@@ -27,7 +27,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -63,11 +62,10 @@ fun CategoriesScreen(
 ) {
     val graph = rememberGraph()
     val vm: CategoriesViewModel = viewModel(
-        factory = viewModelFactory { initializer { CategoriesViewModel(graph.tmdbApi, graph.aniListApi) } },
+        factory = viewModelFactory { initializer { CategoriesViewModel(graph.magisHomeCatalog) } },
     )
     val rows by vm.rows.collectAsStateWithLifecycle()
     val loading by vm.loading.collectAsStateWithLifecycle()
-    val previews by vm.previews.collectAsStateWithLifecycle()
 
     var query by remember { mutableStateOf("") }
     val focusManager = LocalFocusManager.current
@@ -77,10 +75,11 @@ fun CategoriesScreen(
         else rows.filter { it.title.contains(query.trim(), ignoreCase = true) }
     }
 
-    val fixed = displayRows.filter { it.id in setOf("series_populares", "series_top", "anime", "anime_populares", "anime_top") }
-    val movieGenres = displayRows.filter { it.id.startsWith("g_movie_") }
-    val seriesGenres = displayRows.filter { it.id.startsWith("g_tv_") }
-    val animeGenres = displayRows.filter { it.id.startsWith("g_anime_") }
+    val fixed = displayRows.filter { it.id.startsWith("magis_new_") || it.id.startsWith("magis_top_") }
+    val movieGenres = displayRows.filter { it.id.startsWith("magis_g_peliculas_") }
+    val seriesGenres = displayRows.filter { it.id.startsWith("magis_g_series_") }
+    val animeGenres = displayRows.filter { it.id.startsWith("magis_g_anime_") }
+    val kidsGenres = displayRows.filter { it.id.startsWith("magis_g_infantil_") }
 
     if (loading && rows.size <= 8) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -133,10 +132,9 @@ fun CategoriesScreen(
         if (fixed.isNotEmpty()) {
             item(span = { GridItemSpan(maxLineSpan) }) { SectionLabel("Destacadas") }
             items(fixed, key = { it.id }) { spec ->
-                LaunchedEffect(spec.id) { vm.fetchPreview(spec.id) }
                 CategoryCard(
                     title = spec.title,
-                    imageUrl = previews[spec.id],
+                    imageUrl = spec.previewUrl,
                     onClick = { onBrowseRow(spec.id, spec.title) },
                 )
             }
@@ -145,10 +143,9 @@ fun CategoriesScreen(
         if (movieGenres.isNotEmpty()) {
             item(span = { GridItemSpan(maxLineSpan) }) { SectionLabel("Géneros · Películas") }
             items(movieGenres, key = { it.id }) { spec ->
-                LaunchedEffect(spec.id) { vm.fetchPreview(spec.id) }
                 CategoryCard(
                     title = spec.title.removeSuffix(" · Películas"),
-                    imageUrl = previews[spec.id],
+                    imageUrl = spec.previewUrl,
                     onClick = { onBrowseRow(spec.id, spec.title) },
                 )
             }
@@ -157,10 +154,9 @@ fun CategoriesScreen(
         if (seriesGenres.isNotEmpty()) {
             item(span = { GridItemSpan(maxLineSpan) }) { SectionLabel("Géneros · Series") }
             items(seriesGenres, key = { it.id }) { spec ->
-                LaunchedEffect(spec.id) { vm.fetchPreview(spec.id) }
                 CategoryCard(
                     title = spec.title.removeSuffix(" · Series"),
-                    imageUrl = previews[spec.id],
+                    imageUrl = spec.previewUrl,
                     onClick = { onBrowseRow(spec.id, spec.title) },
                 )
             }
@@ -169,10 +165,20 @@ fun CategoriesScreen(
         if (animeGenres.isNotEmpty()) {
             item(span = { GridItemSpan(maxLineSpan) }) { SectionLabel("Géneros · Anime") }
             items(animeGenres, key = { it.id }) { spec ->
-                LaunchedEffect(spec.id) { vm.fetchPreview(spec.id) }
                 CategoryCard(
                     title = spec.title.removeSuffix(" · Anime"),
-                    imageUrl = previews[spec.id],
+                    imageUrl = spec.previewUrl,
+                    onClick = { onBrowseRow(spec.id, spec.title) },
+                )
+            }
+        }
+
+        if (kidsGenres.isNotEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }) { SectionLabel("Géneros · Infantil") }
+            items(kidsGenres, key = { it.id }) { spec ->
+                CategoryCard(
+                    title = spec.title.removeSuffix(" · Infantil"),
+                    imageUrl = spec.previewUrl,
                     onClick = { onBrowseRow(spec.id, spec.title) },
                 )
             }

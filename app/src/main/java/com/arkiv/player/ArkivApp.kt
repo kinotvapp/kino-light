@@ -79,6 +79,13 @@ class ArkivApp : Application(), ImageLoaderFactory {
         graph.applicationScope.launch {
             runCatching { graph.checkForUpdate() }.onFailure { report(it, "startup: check for update") }
         }
+        // Warm the credential/Magis chain on IO: its first init AES-decrypts the store and runs the
+        // native 3DES key resolution, which the O-MVLL VM makes slow (seconds). Doing it here means a
+        // later Composable that reads graph.liveCatalog/contentSource/magisAccount finds it already
+        // built instead of running that on the UI thread and ANRing. See AppGraph.warmUpCredentials.
+        graph.applicationScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching { graph.warmUpCredentials() }
+        }
 
         // New episodes of the series you're watching. Runs in the background and blocks nothing:
         // it's an opportunistic improvement, not a critical path. The "once every N hours" cap

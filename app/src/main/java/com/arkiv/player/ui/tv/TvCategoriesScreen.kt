@@ -51,7 +51,7 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import coil.compose.AsyncImage
 import com.arkiv.player.ui.home.CategoriesViewModel
-import com.arkiv.player.ui.home.HomeRowSpec
+import com.arkiv.player.ui.home.CategorySpec
 import com.arkiv.player.ui.rememberGraph
 import com.arkiv.player.ui.theme.ArkivBlack
 import com.arkiv.player.ui.theme.ArkivTextSecondary
@@ -70,11 +70,10 @@ fun TvCategoriesScreen(
 
     val graph = rememberGraph()
     val vm: CategoriesViewModel = viewModel(
-        factory = viewModelFactory { initializer { CategoriesViewModel(graph.tmdbApi, graph.aniListApi) } },
+        factory = viewModelFactory { initializer { CategoriesViewModel(graph.magisHomeCatalog) } },
     )
     val rows by vm.rows.collectAsStateWithLifecycle()
     val loading by vm.loading.collectAsStateWithLifecycle()
-    val previews by vm.previews.collectAsStateWithLifecycle()
 
     var featured by remember { mutableStateOf<Featured?>(null) }
     val navSound = rememberNavSound()
@@ -118,16 +117,18 @@ fun TvCategoriesScreen(
     }
 
     // Group sections once to pass them as atomic items to the LazyColumn.
-    data class Section(val key: String, val label: String, val suffix: String, val specs: List<HomeRowSpec>)
+    data class Section(val key: String, val label: String, val suffix: String, val specs: List<CategorySpec>)
     val sections = buildList {
-        val fixed = rows.filter { it.id in setOf("series_populares", "series_top", "anime", "anime_populares", "anime_top") }
+        val fixed = rows.filter { it.id.startsWith("magis_new_") || it.id.startsWith("magis_top_") }
         if (fixed.isNotEmpty()) add(Section("destacadas", "Destacadas", "", fixed))
-        val movies = rows.filter { it.id.startsWith("g_movie_") }
+        val movies = rows.filter { it.id.startsWith("magis_g_peliculas_") }
         if (movies.isNotEmpty()) add(Section("pelis", "Géneros · Películas", " · Películas", movies))
-        val series = rows.filter { it.id.startsWith("g_tv_") }
+        val series = rows.filter { it.id.startsWith("magis_g_series_") }
         if (series.isNotEmpty()) add(Section("series", "Géneros · Series", " · Series", series))
-        val anime = rows.filter { it.id.startsWith("g_anime_") }
+        val anime = rows.filter { it.id.startsWith("magis_g_anime_") }
         if (anime.isNotEmpty()) add(Section("anime", "Géneros · Anime", " · Anime", anime))
+        val kids = rows.filter { it.id.startsWith("magis_g_infantil_") }
+        if (kids.isNotEmpty()) add(Section("infantil", "Géneros · Infantil", " · Infantil", kids))
     }
 
     Box(Modifier.fillMaxSize().background(ArkivBlack)) {
@@ -212,8 +213,7 @@ fun TvCategoriesScreen(
                                     horizontalArrangement = Arrangement.spacedBy(16.dp),
                                 ) {
                                     items(section.specs, key = { it.id }) { spec ->
-                                        LaunchedEffect(spec.id) { vm.fetchPreview(spec.id) }
-                                        val imageUrl = previews[spec.id]
+                                        val imageUrl = spec.previewUrl
                                         val label = spec.title.removeSuffix(section.suffix)
                                         TvLandscapeCard(
                                             title = label,

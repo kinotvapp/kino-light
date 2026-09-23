@@ -58,7 +58,12 @@ class RowBrowseViewModel(
                     runCatching { aniListApi.browse(page, source.sort, null, source.genre) }
                         .getOrDefault(emptyList()).map { it.toTitleCard() }
             }
-            _items.value = _items.value + result
+            // Dedup by the SAME key the LazyColumn/Row uses ("kind-tmdbId-anilistId"): TMDB's
+            // paginated discover/curated repeats titles across pages, and a repeated key crashes the
+            // list with "Key … was already used" (IllegalArgumentException). distinctBy keeps the
+            // first occurrence, so order is stable. The end-of-pages heuristic below still reads the
+            // RAW page size, not the deduped total.
+            _items.value = (_items.value + result).distinctBy { "${it.kind}-${it.tmdbId}-${it.anilistId}" }
             // If fewer than 2 items arrived, the source ran out (heuristic: TMDB gives 20/page,
             // AniList gives ~50; any empty or near-empty result signals the end of pages).
             _canLoadMore.value = result.size >= 2

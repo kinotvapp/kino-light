@@ -212,6 +212,23 @@ class AppGraph(context: Context) {
     }
 
     /**
+     * Force the heavy credential/Magis lazies to initialize OFF the main thread. [magisPortal]'s
+     * initializer AES-decrypts the credentials store AND constructs [MagisCrypto], which eagerly
+     * runs the native 3DES key resolution ([NativeCredentialResolver.magisActivate]) -- and the
+     * O-MVLL VM makes that DES kernel slow (seconds). A Composable that reads `graph.liveCatalog` /
+     * `contentSource` / `magisAccount` in its body triggers that whole chain on the UI thread, which
+     * ANRs. Called once at startup on Dispatchers.IO (see [ArkivApp.onCreate]); a no-op before
+     * activation (nothing reaching [magisPortal] is reachable then, and its `!!` would NPE).
+     */
+    fun warmUpCredentials() {
+        runCatching {
+            if (credentialsStore.read() == null) return
+            magisPortal   // -> MagisCrypto(...) -> NativeCredentialResolver.magisActivate (the slow part)
+            magisSession  // depends on magisPortal + magisStore; warm it too
+        }
+    }
+
+    /**
      * The link with Magis as seen from "Settings → Account" (phone and TV) and the prompt on
      * entering the TV (Task 8, sub-project 2B): all three screens stopped using `AccountManager`
      * for this -it no longer depends on any Kino session, see the KDoc on

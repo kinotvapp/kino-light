@@ -115,9 +115,11 @@ private fun JSONObject.text(name: String): String = if (isNull(name)) "" else op
  *  their original alphabet: with no Latin letter at all that name comes out unreadable to someone
  *  viewing from Colombia, so the person parsers drop it (never the work's or the chapter's titles,
  *  which are shown as-is). A mixed name with at least one Latin letter stays. */
-private val LATIN_LETTER = Regex("\\p{IsLatin}")
-
-private fun hasLatinLetters(name: String): Boolean = LATIN_LETTER.containsMatchIn(name)
+// Was `Regex("\\p{IsLatin}")`, which threw PatternSyntaxException (U_ILLEGAL_ARGUMENT_ERROR) on
+// Android's ICU regex -- the `\p{Is…}` script syntax isn't accepted there. Character.UnicodeScript
+// (API 24+) does the same "is this a Latin-script letter" test without a regex.
+private fun hasLatinLetters(name: String): Boolean =
+    name.any { c -> runCatching { Character.UnicodeScript.of(c.code) }.getOrNull() == Character.UnicodeScript.LATIN }
 
 /** The non-empty `name`s (nor the literal `"null"` text) of an array of `{"name": ...}` objects. */
 private fun JSONArray?.names(): List<String> =
