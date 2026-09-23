@@ -1,0 +1,24 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+
+# Build outputs
+build/
+app/build/
+app/.cxx/
+.gradle/
+local.properties
+
+# IDE / OS junk
+.DS_Store
+.kotlin/
+*.iml
+.idea/
+
+# Local graph cache — regenerable
+graft/
+
+# Claude Code tooling
+.claude/
+.superpowers/

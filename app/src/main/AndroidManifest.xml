@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <!-- Android TV: don't require a touchscreen -->
+    <uses-feature
+        android:name="android.hardware.touchscreen"
+        android:required="false" />
+    <uses-feature
+        android:name="android.software.leanback"
+        android:required="false" />
+
+    <application
+        android:name=".ArkivApp"
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:banner="@drawable/ic_banner"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Arkiv"
+        android:usesCleartextTraffic="true">
+
+        <meta-data
+            android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
+            android:value="com.arkiv.player.cast.CastOptionsProvider" />
+
+        <!-- Sentry's SDK ships its own manifest-merged ContentProvider that auto-initializes from
+             manifest meta-data. Disabled: ArkivApp.kt inits it by hand (DSN from BuildConfig,
+             explicit privacy options), so the SDK's own auto-init must stay off. -->
+        <meta-data
+            android:name="io.sentry.auto-init"
+            android:value="false" />
+
+        <service
+            android:name=".playback.PlaybackService"
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+            </intent-filter>
+        </service>
+
+        <!--
+            WorkManager's foreground service ships from the library WITHOUT
+            `foregroundServiceType`, and since API 34 Android requires the type that
+            `setForeground()` asks for to be declared on the <service> element. Without this, the
+            download queue (LocalDownloadWorker, which asks for DATA_SYNC) throws
+            "foregroundServiceType 0x1 is not a subset of 0x0" and **kills the app**.
+
+            NOTE: the FOREGROUND_SERVICE_DATA_SYNC permission, which was already there, isn't
+            enough by itself. Neither is wrapping `setForeground()` in a runCatching: the exception
+            isn't thrown in the worker's coroutine but later, on the main thread, inside
+            SystemForegroundService itself. Confirmed crashing on an S24+ running Android 16.
+        -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
+
+        <!--
+            The banner is declared here TOO, not only on <application>, which is what Android TV's
+            docs ask for the LEANBACK_LAUNCHER activity: without this, `aapt2 dump badging` showed
+            `leanback-launchable-activity: ... banner=''`.
+
+            NOTE: this does NOT fix the Fire TV Stick, and it was tested: on an AFTKM (Fire OS /
+            Android 11), with the banner already resolved on the activity (`banner=0x7f0800f9` per
+            `cmd package resolve-activity`) and after a FULL reboot to rule out the launcher's
+            cache, the home card kept painting the adaptive icon with grey bars on the sides. Fire
+            TV's launcher uses the ICON for sideloaded apps, not the banner. That's also why
+            mipmap-television/ exists: the icon handed to a TV there is already 16:9 landscape,
+            which is the card's shape. That path was left UNVERIFIED (needs another reboot to
+            clear the launcher's cache).
+        -->
+        <activity
+            android:name=".MainActivity"
+            android:banner="@drawable/ic_banner"
+            android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.Arkiv.Starting">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+        <!-- The download notification's "Cancel" button. `exported=false`: only our own
+             PendingIntent can fire it, no one from outside. -->
+        <receiver
+            android:name=".data.local.DownloadActionsReceiver"
+            android:exported="false" />
+    </application>
+</manifest>

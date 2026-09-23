@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Backup on Android <= 11 (API 30). This file's counterpart for API 31+ is
+  data_extraction_rules.xml: the TWO have to say the same thing, otherwise the old device restores
+  what the new one excludes.
+
+  The encrypted prefs CANNOT travel in a backup. They're encrypted with an Android Keystore key
+  that never leaves the device, so restoring them on another phone brings the file but not the
+  key: undecipherable forever. That's exactly what left a Galaxy A54 opening and closing the app
+  in a loop on its own on 2026-08-20. See EncryptedPrefs.
+-->
+<full-backup-content>
+    <exclude domain="sharedpref" path="arkiv_pb_secure.xml" />
+    <exclude domain="sharedpref" path="arkiv_pb_plano.xml" />
+</full-backup-content>

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Arkiv" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:windowBackground">@color/arkiv_background</item>
+        <item name="android:statusBarColor">@color/arkiv_background</item>
+        <item name="android:navigationBarColor">@color/arkiv_background</item>
+        <item name="colorPrimary">@color/arkiv_red</item>
+        <item name="colorAccent">@color/arkiv_red</item>
+    </style>
+
+    <!--
+      Startup theme: the system paints the logo over the brand background from the very first
+      frame (instead of plain black), then hands control to Theme.Arkiv, where Compose's animated
+      intro continues the sequence.
+    -->
+    <style name="Theme.Arkiv.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/arkiv_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="postSplashScreenTheme">@style/Theme.Arkiv</item>
+    </style>
+</resources>

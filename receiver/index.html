@@ -1,0 +1,87 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Kino receiver</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; }
+    cast-media-player { --background-color: #000; --splash-color: #000; }
+    #log {
+      position: fixed; left: 0; bottom: 0; max-height: 40%; overflow: hidden;
+      color: #6f6; font: 12px/1.35 monospace; background: rgba(0,0,0,.55);
+      padding: 6px 8px; white-space: pre-wrap; display: none;
+    }
+  </style>
+</head>
+<body>
+  <cast-media-player></cast-media-player>
+  <div id="log"></div>
+
+  <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+  <script>
+  /*
+   * Kino's own Cast receiver.
+   *
+   * It exists for one reason: the Default Media Receiver (CC1AD845) cannot play the MPEG-TS that
+   * Magis serves. Measured on a KALLEY R3 on 2026-09-12, in its own words --
+   * `{"error":"FFmpegDemuxer: open context failed"}` for a bare transport stream, and once the
+   * same bytes were offered as HLS segments, hundreds of `Failed to get frame timestamps` a
+   * minute with the picture juddering while the decoder itself was healthy. Its HLS support is the
+   * old Media Player Library, which Google itself recommends moving off.
+   *
+   * `useShakaForHls` swaps that for Shaka Player, which transmuxes transport-stream segments into
+   * fMP4 before handing them to the decoder -- exactly the conversion the phone was doing at a
+   * cost of minutes, gigabytes and battery, done here for free because the bytes are passing
+   * through anyway.
+   *
+   * The phone keeps serving the same `/hls.m3u8` + `/seg` it already does, so nothing about the
+   * playlist changes; this only replaces who reads it.
+   */
+  const context = cast.framework.CastReceiverContext.getInstance();
+  const playerManager = context.getPlayerManager();
+
+  // On-screen log, off unless the sender asks for it. Debugging a receiver is otherwise blind:
+  // its logs live on the TV, and a TV is not always within reach of adb.
+  const logBox = document.getElementById('log');
+  const lines = [];
+  function log(msg) {
+    console.log('[kino] ' + msg);
+    lines.push(msg);
+    if (lines.length > 14) lines.shift();
+    logBox.textContent = lines.join('\n');
+  }
+
+  playerManager.setMessageInterceptor(
+    cast.framework.messages.MessageType.LOAD,
+    (request) => {
+      const media = (request && request.media) || {};
+      log('LOAD ' + (media.contentType || '?') + ' ' + String(media.contentUrl || media.contentId || '').slice(0, 90));
+      if (media.customData && media.customData.debug) logBox.style.display = 'block';
+      return request;
+    });
+
+  // Why a load failed, in the receiver's own words. Without this the sender only sees the session
+  // go idle, which is the same thing it sees for half a dozen unrelated causes.
+  playerManager.addEventListener(
+    cast.framework.events.EventType.ERROR,
+    (e) => log('ERROR ' + (e.detailedErrorCode || '') + ' ' + (e.reason || '')));
+  playerManager.addEventListener(
+    cast.framework.events.EventType.MEDIA_FINISHED,
+    (e) => log('FINISHED ' + (e.endedReason || '')));
+  playerManager.addEventListener(
+    cast.framework.events.EventType.PLAYER_LOAD_COMPLETE,
+    () => log('load complete, playing'));
+
+  const options = new cast.framework.CastReceiverOptions();
+  // THE line this receiver exists for. Without it the old Media Player Library handles HLS and
+  // chokes on transport-stream segments the way the default receiver does.
+  options.useShakaForHls = true;
+  // The phone serves from its own LAN address over plain http; a receiver that demanded https
+  // would reject every segment.
+  options.disableIdleTimeout = false;
+
+  context.start(options);
+  log('receiver up, shaka-for-hls on');
+  </script>
+</body>
+</html>

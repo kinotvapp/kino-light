@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug-only additions. Nothing here reaches a release APK. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Triggered by hand over adb; see CaracolOfflineProbe's KDoc. -->
+        <receiver
+            android:name="com.arkiv.player.debug.CaracolOfflineProbe"
+            android:exported="true" />
+
+        <!-- Second question: does the shipping path work, queue and strategy included? -->
+        <receiver
+            android:name="com.arkiv.player.debug.CaracolDownloadProbe"
+            android:exported="true" />
+    </application>
+</manifest>

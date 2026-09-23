@@ -1,0 +1,190 @@
+package com.arkiv.player.ui.settings
+
+import android.widget.Toast
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
+import com.arkiv.player.BuildConfig
+import com.arkiv.player.data.credentials.SeedResult
+import com.arkiv.player.data.update.UpdateInfo
+import com.arkiv.player.ui.rememberGraph
+import com.arkiv.player.ui.update.UpdateDialog
+
+/** What belongs to the app and not to the content: updates and access to offline downloads. */
+@Composable
+internal fun AppTab(onOpenDownloads: () -> Unit = {}) {
+    val graph = rememberGraph()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var checking by remember { mutableStateOf(false) }
+    var manualUpdate by remember { mutableStateOf<UpdateInfo?>(null) }
+    var seeding by remember { mutableStateOf(false) }
+    var seedMessage by remember { mutableStateOf<String?>(null) }
+    val funFactsEnabled by graph.settings.funFactsEnabled.collectAsState()
+    val seedAutoRefreshEnabled by graph.settings.seedAutoRefreshEnabled.collectAsState()
+
+    // The country we recognize for this phone -- the same free, no-permission, no-network signal
+    // (SIM -> time zone -> locale) the live-channels row uses. Shown next to the version so support
+    // can see which region the app resolved the device to. Computed once; the signals don't change.
+    val detectedCountry = remember {
+        com.arkiv.player.ui.live.deviceCountry(context)?.let { iso ->
+            val name = java.util.Locale("", iso).getDisplayCountry(java.util.Locale("es"))
+            if (name.isNotBlank() && !name.equals(iso, ignoreCase = true)) "$name ($iso)" else iso
+        }
+    }
+
+    // Manual check: independent of MainActivity's global dialog, so it works even if the user
+    // already dismissed that one this session.
+    fun checkForUpdatesNow() {
+        checking = true
+        scope.launch {
+            // Manual check bypasses the staggered deferral: show a newer version right away.
+            val info = graph.checkForUpdateNow()
+            checking = false
+            if (info != null) {
+                manualUpdate = info
+            } else {
+                Toast.makeText(context, "Ya tienes la última versión", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    manualUpdate?.let { info ->
+        UpdateDialog(info = info, graph = graph, onDismiss = { manualUpdate = null })
+    }
+
+    // Manual re-seed: the backup-session pool is otherwise fetched only once, at activation. A
+    // device activated before the pool existed (or whose one download failed) is stuck with an
+    // empty local pool forever -- this is its self-recovery path. See SeedRefresher's KDoc.
+    fun sembrarSemillas() {
+        seeding = true
+        seedMessage = null
+        scope.launch {
+            val result = graph.seedRefresher.reseed()
+            seeding = false
+            seedMessage = when (result) {
+                is SeedResult.Ok -> "${result.count} semillas cargadas"
+                SeedResult.Failed -> "Sin conexión, reintenta"
+            }
+        }
+    }
+
+    Text(
+        "Descargas",
+        style = MaterialTheme.typography.titleMedium,
+        modifier = Modifier.padding(top = 24.dp, bottom = 8.dp),
+    )
+    Button(onClick = onOpenDownloads) {
+        Text("Ver descargas")
+    }
+
+    Text(
+        "Actualizaciones",
+        style = MaterialTheme.typography.titleMedium,
+        modifier = Modifier.padding(top = 24.dp, bottom = 8.dp),
+    )
+    Text(
+        "Versión instalada: ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+        style = MaterialTheme.typography.bodySmall,
+    )
+    Text(
+        "País detectado: ${detectedCountry ?: "desconocido"}",
+        style = MaterialTheme.typography.bodySmall,
+        modifier = Modifier.padding(bottom = 8.dp),
+    )
+    Button(onClick = ::checkForUpdatesNow, enabled = !checking) {
+        if (checking) {
+            CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
+            Text("Buscando…", modifier = Modifier.padding(start = 8.dp))
+        } else {
+            Text("Buscar actualizaciones")
+        }
+    }
+
+    Text(
+        "Sesiones de respaldo",
+        style = MaterialTheme.typography.titleMedium,
+        modifier = Modifier.padding(top = 24.dp, bottom = 8.dp),
+    )
+    Text(
+        "Recarga las sesiones de respaldo si el contenido no reproduce",
+        style = MaterialTheme.typography.bodySmall,
+        modifier = Modifier.padding(bottom = 8.dp),
+    )
+    Button(onClick = ::sembrarSemillas, enabled = !seeding) {
+        if (seeding) {
+            CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
+            Text("…", modifier = Modifier.padding(start = 8.dp))
+        } else {
+            Text("Sembrar semillas")
+        }
+    }
+    seedMessage?.let {
+        Text(
+            it,
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(0.9f).padding(top = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Actualizar semillas automáticamente", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                "Solo si el contenido dejó de reproducir en algún momento; si nunca pasó, no descarga nada.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        Switch(
+            checked = seedAutoRefreshEnabled,
+            onCheckedChange = { graph.settings.setSeedAutoRefreshEnabled(it) },
+        )
+    }
+
+    Text(
+        "Reproductor",
+        style = MaterialTheme.typography.titleMedium,
+        modifier = Modifier.padding(top = 24.dp, bottom = 8.dp),
+    )
+    Row(
+        modifier = Modifier.fillMaxWidth(0.9f),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Datos curiosos", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                "Muestra un dato curioso de la película o serie durante la reproducción.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        Switch(
+            checked = funFactsEnabled,
+            onCheckedChange = { graph.settings.setFunFactsEnabled(it) },
+        )
+    }
+
+    // At the end and unannounced: locked, it shows no more than a row asking for a code.
+    AdultsSection(graph.settings)
+}
