@@ -113,5 +113,14 @@
         <receiver
             android:name=".data.local.DownloadActionsReceiver"
             android:exported="false" />
+
+        <!-- Google's `datatransport` (pulled in transitively by play-services-cast) registers this
+             AlarmManager receiver for its own usage telemetry. On some devices it NPEs at boot
+             ("Attempt to invoke … Uri.getQueryParameter … on a null object", inside
+             AlarmManagerSchedulerBroadcastReceiver) and takes the process down. We don't use that
+             telemetry, so remove the receiver via the manifest merger. Casting itself is unaffected. -->
+        <receiver
+            android:name="com.google.android.datatransport.runtime.scheduling.jobscheduling.AlarmManagerSchedulerBroadcastReceiver"
+            tools:node="remove" />
     </application>
 </manifest>
