@@ -19,6 +19,7 @@ import com.arkiv.player.data.recommendations.ForYouVerification
 import com.arkiv.player.data.update.ApkDownloader
 import com.arkiv.player.data.update.UpdateChecker
 import com.arkiv.player.data.update.UpdateInfo
+import com.arkiv.player.data.plugin.*
 import com.arkiv.player.dlna.DlnaController
 import com.arkiv.player.companion.CompanionManager
 import com.google.android.gms.cast.framework.CastContext
@@ -253,6 +254,7 @@ class AppGraph(context: Context) {
             liveCatalog
             magisHomeCatalog
             contentSource
+            pluginRegistry
             magisAccount
             built = true
         } catch (_: Throwable) {
@@ -326,6 +328,84 @@ class AppGraph(context: Context) {
      */
     val contentSource: com.arkiv.player.data.gateway.ContentSource by lazy {
         com.arkiv.player.data.gateway.CompositeSource(listOf(magisSource, dituSource))
+    }
+
+    // --- Plugins (docs/superpowers/specs/2026-09-24-plugin-sources-design.md) ---
+
+    val pluginStore: PluginStore by lazy {
+        PluginStore(java.io.File(appContext.filesDir, "plugins"), java.io.File(appContext.filesDir, "plugin-data"))
+            .also { it.cleanStaging() }
+    }
+
+    /** Base client for plugin traffic; each plugin derives its own (cookie jar, host gate) in PluginHttp. */
+    private val pluginBaseHttp: okhttp3.OkHttpClient by lazy {
+        okhttp3.OkHttpClient.Builder()
+            .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+    }
+
+    val pluginRegistry: PluginRegistry by lazy { PluginRegistry(pluginStore).also { it.reload() } }
+
+    /** The live PluginHttp of each open runtime, so the pool can reset its per-call request budget. */
+    private val pluginHttps = java.util.concurrent.ConcurrentHashMap<String, PluginHttp>()
+
+    val pluginRuntimes: PluginRuntimePool by lazy {
+        PluginRuntimePool(
+            open = { id -> openPluginRuntime(id) },
+            // F5: on 3 consecutive timeouts the runtime discards itself internally (see
+            // PluginRuntime.call/close KDoc) without the pool ever calling close() on it, so the
+            // decorator below never runs for this path -- drop the stale PluginHttp here too.
+            onUnresponsive = { id -> pluginRegistry.markUnresponsive(id); pluginHttps.remove(id) },
+            scope = applicationScope,
+            beforeCall = { id -> pluginHttps[id]?.beginCall() },
+        )
+    }
+
+    private suspend fun openPluginRuntime(id: String): ScriptRuntime {
+        val plugin = pluginRegistry.find(id) ?: throw PluginScriptException("El plugin no está instalado")
+        val script = try {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { pluginStore.readVerifiedScript(id) }
+        } catch (e: PluginDamagedException) {
+            pluginRegistry.markDamaged(id)
+            throw e
+        }
+        // The APPROVED hosts from installed.json, never the manifest's: they're what the person accepted.
+        val http = PluginHttp(pluginBaseHttp, id, plugin.record.hosts, BuildConfig.VERSION_NAME)
+        pluginHttps[id] = http
+        val storage = PluginStorage(java.io.File(pluginStore.dataDir(id), "storage.json"))
+        val runtime = PluginRuntime.open(id, script, DefaultPluginHost(id, http, storage), PluginEnv(appVersion = BuildConfig.VERSION_NAME))
+        // F5: drop this plugin's PluginHttp the moment its runtime is closed -- idle timeout, or an
+        // explicit pool.close() from DefaultPluginAdmin's disable/update/uninstall -- so pluginHttps
+        // never keeps a stale, no-longer-approved host list around after the runtime that used it is
+        // gone. remove(id, http) only clears OUR entry: if a newer runtime already replaced it, this
+        // deferred close (see PluginRuntime.close KDoc) must not delete that live one instead.
+        return object : ScriptRuntime by runtime {
+            override fun close() {
+                runtime.close()
+                pluginHttps.remove(id, http)
+            }
+        }
+    }
+
+    val pluginInstaller: PluginInstaller by lazy {
+        PluginInstaller(
+            store = pluginStore,
+            fetcher = RawGithubFetcher(pluginBaseHttp),
+            probe = { script ->
+                val runtime = PluginRuntime.open("probe", script, ProbePluginHost, PluginEnv(appVersion = BuildConfig.VERSION_NAME))
+                try { runtime.exports } finally { runtime.close() }
+            },
+        )
+    }
+
+    val pluginAdmin: PluginAdmin by lazy { DefaultPluginAdmin(pluginRegistry, pluginInstaller, pluginRuntimes) }
+
+    /** UpdateWorker's plugin step: each plugin at most once per 24 h; see PluginInstaller.checkDueUpdates. */
+    suspend fun checkPluginUpdates() {
+        val outcomes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { pluginInstaller.checkDueUpdates() }
+        outcomes.filter { it.second is UpdateOutcome.Applied }.forEach { pluginRuntimes.close(it.first) }
+        pluginRegistry.reload()
     }
 
     internal val magisLive: com.arkiv.player.data.magis.MagisLive by lazy {
