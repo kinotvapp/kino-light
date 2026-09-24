@@ -115,6 +115,14 @@ data class TmdbDetail(
      * neither of those matches Xuper, but the English one does. Empty when TMDB has no English title.
      */
     val englishTitle: String = "",
+    /**
+     * Other SPANISH titles (from TMDB `translations`): the same film is often titled differently in
+     * Spain (es-ES) than in Latin America (es-MX, which is [title]) -- "Un mundo propio" vs another
+     * regional name -- and Xuper may carry only one of them. All the distinct `es` variants other
+     * than [title], so searching by them recognizes a title Xuper lists under a different Spanish.
+     * Empty when TMDB has no extra Spanish variant.
+     */
+    val spanishTitles: List<String> = emptyList(),
     val posterUrl: String,
     val backdropUrl: String,
     val overview: String,
@@ -248,11 +256,22 @@ class TmdbApi(
             // English title from the `translations` block (already appended to this response): the
             // en-US entry's `data.name` (tv) / `data.title` (movie). Xuper often stores anime and
             // international titles under this English name, so it's worth searching by too.
-            val english = o.optJSONObject("translations")?.optJSONArray("translations")?.let { arr ->
+            val translations = o.optJSONObject("translations")?.optJSONArray("translations")
+            fun titleOf(t: JSONObject): String =
+                t.optJSONObject("data")?.let { if (isTv) it.optString("name") else it.optString("title") }.orEmpty()
+            val english = translations?.let { arr ->
                 (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
                     .firstOrNull { it.optString("iso_639_1") == "en" }
-                    ?.optJSONObject("data")
-                    ?.let { if (isTv) it.optString("name") else it.optString("title") }
+                    ?.let(::titleOf)
+            }.orEmpty()
+            // Every distinct SPANISH variant (es-ES, es-419, es-AR…) other than the es-MX [localized]
+            // title -- Xuper sometimes lists a title only under Spain's Spanish, which differs.
+            val spanish = translations?.let { arr ->
+                (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
+                    .filter { it.optString("iso_639_1") == "es" }
+                    .map(::titleOf)
+                    .filter { it.isNotBlank() && !it.equals(localized, ignoreCase = true) }
+                    .distinctBy { it.trim().lowercase() }
             }.orEmpty()
             TmdbDetail(
                 id = id,
@@ -260,6 +279,7 @@ class TmdbApi(
                 title = localized,
                 originalTitle = original,
                 englishTitle = english,
+                spanishTitles = spanish,
                 posterUrl = imgUrl(o.optString("poster_path"), "w500"),
                 backdropUrl = imgUrl(o.optString("backdrop_path"), "w1280"),
                 overview = o.optString("overview"),
