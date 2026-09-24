@@ -18,7 +18,6 @@ import com.arkiv.player.ui.catalog.isSeries
 import com.arkiv.player.ui.rememberGraph
 import com.arkiv.player.ui.search.PlaybackResult
 import com.arkiv.player.ui.search.SearchPlayback
-import kotlinx.coroutines.launch
 
 /**
  * What tapping a plugin card on the phone's Home does — the same as in search: a movie is saved
@@ -30,6 +29,8 @@ fun rememberPluginOpener(onPlay: (episodeId: String) -> Unit): (GatewayResult) -
     val context = LocalContext.current
     val playback = remember(graph) { SearchPlayback(graph) }
     val scope = rememberCoroutineScope()
+    // A double tap on a movie card must not resolve, save and navigate twice.
+    val single = remember(scope) { SinglePlayback(scope) }
     val currentOnPlay by rememberUpdatedState(onPlay)
     var season by remember { mutableStateOf<PlaySource.Plugin?>(null) }
 
@@ -47,7 +48,7 @@ fun rememberPluginOpener(onPlay: (episodeId: String) -> Unit): (GatewayResult) -
             onDismiss = { season = null },
             onPlay = { chapters, chapter, series ->
                 season = null
-                scope.launch { handle(playback.playPluginSeason(open.result, chapters, chapter, series)) }
+                single.start { handle(playback.playPluginSeason(open.result, chapters, chapter, series)) }
             },
             onSave = null,
             sourceLabel = open.pluginName,
@@ -55,13 +56,13 @@ fun rememberPluginOpener(onPlay: (episodeId: String) -> Unit): (GatewayResult) -
         )
     }
 
-    return remember(playback) {
+    return remember(playback, single) {
         { result ->
             val source = result.toPlaySource() as? PlaySource.Plugin
             when {
                 source == null -> Unit
                 source.isSeries() -> season = source
-                else -> scope.launch { handle(playback.playPlugin(result)) }
+                else -> single.start { handle(playback.playPlugin(result)) }
             }
         }
     }
