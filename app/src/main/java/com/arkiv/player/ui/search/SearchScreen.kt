@@ -108,6 +108,8 @@ fun SearchScreen(
     shortcutKind: String? = null,
     shortcutTmdbId: Int? = null,
     shortcutAnilistId: Long? = null,
+    /** A plain title to search on entry (Kinobot's suggestion chips): runs the query phase. */
+    shortcutQuery: String? = null,
 ) {
     val graph = rememberGraph()
     // Fixed rows always available (no API): anime, cartelera, tendencias, series, etc.
@@ -168,6 +170,12 @@ fun SearchScreen(
     LaunchedEffect(shortcutKind, shortcutTmdbId, shortcutAnilistId) {
         val k = shortcutKind ?: return@LaunchedEffect
         vm.startFromShortcut(k, shortcutTmdbId, shortcutAnilistId)
+    }
+
+    // Plain-title entry (Kinobot suggestion chip): run the query phase with the given title, exactly
+    // like typing it in the box. Fires once per distinct query.
+    LaunchedEffect(shortcutQuery) {
+        shortcutQuery?.takeIf { it.isNotBlank() }?.let { vm.search(it) }
     }
 
     // "Enriched" metadata for the chosen card, to save a real title/poster/description (not the

@@ -698,6 +698,11 @@ class AppGraph(context: Context) {
         )
     }
 
+    /** Kinobot: the movie/series/anime chat, streaming on top of [aiClient]. */
+    internal val kinobotClient: com.arkiv.player.data.ai.KinobotClient by lazy {
+        com.arkiv.player.data.ai.KinobotClient { aiClient.streamChat(it) }
+    }
+
     /** The player's fun fact (sub-project 4): Kilo, from the device, a month of caching. */
     internal val triviaFacts: com.arkiv.player.data.trivia.TriviaFacts by lazy {
         com.arkiv.player.data.trivia.TriviaFacts(

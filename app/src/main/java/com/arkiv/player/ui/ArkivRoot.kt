@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.GridView
@@ -244,6 +245,13 @@ fun ArkivRoot(
                             IconButton(onClick = { graph.reloadHomeCatalog() }) {
                                 Icon(Icons.Default.Refresh, contentDescription = "Recargar catálogo", tint = Color.White)
                             }
+                            IconButton(onClick = { navController.navigate("kinobot") }) {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.Chat,
+                                    contentDescription = "Kinobot",
+                                    tint = Color.White,
+                                )
+                            }
                             IconButton(onClick = { navController.navigate("search") }) {
                                 Icon(Icons.Default.Search, contentDescription = "Buscar", tint = Color.White)
                             }
@@ -336,12 +344,19 @@ fun ArkivRoot(
                     contentPadding = padding,
                 )
             }
+            composable("kinobot") {
+                com.arkiv.player.ui.kinobot.KinobotScreen(
+                    onBack = { navController.popBackStack() },
+                    onSearch = { title -> navController.navigate("search?query=${android.net.Uri.encode(title)}") },
+                )
+            }
             composable(
-                "search?kind={kind}&tmdbId={tmdbId}&anilistId={anilistId}",
+                "search?kind={kind}&tmdbId={tmdbId}&anilistId={anilistId}&query={query}",
                 arguments = listOf(
                     navArgument("kind") { nullable = true; type = NavType.StringType; defaultValue = null },
                     navArgument("tmdbId") { nullable = true; type = NavType.StringType; defaultValue = null },
                     navArgument("anilistId") { nullable = true; type = NavType.StringType; defaultValue = null },
+                    navArgument("query") { nullable = true; type = NavType.StringType; defaultValue = null },
                 ),
             ) { entry ->
                 Box(Modifier.fillMaxSize().padding(padding)) {
@@ -355,6 +370,7 @@ fun ArkivRoot(
                         shortcutKind = entry.arguments?.getString("kind"),
                         shortcutTmdbId = entry.arguments?.getString("tmdbId")?.toIntOrNull(),
                         shortcutAnilistId = entry.arguments?.getString("anilistId")?.toLongOrNull(),
+                        shortcutQuery = entry.arguments?.getString("query"),
                     )
                 }
             }
