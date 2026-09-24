@@ -143,6 +143,12 @@ internal fun LiveExoPlayer(
         )
         Log.i(TAG, "DisposableEffect hooked · state=${exoPlayer.playbackState}")
 
+        // Telemetry rate-limit: live HLS can loop the SAME error (a CDN playlist reset re-fires
+        // onPlayerError on every retry), which flooded GlitchTip with 1000+ identical "Source error"
+        // reports from one bad box. Report only the FIRST error of this player session; the on-screen
+        // error still shows every time. Reset per session (this effect re-runs per exoPlayer).
+        var errorReported = false
+
         val listener = object : Player.Listener {
 
             override fun onVideoSizeChanged(videoSize: VideoSize) {
@@ -180,7 +186,10 @@ internal fun LiveExoPlayer(
             override fun onPlayerError(error: PlaybackException) {
                 val msg = error.message ?: "Error de reproducción (${error.errorCode})"
                 Log.e(TAG, "onPlayerError errorCode=${error.errorCode} msg=$msg", error)
-                com.arkiv.player.crash.Crash.report(error, "live-playback-${PlaybackException.getErrorCodeName(error.errorCode)}")
+                if (!errorReported) {
+                    errorReported = true
+                    com.arkiv.player.crash.Crash.report(error, "live-playback-${PlaybackException.getErrorCodeName(error.errorCode)}")
+                }
                 onError(msg)
             }
         }
