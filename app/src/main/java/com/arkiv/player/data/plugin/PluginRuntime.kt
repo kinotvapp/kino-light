@@ -114,10 +114,10 @@ class PluginRuntime private constructor(
             // measured, the next evaluate threw "Result promise not found". Probe it; if it's
             // broken, discard it so the pool opens a fresh one.
             if (!isHealthy()) close()
-            throw PluginScriptException(errorText(e.message, "Error del plugin"), e)
+            throw PluginScriptException(errorText(e.message, "Error del plugin"), boundedCause(e))
         } catch (e: Exception) {
             // A Kotlin exception from a binding (e.g. HostNotAllowedException) that JS didn't catch.
-            throw PluginScriptException(errorText(e.message, e.javaClass.simpleName), e)
+            throw PluginScriptException(errorText(e.message, e.javaClass.simpleName), boundedCause(e))
         } finally {
             synchronized(lock) { if (inFlight === job && job.isCompleted) inFlight = null }
         }
@@ -166,6 +166,18 @@ class PluginRuntime private constructor(
          */
         private fun errorText(message: String?, fallback: String): String =
             message?.takeIf { it.isNotBlank() }?.take(MAX_ERROR_CHARS) ?: fallback
+
+        /**
+         * [e] as a cause only if no message in its chain is longer than [MAX_ERROR_CHARS]: the
+         * cause is logged with its whole chain (e.g. PlayerViewModel's `Log.w(..., failure)`), so
+         * a huge engine message there would be copied again. Otherwise no cause at all; the
+         * already-cut text is in the wrapping exception's own message.
+         */
+        private fun boundedCause(e: Throwable): Throwable? =
+            e.takeIf { generateSequence(e) { it.cause }.take(10).all { (it.message?.length ?: 0) <= MAX_ERROR_CHARS } }
+
+        /** The longest `name` a plugin may give a function (see the prelude's define guards). */
+        const val MAX_FUNCTION_NAME_CHARS = 1_000
 
         /** What a thrown null, undefined, Symbol or unreadable value becomes. */
         private const val THROWN_FALLBACK = "el plugin falló sin decir por qué"
@@ -230,10 +242,10 @@ class PluginRuntime private constructor(
                 throw e
             } catch (e: QuickJsException) {
                 executor.shutdown()
-                throw PluginScriptException(errorText(e.message, "El plugin no carga"), e)
+                throw PluginScriptException(errorText(e.message, "El plugin no carga"), boundedCause(e))
             } catch (e: Exception) {
                 executor.shutdown()
-                throw PluginScriptException(errorText(e.message, e.javaClass.simpleName), e)
+                throw PluginScriptException(errorText(e.message, e.javaClass.simpleName), boundedCause(e))
             }
         }
 
@@ -264,9 +276,51 @@ class PluginRuntime private constructor(
               const n = {};
               for (const k of Object.getOwnPropertyNames(native)) { n[k] = native[k]; delete native[k]; }
               Object.freeze(native);
-              const S = String, E = Error, stringify = JSON.stringify, parse = JSON.parse;
+              const S = String, E = Error, TE = TypeError, stringify = JSON.stringify, parse = JSON.parse;
               const slice = Function.prototype.call.bind(String.prototype.slice);
               const define = Object.defineProperty, freeze = Object.freeze;
+              const defineAll = Object.defineProperties, reflectDefine = Reflect.defineProperty;
+              const ownKeys = Reflect.ownKeys, apply = Reflect.apply;
+              const OP = Object.prototype, defineGetter = OP.__defineGetter__, defineSetter = OP.__defineSetter__;
+              // A function's `name` is read by quickjs-kt's native code when an error is built or
+              // a rejection is tracked in that function's frame; at ~20 MB the native side fails
+              // an allocation and crashes the whole process (measured). A function's name can only
+              // be changed through these define APIs (it's non-writable), so they refuse a long
+              // name, an accessor name, or making it writable. Everything else passes through.
+              const nameRefused = () => new TE('el nombre de una función no puede cambiarse a más de $MAX_FUNCTION_NAME_CHARS caracteres');
+              const safeNameDescriptor = (desc) => {
+                if (desc === null || typeof desc !== 'object') return desc;
+                const d = {};
+                for (const k of ['value', 'writable', 'enumerable', 'configurable', 'get', 'set']) if (k in desc) d[k] = desc[k];
+                if ('get' in d || 'set' in d || d.writable === true) throw nameRefused();
+                if (typeof d.value === 'string' && d.value.length > $MAX_FUNCTION_NAME_CHARS) throw nameRefused();
+                return d;
+              };
+              const isName = (key) => typeof key !== 'symbol' && S(key) === 'name';
+              Object.defineProperty = freeze(function defineProperty(o, key, desc) {
+                if (typeof o === 'function' && isName(key)) return define(o, 'name', safeNameDescriptor(desc));
+                return define(o, key, desc);
+              });
+              Object.defineProperties = freeze(function defineProperties(o, props) {
+                if (typeof o !== 'function' || props === null || typeof props !== 'object') return defineAll(o, props);
+                const copy = {};
+                for (const k of ownKeys(props)) copy[k] = isName(k) ? safeNameDescriptor(props[k]) : props[k];
+                return defineAll(o, copy);
+              });
+              Reflect.defineProperty = freeze(function defineProperty(o, key, desc) {
+                if (typeof o === 'function' && isName(key)) {
+                  try { return reflectDefine(o, 'name', safeNameDescriptor(desc)); } catch (e) { if (e instanceof TE) return false; throw e; }
+                }
+                return reflectDefine(o, key, desc);
+              });
+              define(OP, '__defineGetter__', { value: freeze(function __defineGetter__(key, fn) {
+                if (typeof this === 'function' && isName(key)) throw nameRefused();
+                return apply(defineGetter, this, [key, fn]);
+              }), writable: true, configurable: true, enumerable: false });
+              define(OP, '__defineSetter__', { value: freeze(function __defineSetter__(key, fn) {
+                if (typeof this === 'function' && isName(key)) throw nameRefused();
+                return apply(defineSetter, this, [key, fn]);
+              }), writable: true, configurable: true, enumerable: false });
               const toStr = (x) => (typeof x === 'string' ? x : S(x));
               const cut = (s, max) => (s.length > max ? slice(s, 0, max) : s);
               const str = (x) => { if (typeof x === 'string') return x; try { return toStr(stringify(x)); } catch (e) { return toStr(x); } };
@@ -276,7 +330,7 @@ class PluginRuntime private constructor(
                 apiVersion: ${env.apiVersion},
                 appVersion: ${JSONObject.quote(env.appVersion)},
                 lang: ${JSONObject.quote(env.lang)},
-                async fetch(url, opts) {
+                fetch: freeze(async function fetch(url, opts) {
                   const o = opts || {};
                   const req = toStr(stringify({
                     url: toStr(url), method: o.method || 'GET', headers: o.headers || {},
@@ -291,38 +345,47 @@ class PluginRuntime private constructor(
                   const r = parse(await n.fetch(req));
                   return { ok: r.ok, status: r.status, url: r.url, headers: r.headers,
                            text: () => r.body, json: () => parse(r.body) };
-                },
+                }),
                 html: freeze({
-                  select: (html, css) => {
+                  select: freeze((html, css) => {
                     const selector = toStr(css);
                     if (selector.length > $MAX_SELECTOR_CHARS) throw new E('selector CSS demasiado largo (más de $MAX_SELECTOR_CHARS caracteres)');
                     return parse(n.select(cut(toStr(html), ${PluginHtml.MAX_HTML_CHARS}), selector));
-                  },
+                  }),
                 }),
                 storage: freeze({
-                  get: (k) => { const key = toStr(k); if (key.length > $STORAGE_CHARS) return null; const v = n.storageGet(key); return v == null ? null : v; },
-                  set: (k, v) => {
+                  get: freeze((k) => { const key = toStr(k); if (key.length > $STORAGE_CHARS) return null; const v = n.storageGet(key); return v == null ? null : v; }),
+                  set: freeze((k, v) => {
                     const key = toStr(k), value = toStr(v);
                     if (key.length + value.length > $STORAGE_CHARS) throw new E('almacenamiento del plugin lleno (64 KB)');
                     n.storageSet(key, value);
-                  },
-                  remove: (k) => { const key = toStr(k); if (key.length <= $STORAGE_CHARS) n.storageRemove(key); },
+                  }),
+                  remove: freeze((k) => { const key = toStr(k); if (key.length <= $STORAGE_CHARS) n.storageRemove(key); }),
                 }),
-                log: (...a) => log('info', a),
+                log: freeze((...a) => log('info', a)),
               };
               globalThis.kino = freeze(kino);
               globalThis.console = freeze({
-                log: (...a) => log('info', a), info: (...a) => log('info', a),
-                warn: (...a) => log('warn', a), error: (...a) => log('error', a),
+                log: freeze((...a) => log('info', a)), info: freeze((...a) => log('info', a)),
+                warn: freeze((...a) => log('warn', a)), error: freeze((...a) => log('error', a)),
               });
               // quickjs-kt alpha13 aborts the whole call on a promise rejected before anyone
               // awaits it, even inside try/catch. Deferring Promise.reject by one job lets the
               // awaiting caller attach its handler first. See QuickJsSpikeTest.
-              Promise.reject = (e) => Promise.resolve().then(() => { throw e; });
+              Promise.reject = freeze((e) => Promise.resolve().then(() => { throw e; }));
               // A thrown value's message reaches Kotlin (and the screen) as the exception text,
               // so it's rebuilt here: a short plain string, no stack. Every step can be hostile
               // (a throwing getter or toString, a Proxy, a Symbol, 30 MB of text), hence the
               // captured built-ins and the fixed fallback.
+              // What __kinoCall throws carries an OWN, fixed name: native code formats an error
+              // as "<name>: <message>" and would otherwise read a plugin-controlled
+              // Error.prototype.name (30 MB, measured). The prototype itself is left alone so
+              // `this.name = 'MyErr'` in a plugin's Error subclass keeps working.
+              const kinoError = (message) => {
+                const err = new E(message);
+                define(err, 'name', { value: 'Error', writable: false, configurable: false, enumerable: false });
+                return err;
+              };
               const errorText = (e) => {
                 try {
                   let m = e;
@@ -338,20 +401,22 @@ class PluginRuntime private constructor(
                   return '$THROWN_FALLBACK';
                 }
               };
+              // Frozen too: its `name` is read natively when the rethrow below builds an error in
+              // its frame (a plugin renamed it to 20 MB and crashed the process, measured).
               define(globalThis, '__kinoCall', {
-                value: async (name, argJson) => {
+                value: freeze(async (name, argJson) => {
                   let out;
                   try {
                     const fn = globalThis.__kinoExports[name];
                     if (typeof fn !== 'function') throw new E('el plugin no exporta ' + name);
                     out = stringify(await fn(parse(argJson)));
                   } catch (e) {
-                    throw new E(errorText(e));
+                    throw kinoError(errorText(e));
                   }
                   if (typeof out !== 'string') return 'null';
-                  if (out.length > $MAX_RESULT_CHARS) throw new E('$RESULT_TOO_BIG');
+                  if (out.length > $MAX_RESULT_CHARS) throw kinoError('$RESULT_TOO_BIG');
                   return out;
-                },
+                }),
                 writable: false, configurable: false, enumerable: false,
               });
             })();

@@ -354,6 +354,90 @@ class PluginRuntimeTest {
             }
     }
 
+    // --- Function names and error names: a 20 MB name makes quickjs-kt's native code crash the
+    // whole process (measured: SIGSEGV in _platform_strlen <- js_async_function_resume, or in
+    // JS_DefineProperty when a native built-in throws). A plugin must not be able to set one.
+
+    private fun chainLengths(t: Throwable): List<Int> = generateSequence(t) { it.cause }.map { it.message?.length ?: 0 }.toList()
+
+    private val huge = "'n'.repeat(20000000)"
+
+    @Test fun `renaming __kinoCall to a huge name and throwing after an await fails normally`() {
+        val rt = runBlocking {
+            open(
+                "export async function home() { try { Object.defineProperty(Object.getOwnPropertyDescriptor(globalThis, '__kinoCall').value, 'name', { value: $huge }) } catch (e) {}\n" +
+                    "await null; throw new Error('boom') }",
+            )
+        }
+        val e = failureOf(rt)
+        assertTrue(chainLengths(e).toString(), chainLengths(e).all { it <= PluginRuntime.MAX_ERROR_CHARS })
+        assertTrue(e.message, e.message!!.contains("boom"))
+    }
+
+    @Test fun `the prelude's own functions cannot be renamed`() = runBlocking {
+        val rt = open(
+            "export async function home() { const fns = [Object.getOwnPropertyDescriptor(globalThis, '__kinoCall').value, kino.fetch, kino.log, kino.html.select, kino.storage.get, kino.storage.set, kino.storage.remove, console.log, console.error, Promise.reject];\n" +
+                "return fns.map(f => { try { Object.defineProperty(f, 'name', { value: 'x' }); return 'renamed' } catch (e) { return Object.isFrozen(f) } }) }",
+        )
+        assertEquals("[" + List(10) { "true" }.joinToString(",") + "]", rt.call("home", "null", 5_000))
+    }
+
+    @Test fun `a huge function name is refused by every define API, and small ones still work`() = runBlocking {
+        val rt = open(
+            "export async function home() { const out = []; const big = $huge; function g() {}\n" +
+                "const t = (f) => { try { f(); return 'allowed' } catch (e) { return e instanceof TypeError ? 'refused' : 'other' } };\n" +
+                "out.push(t(() => Object.defineProperty(g, 'name', { value: big })));\n" +
+                "out.push(t(() => Object.defineProperty(JSON.parse, 'name', { value: big })));\n" +
+                "out.push(t(() => Object.defineProperties(g, { name: { value: big } })));\n" +
+                "out.push(Reflect.defineProperty(g, 'name', { value: big }) ? 'allowed' : 'refused');\n" +
+                "out.push(t(() => Object.defineProperty(g, 'name', { get() { return big } })));\n" +
+                "out.push(t(() => Object.defineProperty(g, 'name', { writable: true })));\n" +
+                "out.push(t(() => g.__defineGetter__('name', () => big)));\n" +
+                "out.push(g.name);\n" +
+                "out.push(t(() => Object.defineProperty(g, 'name', { value: 'renamed' })), g.name);\n" +
+                "const plain = {}; Object.defineProperty(plain, 'name', { value: 'y'.repeat(5000), writable: true, enumerable: true });\n" +
+                "out.push(plain.name.length); return out }",
+        )
+        assertEquals(
+            "[\"refused\",\"refused\",\"refused\",\"refused\",\"refused\",\"refused\",\"refused\",\"g\",\"allowed\",\"renamed\",5000]",
+            rt.call("home", "null", 5_000),
+        )
+    }
+
+    @Test fun `measured crash variants now fail normally - own async function, unawaited kino fetch, native built-in`() {
+        val variants = listOf(
+            // Renamed own async function rejecting before its first await (SIGSEGV before the guard).
+            "async function g() { throw new Error('x') }; try { Object.defineProperty(g, 'name', { value: $huge }) } catch (e) {}; await g()",
+            // Renamed kino.fetch whose rejection has no handler yet (SIGSEGV before the freeze).
+            "try { Object.defineProperty(kino.fetch, 'name', { value: $huge }) } catch (e) {}; const p = kino.fetch('https://x.example/', { method: 'POST', body: 'x'.repeat(2000000) }); await null; await null; await null; await p",
+            // Renamed native built-in that throws (SIGSEGV in JS_DefineProperty before the guard).
+            "try { Object.defineProperty(JSON.parse, 'name', { value: $huge }) } catch (e) {}; await null; JSON.parse('{')",
+        )
+        for (body in variants) {
+            val rt = runBlocking { open("export async function home(ok) { if (ok) return [1]; $body }") }
+            val e = failureOf(rt)
+            assertTrue("$body: ${chainLengths(e)}", chainLengths(e).all { it <= PluginRuntime.MAX_ERROR_CHARS })
+            assertEquals(body, "[1]", runBlocking { rt.call("home", "true", 5_000) })
+        }
+    }
+
+    @Test fun `a huge Error prototype name does not inflate any message in the error chain`() {
+        val rt = runBlocking { open("export async function home() { Error.prototype.name = 'n'.repeat(30000000); await null; throw new Error('boom') }") }
+        val e = failureOf(rt)
+        assertTrue(chainLengths(e).toString(), chainLengths(e).all { it <= PluginRuntime.MAX_ERROR_CHARS })
+        assertTrue(e.message, e.message!!.contains("boom"))
+    }
+
+    @Test fun `custom Error subclasses that set their name still work`() = runBlocking {
+        val rt = open(
+            "class MyErr extends Error { constructor(m) { super(m); this.name = 'MyErr' } }\n" +
+                "export async function home(fail) { if (fail) { await null; throw new MyErr('boom') }\n" +
+                "try { throw new MyErr('b') } catch (e) { return [e.name, e.message, e instanceof MyErr, e instanceof Error, String(e)] } }",
+        )
+        assertEquals("[\"MyErr\",\"b\",true,true,\"MyErr: b\"]", rt.call("home", "false", 5_000))
+        assertTrue(assertThrows(PluginScriptException::class.java) { runBlocking { rt.call("home", "true", 5_000) } }.message!!.contains("boom"))
+    }
+
     @Test fun `a synchronous busy loop times out, returns control and discards the runtime`() {
         val rt = runBlocking { open("export async function search(q) { let i = 0; while (i < 150000000) i++; return [] }") }
         val t0 = System.currentTimeMillis()
