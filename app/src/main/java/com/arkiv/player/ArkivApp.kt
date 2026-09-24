@@ -118,7 +118,12 @@ class ArkivApp : Application(), ImageLoaderFactory {
         // Proactive telemetry: the backup seed pool ran dry for a device that needs it -> the user
         // can't play, and nothing throws. Report the rising edge so we learn about pool exhaustion
         // (and can re-mint) without a user having to tell us. StateFlow only re-emits on change.
+        //
+        // CRITICAL: `seedsExhausted` forces `magisSession` -> `magisPortal`, whose init does
+        // `credentialsStore.read()!!` -- which is NULL before activation and NPEs (a fresh install
+        // would crash here). So wait until the device is actually activated before ever touching it.
         graph.applicationScope.launch {
+            while (graph.credentialsStore.read() == null) kotlinx.coroutines.delay(3000)
             graph.seedsExhausted.collect { exhausted ->
                 if (exhausted) {
                     com.arkiv.player.crash.Crash.report(
