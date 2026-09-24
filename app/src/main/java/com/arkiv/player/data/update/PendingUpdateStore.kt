@@ -37,7 +37,6 @@ class PendingUpdateStore(context: Context) {
                 versionName = prefs.getString(K_VERSION_NAME, "").orEmpty(),
                 url = prefs.getString(K_URL, "").orEmpty(),
                 notes = prefs.getString(K_NOTES, "").orEmpty(),
-                sha256 = prefs.getString(K_SHA, "").orEmpty(),
             ),
             promoteAtMillis = prefs.getLong(K_PROMOTE_AT, 0L),
             dismissed = prefs.getBoolean(K_DISMISSED, false),
@@ -61,7 +60,6 @@ class PendingUpdateStore(context: Context) {
             .putString(K_VERSION_NAME, info.versionName)
             .putString(K_URL, info.url)
             .putString(K_NOTES, info.notes)
-            .putString(K_SHA, info.sha256)
             .putLong(K_PROMOTE_AT, promoteAt)
             .putBoolean(K_DISMISSED, false)
             .apply()
@@ -82,7 +80,6 @@ class PendingUpdateStore(context: Context) {
         const val K_VERSION_NAME = "versionName"
         const val K_URL = "url"
         const val K_NOTES = "notes"
-        const val K_SHA = "sha256"
         const val K_PROMOTE_AT = "promoteAt"
         const val K_DISMISSED = "dismissed"
     }

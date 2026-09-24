@@ -56,23 +56,18 @@ class UpdateCheckerTest {
         assertNull(checker.check(currentVersionCode = 1))
     }
 
+    /** Older manifests still carry a `sha256`; the app no longer verifies it, so parsing must
+     *  simply ignore the extra field rather than choke on it. */
     @Test
-    fun `parses sha256 and normalizes it to lowercase hex`() = runBlocking {
+    fun `a manifest that still carries sha256 is parsed, the field ignored`() = runBlocking {
         server.enqueue(MockResponse().setBody("""
             {"versionCode":2,"versionName":"0.2.0","url":"https://example.com/app.apk","notes":"fix",
-             "sha256":"  ABCD1234ef  "}
+             "sha256":"abcd1234ef"}
         """.trimIndent()))
         val result = checker.check(currentVersionCode = 1)
-        assertEquals("abcd1234ef", result!!.sha256)
-    }
-
-    @Test
-    fun `sha256 defaults to empty when the manifest omits it`() = runBlocking {
-        server.enqueue(MockResponse().setBody("""
-            {"versionCode":2,"versionName":"0.2.0","url":"https://example.com/app.apk","notes":"fix"}
-        """.trimIndent()))
-        val result = checker.check(currentVersionCode = 1)
-        assertEquals("", result!!.sha256)
+        assertNotNull(result)
+        assertEquals(2, result!!.versionCode)
+        assertEquals("https://example.com/app.apk", result.url)
     }
 
     @Test

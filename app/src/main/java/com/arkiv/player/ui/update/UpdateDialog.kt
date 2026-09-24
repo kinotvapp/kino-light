@@ -37,8 +37,8 @@ fun UpdateDialog(info: UpdateInfo, graph: AppGraph, onDismiss: () -> Unit) {
     var downloading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var downloadJob by remember { mutableStateOf<Job?>(null) }
-    // Set once the APK is downloaded AND its sha256 verified: the download step is done, so the
-    // dialog shows an explicit "Instalar" button instead of launching the installer on its own.
+    // Set once the APK is downloaded: the download step is done, so the dialog shows an explicit
+    // "Instalar" button instead of launching the installer on its own (Android verifies at install).
     var readyFile by remember { mutableStateOf<File?>(null) }
     val buttonFocus = remember { FocusRequester() }
 
@@ -78,16 +78,15 @@ fun UpdateDialog(info: UpdateInfo, graph: AppGraph, onDismiss: () -> Unit) {
         error = null
         downloadJob = scope.launch {
             // Re-fetch the manifest (cache-busted) right before downloading, so we use the CURRENT
-            // url + sha256 even when the pending this dialog opened with is stale -- a CDN-cached
-            // older manifest whose sha no longer matches the overwritten kino.apk. That mismatch is
-            // exactly what surfaced as "descarga corrupta". Falls back to the pending info if the
+            // url even when the pending this dialog opened with is stale (a CDN-cached older
+            // manifest pointing at an outdated version). Falls back to the pending info if the
             // re-check can't be made (offline). Covers both "Actualizar ahora" and "Reintentar".
             val fresh = runCatching { graph.checkForUpdateNow() }.getOrNull() ?: info
-            graph.apkDownloader.download(fresh.url, fresh.sha256).collect { state ->
+            graph.apkDownloader.download(fresh.url).collect { state ->
                 when (state) {
                     is DownloadState.Downloading -> progress = state.progress
-                    // Verified (sha256 matched, if the manifest carried one): hand it to the person
-                    // via an "Instalar" button rather than launching the installer unprompted.
+                    // Downloaded: hand it to the person via an "Instalar" button rather than
+                    // launching the installer unprompted (Android verifies the APK at install).
                     is DownloadState.Ready -> { downloading = false; readyFile = state.file }
                     is DownloadState.Failed -> { downloading = false; error = state.error }
                 }

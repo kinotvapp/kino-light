@@ -8,7 +8,6 @@ import kotlinx.coroutines.flow.flowOn
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
-import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
 sealed interface DownloadState {
@@ -24,13 +23,15 @@ class ApkDownloader(private val context: Context) {
         .build()
 
     /**
-     * Downloads the APK at [url] to a private cache file. When [expectedSha256] is non-blank, the
-     * bytes are hashed as they stream and the file is REJECTED (deleted, [DownloadState.Failed]) if
-     * the digest doesn't match -- so a truncated/corrupt download, or an error page served instead
-     * of the APK (an archive.org item still propagating, a stale cache), never reaches the installer.
-     * Integrity only; the APK signature is what gates the actual install.
+     * Downloads the APK at [url] to a private cache file and hands it to the installer. There's no
+     * app-side integrity gate on purpose: Android's own package installer verifies the APK's
+     * signature and integrity at install time (a truncated or altered file is rejected there), so a
+     * second sha256 check here only ever added a fragile failure mode -- a stale/propagating
+     * archive.org manifest whose sha didn't match the served bytes surfaced as a false "app corrupta"
+     * even though the file was fine. Dropping it means the OTA never rejects a download; a bad one
+     * simply fails to install and the user retries.
      */
-    fun download(url: String, expectedSha256: String = ""): Flow<DownloadState> = flow {
+    fun download(url: String): Flow<DownloadState> = flow {
         try {
             val dest = File(context.cacheDir, "update.apk")
             if (dest.exists()) dest.delete()
@@ -49,7 +50,6 @@ class ApkDownloader(private val context: Context) {
                 emit(DownloadState.Failed("Empty response"))
                 return@flow
             }
-            val digest = MessageDigest.getInstance("SHA-256")
             val total = body.contentLength()
             var downloaded = 0L
             dest.outputStream().use { out ->
@@ -58,25 +58,10 @@ class ApkDownloader(private val context: Context) {
                     var read: Int
                     while (input.read(buffer).also { read = it } != -1) {
                         out.write(buffer, 0, read)
-                        digest.update(buffer, 0, read)
                         downloaded += read
                         val progress = if (total > 0) downloaded.toFloat() / total else -1f
                         emit(DownloadState.Downloading(progress))
                     }
-                }
-            }
-            if (expectedSha256.isNotBlank()) {
-                val actual = toHex(digest.digest())
-                if (!actual.equals(expectedSha256.trim(), ignoreCase = true)) {
-                    dest.delete()
-                    com.arkiv.player.crash.Crash.report(
-                        com.arkiv.player.crash.OtaDownloadFailed(
-                            "sha mismatch: got ${actual.take(12)} expected ${expectedSha256.trim().take(12)} for $url",
-                        ),
-                        "ota-download",
-                    )
-                    emit(DownloadState.Failed("La descarga no coincide con la esperada (archivo corrupto o incompleto). Se reintentará."))
-                    return@flow
                 }
             }
             emit(DownloadState.Ready(dest))
@@ -84,13 +69,4 @@ class ApkDownloader(private val context: Context) {
             emit(DownloadState.Failed(e.message ?: "Error de descarga"))
         }
     }.flowOn(Dispatchers.IO)
-
-    companion object {
-        /** Lowercase-hex encoding of [bytes]. Shared by the download's integrity check and its test. */
-        fun toHex(bytes: ByteArray): String = bytes.joinToString("") { "%02x".format(it) }
-
-        /** Lowercase-hex SHA-256 of [bytes]. */
-        fun sha256Hex(bytes: ByteArray): String =
-            toHex(MessageDigest.getInstance("SHA-256").digest(bytes))
-    }
 }

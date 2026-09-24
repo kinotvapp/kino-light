@@ -1,31 +1,18 @@
 package com.arkiv.player.data.update
 
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The two safety-critical OTA primitives: the SHA-256 the integrity gate compares against, and the
- * staggered-rollout timing (only surface once the randomized time passed, never when dismissed).
+ * The staggered-rollout timing: a pending update only surfaces once its randomized time has passed,
+ * and never when dismissed. (There is no app-side sha integrity gate anymore -- Android verifies the
+ * APK at install time; see [ApkDownloader].)
  */
 class OtaSafetyTest {
 
-    @Test
-    fun `sha256Hex matches known vectors (lowercase hex)`() {
-        // FIPS 180-4 test vectors.
-        assertEquals(
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-            ApkDownloader.sha256Hex(ByteArray(0)),
-        )
-        assertEquals(
-            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
-            ApkDownloader.sha256Hex("abc".toByteArray()),
-        )
-    }
-
     private fun pending(promoteAt: Long, dismissed: Boolean = false) =
-        PendingUpdate(UpdateInfo(2, "0.2.0", "https://example.com/app.apk", "", ""), promoteAt, dismissed)
+        PendingUpdate(UpdateInfo(2, "0.2.0", "https://example.com/app.apk", ""), promoteAt, dismissed)
 
     @Test
     fun `isDue only once the staggered time has passed`() {

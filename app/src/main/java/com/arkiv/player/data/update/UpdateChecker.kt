@@ -21,10 +21,9 @@ class UpdateChecker(
 
         /**
          * A unique query string per fetch so archive.org's CDN can't serve a STALE cached
-         * `latest.json`. FORCE_NETWORK only bypasses OkHttp's own cache, not the CDN's -- and a CDN
-         * edge holding an old manifest (whose `sha256` no longer matches the current `kino.apk`) is
-         * exactly what made the app report a fresh download as "corrupt". Different URL = cache miss
-         * = fresh bytes.
+         * `latest.json`. FORCE_NETWORK only bypasses OkHttp's own cache, not the CDN's, so without
+         * this a CDN edge holding an old manifest could keep pointing the app at an outdated
+         * `versionCode`/`url`. Different URL = cache miss = fresh bytes.
          */
         private fun busted(u: String): String = u + (if ('?' in u) "&" else "?") + "cb=" + System.currentTimeMillis()
     }
@@ -39,7 +38,6 @@ class UpdateChecker(
                 versionName = json.getString("versionName"),
                 url = json.getString("url"),
                 notes = json.optString("notes", ""),
-                sha256 = json.optString("sha256", "").trim().lowercase(),
             )
             if (remote.versionCode > currentVersionCode) remote else null
         }.getOrNull()
