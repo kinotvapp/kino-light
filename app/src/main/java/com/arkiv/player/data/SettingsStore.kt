@@ -71,6 +71,11 @@ class SettingsStore(context: Context) {
     private val _effectsAutoReduced = MutableStateFlow(prefs.getBoolean(KEY_EFFECTS_AUTO_REDUCED, false))
     val effectsAutoReduced: StateFlow<Boolean> = _effectsAutoReduced
 
+    // The navigation "tick" the TV plays when focus moves to another card (see `rememberNavSound`).
+    // ON by default, as it has always been; some people can't stand it, so Ajustes can turn it off.
+    private val _uiSoundsEnabled = MutableStateFlow(prefs.getBoolean(KEY_UI_SOUNDS, true))
+    val uiSoundsEnabled: StateFlow<Boolean> = _uiSoundsEnabled
+
     // Marker for the 2026-08-14 one-time recents purge (see `ArkivApp.onCreate`). Same rescue as
     // [adultsUnlocked]: if it's lost, the purge simply runs once more -- no StateFlow needed
     // since nothing observes it, it's only read on launch.
@@ -135,6 +140,12 @@ class SettingsStore(context: Context) {
         }.apply()
         if (mode == EffectsMode.AUTO) _effectsAutoReduced.value = false
         _effectsMode.value = mode
+    }
+
+    fun setUiSoundsEnabled(v: Boolean) {
+        if (_uiSoundsEnabled.value == v) return
+        prefs.edit().putBoolean(KEY_UI_SOUNDS, v).apply()
+        _uiSoundsEnabled.value = v
     }
 
     /** The app version (code) whose startup profile was already reported: each device reports once per release. See `StartupProfiler`. */
@@ -272,6 +283,7 @@ class SettingsStore(context: Context) {
         private const val KEY_EFFECTS_AUTO_REDUCED = "efectos_reducidos_auto"
         private const val KEY_EFFECTS_SLOW_STRIKES = "efectos_muestras_lentas"
         private const val KEY_STARTUP_PROFILE_VERSION = "perfil_arranque_version"
+        private const val KEY_UI_SOUNDS = "sonidos_interfaz"
 
         /** The encrypted file `SecureDeviceStore` used to write (deleted in Task 9). */
         private const val OLD_ACCOUNTS_STORE_FILE = "arkiv_pb_secure"

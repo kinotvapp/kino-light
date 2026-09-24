@@ -244,6 +244,13 @@ internal fun TvSettingsApp() {
         color = ArkivTextSecondary,
     )
 
+    // The "tick" the TV plays every time focus moves to another card. Some people can't stand it.
+    val uiSounds by graph.settings.uiSoundsEnabled.collectAsState()
+    TvActionOption(
+        if (uiSounds) "Sonidos de navegación: activados" else "Sonidos de navegación: desactivados",
+        onClick = { graph.settings.setUiSoundsEnabled(!uiSounds) },
+    )
+
     TvAdultsSection(graph.settings)
 }
 
