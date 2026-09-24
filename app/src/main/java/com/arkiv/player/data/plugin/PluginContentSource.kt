@@ -33,7 +33,14 @@ class PluginContentSource(
     private val source = PluginIds.sourceFor(id)
     private val caps = plugin.manifest.capabilities
 
-    override val searchTimeoutMs: Long? = SEARCH_TIMEOUT_MS
+    /**
+     * `CompositeSource`'s limit is only a BACKSTOP: the plugin's own call limit
+     * ([SEARCH_TIMEOUT_MS], passed to [PluginCaller.call]) must fire first, because only its
+     * [PluginTimeoutException] counts toward "no responde" in `PluginRuntimePool`. With equal
+     * limits the outer clock, which starts earlier (before the pool's mutex and the runtime load),
+     * always won, so a hanging search never counted as a timeout.
+     */
+    override val searchTimeoutMs: Long? = SEARCH_TIMEOUT_MS + SEARCH_BACKSTOP_GRACE_MS
 
     override fun recognizes(ref: String): Boolean = ref.startsWith(PluginRef.prefixFor(id))
 
@@ -119,6 +126,9 @@ class PluginContentSource(
 
     companion object {
         const val SEARCH_TIMEOUT_MS = 15_000L
+
+        /** How much longer [searchTimeoutMs] waits than the plugin's own search limit. */
+        const val SEARCH_BACKSTOP_GRACE_MS = 5_000L
         const val HOME_TIMEOUT_MS = 20_000L
         const val EPISODES_TIMEOUT_MS = 20_000L
         const val RESOLVE_TIMEOUT_MS = 20_000L

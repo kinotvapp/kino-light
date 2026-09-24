@@ -120,4 +120,23 @@ class PluginContentSourceTest {
         assertEquals("https://example.com/v.mp4", composite.resolve(PluginRef("demo", "m1", PluginRef.MOVIE, "R1").encode()).url)
         assertFalse(UnusablePluginSource(FakeAccess(PluginAccess.Disabled("Demo"))).recognizes("ditu1:VOD:1"))
     }
+
+    /**
+     * The plugin's own call limit must fire before `CompositeSource`'s backstop: only a
+     * [PluginTimeoutException] counts toward "no responde" in `PluginRuntimePool`. The caller here
+     * spends a little time "opening the runtime" and then times out at its own limit, like the pool.
+     */
+    @Test fun `the plugin's own search timeout wins over the composite backstop`() = runTest {
+        val caller = PluginCaller { _, function, _, timeoutMs ->
+            kotlinx.coroutines.delay(500)
+            kotlinx.coroutines.delay(timeoutMs)
+            throw PluginTimeoutException(function, timeoutMs)
+        }
+        val src = source(caller)
+        assertTrue(src.searchTimeoutMs!! > PluginContentSource.SEARCH_TIMEOUT_MS)
+        val events = com.arkiv.player.data.gateway.CompositeSource(listOf(src)).search(GatewaySearchQuery(q = "x")).toList()
+        val err = events.filterIsInstance<SearchEvent.SourceError>().single()
+        assertEquals("plugin:demo", err.source)
+        assertTrue(err.cause is PluginTimeoutException)
+    }
 }
