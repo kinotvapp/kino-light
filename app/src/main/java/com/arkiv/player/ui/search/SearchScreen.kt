@@ -75,7 +75,9 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import coil.compose.AsyncImage
 import com.arkiv.player.data.RecentTitle
 import com.arkiv.player.data.local.DownloadSource
+import com.arkiv.player.data.plugin.PluginIds
 import com.arkiv.player.ui.catalog.PlaySource
+import com.arkiv.player.ui.catalog.accent
 import com.arkiv.player.ui.catalog.SourceRow
 import com.arkiv.player.ui.catalog.posterFor
 import com.arkiv.player.ui.catalog.SourceCard
@@ -163,6 +165,8 @@ fun SearchScreen(
     // from Magis's on purpose: what's tapped in its window only ever reaches
     // `playback.playDituSeason`, so a Caracol chapter never falls into Magis's save path.
     var dituSeason by remember { mutableStateOf<com.arkiv.player.data.gateway.GatewayResult?>(null) }
+    // Open plugin series: same path as Caracol, saved through `playback.playPluginSeason`.
+    var pluginSeason by remember { mutableStateOf<PlaySource.Plugin?>(null) }
 
     // Shortcut from the home: enters already positioned on a title. Fires only once per arg
     // combination (LaunchedEffect doesn't re-run on recompositions with no changes), and
@@ -241,9 +245,17 @@ fun SearchScreen(
         scope.launch { applyResult(playback.playDitu(source.result)) }
     }
 
+    fun playPluginResult(source: PlaySource.Plugin) {
+        // Same as Caracol: a series opens its chapters, a movie plays (and stays in the library).
+        if (source.isSeries()) { pluginSeason = source; return }
+        preparing = true; playError = null
+        scope.launch { applyResult(playback.playPlugin(source.result)) }
+    }
+
     fun playResult(source: PlaySource) = when (source) {
         is PlaySource.Magis -> playMagisResult(source.result)
         is PlaySource.Ditu -> playDituResult(source)
+        is PlaySource.Plugin -> playPluginResult(source)
     }
 
     /**
@@ -424,6 +436,24 @@ fun SearchScreen(
             },
             sourceLabel = "Caracol",
             accent = ArkivCaracolVerde,
+        )
+    }
+
+    pluginSeason?.let { open ->
+        com.arkiv.player.ui.catalog.MagisSeasonDialog(
+            season = open.result,
+            // The composite source: with a plg1: ref, `episodesWithSeries` reaches the plugin.
+            client = graph.contentSource,
+            onDismiss = { pluginSeason = null },
+            onPlay = { chapters, chapter, series ->
+                pluginSeason = null
+                preparing = true; playError = null
+                scope.launch { applyResult(playback.playPluginSeason(open.result, chapters, chapter, series)) }
+            },
+            // No downloads for plugin titles in v1.
+            onSave = null,
+            sourceLabel = open.pluginName,
+            accent = open.accent,
         )
     }
 
@@ -770,7 +800,12 @@ private fun ResultsContent(
     // `rememberSaveable` and not `remember`: this screen gets destroyed when the player opens, and
     // with `remember` the chosen origin was lost -- you'd come back from watching something via
     // Magis and the list was back on "Todo", with the item you'd just tapped buried among dozens of results.
-    var tab by rememberSaveable { mutableStateOf(SourceTab.ALL) }
+    // The KEY is saved (a `SourceTab` isn't Saveable); a plugin tab that's gone falls back to "Todo".
+    var tabKey by rememberSaveable { mutableStateOf(SourceTab.ALL.key) }
+    val tabs = tabsFor(sources)
+    val tab = tabs.firstOrNull { it.key == tabKey } ?: SourceTab.ALL
+    // Plugin sections start open like the fixed ones; this remembers the ones the person closed.
+    var collapsedPlugins by rememberSaveable { mutableStateOf(setOf<String>()) }
 
     val magis = sources.filterIsInstance<PlaySource.Magis>()
     val caracol = sources.filterIsInstance<PlaySource.Ditu>()
@@ -778,7 +813,7 @@ private fun ResultsContent(
     val counts = countsByTab(sources)
     // Each chip spins while its source is still searching, and "Todo" while any one is missing:
     // see [SearchingSources].
-    val loadingOf = SourceTab.entries.associateWith { searchingSources.isSearching(it) }
+    val loadingOf = tabs.associateWith { searchingSources.isSearching(it) }
 
     // The hero goes full-bleed (no side margin) so the backdrop reaches the edges; that's why the
     // horizontal padding is set by each item instead of the list's contentPadding.
@@ -788,7 +823,7 @@ private fun ResultsContent(
         }
 
         item(key = "filters") {
-            SourceTabRow(tab, counts, loadingOf, Modifier.padding(horizontal = HPAD, vertical = 12.dp)) { tab = it }
+            SourceTabRow(tabs, tab, counts, loadingOf, Modifier.padding(horizontal = HPAD, vertical = 12.dp)) { tabKey = it.key }
         }
 
         // One line per down source, with or without results: doesn't cover up what the others brought.
@@ -817,6 +852,15 @@ private fun ResultsContent(
             // "Todo": a collapsible section per origin, in [SourceTab]'s order.
             sourceSection(this, "XUPER", ArkivMagisBlue, magis, searchingSources.isSearching(SourceTab.MAGIS), "MAGIS" in expandedSections, { toggle("MAGIS") }, enabled, onPlay, onLongPlay, emptySectionText(SourceTab.MAGIS, sourcesState))
             sourceSection(this, "CARACOL", ArkivCaracolVerde, caracol, searchingSources.isSearching(SourceTab.CARACOL), "CARACOL" in expandedSections, { toggle("CARACOL") }, enabled, onPlay, onLongPlay, emptySectionText(SourceTab.CARACOL, sourcesState))
+            // Then one section per plugin that brought results, in [tabsFor]'s order.
+            tabs.filter { PluginIds.pluginIdOfSource(it.key) != null }.forEach { t ->
+                sourceSection(
+                    this, t.label.uppercase(), t.accent, filterByTab(sources, t), searchingSources.isSearching(t),
+                    t.key !in collapsedPlugins,
+                    { collapsedPlugins = if (t.key in collapsedPlugins) collapsedPlugins - t.key else collapsedPlugins + t.key },
+                    enabled, onPlay, onLongPlay, emptySectionText(t, sourcesState), key = t.key,
+                )
+            }
         } else {
             // With one origin chosen the section header is unnecessary: the list goes flat.
             val shown = filterByTab(sources, tab)
@@ -991,24 +1035,26 @@ private fun sourceSection(
     onLongPlay: (PlaySource) -> Unit,
     /** What shows below the section when it brought back nothing ([emptySectionText]). */
     empty: String,
+    /** The section's LazyColumn identity; defaults to [tag], but two plugins may share a display name. */
+    key: String = tag,
 ) {
-    scope.item(key = "sec-$tag") {
+    scope.item(key = "sec-$key") {
         Box(Modifier.padding(horizontal = HPAD)) {
             SourceSectionHeader(tag, tagColor, items.size, loading, expanded, onToggle)
         }
     }
     if (expanded) {
         if (items.any { posterFor(it).isNotBlank() }) {
-            scope.twoColumnCards(tag, items, enabled, onPlay, onLongPlay)
+            scope.twoColumnCards(key, items, enabled, onPlay, onLongPlay)
         } else {
-            scope.items(items, key = { "$tag-${sourceKey(it)}" }) { s ->
+            scope.items(items, key = { "$key-${sourceKey(it)}" }) { s ->
                 Box(Modifier.padding(horizontal = HPAD)) {
                     SourceRow(s, enabled = enabled, onLongClick = { onLongPlay(s) }) { onPlay(s) }
                 }
             }
         }
         if (items.isEmpty() && !loading) {
-            scope.item(key = "sec-$tag-empty") {
+            scope.item(key = "sec-$key-empty") {
                 Text(
                     empty, color = ArkivTextSecondary, style = MaterialTheme.typography.labelSmall,
                     modifier = Modifier.padding(start = HPAD + 8.dp, bottom = 8.dp),
@@ -1024,10 +1070,12 @@ private fun sourceKey(s: PlaySource): String = when (s) {
     is PlaySource.Magis -> "m-${s.result.extra["content_id"] ?: s.result.ref}"
     // Caracol's ref is already unique per content: `ditu1:<contentType>:<contentId>`.
     is PlaySource.Ditu -> "d-${s.result.ref}"
+    // The plugin item id is stable and unique within its plugin; the source keeps plugins apart.
+    is PlaySource.Plugin -> "p-${s.result.source}-${s.result.extra["pluginItemId"] ?: s.result.ref}"
 }
 
 /**
- * Filter chips by origin (the order is set by [SourceTab]), with their count.
+ * Filter chips by origin ([tabs], from [tabsFor]: the fixed ones, then one per plugin), with their count.
  *
  * The row SCROLLS horizontally: with more sources than fit a phone's width, a non-scrolling Row
  * shrank the last chip to fit and its text came out split letter by letter vertically. Scrolling,
@@ -1035,6 +1083,7 @@ private fun sourceKey(s: PlaySource): String = when (s) {
  */
 @Composable
 private fun SourceTabRow(
+    tabs: List<SourceTab>,
     selected: SourceTab,
     counts: Map<SourceTab, Int>,
     loading: Map<SourceTab, Boolean>,
@@ -1045,12 +1094,8 @@ private fun SourceTabRow(
         modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        SourceTab.entries.forEach { t ->
-            val accent = when (t) {
-                SourceTab.ALL -> Color.White
-                SourceTab.MAGIS -> ArkivMagisBlue
-                SourceTab.CARACOL -> ArkivCaracolVerde
-            }
+        tabs.forEach { t ->
+            val accent = t.accent
             val on = t == selected
             Row(
                 Modifier.clip(RoundedCornerShape(16.dp))

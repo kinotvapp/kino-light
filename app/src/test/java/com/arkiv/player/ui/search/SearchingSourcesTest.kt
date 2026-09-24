@@ -8,7 +8,7 @@ import org.junit.Test
 class SearchingSourcesTest {
 
     private fun SearchingSources.searching(vararg tabs: SourceTab) =
-        SourceTab.entries.forEach { t -> assertTrue("$t", isSearching(t) == (t in tabs)) }
+        SourceTab.FIXED.forEach { t -> assertTrue("$t", isSearching(t) == (t in tabs)) }
 
     @Test fun `on starting, everything is searching`() {
         SearchingSources.starting().searching(SourceTab.ALL, SourceTab.MAGIS, SourceTab.CARACOL)
@@ -42,5 +42,13 @@ class SearchingSourcesTest {
     @Test fun `with no search in progress nothing spins`() {
         SearchingSources().searching()
         assertFalse(SearchingSources().any)
+    }
+
+    /** A plugin that is still searching keeps "Todo" spinning after Xuper and Caracol are done. */
+    @Test fun `a started plugin keeps todo spinning until it finishes`() {
+        val s = SearchingSources.starting().sourceStarted("plugin:demo").sourceFinished("magis").sourceFinished("ditu")
+        s.searching(SourceTab.ALL)
+        assertTrue(s.isSearching(SourceTab.plugin("plugin:demo", "Demo", androidx.compose.ui.graphics.Color.White)))
+        s.sourceFinished("plugin:demo").searching()
     }
 }

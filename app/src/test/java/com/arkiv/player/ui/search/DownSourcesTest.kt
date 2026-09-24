@@ -74,4 +74,14 @@ class DownSourcesTest {
         assertEquals(listOf("Una fuente no respondió: boom"), downSourceNotices(state, SourceTab.ALL))
         assertTrue(downSourceNotices(state, SourceTab.CARACOL).isEmpty())
     }
+
+    @Test fun `a plugin that did not respond is named by its label`() {
+        val state = SourcesState().withLabel("plugin:demo", "Demo").withResponse("magis").withFailure("plugin:demo", "no respondió a tiempo")
+        assertEquals(listOf("Demo no respondió: no respondió a tiempo"), downSourceNotices(state, SourceTab.ALL))
+        val tab = tabForSource("plugin:demo", state.labels)!!
+        assertEquals(listOf("Demo no respondió: no respondió a tiempo"), downSourceNotices(state, tab))
+        assertEquals(emptyList<String>(), downSourceNotices(state, SourceTab.MAGIS))
+        assertNull(emptyTabText(tab, false, state))
+        assertEquals("No respondió", emptySectionText(tab, state))
+    }
 }

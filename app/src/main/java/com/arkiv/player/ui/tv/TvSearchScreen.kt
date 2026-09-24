@@ -77,6 +77,7 @@ import com.arkiv.player.ui.search.SearchViewModel
 import com.arkiv.player.ui.search.SourceTab
 import com.arkiv.player.ui.search.TitleCard
 import com.arkiv.player.ui.search.countsByTab
+import com.arkiv.player.ui.search.tabsFor
 import com.arkiv.player.ui.search.visibleRows
 import com.arkiv.player.ui.search.SourcesState
 import com.arkiv.player.ui.search.SearchingSources
@@ -159,6 +160,8 @@ fun TvSearchScreen(
     // chapter list only calls `playback.playDituSeason`, so a Caracol chapter never falls into
     // Magis's save path.
     var dituSeasonFor by remember { mutableStateOf<com.arkiv.player.data.gateway.GatewayResult?>(null) }
+    // Chosen plugin series: the Caracol path, saved through `playback.playPluginSeason`.
+    var pluginSeasonFor by remember { mutableStateOf<PlaySource.Plugin?>(null) }
 
     // The chosen card's "enriched" metadata, to save the real title/poster — same criterion as
     // SearchScreen (phone).
@@ -183,6 +186,11 @@ fun TvSearchScreen(
         scope.launch { applyResult(playback.playDitu(r)) }
     }
 
+    fun playPluginResult(r: com.arkiv.player.data.gateway.GatewayResult) {
+        preparing = true; playError = null
+        scope.launch { applyResult(playback.playPlugin(r)) }
+    }
+
     fun playResult(source: PlaySource) = when (source) {
         is PlaySource.Magis ->
             if (source.result.extra["program_type"] in com.arkiv.player.data.gateway.MAGIS_SERIES) {
@@ -196,6 +204,7 @@ fun TvSearchScreen(
             } else {
                 playDituResult(source.result)
             }
+        is PlaySource.Plugin -> if (source.isSeries()) pluginSeasonFor = source else playPluginResult(source.result)
     }
 
     // Search does NOT fire on every keystroke: with the remote, each letter cost a full network
@@ -305,12 +314,13 @@ fun TvSearchScreen(
     }
 
     // In REFINE/RESULTS, back steps one phase back within the wizard; in the titles phase, back
-    // exits the screen. With a series' chapters open inside RESULTS (from Magis or Caracol), back
+    // exits the screen. With a series' chapters open inside RESULTS (Magis, Caracol or a plugin), back
     // goes to the source list first (doesn't exit the phase).
     BackHandler {
         when {
             phase == SearchPhase.RESULTS && magisSeasonFor != null -> magisSeasonFor = null
             phase == SearchPhase.RESULTS && dituSeasonFor != null -> dituSeasonFor = null
+            phase == SearchPhase.RESULTS && pluginSeasonFor != null -> pluginSeasonFor = null
             phase != SearchPhase.QUERY -> vm.back()
             else -> onBack()
         }
@@ -488,6 +498,7 @@ fun TvSearchScreen(
             SearchPhase.RESULTS -> {
                 val currentMagis = magisSeasonFor
                 val currentDitu = dituSeasonFor
+                val currentPlugin = pluginSeasonFor
                 if (currentMagis != null) {
                     TvMagisSeasonContent(
                         season = currentMagis,
@@ -512,6 +523,17 @@ fun TvSearchScreen(
                         preparing = preparing,
                         onChoose = { save ->
                             dituSeasonFor = null
+                            preparing = true; playError = null
+                            scope.launch { applyResult(save()) }
+                        },
+                    )
+                } else if (currentPlugin != null) {
+                    TvPluginChapters(
+                        source = currentPlugin,
+                        posterUrl = currentPlugin.result.extra["poster"].orEmpty().ifBlank { resultPoster },
+                        preparing = preparing,
+                        onChoose = { save ->
+                            pluginSeasonFor = null
                             preparing = true; playError = null
                             scope.launch { applyResult(save()) }
                         },
@@ -881,7 +903,8 @@ private fun TvRefineContent(
  * With a single real source (Magis), the filter no longer separates anything, but it's kept in
  * case there's more than one source at once again.
  *
- * Both chips are always painted, even at 0: if they appeared and disappeared as results arrived,
+ * [tabs] comes from `tabsFor`: the fixed chips, then one per plugin that brought results. The
+ * fixed chips are always painted, even at 0: if they appeared and disappeared as results arrived,
  * focus would jump chips while the user navigates. For the same reason, a source that's still
  * searching shows a spinner instead of "0" — a premature zero reads as "there's nothing here"
  * when really it just hasn't finished yet.
@@ -889,6 +912,7 @@ private fun TvRefineContent(
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun TvSourceTabRow(
+    tabs: List<SourceTab>,
     selected: SourceTab,
     counts: Map<SourceTab, Int>,
     loading: Map<SourceTab, Boolean>,
@@ -899,12 +923,8 @@ private fun TvSourceTabRow(
         modifier.horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        SourceTab.entries.forEach { t ->
-            val accent = when (t) {
-                SourceTab.ALL -> androidx.compose.ui.graphics.Color.White
-                SourceTab.MAGIS -> com.arkiv.player.ui.catalog.ArkivMagisBlue
-                SourceTab.CARACOL -> com.arkiv.player.ui.catalog.ArkivCaracolVerde
-            }
+        tabs.forEach { t ->
+            val accent = t.accent
             val on = t == selected
             Surface(
                 onClick = { onSelect(t) },
@@ -1039,7 +1059,8 @@ private fun TvResultsContent(
     val counts = countsByTab(ordered)
     // Each tab spins while its source is still searching, and "Todo" while any is missing: see
     // [SearchingSources].
-    val loadingOf = SourceTab.entries.associateWith { searchingSources.isSearching(it) }
+    val tabs = tabsFor(ordered)
+    val loadingOf = tabs.associateWith { searchingSources.isSearching(it) }
 
     // Initial focus on the first source as soon as the first batch shows up (progressive: doesn't
     // steal focus back from the user when more results arrive later).
@@ -1146,6 +1167,7 @@ private fun TvResultsContent(
 
             item {
                 TvSourceTabRow(
+                    tabs = tabs,
                     selected = tab,
                     counts = counts,
                     loading = loadingOf,
@@ -1226,6 +1248,7 @@ private fun TvResultsContent(
 internal fun sourceKey(s: PlaySource): String = when (s) {
     is PlaySource.Magis -> "magis-${s.result.extra["content_id"] ?: s.result.ref}"
     is PlaySource.Ditu -> "ditu-${s.result.ref}"
+    is PlaySource.Plugin -> "plugin-${s.result.source}-${s.result.extra["pluginItemId"] ?: s.result.ref}"
 }
 
 /**
@@ -1260,6 +1283,30 @@ internal fun TvCaracolChapters(
         },
         onSaveAll = null,
         label = "Caracol",
+    )
+}
+
+/** A plugin series' chapters on TV: [TvCaracolChapters] with the plugin's name, saving through `playPluginSeason`. */
+@Composable
+internal fun TvPluginChapters(
+    source: PlaySource.Plugin,
+    posterUrl: String,
+    preparing: Boolean,
+    onChoose: (save: suspend () -> PlaybackResult) -> Unit,
+) {
+    val graph = rememberGraph()
+    val playback = remember { SearchPlayback(graph) }
+    TvMagisSeasonContent(
+        season = source.result,
+        // The composed source: with a plg1: ref, `episodesWithSeries` reaches the plugin.
+        client = graph.contentSource,
+        posterUrl = posterUrl,
+        preparing = preparing,
+        onPlayOne = { chapters, chapter, data ->
+            onChoose { playback.playPluginSeason(source.result, chapters, chapter, data) }
+        },
+        onSaveAll = null,
+        label = source.pluginName,
     )
 }
 

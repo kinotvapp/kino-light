@@ -1,6 +1,9 @@
 package com.arkiv.player.ui.search
 
+import androidx.compose.ui.graphics.Color
 import com.arkiv.player.data.ditu.CaracolFailure
+import com.arkiv.player.data.plugin.PluginColors
+import com.arkiv.player.data.plugin.PluginIds
 
 /**
  * What happened with each source in the last source search: which ones responded and which ones
@@ -11,8 +14,9 @@ import com.arkiv.player.data.ditu.CaracolFailure
  * resultados en Caracol." as if there were nothing, and with everything down the screen suggested
  * trying another season.
  *
- * Sources go by the name they travel under in search events (`"magis"`, `"ditu"`), the same one
- * `GatewayResult.toPlaySource` sorts them by.
+ * Sources go by the name they travel under in search events (`"magis"`, `"ditu"`,
+ * `"plugin:<id>"`), the same one `GatewayResult.toPlaySource` sorts them by. [labels]: source →
+ * human name, from `SourceStart.label` (plugins announce theirs; Xuper and Caracol are fixed).
  */
 data class SourcesState(
     val responded: Set<String> = emptySet(),
@@ -20,46 +24,50 @@ data class SourcesState(
     val failed: Map<String, String> = emptyMap(),
     /** Source → its error's exception, for the ones that sent one (see `SearchEvent.SourceError.cause`). */
     val causes: Map<String, Throwable> = emptyMap(),
+    val labels: Map<String, String> = emptyMap(),
 ) {
     fun withResponse(source: String) = copy(responded = responded + source)
     fun withFailure(source: String, error: String, cause: Throwable? = null) = copy(
         failed = failed + (source to error),
         causes = if (cause == null) causes else causes + (source to cause),
     )
+    fun withLabel(source: String, label: String) = if (label.isBlank()) this else copy(labels = labels + (source to label))
 }
 
 /** A source's tab by its name in the events, or null if it isn't known which one it is. */
-internal fun tabForSource(source: String): SourceTab? = when (source) {
-    "magis" -> SourceTab.MAGIS
-    "ditu" -> SourceTab.CARACOL
-    else -> null
+internal fun tabForSource(source: String, labels: Map<String, String> = emptyMap()): SourceTab? = when {
+    source == SourceTab.MAGIS.key -> SourceTab.MAGIS
+    source == SourceTab.CARACOL.key -> SourceTab.CARACOL
+    else -> PluginIds.pluginIdOfSource(source)?.let { id ->
+        SourceTab.plugin(source, labels[source] ?: id, Color(PluginColors.DEFAULT))
+    }
 }
 
 /**
  * How a source is named in notices. "Una fuente" covers the name `CompositeSource` uses when a
  * source goes down before announcing itself.
  */
-private fun sourceName(source: String): String = tabForSource(source)?.label ?: "Una fuente"
+private fun sourceName(source: String, state: SourcesState): String =
+    tabForSource(source, state.labels)?.label ?: "Una fuente"
 
-private fun isDown(tab: SourceTab, state: SourcesState): Boolean =
-    state.failed.keys.any { tabForSource(it) == tab }
+private fun isDown(tab: SourceTab, state: SourcesState): Boolean = tab.key in state.failed.keys
 
 /**
  * One line per down source matching [tab] ("Todo" shows them all). They go above the list, with
  * or without results: if Caracol goes down and Magis responds, Magis's results show along with
  * Caracol's line. With no errors the list is empty and the screen stays as it was before.
  *
- * Caracol's line is written by [CaracolFailure], in plain human words. Magis's and an unnamed
- * source's stay as before: the name and the error text.
+ * Caracol's line is written by [CaracolFailure], in plain human words. Magis's, a plugin's (by
+ * its announced label) and an unnamed source's stay as before: the name and the error text.
  */
 fun downSourceNotices(state: SourcesState, tab: SourceTab): List<String> =
     state.failed
-        .filter { (source, _) -> tab == SourceTab.ALL || tabForSource(source) == tab }
+        .filter { (source, _) -> tab == SourceTab.ALL || source == tab.key }
         .map { (source, error) ->
-            if (tabForSource(source) == SourceTab.CARACOL) {
+            if (source == SourceTab.CARACOL.key) {
                 CaracolFailure.inSearch(state.causes[source], error)
             } else {
-                "${sourceName(source)} no respondió: $error"
+                "${sourceName(source, state)} no respondió: $error"
             }
         }
 

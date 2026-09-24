@@ -7,34 +7,41 @@ package com.arkiv.player.ui.search
  * ENTIRE search finished. Since `CompositeSource` emits a single `Done` when all sources have
  * finished, "Buscando en Magis…" kept spinning until Caracol answered, even if Magis had already
  * brought back everything. Now each source turns its own off as soon as it sends its `SourceDone`
- * or its `SourceError` ([sourceFinished]), and "Todo" spins while any one is still missing.
+ * or its `SourceError` ([sourceFinished]), and "Todo" spins while Xuper, Caracol, or any plugin
+ * that announced itself ([sourceStarted]) hasn't finished.
  *
  * The end of the entire search ([allFinished]) turns everything off regardless: a source that
  * never got to send either one can't leave its tab spinning forever.
  *
- * Sources go by the name they travel under in the events (`"magis"`, `"ditu"`), same as in
- * [SourcesState].
+ * Sources go by the name they travel under in the events (`"magis"`, `"ditu"`, `"plugin:<id>"`),
+ * same as in [SourcesState].
  */
 data class SearchingSources(
     /** The sources that already responded or went down. */
     val finished: Set<String> = emptySet(),
     /** Whether the entire search already finished. Defaults to `true`: with no search in progress, nothing spins. */
     val done: Boolean = true,
+    /** Plugin sources that announced themselves (`SourceStart`); Xuper and Caracol are always expected. */
+    val started: Set<String> = emptySet(),
 ) {
+    fun sourceStarted(source: String) = copy(started = started + source)
+
     fun sourceFinished(source: String) = copy(finished = finished + source)
 
     fun allFinished() = copy(done = true)
 
     /** Whether [tab] has to show that it's still searching. */
     fun isSearching(tab: SourceTab): Boolean = when (tab) {
-        SourceTab.ALL -> SourceTab.entries.any { it != SourceTab.ALL && isSearching(it) }
-        else -> !done && finished.none { tabForSource(it) == tab }
+        SourceTab.ALL -> !done && ((ALWAYS_EXPECTED + started) - finished).isNotEmpty()
+        else -> !done && tab.key !in finished
     }
 
     /** Whether any source is still searching: the same as "Todo". */
     val any: Boolean get() = isSearching(SourceTab.ALL)
 
     companion object {
+        private val ALWAYS_EXPECTED = setOf(SourceTab.MAGIS.key, SourceTab.CARACOL.key)
+
         /** A search that's starting: everything searching. */
         fun starting() = SearchingSources(done = false)
     }
