@@ -172,11 +172,8 @@ fun SearchScreen(
         vm.startFromShortcut(k, shortcutTmdbId, shortcutAnilistId)
     }
 
-    // Plain-title entry (Kinobot suggestion chip): run the query phase with the given title, exactly
-    // like typing it in the box. Fires once per distinct query.
-    LaunchedEffect(shortcutQuery) {
-        shortcutQuery?.takeIf { it.isNotBlank() }?.let { vm.search(it) }
-    }
+    // (The plain-title entry from a Kinobot suggestion chip is handled inside QueryContent, via its
+    // `initialQuery`, so the search box is filled and the results — not the history — are shown.)
 
     // "Enriched" metadata for the chosen card, to save a real title/poster/description (not the
     // torrent's raw name) -- same criterion as CineDetailScreen.
@@ -317,6 +314,7 @@ fun SearchScreen(
                 else -> QueryContent(
                     titleResults = titleResults,
                     loadingTitles = loadingTitles,
+                    initialQuery = shortcutQuery,
                     onSearchSourcesByText = { q -> vm.searchSourcesByText(q) },
                     recentQueries = recentQueries,
                     recentTitles = recentTitles,
@@ -437,6 +435,8 @@ fun SearchScreen(
 private fun QueryContent(
     titleResults: List<TitleCard>,
     loadingTitles: Boolean,
+    /** A title to run on entry (a Kinobot suggestion chip): fills the box and searches it once. */
+    initialQuery: String? = null,
     /** Sends the text AS-IS to the sources wizard, without going through the catalog (same path
      *  as the TV's "Buscar" button): for when you remember a piece of the name and not the exact
      *  title TMDB has it under. */
@@ -474,6 +474,12 @@ private fun QueryContent(
         hasSearched = true
         searchNumber++
         onSearch(q)
+    }
+
+    // Entered from a Kinobot suggestion chip: fill the box and search that title once, so the results
+    // (not the history) show. Keyed on the query so a different chip re-runs it.
+    LaunchedEffect(initialQuery) {
+        initialQuery?.takeIf { it.isNotBlank() }?.let { search(it) }
     }
 
     LazyVerticalGrid(
