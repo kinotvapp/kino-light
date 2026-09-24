@@ -21,8 +21,8 @@ data class PluginHomeRow(
 
 /**
  * Home rows from every usable plugin with the `home` capability, asked in parallel. Each plugin's
- * raw answer is cached in its data dir for [ttlMs] (6 h): the cached rows are emitted first, even
- * stale, then the fresh ones. A plugin whose `home()` fails contributes nothing and never blocks
+ * raw answer is cached in its data dir for [ttlMs] (6 h) once it parsed into at least one row and
+ * fits in [MAX_CACHE_BYTES]: the cached rows are emitted first, even stale, then the fresh ones. A plugin whose `home()` fails contributes nothing and never blocks
  * the rest. Items are built with [PluginContentSource.resultFrom], so a Home card reaches
  * `SearchPlayback` exactly like a search result.
  */
@@ -35,6 +35,11 @@ class PluginHomeRows(
     private val log: (String) -> Unit = { android.util.Log.w("KinoPlugin", it) },
 ) {
     private data class Cached(val fetchedAt: Long, val json: String)
+
+    companion object {
+        /** A cache file bigger than this is neither written nor read (it's deleted instead). */
+        const val MAX_CACHE_BYTES = 2 * 1024 * 1024
+    }
 
     fun rows(): Flow<List<PluginHomeRow>> = flow {
         val targets = plugins().filter { "home" in it.manifest.capabilities }
@@ -54,8 +59,9 @@ class PluginHomeRows(
         if (cached != null && clock() - cached.fetchedAt < ttlMs) return parse(p, cached.json)
         return try {
             val json = caller.call(p.id, "home", "null", PluginContentSource.HOME_TIMEOUT_MS)
-            writeCache(p.id, json)
-            parse(p, json)
+            // Parsed BEFORE it's cached: an answer that can't be read must never be persisted and
+            // re-read on every Home open. Nothing usable, nothing cached: the next Home asks again.
+            parse(p, json).also { rows -> if (rows.isNotEmpty()) writeCache(p.id, json) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -77,17 +83,26 @@ class PluginHomeRows(
             }
         }
 
+    /** A file over [MAX_CACHE_BYTES] is deleted unread: reading it on every Home open is the crash. */
     private fun readCache(pluginId: String): Cached? = runCatching {
-        val o = JSONObject(cacheFileFor(pluginId).readText())
+        val file = cacheFileFor(pluginId)
+        if (file.length() > MAX_CACHE_BYTES) {
+            log("[$pluginId] home cache over $MAX_CACHE_BYTES bytes, deleted")
+            file.delete()
+            return@runCatching null
+        }
+        val o = JSONObject(file.readText())
         Cached(o.getLong("fetchedAt"), o.getString("json"))
     }.getOrNull()
 
     private fun writeCache(pluginId: String, json: String) {
         runCatching {
-            writeFileAtomically(
-                cacheFileFor(pluginId),
-                JSONObject().put("fetchedAt", clock()).put("json", json).toString().toByteArray(Charsets.UTF_8),
-            )
+            val bytes = JSONObject().put("fetchedAt", clock()).put("json", json).toString().toByteArray(Charsets.UTF_8)
+            if (bytes.size > MAX_CACHE_BYTES) {
+                log("[$pluginId] home answer too big to cache (${bytes.size} bytes)")
+                return@runCatching
+            }
+            writeFileAtomically(cacheFileFor(pluginId), bytes)
         }.onFailure { log("[$pluginId] home cache not written: ${it.message}") }
     }
 }

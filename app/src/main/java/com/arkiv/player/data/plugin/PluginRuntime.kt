@@ -88,7 +88,11 @@ class PluginRuntime private constructor(
             scope.async { js.evaluate<String>(code) }.also { inFlight = it }
         }
         try {
-            return withTimeout(timeoutMs) { job.await() }
+            val result = withTimeout(timeoutMs) { job.await() }
+            // The prelude's __kinoCall already refuses this in JS; this only keeps a bigger string
+            // (should the prelude ever be bypassed) away from the JSON parsers downstream.
+            if (result.length > MAX_RESULT_CHARS) throw PluginScriptException(RESULT_TOO_BIG)
+            return result
         } catch (e: TimeoutCancellationException) {
             close()
             throw PluginTimeoutException(function, timeoutMs)
@@ -140,6 +144,23 @@ class PluginRuntime private constructor(
     }
 
     companion object {
+        /** The longest JSON a capability call may return; checked in JS, before it crosses. */
+        const val MAX_RESULT_CHARS = 2_000_000
+
+        private const val RESULT_TOO_BIG = "respuesta del plugin demasiado grande (más de 2 millones de caracteres)"
+
+        /** The longest `kino.fetch` request (URL, headers and body, as JSON); checked in JS. */
+        const val MAX_REQUEST_CHARS = 1_048_576
+
+        /** `console.*` / `kino.log` lines are cut to this many characters in JS. */
+        const val MAX_LOG_CHARS = 2_000
+
+        /** The longest CSS selector `kino.html.select` accepts. */
+        const val MAX_SELECTOR_CHARS = 10_000
+
+        /** `kino.storage` holds 64 KB in total, so a key plus value longer than this can never fit. */
+        private const val STORAGE_CHARS = 64 * 1024
+
         /**
          * Loads [script] as an ES module. Fails with [PluginScriptException] on a syntax error or a
          * throw at module top level, and [PluginTimeoutException] if loading takes longer than
@@ -158,7 +179,8 @@ class PluginRuntime private constructor(
                     js.evaluate<Any?>(code = prelude(env), filename = "prelude.js", asModule = false)
                     js.addModule("plugin.js", script)
                     js.evaluate<Any?>(
-                        code = "import * as p from 'plugin.js'; globalThis.__kinoExports = p;",
+                        code = "import * as p from 'plugin.js'; " +
+                            "Object.defineProperty(globalThis, '__kinoExports', { value: p, writable: false, configurable: false });",
                         filename = "loader.js",
                         asModule = true,
                     )
@@ -208,48 +230,88 @@ class PluginRuntime private constructor(
             }
         }
 
+        /**
+         * The JS side of the bridge. Everything that crosses into Kotlin is capped HERE, before it
+         * crosses: the 64 MB memory limit bounds only the QuickJS heap, so a string that reached
+         * Kotlin would already be copied onto the app's heap (a 40 MB `home()` answer was an OOM
+         * on a TV box). The prelude captures the built-ins it relies on so a plugin can't swap
+         * them, empties and freezes `__kinoNative` (only these wrappers hold its functions), and
+         * defines `__kinoCall` non-writable and non-configurable.
+         */
         private fun prelude(env: PluginEnv): String = """
             (() => {
-              const n = globalThis.__kinoNative;
-              const str = (x) => { if (typeof x === 'string') return x; try { return JSON.stringify(x); } catch (e) { return String(x); } };
-              const line = (args) => args.map(str).join(' ');
+              // quickjs-kt defines __kinoNative non-configurable, so it can't be deleted; its
+              // functions can (they work unbound). Take them, then leave an empty frozen object.
+              const native = globalThis.__kinoNative;
+              const n = {};
+              for (const k of Object.getOwnPropertyNames(native)) { n[k] = native[k]; delete native[k]; }
+              Object.freeze(native);
+              const S = String, E = Error, stringify = JSON.stringify, parse = JSON.parse;
+              const slice = Function.prototype.call.bind(String.prototype.slice);
+              const define = Object.defineProperty, freeze = Object.freeze;
+              const toStr = (x) => (typeof x === 'string' ? x : S(x));
+              const cut = (s, max) => (s.length > max ? slice(s, 0, max) : s);
+              const str = (x) => { if (typeof x === 'string') return x; try { return toStr(stringify(x)); } catch (e) { return toStr(x); } };
+              const line = (args) => { let out = ''; for (let i = 0; i < args.length && out.length <= $MAX_LOG_CHARS; i++) out += (i ? ' ' : '') + str(args[i]); return cut(out, $MAX_LOG_CHARS); };
+              const log = (level, args) => n.log(level, line(args));
               const kino = {
                 apiVersion: ${env.apiVersion},
                 appVersion: ${JSONObject.quote(env.appVersion)},
                 lang: ${JSONObject.quote(env.lang)},
                 async fetch(url, opts) {
                   const o = opts || {};
-                  const raw = await n.fetch(JSON.stringify({
-                    url: String(url), method: o.method || 'GET', headers: o.headers || {},
-                    body: o.body == null ? null : String(o.body), timeoutMs: o.timeoutMs || 0,
+                  const req = toStr(stringify({
+                    url: toStr(url), method: o.method || 'GET', headers: o.headers || {},
+                    body: o.body == null ? null : toStr(o.body), timeoutMs: o.timeoutMs || 0,
                   }));
-                  const r = JSON.parse(raw);
+                  if (req.length > $MAX_REQUEST_CHARS) {
+                    // A throw before this async function's first await would abort the whole call
+                    // in alpha13 even inside the plugin's try/catch; after one it's catchable.
+                    await null;
+                    throw new E('solicitud demasiado grande (más de 1 MB)');
+                  }
+                  const r = parse(await n.fetch(req));
                   return { ok: r.ok, status: r.status, url: r.url, headers: r.headers,
-                           text: () => r.body, json: () => JSON.parse(r.body) };
+                           text: () => r.body, json: () => parse(r.body) };
                 },
-                html: Object.freeze({ select: (html, css) => JSON.parse(n.select(String(html), String(css))) }),
-                storage: Object.freeze({
-                  get: (k) => { const v = n.storageGet(String(k)); return v == null ? null : v; },
-                  set: (k, v) => { n.storageSet(String(k), String(v)); },
-                  remove: (k) => { n.storageRemove(String(k)); },
+                html: freeze({
+                  select: (html, css) => {
+                    const selector = toStr(css);
+                    if (selector.length > $MAX_SELECTOR_CHARS) throw new E('selector CSS demasiado largo (más de $MAX_SELECTOR_CHARS caracteres)');
+                    return parse(n.select(cut(toStr(html), ${PluginHtml.MAX_HTML_CHARS}), selector));
+                  },
                 }),
-                log: (...a) => n.log('info', line(a)),
+                storage: freeze({
+                  get: (k) => { const key = toStr(k); if (key.length > $STORAGE_CHARS) return null; const v = n.storageGet(key); return v == null ? null : v; },
+                  set: (k, v) => {
+                    const key = toStr(k), value = toStr(v);
+                    if (key.length + value.length > $STORAGE_CHARS) throw new E('almacenamiento del plugin lleno (64 KB)');
+                    n.storageSet(key, value);
+                  },
+                  remove: (k) => { const key = toStr(k); if (key.length <= $STORAGE_CHARS) n.storageRemove(key); },
+                }),
+                log: (...a) => log('info', a),
               };
-              globalThis.kino = Object.freeze(kino);
-              globalThis.console = Object.freeze({
-                log: (...a) => n.log('info', line(a)), info: (...a) => n.log('info', line(a)),
-                warn: (...a) => n.log('warn', line(a)), error: (...a) => n.log('error', line(a)),
+              globalThis.kino = freeze(kino);
+              globalThis.console = freeze({
+                log: (...a) => log('info', a), info: (...a) => log('info', a),
+                warn: (...a) => log('warn', a), error: (...a) => log('error', a),
               });
               // quickjs-kt alpha13 aborts the whole call on a promise rejected before anyone
               // awaits it, even inside try/catch. Deferring Promise.reject by one job lets the
               // awaiting caller attach its handler first. See QuickJsSpikeTest.
               Promise.reject = (e) => Promise.resolve().then(() => { throw e; });
-              globalThis.__kinoCall = async (name, argJson) => {
-                const fn = globalThis.__kinoExports[name];
-                if (typeof fn !== 'function') throw new Error('el plugin no exporta ' + name);
-                const out = await fn(JSON.parse(argJson));
-                return JSON.stringify(out === undefined ? null : out);
-              };
+              define(globalThis, '__kinoCall', {
+                value: async (name, argJson) => {
+                  const fn = globalThis.__kinoExports[name];
+                  if (typeof fn !== 'function') throw new E('el plugin no exporta ' + name);
+                  const out = stringify(await fn(parse(argJson)));
+                  if (typeof out !== 'string') return 'null';
+                  if (out.length > $MAX_RESULT_CHARS) throw new E('$RESULT_TOO_BIG');
+                  return out;
+                },
+                writable: false, configurable: false, enumerable: false,
+              });
             })();
         """.trimIndent()
     }

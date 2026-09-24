@@ -3,6 +3,8 @@ package com.arkiv.player.data.plugin
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -59,6 +61,33 @@ class PluginHomeRowsTest {
         assertEquals(1, emissions.first().size)
         assertEquals(1, caller.calls)
         now += 2 * 3_600_000L
+        home(listOf(plugin("a")), caller).rows().toList()
+        assertEquals(2, caller.calls)
+    }
+
+    @Test fun `an oversized cache file is ignored and removed, never parsed`() = runTest {
+        val file = File(tmp.root, "a/home.json").apply { parentFile!!.mkdirs() }
+        // Fresh (fetchedAt = now) and valid, just too big: it must not be read at all.
+        file.writeText("{\"fetchedAt\":0,\"json\":" + org.json.JSONObject.quote(rowJson + " ".repeat(PluginHomeRows.MAX_CACHE_BYTES)) + "}")
+        val caller = CountingCaller { rowJson }
+        val emissions = home(listOf(plugin("a")), caller).rows().toList()
+        assertEquals(emptyList<PluginHomeRow>(), emissions.first())
+        assertEquals(1, caller.calls)
+        assertEquals(listOf("top"), emissions.last().map { it.id })
+        assertTrue(file.length() <= PluginHomeRows.MAX_CACHE_BYTES)
+    }
+
+    @Test fun `an answer too big to cache is shown but not written`() = runTest {
+        val big = rowJson.replace("\"title\":\"Lo más visto\"", "\"title\":\"Lo más visto\",\"pad\":\"" + "x".repeat(PluginHomeRows.MAX_CACHE_BYTES) + "\"")
+        val emissions = home(listOf(plugin("a")), CountingCaller { big }).rows().toList()
+        assertEquals(listOf("top"), emissions.last().map { it.id })
+        assertFalse(File(tmp.root, "a/home.json").exists())
+    }
+
+    @Test fun `an answer with no valid rows is not cached, so the next Home asks again`() = runTest {
+        val caller = CountingCaller { "not json" }
+        home(listOf(plugin("a")), caller).rows().toList()
+        assertFalse(File(tmp.root, "a/home.json").exists())
         home(listOf(plugin("a")), caller).rows().toList()
         assertEquals(2, caller.calls)
     }

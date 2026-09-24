@@ -213,7 +213,7 @@ all or nothing.
 | Thing | Rules |
 | --- | --- |
 | `search` result | At most 50 items. |
-| `home` result | At most 10 rows of at most 40 items each. A row needs a unique `id` (same pattern as an item id) and a non-blank `title`; rows with no valid items are dropped. Kino shows them after its own rows, labelled with your plugin's name, and caches them for 6 hours (stale rows show while it refreshes). If `home()` fails you contribute no rows and Home is not blocked. |
+| `home` result | At most 10 rows of at most 40 items each. A row needs a unique `id` (same pattern as an item id) and a non-blank `title`; rows with no valid items are dropped. Kino shows them after its own rows, labelled with your plugin's name, and caches them for 6 hours (stale rows show while it refreshes; an answer with no valid rows, or over 2 MB, is not cached and is asked again next time). If `home()` fails you contribute no rows and Home is not blocked. |
 | `episodes` result | At most 2000 episodes. `number` is required and from 1 to 99999 (an episode numbered 0, such as a special, is dropped). `season` should be from 1 to 999; a missing or out-of-range season becomes 1. `ref` is required. A repeated season and number is dropped. Without a `title`, Kino shows "Capítulo N". |
 | `id` | `^[A-Za-z0-9._~-]{1,128}$`. Anything else drops the item, so if your source's own ids have other characters (spaces, `/`, `:`, `%`), derive a stable id yourself, such as a slug. Repeated ids in one list are dropped. |
 | `ref` | A non-empty string of at most 4096 characters. |
@@ -296,7 +296,8 @@ r.json()    // JSON.parse of the body
 Parses `html` and returns `[{ text, html, attrs }]` for every element matching the CSS selector
 (Jsoup's selector syntax): `text` is its text, `html` its inner HTML, `attrs` an object of its
 attributes. Only the first 2,000,000 characters of `html` are read, at most 500 elements come back,
-and it throws if the combined text and HTML of the matches goes over 5,242,880 characters (5 MB). **It
+and it throws if the combined text and HTML of the matches goes over 5,242,880 characters (5 MB). A
+selector longer than 10,000 characters throws `Error("selector CSS demasiado largo (más de 10000 caracteres)")`. **It
 exists only inside Kino**: the Node kit's version throws, so test anything that uses it in the app.
 
 ### `kino.storage`
@@ -329,8 +330,10 @@ characters. Under the Node kit they go to stderr.
 | Loading the module (its top level) | 10 s |
 | Idle sandbox | closed after 5 minutes without calls |
 | Consecutive timeouts | 3 in a row and Kino disables the plugin ("No responde — actívalo para volver a intentar") until the person re-enables it |
-| `kino.fetch` | https only; 15 s default, 30 s maximum; body at most 5 MB; at most 60 requests per call; at most 10 redirects per request |
+| `kino.fetch` | https only; 15 s default, 30 s maximum; response body at most 5 MB; the request (URL, headers and body together) at most 1,048,576 characters, or it throws `Error("solicitud demasiado grande (más de 1 MB)")`; at most 60 requests per call; at most 10 redirects per request |
+| What a function returns | at most 2,000,000 characters once turned into JSON, or the call fails with `Error("respuesta del plugin demasiado grande (más de 2 millones de caracteres)")` |
 | `kino.storage` | 64 KB per plugin |
+| `kino.log` / `console.*` | 2000 characters per message |
 | Results | `search` 50 items; `home` 10 rows of 40; `episodes` 2000; `ref` 4096 characters; `id` matches `^[A-Za-z0-9._~-]{1,128}$` |
 | `hosts` | 1 to 20 entries |
 
@@ -454,7 +457,8 @@ differences:
 - The host, redirect and request-count rules are the same, but there is no cookie jar, no refusal of
   names that resolve to private addresses, every HTTP method is passed through, bodies are always
   read as UTF-8, and the 15 s timeout covers the wait for the response but not the download.
-- The per-call time limits and the memory limit are not enforced.
+- The per-call time limits, the memory limit and the size caps on requests, answers and selectors
+  are not enforced.
 
 ## 8. Publishing your plugin
 

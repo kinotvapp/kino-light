@@ -10,9 +10,11 @@ class PluginStorage(private val file: File, private val maxBytes: Int = 64 * 102
     @Synchronized fun get(key: String): String? = values[key]
 
     @Synchronized fun set(key: String, value: String) {
+        // Every char is at least one UTF-8 byte: refuse the obvious case before copying the map.
+        if (key.length + value.length > maxBytes) throw IllegalStateException(FULL)
         val next = LinkedHashMap(values).apply { put(key, value) }
         val json = encode(next)
-        if (json.toByteArray(Charsets.UTF_8).size > maxBytes) throw IllegalStateException("almacenamiento del plugin lleno (64 KB)")
+        if (json.toByteArray(Charsets.UTF_8).size > maxBytes) throw IllegalStateException(FULL)
         write(json)
         values[key] = value
     }
@@ -29,4 +31,8 @@ class PluginStorage(private val file: File, private val maxBytes: Int = 64 * 102
     private fun encode(map: Map<String, String>): String = JSONObject(map).toString()
 
     private fun write(json: String) = writeFileAtomically(file, json.toByteArray(Charsets.UTF_8))
+
+    private companion object {
+        const val FULL = "almacenamiento del plugin lleno (64 KB)"
+    }
 }

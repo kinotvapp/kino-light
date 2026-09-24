@@ -188,6 +188,89 @@ class PluginRuntimeTest {
         assertEquals("[\"a10,a2\",\"A,B,a,b\",\"1234.5\"]", rt.call("home", "null", 5_000))
     }
 
+    // --- What crosses into Kotlin is capped BEFORE it crosses (the 64 MB limit only bounds the JS heap).
+
+    @Test fun `an oversized answer fails the call with a normal plugin error`() {
+        val rt = runBlocking { open("export async function home() { return 'x'.repeat(${PluginRuntime.MAX_RESULT_CHARS}) }") }
+        val e = assertThrows(PluginScriptException::class.java) { runBlocking { rt.call("home", "null", 10_000) } }
+        assertTrue(e.message, e.message!!.contains("demasiado grande"))
+        // The runtime is still fine: the refusal happened in JS, nothing large reached Kotlin.
+        assertEquals(false, rt.isDiscarded)
+    }
+
+    @Test fun `an answer right at the cap still goes through`() = runBlocking {
+        // JSON.stringify adds the two quotes.
+        val rt = open("export async function home() { return 'x'.repeat(${PluginRuntime.MAX_RESULT_CHARS - 2}) }")
+        assertEquals(PluginRuntime.MAX_RESULT_CHARS, rt.call("home", "null", 10_000).length)
+    }
+
+    @Test fun `a plugin cannot replace __kinoCall or JSON stringify to smuggle a huge answer`() = runBlocking {
+        val rt = open(
+            "try { globalThis.__kinoCall = async () => 'hijacked' } catch (e) {}\n" +
+                "try { Object.defineProperty(globalThis, '__kinoCall', { value: async () => 'hijacked' }) } catch (e) {}\n" +
+                "JSON.stringify = () => 'x'.repeat(${PluginRuntime.MAX_RESULT_CHARS + 10})\n" +
+                "export async function home() { try { globalThis.__kinoExports = { home: async () => 'evil' } } catch (e) {} return [1] }",
+        )
+        assertEquals("[1]", rt.call("home", "null", 5_000))
+        assertEquals("[1]", rt.call("home", "null", 5_000))
+    }
+
+    @Test fun `the native bridge is not reachable from plugin code`() = runBlocking {
+        // quickjs-kt makes the global itself non-configurable: it stays, emptied and frozen.
+        val rt = open(
+            "export async function home() { const n = globalThis.__kinoNative; try { n.fetch = () => 1 } catch (e) {} " +
+                "return [typeof n.fetch, typeof n.log, typeof n.storageSet, Object.getOwnPropertyNames(n).length, Object.isFrozen(n)] }",
+        )
+        assertEquals("[\"undefined\",\"undefined\",\"undefined\",0,true]", rt.call("home", "null", 5_000))
+    }
+
+    @Test fun `log lines are cut before they reach the host`() = runBlocking {
+        val host = FakeHost()
+        val rt = open("export async function home() { console.log('x'.repeat(100000)); kino.log('y'.repeat(100000)); return [] }", host)
+        rt.call("home", "null", 5_000)
+        assertEquals(listOf(PluginRuntime.MAX_LOG_CHARS, PluginRuntime.MAX_LOG_CHARS), host.logs.map { it.substringAfter(':').length })
+    }
+
+    @Test fun `an oversized storage value is refused in JS and never reaches the host`() = runBlocking {
+        val host = FakeHost()
+        val rt = open(
+            "export async function home() { try { kino.storage.set('k', 'x'.repeat(70000)) } catch (e) { return [e.message] } return ['stored'] }",
+            host,
+        )
+        assertEquals("[\"almacenamiento del plugin lleno (64 KB)\"]", rt.call("home", "null", 5_000))
+        assertEquals(emptyMap<String, String>(), host.storage)
+    }
+
+    @Test fun `an oversized fetch request is refused in JS and never reaches the host`() = runBlocking {
+        val host = FakeHost()
+        var fetched = false
+        host.onFetch = { fetched = true; "{}" }
+        val rt = open(
+            "export async function search() { try { await kino.fetch('https://x.example/', { method: 'POST', body: 'x'.repeat(${PluginRuntime.MAX_REQUEST_CHARS}) }) } catch (e) { return [e.message] } return ['sent'] }",
+            host,
+        )
+        assertTrue(rt.call("search", "{}", 5_000).contains("demasiado grande"))
+        assertEquals(false, fetched)
+    }
+
+    @Test fun `html select reads only the first 2 million characters, cut before crossing`() = runBlocking {
+        val host = FakeHost()
+        var seen = -1
+        host.onSelect = { html, _ -> seen = html.length; "[]" }
+        val rt = open("export async function home() { return kino.html.select('x'.repeat(${PluginHtml.MAX_HTML_CHARS + 1000}), 'a') }", host)
+        assertEquals("[]", rt.call("home", "null", 10_000))
+        assertEquals(PluginHtml.MAX_HTML_CHARS, seen)
+    }
+
+    @Test fun `an oversized css selector is refused in JS`() = runBlocking {
+        val host = FakeHost()
+        var selected = false
+        host.onSelect = { _, _ -> selected = true; "[]" }
+        val rt = open("export async function home() { try { kino.html.select('<a/>', 'a'.repeat(20000)) } catch (e) { return [e.message] } return ['ran'] }", host)
+        assertTrue(rt.call("home", "null", 5_000).contains("selector"))
+        assertEquals(false, selected)
+    }
+
     @Test fun `a synchronous busy loop times out, returns control and discards the runtime`() {
         val rt = runBlocking { open("export async function search(q) { let i = 0; while (i < 150000000) i++; return [] }") }
         val t0 = System.currentTimeMillis()
