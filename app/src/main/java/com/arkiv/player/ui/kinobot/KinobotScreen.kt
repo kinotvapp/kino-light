@@ -50,9 +50,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -344,32 +346,58 @@ private fun Context.findActivity(): Activity? {
 }
 
 /**
- * The light Markdown the model tends to emit despite the prompt, as an [AnnotatedString]: `**bold**`,
- * `*italic*`/`_italic_`, and `- `/`* ` bullets (turned into "• "). Deliberately tiny -- no library,
- * no tables/headers/links -- because that's all the assistant produces and the app watches its size.
- * A still-streaming, unterminated `**bold` renders as plain text until its closer arrives.
+ * The Markdown the model tends to emit despite the prompt, as an [AnnotatedString]. Line level:
+ * `#`..`######` headers (rendered bold) and `- `/`* ` bullets (turned into "• "); numbered lists
+ * (`1. `) are left as-is (they read fine). Inline: `**bold**`/`__bold__`, `*italic*`/`_italic_`,
+ * `` `code` ``, `~~strike~~`, and `[label](url)` links (only the label is shown -- Kinobot points to
+ * titles through its chips, not URLs). Deliberately hand-rolled (no Markdown library -- the app
+ * watches its size). A still-streaming, unterminated marker renders as plain text until it closes.
  */
-private fun markdownToAnnotated(src: String): AnnotatedString = buildAnnotatedString {
+internal fun markdownToAnnotated(src: String): AnnotatedString = buildAnnotatedString {
     val lines = src.split("\n")
     lines.forEachIndexed { index, raw ->
         if (index > 0) append("\n")
         val trimmed = raw.trimStart()
-        var line = raw
-        if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
-            append("•  ")
-            line = trimmed.removeRange(0, 2)
+        val header = HEADER.find(trimmed)
+        when {
+            header != null -> {
+                pushStyle(SpanStyle(fontWeight = FontWeight.Bold))
+                appendInlineMarkdown(header.groupValues[1])
+                pop()
+            }
+            trimmed.startsWith("- ") || trimmed.startsWith("* ") -> {
+                append("•  ")
+                appendInlineMarkdown(trimmed.removeRange(0, 2))
+            }
+            else -> appendInlineMarkdown(raw)
         }
-        appendInlineMarkdown(line)
     }
 }
+
+private val HEADER = Regex("^#{1,6}\\s+(.*)")
 
 private fun AnnotatedString.Builder.appendInlineMarkdown(text: String) {
     var i = 0
     while (i < text.length) {
-        if (text.startsWith("**", i)) {
-            val end = text.indexOf("**", i + 2)
+        val boldMarker = when {
+            text.startsWith("**", i) -> "**"
+            text.startsWith("__", i) -> "__"
+            else -> null
+        }
+        if (boldMarker != null) {
+            val end = text.indexOf(boldMarker, i + 2)
             if (end != -1) {
                 pushStyle(SpanStyle(fontWeight = FontWeight.Bold))
+                appendInlineMarkdown(text.substring(i + 2, end)) // allow italic/code inside bold
+                pop()
+                i = end + 2
+                continue
+            }
+        }
+        if (text.startsWith("~~", i)) {
+            val end = text.indexOf("~~", i + 2)
+            if (end != -1) {
+                pushStyle(SpanStyle(textDecoration = TextDecoration.LineThrough))
                 append(text.substring(i + 2, end))
                 pop()
                 i = end + 2
@@ -377,7 +405,17 @@ private fun AnnotatedString.Builder.appendInlineMarkdown(text: String) {
             }
         }
         val ch = text[i]
-        if ((ch == '*' || ch == '_') && i + 1 < text.length) {
+        if (ch == '`') {
+            val end = text.indexOf('`', i + 1)
+            if (end > i) {
+                pushStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = Color(0x33FFFFFF)))
+                append(text.substring(i + 1, end))
+                pop()
+                i = end + 1
+                continue
+            }
+        }
+        if ((ch == '*' || ch == '_') && i + 1 < text.length && text[i + 1] != ch) {
             val end = text.indexOf(ch, i + 1)
             if (end > i + 1) {
                 pushStyle(SpanStyle(fontStyle = FontStyle.Italic))
@@ -385,6 +423,17 @@ private fun AnnotatedString.Builder.appendInlineMarkdown(text: String) {
                 pop()
                 i = end + 1
                 continue
+            }
+        }
+        if (ch == '[') {
+            val closeBracket = text.indexOf(']', i + 1)
+            if (closeBracket != -1 && closeBracket + 1 < text.length && text[closeBracket + 1] == '(') {
+                val closeParen = text.indexOf(')', closeBracket + 2)
+                if (closeParen != -1) {
+                    appendInlineMarkdown(text.substring(i + 1, closeBracket)) // label only, drop the URL
+                    i = closeParen + 1
+                    continue
+                }
             }
         }
         append(ch)
