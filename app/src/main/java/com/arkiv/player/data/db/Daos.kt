@@ -884,3 +884,16 @@ interface RecommendationDao {
         new.forEach { upsert(it) }
     }
 }
+
+/** The Kinobot chat history (see [KinobotMessageEntity]), oldest first. */
+@Dao
+interface KinobotDao {
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insert(message: KinobotMessageEntity): Long
+
+    @Query("SELECT * FROM kinobot_messages ORDER BY id ASC")
+    fun flowAll(): Flow<List<KinobotMessageEntity>>
+
+    @Query("DELETE FROM kinobot_messages")
+    suspend fun clear()
+}

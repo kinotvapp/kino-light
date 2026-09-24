@@ -377,3 +377,19 @@ data class RecommendationEntity(
     val updatedAt: Long = 0,
     val deleted: Boolean = false,
 )
+
+/**
+ * One message in the Kinobot chat (sub-project: the movie/series/anime assistant). Persisted so the
+ * conversation survives app restarts. Only the visible turns are stored -- the system persona is
+ * re-prepended at call time and never saved. `suggestionsJson` holds the assistant's suggested
+ * titles as an org.json array (empty for user turns), same hand-rolled JSON convention as
+ * [ArtworkEntity].
+ */
+@Entity(tableName = "kinobot_messages")
+data class KinobotMessageEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val role: String,               // "user" | "assistant"
+    val content: String,
+    val suggestionsJson: String = "[]",
+    val createdAt: Long,
+)
