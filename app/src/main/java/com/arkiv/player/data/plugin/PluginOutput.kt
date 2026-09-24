@@ -66,6 +66,7 @@ object PluginOutput {
     fun rows(json: String, allowSeries: Boolean, log: (String) -> Unit = {}): List<PluginRow> {
         val array = runCatching { JSONArray(json) }.getOrNull()
             ?: return emptyList<PluginRow>().also { log("home: the answer is not a JSON array") }
+        val seen = HashSet<String>()
         val out = ArrayList<PluginRow>()
         for (i in 0 until array.length()) {
             if (out.size >= MAX_ROWS) { log("home: rows beyond $MAX_ROWS dropped"); break }
@@ -75,7 +76,10 @@ object PluginOutput {
             val title = text(o, "title", MAX_TITLE_CHARS)
             if (title.isBlank()) { log("home: row $id has no title"); continue }
             val items = itemsOf(o.optJSONArray("items") ?: JSONArray(), MAX_ROW_ITEMS, allowSeries, log)
-            if (items.isNotEmpty()) out += PluginRow(id, title, items)
+            if (items.isEmpty()) continue
+            // Home keys its Lazy rows by this id: a repeat would crash the whole screen.
+            if (!seen.add(id)) { log("home: duplicate row $id dropped"); continue }
+            out += PluginRow(id, title, items)
         }
         return out
     }

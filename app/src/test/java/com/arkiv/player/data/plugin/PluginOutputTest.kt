@@ -53,6 +53,20 @@ class PluginOutputTest {
         assertEquals(0, PluginOutput.rows("""[{"id":"r","title":"","items":[$item]}]""", true, log).size)
     }
 
+    @Test fun `duplicate row ids are dropped, first wins, with a log line`() {
+        val item = """{"id":"i","ref":"r","title":"t","kind":"movie"}"""
+        val json = """[
+          {"id":"top","title":"Primera","items":[$item]},
+          {"id":"mid","title":"Otra","items":[$item]},
+          {"id":"top","title":"Duplicada","items":[$item]}
+        ]"""
+        val rows = PluginOutput.rows(json, true, log)
+        // Home keys each Lazy row by the plugin's row id: a repeat id would crash the screen.
+        assertEquals(listOf("top", "mid"), rows.map { it.id })
+        assertEquals("Primera", rows[0].title)
+        assertTrue(logs.any { "duplicate" in it && "top" in it })
+    }
+
     @Test fun `episodes default season 1, drop bad ones and duplicates`() {
         val json = """{"series":{"title":"Dragnet","tmdbId":123,"poster":"https://x/p.jpg"},
           "episodes":[{"number":1,"ref":"a"},{"season":2,"number":1,"ref":"b","title":"B"},
