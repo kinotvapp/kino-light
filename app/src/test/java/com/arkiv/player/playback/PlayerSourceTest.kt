@@ -18,6 +18,12 @@ class PlayerSourceTest {
         assertEquals(SourceKind.MAGIS, PlayerSource.kindFor("magis:2AD2591D4242471D96B68FF04FFD2784::e6"))
     }
 
+    @Test fun `a plugin id is a plugin source and never live`() {
+        assertEquals(SourceKind.PLUGIN, PlayerSource.kindFor("plugin:archive-org:Metropolis_1927::0"))
+        assertEquals(SourceKind.PLUGIN, PlayerSource.kindFor("plugin:demo:s1::t2e1"))
+        assertFalse(PlayerSource.isLiveChannel("plugin:demo:s1::e1"))
+    }
+
     // --- is it a live channel? ------------------------------------------------------------------
 
     @Test fun magis_live_is_a_live_channel() {

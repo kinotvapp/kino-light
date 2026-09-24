@@ -9,6 +9,7 @@ import com.arkiv.player.data.db.LiveRecentEntity
 import com.arkiv.player.data.ditu.CaracolFailure
 import com.arkiv.player.data.gateway.GatewayBlockedException
 import com.arkiv.player.data.gateway.LiveChannel
+import com.arkiv.player.data.plugin.blockedMessage
 import com.arkiv.player.playback.ArchiveCacheProxy
 import com.arkiv.player.playback.AdultContent
 import com.arkiv.player.playback.DituLive
@@ -39,7 +40,7 @@ data class PlayerData(
     val openingStartMs: Long?,
     val openingEndMs: Long?,
     val endingStartMs: Long?,
-    val kind: SourceKind,       // source (MAGIS/DITU/LOCAL/LIVE/UNKNOWN) -- PlayerScreen reads it for live detection, the cast LAN URL and the cast-transcode origin
+    val kind: SourceKind,       // source (MAGIS/DITU/LOCAL/LIVE/UNKNOWN/PLUGIN) -- PlayerScreen reads it for live detection, the cast LAN URL and the cast-transcode origin
     val referer: String? = null,    // headers for the web stream (some hosts require Referer)
     val userAgent: String? = null,
     val proxyUrl: String? = null,   // web: backup proxied URL if the direct one fails (403/geo/anti-leech)
@@ -58,6 +59,10 @@ data class PlayerData(
      * pruning -- archive, torrent, web), where the notion doesn't exist.
      */
     val adult: Boolean = false,
+    /** Headers the stream needs on every request (plugins); Magis's travel inside the proxy URL. */
+    val requestHeaders: Map<String, String> = emptyMap(),
+    /** Container MIME the source declared ("" = let ExoPlayer sniff). */
+    val mime: String = "",
     /**
      * Start position to resume (ExoPlayer, e.g. magisItem). The local player uses
      * PlaylistData.startPositionMs instead.
@@ -229,12 +234,18 @@ class PlayerViewModel internal constructor(
     /** Whether "Datos curiosos" is enabled in Settings. Read per load; when false the facts aren't
      *  even requested (no model call, no badge/panel/button). Defaults on for tests. */
     private val funFactsEnabled: () -> Boolean = { true },
+    /** Installed plugins: whether a saved plugin title can play, and the plugin's name. */
+    private val plugins: com.arkiv.player.data.plugin.PluginPlayback? = null,
 ) : ViewModel() {
 
     private val _playlist = MutableStateFlow<PlaylistData?>(null)
     val playlist: StateFlow<PlaylistData?> = _playlist.asStateFlow()
 
-    /** Magis item -- played by ExoPlayer through the local proxy, without going through VLC. */
+    /**
+     * Magis item -- played by `StreamExoPlayer` through the local proxy, without going through
+     * VLC. Also carries plugin items (`kind = SourceKind.PLUGIN`), which `StreamExoPlayer` plays
+     * directly with the plugin's headers on the data source.
+     */
     private val _magisItem = MutableStateFlow<PlayerData?>(null)
     val magisItem: StateFlow<PlayerData?> = _magisItem.asStateFlow()
 
@@ -388,6 +399,7 @@ class PlayerViewModel internal constructor(
                 SourceKind.UNKNOWN -> loadUnknownSource(episodeId)
                 SourceKind.MAGIS -> loadMagis(episodeId)
                 SourceKind.DITU -> loadDitu(episodeId)
+                SourceKind.PLUGIN -> loadPlugin(episodeId)
                 // kindFor() never returns LOCAL: a downloaded file is detected above by
                 // localLibrary.fileFor(). The branch exists because the `when` is exhaustive.
                 SourceKind.LOCAL -> loadUnknownSource(episodeId)
@@ -737,7 +749,13 @@ class PlayerViewModel internal constructor(
     }
 
     fun onMagisExoError(message: String) {
-        _error.value = "Xuper: $message"
+        val item = _magisItem.value
+        val label = if (item?.kind == SourceKind.PLUGIN) {
+            plugins?.nameOf(com.arkiv.player.data.plugin.PluginIds.pluginIdOfEpisode(item.episodeId)) ?: "Plugin"
+        } else {
+            "Xuper"
+        }
+        _error.value = "$label: $message"
     }
 
     /**
@@ -1095,6 +1113,64 @@ class PlayerViewModel internal constructor(
         ) {
             Log.w(PLAY, "loadDitu() discarded on publish: $episodeId is no longer the current request")
         }
+    }
+
+    /**
+     * A plugin title (`plugin:<id>:…`). The ref comes from the episode's `torrentData` like
+     * Caracol's ([loadDitu]); playback goes through the same slot as Magis ([_magisItem], played by
+     * `StreamExoPlayer`), but the URL is played directly with the plugin's headers on the data
+     * source — see `StreamExoPlayer.requestHeaders` for why not through `archiveCacheProxy`.
+     *
+     * A disabled, damaged or uninstalled plugin never reaches `resolve`: the person gets the
+     * spec's message naming the plugin instead of "No hay ninguna fuente que sepa abrir esto".
+     */
+    private suspend fun loadPlugin(episodeId: String) {
+        val pluginId = com.arkiv.player.data.plugin.PluginIds.pluginIdOfEpisode(episodeId)
+        val access = plugins?.accessFor(pluginId)
+            ?: com.arkiv.player.data.plugin.PluginAccess.Uninstalled(pluginId ?: "desconocido")
+        val blocked = access.blockedMessage()
+        if (blocked != null) {
+            Log.w(PLAY, "loadPlugin() $episodeId blocked: $blocked")
+            _error.value = blocked
+            return
+        }
+        val name = access.name
+        val ref = repo.magisRefForEpisode(episodeId)
+        Log.w(PLAY, "loadPlugin() episodeId=$episodeId plugin=$pluginId ref=${ref?.take(16)}…")
+        if (ref.isNullOrBlank()) { _error.value = "No se encontró la fuente de $name"; return }
+
+        _playlist.value = null
+        _webExtras.value = null
+        _resolving.value = true
+        val resolved = withContext(Dispatchers.IO) { runCatching { source.resolve(ref) } }
+        _resolving.value = false
+        val play = resolved.getOrNull()
+        if (play == null) {
+            val failure = resolved.exceptionOrNull()
+            Log.w(PLAY, "loadPlugin() failed: ${failure?.message}", failure)
+            // PluginContentSource already words these for the person ("<plugin>: …", "<plugin> no respondió a tiempo").
+            _error.value = failure?.message?.takeIf { it.isNotBlank() } ?: "No se pudo abrir esto con $name"
+            return
+        }
+        val header = repo.headerInfo(episodeId)
+        _webExtras.value = WebExtras(episodeId, play.headers, play.subtitles.map { ResolvedSub(lang = it.lang, url = it.url) })
+        val startPos = safeStartPosition(episodeId, SourceKind.PLUGIN)
+        _magisItem.value = PlayerData(
+            episodeId = episodeId,
+            itemId = episodeId.substringBefore("::"),
+            title = header?.itemTitle ?: name,
+            subtitle = header?.episodeLabel.orEmpty(),
+            mediaUrl = play.url,
+            // No cast for plugin titles in v1: without a cast URL no cast path has anything to send.
+            castUrl = null,
+            artworkUrl = "",
+            openingStartMs = null, openingEndMs = null, endingStartMs = null,
+            kind = SourceKind.PLUGIN,
+            requestHeaders = play.headers,
+            mime = play.mime,
+            startPositionMs = startPos,
+        )
+        Log.w(PLAY, "loadPlugin() published · mime=${play.mime.ifBlank { "sniff" }} subs=${play.subtitles.size} startPos=$startPos")
     }
 
     /**

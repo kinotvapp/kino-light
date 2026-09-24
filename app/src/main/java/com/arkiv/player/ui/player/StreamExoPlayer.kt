@@ -46,32 +46,43 @@ import androidx.media3.ui.SubtitleView
 import com.arkiv.player.ui.rememberGraph
 import kotlinx.coroutines.delay
 
-private const val TAG = "MagisExo"
+private const val TAG = "StreamExo"
 
 /**
- * Plays a Magis stream using ExoPlayer.
+ * Plays a Magis VOD stream or a plugin stream using ExoPlayer.
  *
- * The URL already arrives proxied by [archiveCacheProxy] (http://127.0.0.1:...), which injects the
- * CDN's authentication headers transparently. ExoPlayer downloads it as plain HTTP.
- *
- * [DefaultMediaSourceFactory] auto-detects HLS, DASH or progressive (MP4/TS) based on the content
- * type. For the progress bar and controls it uses the same [PlayerMirror] VLC used to.
+ * Magis's URL already arrives proxied by [archiveCacheProxy] (http://127.0.0.1:...), which injects
+ * the CDN's authentication headers transparently. A plugin's URL is played directly, with the
+ * plugin's headers on the data source ([requestHeaders]). ExoPlayer downloads either as plain
+ * HTTP, and [DefaultMediaSourceFactory] auto-detects HLS, DASH or progressive (MP4/TS) based on
+ * the content type. For the progress bar and controls it uses the same [PlayerMirror] VLC used to.
  *
  * Uses [TextureView] directly so [onTextureViewReady] exposes the surface and `captureFrame`
  * works the same way it did with VLC. The aspect ratio is kept in sync by listening to
  * [Player.Listener.onVideoSizeChanged]: in portrait the video stays centered in landscape format.
  *
- * The portal's external subtitles are passed as [subtitleConfigs] and ExoPlayer loads them
- * automatically; the overlaid [SubtitleView] renders them on screen. Detected audio and subtitle
- * tracks are reported via [onTracksChanged] so [TracksState] can expose them in the menu.
+ * The portal's or plugin's external subtitles are passed as [subtitleConfigs] and ExoPlayer loads
+ * them automatically; the overlaid [SubtitleView] renders them on screen. Detected audio and
+ * subtitle tracks are reported via [onTracksChanged] so [TracksState] can expose them in the menu.
  */
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
-internal fun MagisExoPlayer(
+internal fun StreamExoPlayer(
     mediaUrl: String,
     mirror: PlayerMirror,
     startPositionMs: Long = 0L,
     subtitleConfigs: List<MediaItem.SubtitleConfiguration> = emptyList(),
+    /**
+     * Headers for every request of this stream (plugins). Empty for Magis, whose headers travel
+     * inside the local proxy's URL. Set on the data source, not through `archiveCacheProxy`: that
+     * proxy serves ONE URL's bytes, and an HLS/DASH manifest's relative segments would resolve
+     * against 127.0.0.1 and 404. Also reaches this stream's subtitle requests.
+     */
+    requestHeaders: Map<String, String> = emptyMap(),
+    /** Container MIME when the source knows it (e.g. `application/x-mpegURL`); null = sniff. */
+    mimeType: String? = null,
+    /** Prefix of the Sentry tag in `onPlayerError`: `"magis"` or `"plugin"`. */
+    crashTag: String = "magis",
     onPlayerReady: (Player?) -> Unit = {},
     onTextureViewReady: (TextureView?) -> Unit = {},
     onError: (String) -> Unit = {},
@@ -94,16 +105,18 @@ internal fun MagisExoPlayer(
     val graph = rememberGraph()
     val subtitleStyle by graph.subtitlePrefs.prefs.collectAsStateWithLifecycle()
 
-    val exoPlayer = remember(mediaUrl, subtitleConfigs) {
+    val exoPlayer = remember(mediaUrl, subtitleConfigs, requestHeaders, mimeType) {
         Log.i(TAG, "Creating ExoPlayer · url=${mediaUrl.take(80)} startMs=$startPositionMs subs=${subtitleConfigs.size}")
         val httpFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent("okhttp/4.12.0")
+            .setUserAgent(requestHeaders.entries.firstOrNull { it.key.equals("User-Agent", true) }?.value ?: "okhttp/4.12.0")
+            .setDefaultRequestProperties(requestHeaders.filterKeys { !it.equals("User-Agent", true) })
             .setConnectTimeoutMs(30_000)
             .setReadTimeoutMs(30_000)
 
         val mediaItem = MediaItem.Builder()
             .setUri(Uri.parse(mediaUrl))
             .setSubtitleConfigurations(subtitleConfigs)
+            .apply { mimeType?.let { setMimeType(it) } }
             .build()
 
         // Magis's CDN delivers at 70–230 KB/s and its files carry 8 badly interleaved audio
@@ -264,7 +277,7 @@ internal fun MagisExoPlayer(
                 Log.e(TAG, "onPlayerError errorCode=${error.errorCode} msg=$msg", error)
                 // Also to Sentry: VOD playback failures (codec init, source, decoder) used to vanish
                 // into Logcat -- this is proactive signal on which content/devices can't play.
-                com.arkiv.player.crash.Crash.report(error, "magis-playback-${androidx.media3.common.PlaybackException.getErrorCodeName(error.errorCode)}")
+                com.arkiv.player.crash.Crash.report(error, "$crashTag-playback-${androidx.media3.common.PlaybackException.getErrorCodeName(error.errorCode)}")
                 onError(msg)
             }
         }

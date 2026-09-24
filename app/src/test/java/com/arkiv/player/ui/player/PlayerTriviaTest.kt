@@ -67,5 +67,6 @@ class PlayerTriviaTest {
         assertFalse(PlayerTrivia.wantsFacts("magis:efimero:C42", SourceKind.MAGIS))
         assertFalse(PlayerTrivia.wantsFacts("live:1", SourceKind.LIVE))
         assertFalse(PlayerTrivia.wantsFacts("algo", SourceKind.UNKNOWN))
+        assertFalse(PlayerTrivia.wantsFacts("plugin:demo:m1::0", SourceKind.PLUGIN))
     }
 }

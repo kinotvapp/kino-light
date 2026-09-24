@@ -46,11 +46,11 @@ private const val TAG = "LiveExo"
  *
  * [mediaUrl] already arrives served by [com.arkiv.player.playback.LiveHlsProxy] on `127.0.0.1`,
  * with the CDN's `Content-Auth`/`Content-License` injected by the proxy on every request --
- * ExoPlayer downloads it as plain HTTP, the same way [MagisExoPlayer] does with the VOD proxy. No
+ * ExoPlayer downloads it as plain HTTP, the same way [StreamExoPlayer] does with the VOD proxy. No
  * need to pass it its own headers: the proxy exists precisely because VLC couldn't send those
  * headers, and ExoPlayer doesn't need them either since it never sees them -- the proxy sets them.
  *
- * Unlike [MagisExoPlayer]:
+ * Unlike [StreamExoPlayer]:
  * - No `startPositionMs`/resume: a live feed has no "where you were".
  * - No subtitles: the portal doesn't send any for the live feed.
  * - No custom [LoadControl]: the problem that motivated Magis's (a single giant TS with 8 badly
@@ -123,7 +123,7 @@ internal fun LiveExoPlayer(
             // `update`'s `fitAspect` call only re-runs on recomposition, and neither
             // `videoAspectRatio` nor `zoom` change just because Android relaid out the view at its
             // new fillMaxSize() bounds -- without this, the picture stayed squashed with the
-            // PREVIOUS orientation's transform. Same fix as MagisExoPlayer's TextureView.
+            // PREVIOUS orientation's transform. Same fix as StreamExoPlayer's TextureView.
             addOnLayoutChangeListener { v, l, t, r, b, oldL, oldT, oldR, oldB ->
                 if (r - l != oldR - oldL || b - t != oldB - oldT) {
                     (v as TextureView).fitAspect(videoAspectRatio, currentZoom.value)
@@ -199,7 +199,7 @@ internal fun LiveExoPlayer(
         }
     }
 
-    // Position polling + the same staggered rescue as MagisExoPlayer (see its long KDoc): the
+    // Position polling + the same staggered rescue as StreamExoPlayer (see its long KDoc): the
     // local proxy can cut a connection mid-segment (network change, CDN down) and leave ExoPlayer
     // with the clock running free with not a single new frame. Here the rescue is the ONLY silent
     // recovery mechanism between minor hiccups and `onError`'s explicit warning →
@@ -254,7 +254,7 @@ internal fun LiveExoPlayer(
         }
     }
 
-    // Same letterbox scheme as MagisExoPlayer: the ratio is applied by transforming the
+    // Same letterbox scheme as StreamExoPlayer: the ratio is applied by transforming the
     // TextureView's CONTENT (which always fills the whole screen), not the view's size -- see the
     // KDoc of [fitAspect] for why (avoids the Fire Stick's green stripe).
     BoxWithConstraints(
