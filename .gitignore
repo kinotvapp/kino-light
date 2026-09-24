@@ -22,3 +22,6 @@ graft/
 # Claude Code tooling
 .claude/
 .superpowers/
+
+# Local stand-in for kino.storage written by plugins/sdk/run.mjs
+plugins/**/.kino-storage.json

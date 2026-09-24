@@ -7,6 +7,7 @@ import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -99,6 +100,92 @@ class PluginRuntimeTest {
     @Test fun `Promise reject is deferred so a caught rejection does not abort the call`() = runBlocking {
         val rt = open("export async function home() { try { await Promise.reject(new Error('x')) } catch (e) { return ['caught ' + e.message] } }")
         assertEquals("[\"caught x\"]", rt.call("home", "null", 5_000))
+    }
+
+    // The rest of the "Known engine limits" of the authoring guide. Each test pins one sentence of
+    // it; if a library bump changes an outcome, the failing test names the sentence to update.
+
+    private fun failsWith(script: String, fragment: String) {
+        val rt = runBlocking { open(script) }
+        val e = assertThrows(PluginScriptException::class.java) { runBlocking { rt.call("home", "null", 5_000) } }
+        assertTrue("message was: ${e.message}", e.message!!.contains(fragment))
+    }
+
+    @Test fun `guide - a throw before the first await aborts the call even with catch, Promise all or allSettled`() {
+        val helper = "async function bad() { throw new Error('sync') }\n"
+        failsWith(helper + "export async function home() { try { await bad() } catch (e) { return ['caught'] } }", "sync")
+        failsWith(helper + "export async function home() { return [await bad().catch(e => 'caught')] }", "sync")
+        failsWith(helper + "export async function home() { try { await Promise.all([bad()]) } catch (e) { return ['caught'] } }", "sync")
+        failsWith(helper + "export async function home() { return (await Promise.allSettled([bad()])).map(r => r.status) }", "sync")
+    }
+
+    @Test fun `guide - a throw after any await is caught, even await null`() = runBlocking {
+        val rt = open(
+            "async function late() { await null; throw new Error('late') }\n" +
+                "export async function home() { try { await late() } catch (e) { return ['caught ' + e.message] } }",
+        )
+        assertEquals("[\"caught late\"]", rt.call("home", "null", 5_000))
+    }
+
+    @Test fun `guide - a promise rejected as soon as it is created aborts the call`() {
+        failsWith(
+            "export async function home() { const p = new Promise((_, reject) => reject(new Error('x'))); try { await p } catch (e) { return ['caught'] } }",
+            "x",
+        )
+        failsWith(
+            "async function later() { await kino.fetch('https://x.example/'); return Promise.reject(new Error('r')) }\n" +
+                "export async function home() { try { await later() } catch (e) { return ['caught'] } }",
+            "r",
+        )
+    }
+
+    @Test fun `guide - Promise reject is safe when it is awaited or caught right away`() = runBlocking {
+        val rt = open(
+            "function refuse() { return Promise.reject(new Error('no')) }\n" +
+                "export async function home() {\n" +
+                "  const a = await refuse().catch(e => 'a ' + e.message);\n" +
+                "  try { await refuse() } catch (e) { return [a, 'b ' + e.message] }\n" +
+                "}",
+        )
+        assertEquals("[\"a no\",\"b no\"]", rt.call("home", "null", 5_000))
+    }
+
+    @Test fun `guide - globals a Node author might reach for do not exist`() = runBlocking {
+        val names = listOf(
+            "fetch", "require", "process", "Buffer", "TextEncoder", "TextDecoder", "btoa", "atob", "structuredClone",
+            "queueMicrotask", "Intl", "URL", "URLSearchParams", "AbortController", "performance", "crypto",
+            "setTimeout", "setInterval", "setImmediate", "WeakRef",
+        )
+        val rt = open("export async function home() { return [${names.joinToString(", ") { "typeof $it" }}, typeof console, typeof encodeURIComponent] }")
+        val expected = names.map { "undefined" } + listOf("object", "function")
+        assertEquals(expected, JSONArray(rt.call("home", "null", 5_000)).let { a -> (0 until a.length()).map { a.getString(it) } })
+    }
+
+    @Test fun `guide - modern syntax and the built-ins the guide lists work`() = runBlocking {
+        val rt = open(
+            "class Box { n = 1 }\n" +
+                "export async function home() {\n" +
+                "  const o = { a: { b: 2 } };\n" +
+                "  const settled = await Promise.allSettled([Promise.resolve(1)]);\n" +
+                "  return [o?.a?.b, o.z ?? 'dflt', /(?<y>\\d{4})/.exec('in 2024').groups.y, /(?<=a)b/.test('ab'),\n" +
+                "    /\\p{L}+/u.exec('ñandú')[0], new Box().n, 'a-b'.replaceAll('-', '+'), [1, 2, 3].at(-1), [1, [2]].flat().length,\n" +
+                "    JSON.stringify(Object.fromEntries([['k', 1]])), settled[0].status, `t\${1 + 1}`, encodeURIComponent('ñ a'),\n" +
+                "    [...new Set([1, 1, 2])].length, typeof 1n] }",
+        )
+        assertEquals(
+            """[2,"dflt","2024",true,"ñandú",1,"a+b",3,2,"{\"k\":1}","fulfilled","t2","%C3%B1%20a",2,"bigint"]""",
+            rt.call("home", "null", 5_000),
+        )
+    }
+
+    @Test fun `guide - localeCompare and toLocaleString ignore their locale and options`() = runBlocking {
+        val rt = open(
+            "export async function home() { return [" +
+                "['a10', 'a2'].sort((x, y) => x.localeCompare(y, undefined, { numeric: true })).join()," +
+                "['b', 'a', 'B', 'A'].sort((x, y) => x.localeCompare(y, 'es', { sensitivity: 'base' })).join()," +
+                "(1234.5).toLocaleString('es-CO')] }",
+        )
+        assertEquals("[\"a10,a2\",\"A,B,a,b\",\"1234.5\"]", rt.call("home", "null", 5_000))
     }
 
     @Test fun `a synchronous busy loop times out, returns control and discards the runtime`() {
