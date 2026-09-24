@@ -271,6 +271,89 @@ class PluginRuntimeTest {
         assertEquals(false, selected)
     }
 
+    // --- A THROWN value's message is capped too: it reaches Kotlin as an exception message.
+
+    private fun failureOf(rt: PluginRuntime, fn: String = "home"): PluginScriptException =
+        assertThrows(PluginScriptException::class.java) { runBlocking { rt.call(fn, "null", 20_000) } }
+
+    @Test fun `a 30 MB thrown Error or string fails the call with a short message, from any capability`() {
+        val huge = "'x'.repeat(30000000)"
+        val bodies = listOf(
+            "throw new Error($huge)", "throw $huge",
+            "await null; throw new Error($huge)", "await null; throw $huge",
+        )
+        for (body in bodies) {
+            val rt = runBlocking {
+                open("export async function search() { $body }\nexport async function home() { $body }\nexport async function resolve() { $body }")
+            }
+            for (fn in listOf("search", "home", "resolve")) {
+                val e = failureOf(rt, fn)
+                assertTrue("$fn / $body: ${e.message!!.length} chars", e.message!!.length <= PluginRuntime.MAX_ERROR_CHARS)
+                assertTrue("$fn / $body", e.message!!.contains("xxxx"))
+            }
+        }
+    }
+
+    @Test fun `hostile thrown values give a bounded, sane message and leave the runtime usable`() {
+        val cases = listOf(
+            "throw { toString() { throw new Error('nope') } }",
+            "throw { get message() { throw new Error('nope') } }",
+            "throw { get message() { return 'y'.repeat(30000000) } }",
+            "throw { toString() { return 'z'.repeat(30000000) } }",
+            "throw Symbol('s')",
+            "throw null",
+            "throw undefined",
+            "throw new Proxy({}, { get() { throw new Error('trap') } })",
+        )
+        for (body in cases) {
+            val rt = runBlocking { open("export async function home(ok) { if (ok) return [1]; await null; $body }") }
+            val e = failureOf(rt)
+            assertTrue("$body: ${e.message}", e.message!!.isNotBlank() && e.message!!.length <= PluginRuntime.MAX_ERROR_CHARS)
+            assertEquals(body, "[1]", runBlocking { rt.call("home", "true", 5_000) })
+        }
+    }
+
+    /**
+     * Thrown before the function's first await, the rejection exists before anyone handles it, and
+     * quickjs-kt alpha13 inspects its reason right then, inside the plugin's call (measured: a
+     * throwing `message` getter, a throwing Proxy trap or a Symbol abort the evaluation from there,
+     * where the prelude can't catch it). The message is still short and sane, and the runtime is
+     * healthy or discarded (the pool opens a fresh one), never half-broken.
+     */
+    @Test fun `hostile values thrown before the first await are bounded, and the runtime is healthy or discarded`() {
+        val cases = listOf(
+            "throw { toString() { throw new Error('nope') } }",
+            "throw { get message() { throw new Error('nope') } }",
+            "throw { get message() { return 'y'.repeat(30000000) } }",
+            "throw { toString() { return 'z'.repeat(30000000) } }",
+            "throw Symbol('s')",
+            "throw null",
+            "throw undefined",
+            "throw new Proxy({}, { get() { throw new Error('trap') } })",
+        )
+        for (body in cases) {
+            val rt = runBlocking { open("export async function home(ok) { if (ok) return [1]; $body }") }
+            val e = failureOf(rt)
+            assertTrue("$body: ${e.message}", e.message!!.isNotBlank() && e.message!!.length <= PluginRuntime.MAX_ERROR_CHARS)
+            if (!rt.isDiscarded) assertEquals(body, "[1]", runBlocking { rt.call("home", "true", 5_000) })
+        }
+    }
+
+    @Test fun `a normal thrown Error keeps its readable message`() {
+        val rt = runBlocking { open("export async function home() { await null; throw new Error('boom') }") }
+        assertTrue(failureOf(rt).message!!.contains("boom"))
+        val sync = runBlocking { open("export async function home() { throw new Error('boom') }") }
+        assertTrue(failureOf(sync).message!!.contains("boom"))
+    }
+
+    @Test fun `a module top level that throws a huge or hostile value fails open with a short message`() {
+        listOf("throw new Error('x'.repeat(30000000))", "throw 'x'.repeat(30000000)", "throw Symbol('s')", "throw null")
+            .forEach { body ->
+                val e = assertThrows(body, PluginScriptException::class.java) { runBlocking { open(body) } }
+                assertTrue("$body: ${e.message!!.length}", e.message!!.isNotBlank() && e.message!!.length <= PluginRuntime.MAX_ERROR_CHARS)
+            }
+    }
+
     @Test fun `a synchronous busy loop times out, returns control and discards the runtime`() {
         val rt = runBlocking { open("export async function search(q) { let i = 0; while (i < 150000000) i++; return [] }") }
         val t0 = System.currentTimeMillis()

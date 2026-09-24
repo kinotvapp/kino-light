@@ -41,7 +41,11 @@ data class PluginEnv(
 )
 
 open class PluginException(message: String, cause: Throwable? = null) : Exception(message, cause)
-class PluginTimeoutException(function: String, ms: Long) : PluginException("$function no respondió en ${(ms + 999) / 1000} s")
+class PluginTimeoutException(function: String, ms: Long) :
+    PluginException("${function.take(100)} no respondió en ${(ms + 999) / 1000} s") {
+    /** The limit that was exceeded, rounded up to whole seconds: what the person is told. */
+    val seconds: Long = (ms + 999) / 1000
+}
 class PluginScriptException(message: String, cause: Throwable? = null) : PluginException(message, cause)
 class PluginDamagedException : PluginException("Archivos dañados, reinstálalo")
 
@@ -110,10 +114,10 @@ class PluginRuntime private constructor(
             // measured, the next evaluate threw "Result promise not found". Probe it; if it's
             // broken, discard it so the pool opens a fresh one.
             if (!isHealthy()) close()
-            throw PluginScriptException(e.message ?: "Error del plugin", e)
+            throw PluginScriptException(errorText(e.message, "Error del plugin"), e)
         } catch (e: Exception) {
             // A Kotlin exception from a binding (e.g. HostNotAllowedException) that JS didn't catch.
-            throw PluginScriptException(e.message ?: e.javaClass.simpleName, e)
+            throw PluginScriptException(errorText(e.message, e.javaClass.simpleName), e)
         } finally {
             synchronized(lock) { if (inFlight === job && job.isCompleted) inFlight = null }
         }
@@ -151,6 +155,20 @@ class PluginRuntime private constructor(
 
         /** The longest `kino.fetch` request (URL, headers and body, as JSON); checked in JS. */
         const val MAX_REQUEST_CHARS = 1_048_576
+
+        /** Any error text from a plugin (a thrown value, a load failure) is cut to this. */
+        const val MAX_ERROR_CHARS = 2_000
+
+        /**
+         * Kotlin-side cut of any error text, whatever its origin: the prelude already shortens what
+         * a call throws, but a module's top-level throw, the engine's own messages and binding
+         * exceptions don't go through it. Never blank.
+         */
+        private fun errorText(message: String?, fallback: String): String =
+            message?.takeIf { it.isNotBlank() }?.take(MAX_ERROR_CHARS) ?: fallback
+
+        /** What a thrown null, undefined, Symbol or unreadable value becomes. */
+        private const val THROWN_FALLBACK = "el plugin falló sin decir por qué"
 
         /** `console.*` / `kino.log` lines are cut to this many characters in JS. */
         const val MAX_LOG_CHARS = 2_000
@@ -212,10 +230,10 @@ class PluginRuntime private constructor(
                 throw e
             } catch (e: QuickJsException) {
                 executor.shutdown()
-                throw PluginScriptException(e.message ?: "El plugin no carga", e)
+                throw PluginScriptException(errorText(e.message, "El plugin no carga"), e)
             } catch (e: Exception) {
                 executor.shutdown()
-                throw PluginScriptException(e.message ?: e.javaClass.simpleName, e)
+                throw PluginScriptException(errorText(e.message, e.javaClass.simpleName), e)
             }
         }
 
@@ -301,11 +319,35 @@ class PluginRuntime private constructor(
               // awaits it, even inside try/catch. Deferring Promise.reject by one job lets the
               // awaiting caller attach its handler first. See QuickJsSpikeTest.
               Promise.reject = (e) => Promise.resolve().then(() => { throw e; });
+              // A thrown value's message reaches Kotlin (and the screen) as the exception text,
+              // so it's rebuilt here: a short plain string, no stack. Every step can be hostile
+              // (a throwing getter or toString, a Proxy, a Symbol, 30 MB of text), hence the
+              // captured built-ins and the fixed fallback.
+              const errorText = (e) => {
+                try {
+                  let m = e;
+                  if (e !== null && (typeof e === 'object' || typeof e === 'function')) {
+                    const own = e.message;
+                    if (own !== undefined) m = own;
+                  }
+                  if (m === null || m === undefined || typeof m === 'symbol') return '$THROWN_FALLBACK';
+                  const text = typeof m === 'string' ? m : S(m);
+                  if (typeof text !== 'string' || text.length === 0) return '$THROWN_FALLBACK';
+                  return cut(text, $MAX_ERROR_CHARS);
+                } catch (_) {
+                  return '$THROWN_FALLBACK';
+                }
+              };
               define(globalThis, '__kinoCall', {
                 value: async (name, argJson) => {
-                  const fn = globalThis.__kinoExports[name];
-                  if (typeof fn !== 'function') throw new E('el plugin no exporta ' + name);
-                  const out = stringify(await fn(parse(argJson)));
+                  let out;
+                  try {
+                    const fn = globalThis.__kinoExports[name];
+                    if (typeof fn !== 'function') throw new E('el plugin no exporta ' + name);
+                    out = stringify(await fn(parse(argJson)));
+                  } catch (e) {
+                    throw new E(errorText(e));
+                  }
                   if (typeof out !== 'string') return 'null';
                   if (out.length > $MAX_RESULT_CHARS) throw new E('$RESULT_TOO_BIG');
                   return out;
