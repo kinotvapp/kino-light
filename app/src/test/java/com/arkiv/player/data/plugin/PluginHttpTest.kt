@@ -1,0 +1,106 @@
+package com.arkiv.player.data.plugin
+
+import kotlinx.coroutines.runBlocking
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.OkHttpClient
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import okio.Buffer
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import java.io.IOException
+
+class PluginHttpTest {
+    private val server = MockWebServer()
+
+    @Before fun start() = server.start()
+    @After fun stop() = server.shutdown()
+
+    // MockWebServer can't serve arbitrary hostnames over https, so these use the test-only
+    // "localhost over http" override; production never sets it.
+    private fun http(hosts: List<String> = listOf("localhost")) =
+        PluginHttp(OkHttpClient(), "test", hosts, "1.0", allowInsecureLocalhost = true)
+
+    private fun url(path: String) = "http://localhost:${server.port}$path"
+
+    @Test fun `gate decisions`() {
+        val hosts = listOf("archive.org", "*.archive.org")
+        PluginHostGate.check("https://archive.org/x".toHttpUrl(), hosts)
+        PluginHostGate.check("https://ia8.us.archive.org/x".toHttpUrl(), hosts)
+        val e = assertThrows(HostNotAllowedException::class.java) {
+            PluginHostGate.check("https://evil.example/".toHttpUrl(), hosts)
+        }
+        assertEquals("host no permitido: evil.example", e.message)
+        assertThrows(IOException::class.java) { PluginHostGate.check("http://archive.org/".toHttpUrl(), hosts) }
+        // Without the test flag, even a declared localhost must be https.
+        assertThrows(IOException::class.java) { PluginHostGate.check("http://localhost/".toHttpUrl(), listOf("localhost")) }
+    }
+
+    @Test fun `fetch returns status, lowercased headers and body with the plugin user agent`() = runBlocking {
+        server.enqueue(MockResponse().setBody("{\"a\":1}").setHeader("X-Test", "yes"))
+        val r = http().fetch(PluginHttp.Request(url("/ok")))
+        assertTrue(r.ok)
+        assertEquals(200, r.status)
+        assertEquals("{\"a\":1}", r.body)
+        assertEquals("yes", r.headers["x-test"])
+        assertEquals("Kino/1.0 (plugin test)", server.takeRequest().getHeader("User-Agent"))
+    }
+
+    @Test fun `a plugin user agent and POST body are sent as given`() = runBlocking {
+        server.enqueue(MockResponse().setBody("ok"))
+        http().fetch(
+            PluginHttp.Request(url("/p"), method = "POST", headers = mapOf("User-Agent" to "X/1", "Content-Type" to "application/json"), body = "{\"q\":1}"),
+        )
+        val rec = server.takeRequest()
+        assertEquals("POST", rec.method)
+        assertEquals("X/1", rec.getHeader("User-Agent"))
+        assertEquals("{\"q\":1}", rec.body.readUtf8())
+    }
+
+    @Test fun `a redirect to an undeclared host is refused before any request goes out`() {
+        server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "http://127.0.0.1:${server.port}/elsewhere"))
+        server.enqueue(MockResponse().setBody("must not be served"))
+        val e = assertThrows(HostNotAllowedException::class.java) {
+            runBlocking { http().fetch(PluginHttp.Request(url("/start"))) }
+        }
+        assertEquals("host no permitido: 127.0.0.1", e.message)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test fun `a redirect to a declared host is followed`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(301).setHeader("Location", "/final"))
+        server.enqueue(MockResponse().setBody("done"))
+        val r = http().fetch(PluginHttp.Request(url("/start")))
+        assertEquals("done", r.body)
+        assertEquals(url("/final"), r.url)
+    }
+
+    @Test fun `bodies over 5 MB are refused`() {
+        server.enqueue(MockResponse().setBody(Buffer().write(ByteArray(5 * 1024 * 1024 + 1))))
+        assertThrows(IOException::class.java) { runBlocking { http().fetch(PluginHttp.Request(url("/big"))) } }
+    }
+
+    @Test fun `at most 60 requests per call, reset by beginCall`() = runBlocking {
+        repeat(62) { server.enqueue(MockResponse().setBody("x")) }
+        val h = http()
+        h.beginCall()
+        repeat(60) { h.fetch(PluginHttp.Request(url("/n"))) }
+        assertThrows(IOException::class.java) { runBlocking { h.fetch(PluginHttp.Request(url("/n"))) } }
+        h.beginCall()
+        assertEquals("x", h.fetch(PluginHttp.Request(url("/n"))).body)
+    }
+
+    @Test fun `cookies persist between requests of the same plugin`() = runBlocking {
+        server.enqueue(MockResponse().setBody("a").addHeader("Set-Cookie", "s=1; Path=/"))
+        server.enqueue(MockResponse().setBody("b"))
+        val h = http()
+        h.fetch(PluginHttp.Request(url("/one")))
+        h.fetch(PluginHttp.Request(url("/two")))
+        server.takeRequest()
+        assertEquals("s=1", server.takeRequest().getHeader("Cookie"))
+    }
+}

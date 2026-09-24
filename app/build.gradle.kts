@@ -684,6 +684,8 @@ dependencies {
 
     // Networking (JSON parsed with bundled org.json)
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // kino.html.select for plugins (CSS selectors over fetched HTML).
+    implementation("org.jsoup:jsoup:1.18.3")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
     // Companion LAN (phone<->TV): WebSocket server+client for the pairing/transport channel.
