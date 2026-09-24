@@ -47,6 +47,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -214,7 +219,9 @@ private fun MessageBubble(text: String, fromUser: Boolean) {
                 )
                 .padding(horizontal = 14.dp, vertical = 10.dp),
         ) {
-            Text(text, color = Color.White, style = MaterialTheme.typography.bodyMedium)
+            // Render the light Markdown the model emits (**bold**, *italic*, "- " bullets) instead
+            // of showing the raw `**` / `-` — user bubbles are plain but the parser is a no-op there.
+            Text(markdownToAnnotated(text), color = Color.White, style = MaterialTheme.typography.bodyMedium)
         }
     }
 }
@@ -334,4 +341,53 @@ private fun Context.findActivity(): Activity? {
         current = current.baseContext
     }
     return null
+}
+
+/**
+ * The light Markdown the model tends to emit despite the prompt, as an [AnnotatedString]: `**bold**`,
+ * `*italic*`/`_italic_`, and `- `/`* ` bullets (turned into "• "). Deliberately tiny -- no library,
+ * no tables/headers/links -- because that's all the assistant produces and the app watches its size.
+ * A still-streaming, unterminated `**bold` renders as plain text until its closer arrives.
+ */
+private fun markdownToAnnotated(src: String): AnnotatedString = buildAnnotatedString {
+    val lines = src.split("\n")
+    lines.forEachIndexed { index, raw ->
+        if (index > 0) append("\n")
+        val trimmed = raw.trimStart()
+        var line = raw
+        if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
+            append("•  ")
+            line = trimmed.removeRange(0, 2)
+        }
+        appendInlineMarkdown(line)
+    }
+}
+
+private fun AnnotatedString.Builder.appendInlineMarkdown(text: String) {
+    var i = 0
+    while (i < text.length) {
+        if (text.startsWith("**", i)) {
+            val end = text.indexOf("**", i + 2)
+            if (end != -1) {
+                pushStyle(SpanStyle(fontWeight = FontWeight.Bold))
+                append(text.substring(i + 2, end))
+                pop()
+                i = end + 2
+                continue
+            }
+        }
+        val ch = text[i]
+        if ((ch == '*' || ch == '_') && i + 1 < text.length) {
+            val end = text.indexOf(ch, i + 1)
+            if (end > i + 1) {
+                pushStyle(SpanStyle(fontStyle = FontStyle.Italic))
+                append(text.substring(i + 1, end))
+                pop()
+                i = end + 1
+                continue
+            }
+        }
+        append(ch)
+        i++
+    }
 }
