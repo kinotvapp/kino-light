@@ -3,6 +3,7 @@ package com.arkiv.player.data.ai
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import okhttp3.mockwebserver.Dispatcher
@@ -43,6 +44,8 @@ class AiClientTest {
     )
     private val chatRequests = mutableListOf<String>()
     private var catalogRequests = 0
+    /** The body of the most recent /chat/completions request (for streaming assertions). */
+    private var lastChatBody = ""
 
     /** Counts down to zero as soon as the server gets a chat request (not a catalog one): used
      *  to wait, in real time, until the request has actually gone out before cancelling. */
@@ -61,6 +64,7 @@ class AiClientTest {
                 // with javap over mockwebserver 4.12.0); reading it here leaves it empty for whoever
                 // reads it again afterward (the "OpenAI dialect" test reads it again).
                 val body = request.body.clone().readUtf8()
+                lastChatBody = body
                 val model = Regex("\"model\"\\s*:\\s*\"([^\"]+)\"").find(body)!!.groupValues[1]
                 chatRequests += model
                 chatRequestLatch.countDown()
@@ -233,5 +237,38 @@ class AiClientTest {
         perModel.remove("a:free") // now the default answers: valid JSON, no delay
         chatRequests.clear()
         assertEquals("a:free", (c.ask("y") as AiResponse.Text).model)
+    }
+
+    // --- streamChat (Kinobot) ---
+
+    private fun sse(vararg contents: String): MockResponse {
+        val frames = contents.joinToString("") {
+            "data: {\"choices\":[{\"delta\":{\"content\":\"$it\"}}]}\n\n"
+        }
+        return MockResponse().addHeader("Content-Type", "text/event-stream").setBody(frames + "data: [DONE]\n\n")
+    }
+
+    @Test fun `streamChat emits the content deltas in order`() = runTest {
+        perModel["kilo-auto/free"] = sse("Hola", " mundo")
+        val out = client().streamChat(listOf(ChatMessage("user", "hi"))).toList()
+        assertEquals(listOf("Hola", " mundo"), out)
+    }
+
+    @Test fun `streamChat sends stream true and the message roles`() = runTest {
+        perModel["kilo-auto/free"] = sse("x")
+        client().streamChat(listOf(ChatMessage("system", "S"), ChatMessage("user", "U"))).toList()
+        assertTrue(lastChatBody.contains("\"stream\":true"))
+        assertTrue(lastChatBody.contains("\"role\":\"system\""))
+        assertTrue(lastChatBody.contains("\"role\":\"user\""))
+        assertEquals("kilo-auto/free", chatRequests.first()) // auto-router tried first
+    }
+
+    @Test fun `streamChat falls through to a catalog model when auto streams nothing`() = runTest {
+        perModel["kilo-auto/free"] = sse() // only [DONE], no tokens (both auto tries)
+        perModel["a:free"] = sse("desde a")
+        val out = client().streamChat(listOf(ChatMessage("user", "hi"))).toList()
+        assertEquals(listOf("desde a"), out)
+        // auto tried twice, then a:free.
+        assertEquals(listOf("kilo-auto/free", "kilo-auto/free", "a:free"), chatRequests)
     }
 }

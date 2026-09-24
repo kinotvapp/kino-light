@@ -5,6 +5,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -26,6 +29,9 @@ internal sealed interface AiResponse {
     data class Text(val text: String, val model: String) : AiResponse
     data object Unable : AiResponse
 }
+
+/** One turn in a chat sent to [AiClient.streamChat]. `role` is "system" | "user" | "assistant". */
+internal data class ChatMessage(val role: String, val content: String)
 
 /**
  * The app talking to Kilo's free models, with no server of its own and no key.
@@ -67,6 +73,81 @@ internal class AiClient(
             return@withContext AiResponse.Text(text, model.id)
         }
         AiResponse.Unable
+    }
+
+    /**
+     * Streams a multi-turn chat as text deltas, for Kinobot. Tries [AUTO_ID] (Kilo's auto-router:
+     * fast, picks a good free model, but ~1 in 4 calls streams nothing) TWICE first, then the
+     * [ModelMemory]-ranked catalog, capped at [MAX_ATTEMPTS]. A model that streams ≥1 token wins; one
+     * that streams nothing or errors is skipped (an empty stream carries no penalty, like [ask]'s
+     * empty answer). Emits nothing (completes) if every attempt fails. Never throws.
+     */
+    fun streamChat(messages: List<ChatMessage>): Flow<String> = flow {
+        val models = currentCatalog()
+        val order = (listOf(AUTO_ID, AUTO_ID) + lock.withLock { memory.order(models) }.map { it.id })
+            .take(MAX_ATTEMPTS)
+        for (id in order) {
+            currentCoroutineContext().ensureActive()
+            var emitted = false
+            val failure = streamAttempt(id, messages) { delta -> emitted = true; emit(delta) }
+            if (emitted) {
+                lock.withLock { memory.success(id) }
+                return@flow
+            }
+            // No tokens: an empty stream is [Failure.Unreadable] (no penalty), so AUTO_ID's second
+            // try — or the same model later — isn't parked for a transient empty.
+            val f = failure ?: Failure.Unreadable
+            Log.w(TAG, "$id (stream): $f")
+            lock.withLock { memory.failure(id, f) }
+        }
+    }.flowOn(Dispatchers.IO)
+
+    /**
+     * One streaming attempt. Reads the SSE body line by line, extracts `choices[0].delta.content`
+     * from each `data:` frame and hands non-empty deltas to [onDelta], stopping at `[DONE]`. Returns
+     * a [Failure] for a non-200 / network error, or null on a clean end (the caller decides based on
+     * whether anything was emitted).
+     */
+    private suspend fun streamAttempt(
+        id: String,
+        messages: List<ChatMessage>,
+        onDelta: suspend (String) -> Unit,
+    ): Failure? {
+        val msgArray = JSONArray()
+        messages.forEach { msgArray.put(JSONObject().put("role", it.role).put("content", it.content)) }
+        val body = JSONObject().put("model", id).put("stream", true).put("messages", msgArray).toString()
+        val request = Request.Builder()
+            .url("$baseUrl/chat/completions")
+            .post(body.toRequestBody(JSON))
+            .build()
+        return try {
+            execute(request).use { resp ->
+                when {
+                    resp.code == 429 -> Failure.RateLimited(
+                        resp.header("Retry-After")?.trim()?.toLongOrNull()?.times(1000)?.coerceAtMost(RATE_LIMIT_WAIT_CAP_MS),
+                    )
+                    !resp.isSuccessful -> Failure.Server
+                    else -> {
+                        val source = resp.body?.source() ?: return Failure.Server
+                        while (true) {
+                            currentCoroutineContext().ensureActive()
+                            val line = source.readUtf8Line() ?: break
+                            if (!line.startsWith("data:")) continue
+                            val payload = line.substring(5).trim()
+                            if (payload == "[DONE]") break
+                            val delta = runCatching {
+                                JSONObject(payload).getJSONArray("choices").getJSONObject(0)
+                                    .optJSONObject("delta")?.optString("content").orEmpty()
+                            }.getOrDefault("")
+                            if (delta.isNotEmpty()) onDelta(delta)
+                        }
+                        null
+                    }
+                }
+            }
+        } catch (e: IOException) {
+            Failure.Server
+        }
     }
 
     /** One attempt against a model: its text, or null after logging the failure in [memory]. */
@@ -168,6 +249,8 @@ internal class AiClient(
 
     internal companion object {
         const val BASE = "https://api.kilo.ai/api/gateway"
+        /** Kilo's auto-router (free tier): fast, but occasionally streams nothing — see [streamChat]. */
+        const val AUTO_ID = "kilo-auto/free"
         const val MAX_ATTEMPTS = 4
         const val TIMEOUT_S = 45L
         const val CATALOG_TTL_MS = 6 * 60 * 60 * 1000L
