@@ -34,4 +34,14 @@ class HostRulesTest {
         assertFalse(HostRules.matches("archive.org", p))
         assertFalse(HostRules.matches("notarchive.org", p))
     }
+
+    @Test fun `IP literals and local names are local addresses, public names are not`() {
+        listOf(
+            "192.168.1.1", "127.0.0.1", "10.0.0.5", "2130706433", "127.1", "::1", "fe80::1", "64:ff9b::c0a8:101",
+            "localhost", "LOCALHOST", "foo.localhost", "printer.local", "nas.lan", "svc.internal", "router.home.arpa",
+            "localhost.",
+        ).forEach { assertTrue(it, HostRules.isLocalAddress(it)) }
+        listOf("archive.org", "ia8.us.archive.org", "cdn-1.example.co", "1.example.com")
+            .forEach { assertFalse(it, HostRules.isLocalAddress(it)) }
+    }
 }

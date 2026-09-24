@@ -26,7 +26,8 @@ data class InstalledPlugin(val manifest: PluginManifest, val record: InstalledRe
 /** Whether a saved plugin title can play now, and the plugin's name for the message if not. */
 sealed interface PluginAccess {
     val name: String
-    data class Ready(override val name: String) : PluginAccess
+    /** [hosts] are the ones the person APPROVED (the installed record): the player gates the stream to them. */
+    data class Ready(override val name: String, val hosts: List<String> = emptyList()) : PluginAccess
     data class Disabled(override val name: String) : PluginAccess
     data class Uninstalled(override val name: String) : PluginAccess
     data class Damaged(override val name: String) : PluginAccess
@@ -82,7 +83,7 @@ class PluginRegistry(private val store: PluginStore) : PluginPlayback {
             p == null -> PluginAccess.Uninstalled(pluginId?.let(store::removedName) ?: pluginId ?: "desconocido")
             p.record.damaged -> PluginAccess.Damaged(p.manifest.name)
             !p.isUsable -> PluginAccess.Disabled(p.manifest.name)
-            else -> PluginAccess.Ready(p.manifest.name)
+            else -> PluginAccess.Ready(p.manifest.name, p.record.hosts)
         }
     }
 

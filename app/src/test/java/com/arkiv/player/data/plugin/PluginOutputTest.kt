@@ -99,4 +99,15 @@ class PluginOutputTest {
             "[]",
         ).forEach { json -> assertThrows(json, PluginContractException::class.java) { PluginOutput.stream(json, hosts) } }
     }
+
+    @Test fun `images on IP literals or local names are dropped, so a poster is never a LAN probe`() {
+        val items = PluginOutput.items(
+            """[{"id":"a","ref":"r","title":"A","kind":"movie","poster":"https://192.168.1.1/cgi-bin/reboot","backdrop":"https://cdn.example.com/b.jpg"},
+                {"id":"b","ref":"r","title":"B","kind":"movie","poster":"https://localhost:8080/p.jpg","backdrop":"https://[fd00::1]/b.jpg"},
+                {"id":"c","ref":"r","title":"C","kind":"movie","poster":"https://nas.local/p.jpg","backdrop":"https://2130706433/b.jpg"}]""",
+            allowSeries = false,
+        )
+        assertEquals(listOf("", "", ""), items.map { it.poster })
+        assertEquals(listOf("https://cdn.example.com/b.jpg", "", ""), items.map { it.backdrop })
+    }
 }

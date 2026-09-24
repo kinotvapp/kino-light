@@ -357,6 +357,13 @@ class AppGraph(context: Context) {
 
     val pluginRegistry: PluginRegistry by lazy { PluginRegistry(pluginStore).also { it.reload() } }
 
+    /**
+     * The player's client for one plugin stream, gated to [approvedHosts] (the installed record's,
+     * carried in `PlayerData.pluginHosts`) on every request and redirect hop. See PluginStreamHttp.
+     */
+    fun pluginStreamClient(approvedHosts: List<String>): okhttp3.OkHttpClient =
+        PluginStreamHttp.client(pluginBaseHttp, approvedHosts)
+
     /** The live PluginHttp of each open runtime, so the pool can reset its per-call request budget. */
     private val pluginHttps = java.util.concurrent.ConcurrentHashMap<String, PluginHttp>()
 

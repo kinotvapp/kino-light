@@ -663,6 +663,9 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer-hls:1.5.1")
     implementation("androidx.media3:media3-ui:1.5.1")
     implementation("androidx.media3:media3-datasource:1.5.1")
+    // Plugin streams play through OkHttp so every manifest, segment, key and redirect hop is
+    // host-gated in an interceptor before the request leaves the device (PluginStreamHttp).
+    implementation("androidx.media3:media3-datasource-okhttp:1.5.1")
     implementation("androidx.media3:media3-session:1.5.1")
     // Transmux MPEG-TS -> MP4 for cast. Transformer copies the compressed samples when the format
     // already fits (no re-encode, so no quality loss and little CPU), which is what turns a

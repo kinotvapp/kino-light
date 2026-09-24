@@ -219,7 +219,7 @@ all or nothing.
 | `ref` | A non-empty string of at most 4096 characters. |
 | `kind` | `"movie"` or `"series"`. A `series` item from a plugin that does not declare `episodes` is dropped: it could never be opened. |
 | Text fields | `title` is required and non-blank, up to 200 characters. `overview` up to 2000; `lang` and `quality` up to 20 (for example `"es"`, `"1080p"`); `year` up to 10 (a number is accepted and converted). Longer text is cut; the text of `SeriesInfo` and `Episode` is cut the same way (200 characters for titles, 2000 for overviews). |
-| Images | `poster`, `backdrop` and `still` must be `https` URLs of at most 2048 characters, or they are ignored. Images are loaded by Kino directly and are **not** checked against `hosts` (they are display only), and Kino does not send your headers or cookies with them. This is the one exception to the host rule. |
+| Images | `poster`, `backdrop` and `still` must be `https` URLs of at most 2048 characters, or they are ignored. Images are loaded by Kino directly and are **not** checked against `hosts` (they are display only), and Kino does not send your headers or cookies with them. This is the one exception to the host rule, with one limit: an image on an IP address or a local name (`localhost`, `.local`, `.lan`, …) is ignored too. |
 
 **The `Stream` rules.**
 
@@ -228,8 +228,14 @@ all or nothing.
   stream still plays.
 - `mime` is optional, of the form `video/mp4` (anything else refuses the stream). When it is missing
   Kino's player detects HLS, DASH or a plain file from the URL and the content.
-- `headers` are sent with the player's requests for that stream (including the segments of an HLS or
-  DASH manifest) and its subtitles, and nowhere else. At most 20; names are letters, digits and
+- **Everything the player fetches for the stream follows the `kino.fetch` host rules.** That covers the
+  `url` itself, the variants, segments and `#EXT-X-KEY` keys an HLS manifest names, the `BaseURL`s of a
+  DASH manifest, the subtitles, and every redirect hop of any of them: each must be `https` on one of
+  your `hosts`, never an IP address or a local name, and a declared name that resolves inside the
+  person's own network is refused. A request that breaks this fails before it leaves the device and
+  playback stops with an error, so a manifest that points at another CDN needs that CDN in `hosts`.
+- `headers` are sent with every one of those player requests (the stream, its manifest's segments and
+  keys, its subtitles, and redirect hops, all on your `hosts`), and nowhere else. At most 20; names are letters, digits and
   hyphens; values are at most 4096 characters with no line breaks; `Host`, `Content-Length`,
   `Transfer-Encoding` and `Connection` are ignored.
 - `subtitles`: at most 30, each `{ lang, url, format? }`. `lang` is a short language code such as
@@ -268,8 +274,10 @@ r.json()    // JSON.parse of the body
 - **https only, and only your hosts.** The host of the request and of **every redirect hop** must
   match `hosts` (`*.x` matches subdomains of `x`, not `x`). A request to anything else fails before
   it leaves the device with a catchable `Error("host no permitido: <host>")`. An `http` URL, even on a
-  declared host, fails with `Error("solo se permite https")`. Kino also refuses a declared name that
-  resolves to an address inside the person's own network (loopback, private, link-local).
+  declared host, fails with `Error("solo se permite https")`. An IP address or a local name
+  (`localhost`, `.local`, …) is always refused with `host no permitido`. Kino also refuses a declared
+  name that resolves to an address inside the person's own network (loopback, private, link-local,
+  carrier-grade NAT, multicast).
 - **Redirects** (301, 302, 303, 307, 308) are followed by Kino, up to 10 hops; each hop is checked
   and counted as a request. A 303, or a 301/302 after a POST, turns into a GET without a body.
 - **A non-2xx answer does not throw**: check `r.ok`. Network failures, refused hosts, timeouts and

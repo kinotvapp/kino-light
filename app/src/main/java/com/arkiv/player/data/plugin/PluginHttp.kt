@@ -21,11 +21,15 @@ class HostNotAllowedException(val host: String) : IOException("host no permitido
 
 /**
  * The single rule of plugin networking: a request (and every redirect hop) goes only to a host the
- * plugin declared and the person approved, over https. `allowInsecureLocalhost` exists for
- * MockWebServer tests; production code never sets it.
+ * plugin declared and the person approved, over https — and never to an IP literal or a local
+ * name, whatever the list says. Used by `kino.fetch` ([PluginHttp]) and by the player
+ * ([PluginStreamGate]). `allowInsecureLocalhost` exists for MockWebServer tests; production code
+ * never sets it.
  */
 object PluginHostGate {
     fun check(url: HttpUrl, hosts: List<String>, allowInsecureLocalhost: Boolean = false) {
+        val testLocalhost = allowInsecureLocalhost && url.host == "localhost"
+        if (HostRules.isLocalAddress(url.host) && !testLocalhost) throw HostNotAllowedException(url.host)
         if (!HostRules.matches(url.host, hosts)) throw HostNotAllowedException(url.host)
         if (url.scheme == "https") return
         if (allowInsecureLocalhost && url.host == "localhost") return
@@ -34,20 +38,35 @@ object PluginHostGate {
 }
 
 /**
- * Refuses a declared name that resolves into the local network (loopback, RFC 1918, link-local,
- * IPv6 unique-local): a public-looking domain must not become a way into the home LAN.
+ * Refuses a declared name that resolves into the local network: loopback, RFC 1918, link-local,
+ * "this network" 0.0.0.0/8, carrier-grade NAT 100.64.0.0/10, multicast, IPv6 unique-local and
+ * NAT64 64:ff9b::/96 (which maps onto any IPv4 address, private ones included). A public-looking
+ * domain must not become a way into the home LAN.
  */
 class PluginDns(
     private val allowLoopback: Boolean = false,
     private val delegate: Dns = Dns.SYSTEM,
 ) : Dns {
     override fun lookup(hostname: String): List<InetAddress> {
-        val usable = delegate.lookup(hostname).filterNot { a ->
-            (a.isLoopbackAddress && !allowLoopback) || a.isSiteLocalAddress || a.isLinkLocalAddress ||
-                a.isAnyLocalAddress || (a is Inet6Address && (a.address[0].toInt() and 0xFE) == 0xFC)
-        }
+        val usable = delegate.lookup(hostname).filterNot { a -> isLocal(a) && !(allowLoopback && a.isLoopbackAddress) }
         if (usable.isEmpty()) throw UnknownHostException("$hostname apunta a una dirección privada")
         return usable
+    }
+
+    private fun isLocal(a: InetAddress): Boolean {
+        if (a.isLoopbackAddress || a.isSiteLocalAddress || a.isLinkLocalAddress || a.isAnyLocalAddress || a.isMulticastAddress) {
+            return true
+        }
+        val b = a.address.map { it.toInt() and 0xFF }
+        return if (a is Inet6Address) {
+            (b[0] and 0xFE) == 0xFC || b.take(12) == NAT64_PREFIX
+        } else {
+            b[0] == 0 || (b[0] == 100 && (b[1] and 0xC0) == 64)
+        }
+    }
+
+    private companion object {
+        val NAT64_PREFIX = listOf(0x00, 0x64, 0xFF, 0x9B, 0, 0, 0, 0, 0, 0, 0, 0)
     }
 }
 

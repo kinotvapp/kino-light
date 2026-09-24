@@ -38,11 +38,14 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
 import androidx.media3.common.text.CueGroup
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.SubtitleView
+import com.arkiv.player.playback.SourceKind
 import com.arkiv.player.ui.rememberGraph
 import kotlinx.coroutines.delay
 
@@ -53,8 +56,8 @@ private const val TAG = "StreamExo"
  *
  * Magis's URL already arrives proxied by [archiveCacheProxy] (http://127.0.0.1:...), which injects
  * the CDN's authentication headers transparently. A plugin's URL is played directly, with the
- * plugin's headers on the data source ([requestHeaders]). ExoPlayer downloads either as plain
- * HTTP, and [DefaultMediaSourceFactory] auto-detects HLS, DASH or progressive (MP4/TS) based on
+ * plugin's headers on the data source ([requestHeaders]) and every request host-gated ([http]).
+ * ExoPlayer downloads either as plain HTTP, and [DefaultMediaSourceFactory] auto-detects HLS, DASH or progressive (MP4/TS) based on
  * the content type. For the progress bar and controls it uses the same [PlayerMirror] VLC used to.
  *
  * Uses [TextureView] directly so [onTextureViewReady] exposes the surface and `captureFrame`
@@ -79,6 +82,8 @@ internal fun StreamExoPlayer(
      * against 127.0.0.1 and 404. Also reaches this stream's subtitle requests.
      */
     requestHeaders: Map<String, String> = emptyMap(),
+    /** The data source: [StreamHttp.Default] for Magis, host-gated OkHttp for plugins. */
+    http: StreamHttp = StreamHttp.Default,
     /** Container MIME when the source knows it (e.g. `application/x-mpegURL`); null = sniff. */
     mimeType: String? = null,
     /** Prefix of the Sentry tag in `onPlayerError`: `"magis"` or `"plugin"`. */
@@ -105,13 +110,20 @@ internal fun StreamExoPlayer(
     val graph = rememberGraph()
     val subtitleStyle by graph.subtitlePrefs.prefs.collectAsStateWithLifecycle()
 
-    val exoPlayer = remember(mediaUrl, subtitleConfigs, requestHeaders, mimeType) {
+    val exoPlayer = remember(mediaUrl, subtitleConfigs, requestHeaders, mimeType, http) {
         Log.i(TAG, "Creating ExoPlayer · url=${mediaUrl.take(80)} startMs=$startPositionMs subs=${subtitleConfigs.size}")
-        val httpFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent(requestHeaders.entries.firstOrNull { it.key.equals("User-Agent", true) }?.value ?: "okhttp/4.12.0")
-            .setDefaultRequestProperties(requestHeaders.filterKeys { !it.equals("User-Agent", true) })
-            .setConnectTimeoutMs(30_000)
-            .setReadTimeoutMs(30_000)
+        val httpFactory: DataSource.Factory = when (http) {
+            StreamHttp.Default -> DefaultHttpDataSource.Factory()
+                .setUserAgent(requestHeaders.entries.firstOrNull { it.key.equals("User-Agent", true) }?.value ?: "okhttp/4.12.0")
+                .setDefaultRequestProperties(requestHeaders.filterKeys { !it.equals("User-Agent", true) })
+                .setConnectTimeoutMs(30_000)
+                .setReadTimeoutMs(30_000)
+            // Every request this stream makes — manifest, variants, segments, keys, subtitles and
+            // each redirect hop — is gated to the approved hosts before it leaves the device.
+            is StreamHttp.PluginGated -> OkHttpDataSource.Factory(graph.pluginStreamClient(http.hosts))
+                .setUserAgent(requestHeaders.entries.firstOrNull { it.key.equals("User-Agent", true) }?.value ?: "okhttp/4.12.0")
+                .setDefaultRequestProperties(requestHeaders.filterKeys { !it.equals("User-Agent", true) })
+        }
 
         val mediaItem = MediaItem.Builder()
             .setUri(Uri.parse(mediaUrl))
@@ -487,6 +499,25 @@ internal fun TextureView.fitAspect(videoAspect: Float, zoom: Float) {
         },
     )
 }
+
+/**
+ * Which HTTP data source a [StreamExoPlayer] stream plays through.
+ *
+ * Magis keeps [DefaultHttpDataSource] exactly as it was (its URL is the local proxy). A plugin
+ * stream plays through OkHttp with the host gate on every request and redirect hop
+ * ([com.arkiv.player.data.plugin.PluginStreamHttp]), so what the manifest names can't reach an
+ * undeclared host, plain http, an IP literal or the home network.
+ */
+internal sealed interface StreamHttp {
+    data object Default : StreamHttp
+
+    /** [hosts]: the ones the person approved, from the installed record — never plugin output. */
+    data class PluginGated(val hosts: List<String>) : StreamHttp
+}
+
+/** Only a PLUGIN stream is gated; an empty host list is still gated (it reaches nothing). */
+internal fun streamHttpFor(kind: SourceKind, pluginHosts: List<String>): StreamHttp =
+    if (kind == SourceKind.PLUGIN) StreamHttp.PluginGated(pluginHosts) else StreamHttp.Default
 
 /**
  * A subtitle's type from its path. VTT by default: what magis's portal serves; the .srt case is

@@ -38,7 +38,8 @@ class PluginContractException(message: String) : Exception(message)
  * Strict reader of what a plugin returns (apiVersion 1). Lists are forgiving — a bad entry is
  * dropped with a [log] line, the rest survive — while a stream is all-or-nothing: an `http` URL, a
  * host the plugin didn't declare, or any DRM field refuses the whole thing. Images must be https
- * and are the one thing NOT host-gated (display-only, loaded by Coil without plugin headers).
+ * and are the one thing NOT host-gated (display-only, loaded by Coil without plugin headers), but
+ * an image on an IP literal or a local name is dropped, so a poster can't probe the home network.
  */
 object PluginOutput {
     const val MAX_ITEMS = 50
@@ -181,6 +182,11 @@ object PluginOutput {
             else -> ""
         }.trim().take(max)
 
-    private fun image(o: JSONObject, key: String): String =
-        (o.opt(key) as? String).orEmpty().trim().takeIf { it.startsWith("https://") && it.length <= 2048 }.orEmpty()
+    /** https, ≤ 2048 chars, and never an IP literal or a local name: a poster must not be a LAN probe. */
+    private fun image(o: JSONObject, key: String): String {
+        val v = (o.opt(key) as? String).orEmpty().trim()
+        if (!v.startsWith("https://") || v.length > 2048) return ""
+        val host = v.toHttpUrlOrNull()?.host ?: return ""
+        return if (HostRules.isLocalAddress(host)) "" else v
+    }
 }

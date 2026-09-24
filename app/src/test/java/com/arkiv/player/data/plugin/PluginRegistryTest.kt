@@ -77,4 +77,12 @@ class PluginRegistryTest {
         assertEquals("Esto venía del plugin Ido, que ya no está instalado", registry.accessFor("gone").blockedMessage())
         assertTrue(registry.accessFor(null) is PluginAccess.Uninstalled)
     }
+
+    @Test fun `a ready plugin carries the hosts the person approved, from the installed record`() {
+        install("pa", "A") { copy(hosts = listOf("approved.example.com", "*.cdn.example.com")) }
+        assertEquals(
+            PluginAccess.Ready("A", listOf("approved.example.com", "*.cdn.example.com")),
+            registry.accessFor("pa"),
+        )
+    }
 }

@@ -40,6 +40,20 @@ class PluginHttpTest {
         assertThrows(IOException::class.java) { PluginHostGate.check("http://localhost/".toHttpUrl(), listOf("localhost")) }
     }
 
+    @Test fun `the gate refuses IP literals and local names before matching the declared hosts`() {
+        // Declared patterns can never be IP literals or local names (HostRules), but the gate
+        // refuses them on its own too: it's the one check every request and redirect hop goes through.
+        listOf("https://192.168.1.1/cgi-bin/x", "https://[::1]/", "https://2130706433/", "https://nas.local/")
+            .forEach { u ->
+                assertThrows(u, HostNotAllowedException::class.java) {
+                    PluginHostGate.check(u.toHttpUrl(), listOf("192.168.1.1", "nas.local", "*.1.1"))
+                }
+            }
+        assertThrows(HostNotAllowedException::class.java) {
+            PluginHostGate.check("https://localhost/".toHttpUrl(), listOf("localhost"))
+        }
+    }
+
     @Test fun `fetch returns status, lowercased headers and body with the plugin user agent`() = runBlocking {
         server.enqueue(MockResponse().setBody("{\"a\":1}").setHeader("X-Test", "yes"))
         val r = http().fetch(PluginHttp.Request(url("/ok")))

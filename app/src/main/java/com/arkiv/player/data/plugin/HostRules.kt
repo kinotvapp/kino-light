@@ -25,6 +25,19 @@ object HostRules {
         return !labels.last().all { it.isDigit() }
     }
 
+    /**
+     * An address that points into the device or the home network by construction: an IPv4 literal
+     * (any all-digit last label, which also covers the `2130706433` / `127.1` shorthands Java's
+     * resolver accepts), an IPv6 literal, `localhost` or a local-only suffix. Never a valid declared
+     * pattern (see [isValidPattern]); the host gate and the image filter refuse it outright.
+     */
+    fun isLocalAddress(host: String): Boolean {
+        val h = host.lowercase().trimEnd('.')
+        if (h.isEmpty() || ':' in h || '[' in h) return true
+        if (h == "localhost" || PRIVATE_SUFFIXES.any { h.endsWith(it) }) return true
+        return h.substringAfterLast('.').all { it.isDigit() }
+    }
+
     fun matches(host: String, patterns: Collection<String>): Boolean {
         val h = host.lowercase().trimEnd('.')
         return patterns.any { p ->
