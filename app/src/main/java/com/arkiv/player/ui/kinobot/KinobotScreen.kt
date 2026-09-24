@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -24,7 +23,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -85,7 +84,9 @@ internal fun KinobotScreen(onBack: () -> Unit, onSearch: (String) -> Unit) {
         if (count > 0) listState.animateScrollToItem(count - 1)
     }
 
-    Column(Modifier.fillMaxSize().background(ArkivBlack).imePadding()) {
+    // No imePadding here on purpose: this app's window resizes for the keyboard (adjustResize), so
+    // the content already lifts; adding imePadding on top double-lifted the input to mid-screen.
+    Column(Modifier.fillMaxSize().background(ArkivBlack)) {
         // Header
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
@@ -101,7 +102,7 @@ internal fun KinobotScreen(onBack: () -> Unit, onSearch: (String) -> Unit) {
             }
             if (messages.isNotEmpty()) {
                 IconButton(onClick = { vm.clear() }) {
-                    Icon(Icons.Default.DeleteOutline, contentDescription = "Borrar conversación", tint = ArkivTextSecondary)
+                    Icon(Icons.Default.Add, contentDescription = "Nueva conversación", tint = Color.White)
                 }
             }
         }

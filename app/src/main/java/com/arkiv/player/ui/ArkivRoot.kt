@@ -4,7 +4,6 @@ import android.net.Uri
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -346,16 +345,10 @@ fun ArkivRoot(
                 )
             }
             composable("kinobot") {
-                // The Scaffold reserves the system-bar insets (no topBar on this route) and consumes
-                // them, so KinobotScreen must take that `padding` for the status/nav bars; its own
-                // `imePadding` then lifts the input by the keyboard height (consumeWindowInsets keeps
-                // the nav-bar inset from being counted twice under the IME).
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .padding(padding)
-                        .consumeWindowInsets(padding),
-                ) {
+                // Takes the Scaffold's padding for the status/nav bars (no topBar on this route).
+                // The keyboard is handled by the window resize (adjustResize), not imePadding — see
+                // KinobotScreen.
+                Box(Modifier.fillMaxSize().padding(padding)) {
                     com.arkiv.player.ui.kinobot.KinobotScreen(
                         onBack = { navController.popBackStack() },
                         onSearch = { title -> navController.navigate("search?query=${android.net.Uri.encode(title)}") },
