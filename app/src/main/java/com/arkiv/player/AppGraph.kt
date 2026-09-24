@@ -436,8 +436,9 @@ class AppGraph(context: Context) {
     /** UpdateWorker's plugin step: each plugin at most once per 24 h; see PluginInstaller.checkDueUpdates. */
     suspend fun checkPluginUpdates() {
         val outcomes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { pluginInstaller.checkDueUpdates() }
-        outcomes.filter { it.second is UpdateOutcome.Applied }.forEach { pluginRuntimes.close(it.first) }
+        // Reload before closing, as in DefaultPluginAdmin: never a new script with the old hosts.
         pluginRegistry.reload()
+        outcomes.filter { it.second is UpdateOutcome.Applied }.forEach { pluginRuntimes.close(it.first) }
     }
 
     internal val magisLive: com.arkiv.player.data.magis.MagisLive by lazy {

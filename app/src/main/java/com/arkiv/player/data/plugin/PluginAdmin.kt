@@ -25,14 +25,16 @@ class DefaultPluginAdmin(
 
     override suspend fun install(preview: InstallPreview) {
         withContext(Dispatchers.IO) { installer.install(preview) }
-        runtimes.close(preview.manifest.id)
+        // Reload first: a call landing between these two would otherwise open the new script
+        // against the old registry entry (old approved hosts) and keep it until idle close.
         registry.reload()
+        runtimes.close(preview.manifest.id)
     }
 
     override suspend fun checkUpdate(id: String): UpdateOutcome {
         val outcome = withContext(Dispatchers.IO) { installer.checkUpdate(id) }
-        if (outcome is UpdateOutcome.Applied) runtimes.close(id)
         registry.reload()
+        if (outcome is UpdateOutcome.Applied) runtimes.close(id)
         return outcome
     }
 
@@ -42,7 +44,7 @@ class DefaultPluginAdmin(
     }
 
     override fun uninstall(id: String) {
-        runtimes.close(id)
         registry.uninstall(id)
+        runtimes.close(id)
     }
 }
