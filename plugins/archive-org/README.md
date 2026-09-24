@@ -36,6 +36,22 @@ kinotvapp/kino-plugin-archive
 Kino reads `kino-plugin.json` and `plugin.js` from the repository root, shows the hosts the plugin
 will reach and asks for approval before anything runs.
 
+## Write your own plugin
+
+This repository is also the starting point for your own plugin:
+
+- [`GUIDE.md`](GUIDE.md) is the authoring guide: file layout, manifest, the four functions your
+  code exports, the `kino` API, every limit and the quirks of the JavaScript engine.
+- [`sdk/`](sdk) lets you run and test a plugin on your computer with Node 18 or newer, using the same
+  `kino` API as the app:
+
+```
+node sdk/run.mjs ./plugin.js search "metropolis"
+node sdk/run.mjs ./plugin.js home
+```
+
+Copy `plugin.js` and `kino-plugin.json`, change them, and publish your repository the same way.
+
 ## License note
 
 What this plugin plays is not ours to license: the videos are public domain or carry the license
