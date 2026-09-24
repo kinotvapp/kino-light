@@ -367,4 +367,25 @@ class LibraryGroupingTest {
 
         assertEquals("item:web:1", LibraryGrouping.groupKeyOf(a, null))
     }
+
+    // --- plugin item ids --------------------------------------------------------------
+
+    @Test
+    fun `a plugin movie groups by its own item id`() {
+        val movie = row("plugin:demo:m1", "Metrópolis", 1, source = "plugin:demo", category = null)
+        assertEquals("item:plugin:demo:m1", LibraryGrouping.groupKeyOf(movie, null))
+    }
+
+    @Test
+    fun `a plugin series with a TMDB id joins the same group as that series from another source`() {
+        val plugin = row("plugin:demo:s1", "Dragnet", 3, source = "plugin:demo", tmdbId = 55, tipo = "tv")
+        val caracol = row("ditu:B9", "Dragnet", 2, source = "ditu", tmdbId = 55, tipo = "tv")
+        assertEquals(LibraryGrouping.groupKeyOf(caracol, null), LibraryGrouping.groupKeyOf(plugin, null))
+    }
+
+    @Test
+    fun `resolveMembers finds a plugin item by its item group key`() {
+        val movie = row("plugin:demo:m1", "Metrópolis", 1, source = "plugin:demo", category = null)
+        assertEquals(listOf(movie), LibraryGrouping.resolveMembers("item:plugin:demo:m1", emptyList(), listOf(movie)))
+    }
 }
