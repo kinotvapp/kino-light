@@ -128,7 +128,18 @@ fun resolvedOmvllNdkVersion(): String =
  */
 val omvllReleaseObfuscation = !allowPlainRelease && file(resolvedOmvllPluginPath()).exists()
 
+// DEV-ONLY fast iteration: `-PkinoFastDev` turns OFF R8 minification and the release lint (the two
+// tasks that dominate a release build's ~9 min). The .so is unaffected -- it is already O-MVLL
+// obfuscated and Gradle caches it, so it is NOT rebuilt for a Kotlin-only change either way. The APK
+// is still signed with the release cert (so it activates) but is un-minified and larger. NEVER use
+// this for a shipped OTA build; leave it off and the build is the normal production one.
+val kinoFastDev = project.hasProperty("kinoFastDev")
+
 android {
+    lint {
+        // Skip the (slow) release lint on a fast dev build; production/OTA builds still run it.
+        checkReleaseBuilds = !kinoFastDev
+    }
     namespace = "com.arkiv.player"
     compileSdk = 35
     // r28+: the linker defaults to 16 KB-aligned LOAD segments, which newer Android devices
@@ -227,7 +238,7 @@ android {
             // goes 20,151,333 -> 7,404,256 bytes with R8, and it builds with no extra keep rules.
             // NOT exercised on a device yet: installing a release build means uninstalling the debug
             // one, which wipes app data, so that check waits for a device that can afford it.
-            isMinifyEnabled = true
+            isMinifyEnabled = !kinoFastDev
             if (hasSigningConfig) signingConfig = signingConfigs.getByName("release")
             // The hardened (obfuscated) release ships BOTH real-device ABIs -- phone arm64-v8a AND
             // Fire Stick armeabi-v7a. The O-MVLL Virtualize pass used to SIGSEGV compiling the marked
@@ -508,6 +519,10 @@ val uploadProguardMappingLegacy = tasks.register("uploadProguardMappingLegacy") 
         "endpoint (the plugin's own chunked auto-upload is broken on this GlitchTip instance)."
     dependsOn("assembleRelease")
     onlyIf {
+        if (kinoFastDev) {
+            logger.lifecycle("uploadProguardMappingLegacy: kinoFastDev (R8 off, no mapping.txt), skipping.")
+            return@onlyIf false
+        }
         if (sentryAuthToken.isBlank()) {
             logger.lifecycle("uploadProguardMappingLegacy: SENTRY_AUTH_TOKEN not set, skipping (tokenless build).")
         }
