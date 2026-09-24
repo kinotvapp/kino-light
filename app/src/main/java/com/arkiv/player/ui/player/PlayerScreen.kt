@@ -2131,6 +2131,11 @@ private fun PlayerContent(
                 android.util.Log.w("ArkivCast", "plugin title: cast not available, ending the session")
                 android.widget.Toast.makeText(context, "No disponible para contenido de plugins", android.widget.Toast.LENGTH_SHORT).show()
                 runCatching { castContext?.sessionManager?.endCurrentSession(true) }
+                // Ending the session flips `casting` to false and relaunches this effect; with
+                // `wasCasting` still true the resume branch below would `play()` the plugin's
+                // player, overriding a manual pause made in that window. This branch ends the
+                // session itself, so there is no cast-end resume to run for it.
+                wasCasting = false
                 return@LaunchedEffect
             }
             // Which guard, if any, stops the send. Kept past the Magis fix: every branch below is
