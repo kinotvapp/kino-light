@@ -8,6 +8,7 @@ import com.arkiv.player.data.db.LiveRecentDao
 import com.arkiv.player.data.db.LiveRecentEntity
 import com.arkiv.player.data.ditu.CaracolFailure
 import com.arkiv.player.data.gateway.GatewayBlockedException
+import com.arkiv.player.data.gateway.GatewaySubtitle
 import com.arkiv.player.data.gateway.LiveChannel
 import com.arkiv.player.data.plugin.blockedMessage
 import com.arkiv.player.playback.ArchiveCacheProxy
@@ -147,7 +148,16 @@ data class PlaylistData(
  * branch's pruning); [WebExtras] still needs it because magis also uses it, receiving its
  * subtitles from the gateway and not from any web resolver.
  */
-data class ResolvedSub(val lang: String, val url: String)
+data class ResolvedSub(
+    val lang: String,
+    val url: String,
+    /** `"vtt"`/`"srt"` when the source declared it (plugins); "" = guess from the URL. */
+    val format: String = "",
+)
+
+/** A plugin's subtitles, keeping the `format` it declared (its URLs rarely end in `.srt`). */
+internal fun pluginSubtitles(subs: List<GatewaySubtitle>): List<ResolvedSub> =
+    subs.map { ResolvedSub(lang = it.lang, url = it.url, format = it.format) }
 
 /** Extras of a resolved source (subtitles + sniffed headers) to attach in the UI. Despite the
  *  "web" name, [PlayerViewModel.loadMagis] also uses it for the subtitles the portal brings. */
@@ -1161,7 +1171,7 @@ class PlayerViewModel internal constructor(
             return
         }
         val header = repo.headerInfo(episodeId)
-        _webExtras.value = WebExtras(episodeId, play.headers, play.subtitles.map { ResolvedSub(lang = it.lang, url = it.url) })
+        _webExtras.value = WebExtras(episodeId, play.headers, pluginSubtitles(play.subtitles))
         val startPos = safeStartPosition(episodeId, SourceKind.PLUGIN)
         _magisItem.value = PlayerData(
             episodeId = episodeId,

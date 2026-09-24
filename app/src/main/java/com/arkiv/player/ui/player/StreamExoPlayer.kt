@@ -520,11 +520,14 @@ internal fun streamHttpFor(kind: SourceKind, pluginHosts: List<String>): StreamH
     if (kind == SourceKind.PLUGIN) StreamHttp.PluginGated(pluginHosts) else StreamHttp.Default
 
 /**
- * A subtitle's type from its path. VTT by default: what magis's portal serves; the .srt case is
- * there in case some source ever names one that way with that extension.
+ * A subtitle's type: the `format` the source declared (plugins), else guessed from its path. VTT
+ * by default: what magis's portal serves (Magis passes no format, so it keeps the URL guess); the
+ * .srt case is there in case some source names one that way with that extension.
  */
-private fun subtitleMimeType(path: String): String = when {
-    path.contains(".srt", ignoreCase = true) -> MimeTypes.APPLICATION_SUBRIP
+internal fun subtitleMimeType(sub: ResolvedSub): String = when {
+    sub.format == "srt" -> MimeTypes.APPLICATION_SUBRIP
+    sub.format == "vtt" -> MimeTypes.TEXT_VTT
+    sub.url.contains(".srt", ignoreCase = true) -> MimeTypes.APPLICATION_SUBRIP
     else -> MimeTypes.TEXT_VTT
 }
 
@@ -532,7 +535,7 @@ private fun subtitleMimeType(path: String): String = when {
 internal fun List<ResolvedSub>.toExoSubtitleConfigs(): List<MediaItem.SubtitleConfiguration> =
     map { sub ->
         MediaItem.SubtitleConfiguration.Builder(Uri.parse(sub.url))
-            .setMimeType(subtitleMimeType(sub.url))
+            .setMimeType(subtitleMimeType(sub))
             .setLanguage(sub.lang)
             .build()
     }
