@@ -20,4 +20,12 @@ class PluginHtmlTest {
     @Test fun `an invalid selector throws so the plugin can catch it`() {
         assertThrows(Exception::class.java) { PluginHtml.selectJson("<p>", "a[") }
     }
+
+    @Test fun `output size is capped even when nested elements repeat their descendants' html`() {
+        // Each of the outer divs' html() re-serializes nearly the whole remaining nested tree, so
+        // MAX_MATCHES alone doesn't bound total output: this is a few thousand nested divs, well
+        // under MAX_HTML_CHARS as input, but their combined html()+text() blows well past a 5 MB cap.
+        val nested = "<div>".repeat(2000) + "x" + "</div>".repeat(2000)
+        assertThrows(Exception::class.java) { PluginHtml.selectJson(nested, "div") }
+    }
 }
