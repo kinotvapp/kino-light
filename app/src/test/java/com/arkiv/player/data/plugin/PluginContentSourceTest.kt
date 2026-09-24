@@ -56,6 +56,16 @@ class PluginContentSourceTest {
         assertEquals("plugin:demo", events.filterIsInstance<SearchEvent.SourceError>().single().source)
     }
 
+    @Test fun `a search timeout reads in Spanish, never with the capability's English name`() = runTest {
+        val caller = PluginCaller { _, function, _, timeoutMs -> throw PluginTimeoutException(function, timeoutMs) }
+        val err = source(caller).search(GatewaySearchQuery(q = "x")).toList().filterIsInstance<SearchEvent.SourceError>().single()
+        // Shown as "<plugin> no respondió: <error>" by DownSources.
+        assertEquals("tardó más de 15 s", err.error)
+        assertFalse(err.error, "search" in err.error)
+        // The cause stays the timeout: that's what counts toward "no responde".
+        assertTrue(err.cause is PluginTimeoutException)
+    }
+
     @Test fun `no search capability means no search at all`() = runTest {
         val events = source(FakeCaller(emptyMap()), plugin(caps = setOf("home", "resolve"))).search(GatewaySearchQuery(q = "x")).toList()
         assertEquals(emptyList<SearchEvent>(), events)

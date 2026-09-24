@@ -60,7 +60,10 @@ class PluginContentSource(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                emit(SearchEvent.SourceError(source, e.message ?: "error del plugin", System.currentTimeMillis() - t0, 0, cause = e))
+                // DownSources shows "<plugin> no respondió: <error>". A timeout's own message names
+                // the capability in English ("search no respondió en 15 s"): never shown.
+                val error = if (e is PluginTimeoutException) "tardó más de ${SEARCH_TIMEOUT_MS / 1000} s" else e.message ?: "error del plugin"
+                emit(SearchEvent.SourceError(source, error, System.currentTimeMillis() - t0, 0, cause = e))
                 return@flow
             }
             val items = PluginOutput.items(out, allowSeries = "episodes" in caps) { log("[$id] $it") }
