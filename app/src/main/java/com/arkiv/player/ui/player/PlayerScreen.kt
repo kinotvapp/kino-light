@@ -49,6 +49,8 @@ import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Tv
+import androidx.compose.material.icons.filled.ZoomIn
+import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -3303,24 +3305,18 @@ private fun PlayerContent(
                     } else {
                         Spacer(Modifier.weight(1f))
                     }
-                    // Speed + zoom (phone only): cycle on tap. Both sources.
+                    // Speed (phone only): cycle on tap. Zoom moved to the two +/- buttons in the
+                    // secondary icon row (they replaced the brightness buttons on phone).
                     // Hidden while casting: the long-press gesture still gives a temporary 2×, so
                     // speed control isn't lost entirely.
-                    // Not while casting: nextSpeed()/nextZoom() act on the local player, which
-                    // isn't what the Chromecast plays.
+                    // Not while casting: nextSpeed() acts on the local player, which isn't what the
+                    // Chromecast plays.
                     if (SHOW_SPEED_AND_ZOOM_ON_PHONE && !isTv && !casting) {
                         TextButton(onClick = { gestures.nextSpeed() }) {
                             Text(
                                 gestures.speedLabel,
                                 color = if (gestures.speedIsNormal) Color.White else ArkivRed,
                                 style = MaterialTheme.typography.labelLarge,
-                            )
-                        }
-                        TextButton(onClick = { gestures.nextZoom() }) {
-                            Text(
-                                gestures.zoomLabel,
-                                color = if (gestures.zoomIsFit) Color.White else ArkivRed,
-                                style = MaterialTheme.typography.labelMedium,
                             )
                         }
                     }
@@ -3521,21 +3517,22 @@ private fun PlayerContent(
                                     tint = if (tracksState.hasSubtitle) ArkivRed else Color.White,
                                 )
                             }
-                            // NIGHT MODE (the same two buttons as on TV; here the left-edge
-                            // brightness gesture still exists and is independent: that one lowers
-                            // the real backlight, these put a scrim over the video).
-                            IconButton(onClick = { gestures.brightnessStep(+1, clampedDimLevel) }) {
+                            // ZOOM (phone only). Replaces the two brightness buttons here: pinch
+                            // zoom is finicky, and wide movies come with thick letterbox bars, so
+                            // two buttons crop the video to fill the screen. Night mode stays
+                            // reachable through the left-edge brightness gesture (and the TV UI).
+                            IconButton(onClick = { gestures.zoomOut() }) {
                                 Icon(
-                                    Icons.Default.Brightness2,
-                                    contentDescription = "Bajar brillo",
-                                    tint = if (clampedDimLevel > 0) ArkivRed else Color.White,
+                                    Icons.Default.ZoomOut,
+                                    contentDescription = "Alejar (menos zoom)",
+                                    tint = if (gestures.zoomIsFit) Color.White else ArkivRed,
                                 )
                             }
-                            IconButton(onClick = { gestures.brightnessStep(-1, clampedDimLevel) }) {
+                            IconButton(onClick = { gestures.zoomIn() }) {
                                 Icon(
-                                    Icons.Default.BrightnessHigh,
-                                    contentDescription = "Subir brillo",
-                                    tint = if (clampedDimLevel > 0) ArkivRed else Color.White,
+                                    Icons.Default.ZoomIn,
+                                    contentDescription = "Acercar (más zoom, recorta las barras negras)",
+                                    tint = if (gestures.zoomIsFit) Color.White else ArkivRed,
                                 )
                             }
                             if (PlayerTrivia.hasButton(trivia)) {

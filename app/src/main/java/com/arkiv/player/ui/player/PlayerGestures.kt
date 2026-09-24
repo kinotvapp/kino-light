@@ -21,9 +21,13 @@ import kotlinx.coroutines.delay
 private val SPEED_STEPS = listOf(0.75f, 1f, 1.25f, 1.5f, 2f)
 private val SPEED_LABELS = listOf("0.75×", "1×", "1.25×", "1.5×", "2×")
 
-/** Zoom steps, applied as a scale of the video TextureView's transform. 0f = "fit the screen". */
-private val ZOOM_STEPS = listOf(0f, 1.15f, 1.35f)
-private val ZOOM_LABELS = listOf("Ajustar", "Zoom", "Zoom+")
+/**
+ * Zoom steps, applied as a scale of the video TextureView's transform. 0f = "fit the screen"; the
+ * rest crop progressively so the black letterbox bars of a wide movie can be zoomed away, at the
+ * cost of losing the sides. A fine ramp (10% per tap) because the two [zoomIn]/[zoomOut] buttons
+ * make small adjustments cheap, and the sweet spot for a given movie is somewhere in the middle.
+ */
+private val ZOOM_STEPS = listOf(0f, 1.1f, 1.2f, 1.3f, 1.4f, 1.5f, 1.6f)
 
 /**
  * Night mode's ceiling: the black veil goes ON TOP of the video, with opacity level/[DIM_MAX_LEVEL] —
@@ -111,15 +115,15 @@ internal class GesturesState(
         runCatching { am.setStreamVolume(AudioManager.STREAM_MUSIC, index, 0) }
     }
 
-    /** Central card for the gesture in progress (speed, seek, volume, brightness), or null. */
+    /** Central card for the gesture in progress (speed, seek, volume, brightness, zoom), or null. */
     var hud by mutableStateOf<String?>(null)
         private set
 
     /**
-     * Bumps with each press of the brightness buttons, so its HUD clears itself. Goes by tick and
-     * not by the value: at the caps the level doesn't change, but the press still shows the HUD
-     * and it has to fade. Gestures clear theirs by hand on release; a button has no "release", so
-     * it needs its own timer.
+     * Bumps with each press of the brightness OR zoom buttons, so their HUD clears itself. Goes by
+     * tick and not by the value: at the caps the level doesn't change, but the press still shows the
+     * HUD and it has to fade. Gestures clear theirs by hand on release; a button has no "release",
+     * so it needs its own timer.
      */
     var brightnessHudTick by mutableIntStateOf(0)
         private set
@@ -132,7 +136,8 @@ internal class GesturesState(
 
     val speedLabel: String get() = SPEED_LABELS[speedIndex]
     val speedIsNormal: Boolean get() = speedIndex == 1
-    val zoomLabel: String get() = ZOOM_LABELS[zoomIndex]
+
+    /** True at step 0 ("fit"): the video isn't zoomed, so the buttons show as inactive (white). */
     val zoomIsFit: Boolean get() = zoomIndex == 0
 
     /**
@@ -144,17 +149,34 @@ internal class GesturesState(
      */
     val zoomForExo: Float get() = if (exoRef != null) ZOOM_STEPS[zoomIndex].let { if (it <= 0f) 1f else it } else 1f
 
-    /** Speed and zoom are cyclic: each tap moves to the next step and wraps back to the start. */
+    /** Speed is cyclic: each tap moves to the next step and wraps back to the start. */
     fun nextSpeed() {
         speedIndex = (speedIndex + 1) % SPEED_STEPS.size
         applySpeed(SPEED_STEPS[speedIndex])
         onInteract()
     }
 
-    fun nextZoom() {
-        zoomIndex = (zoomIndex + 1) % ZOOM_STEPS.size
-        // Nobody to tell: whoever draws the video reads [zoomForExo].
+    /**
+     * Zoom is NOT cyclic (unlike speed): the two buttons step it up/down, clamped to the ends. Like
+     * [brightnessStep], at the caps the press changes nothing but still flashes the HUD. Nobody to
+     * tell: whoever draws the video reads [zoomForExo].
+     */
+    fun zoomIn() {
+        zoomIndex = (zoomIndex + 1).coerceAtMost(ZOOM_STEPS.size - 1)
+        showZoomHud()
         onInteract()
+    }
+
+    fun zoomOut() {
+        zoomIndex = (zoomIndex - 1).coerceAtLeast(0)
+        showZoomHud()
+        onInteract()
+    }
+
+    private fun showZoomHud() {
+        val z = ZOOM_STEPS[zoomIndex]
+        hud = if (z <= 0f) "🔍 Ajustar" else "🔍 ${(z * 100).toInt()}%"
+        brightnessHudTick++
     }
 
     /**
