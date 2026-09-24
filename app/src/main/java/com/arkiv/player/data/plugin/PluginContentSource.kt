@@ -36,11 +36,17 @@ class PluginContentSource(
     /**
      * `CompositeSource`'s limit is only a BACKSTOP: the plugin's own call limit
      * ([SEARCH_TIMEOUT_MS], passed to [PluginCaller.call]) must fire first, because only its
-     * [PluginTimeoutException] counts toward "no responde" in `PluginRuntimePool`. With equal
-     * limits the outer clock, which starts earlier (before the pool's mutex and the runtime load),
-     * always won, so a hanging search never counted as a timeout.
+     * [PluginTimeoutException] counts toward "no responde" in `PluginRuntimePool`.
+     *
+     * The backstop's clock starts when the search is collected; the plugin's own starts only once
+     * the pool's per-plugin mutex is taken. In the worst case the search waits there behind ONE
+     * slow call of the same plugin (the longest other capability limit), then runs its full
+     * [SEARCH_TIMEOUT_MS]. So the backstop is own limit + that queue wait + a grace for the runtime
+     * load. With equal limits the backstop always won, the call was cancelled instead of timing
+     * out, and a hanging search never counted.
      */
-    override val searchTimeoutMs: Long? = SEARCH_TIMEOUT_MS + SEARCH_BACKSTOP_GRACE_MS
+    override val searchTimeoutMs: Long? =
+        SEARCH_TIMEOUT_MS + maxOf(HOME_TIMEOUT_MS, EPISODES_TIMEOUT_MS, RESOLVE_TIMEOUT_MS) + SEARCH_BACKSTOP_GRACE_MS
 
     override fun recognizes(ref: String): Boolean = ref.startsWith(PluginRef.prefixFor(id))
 
@@ -127,7 +133,7 @@ class PluginContentSource(
     companion object {
         const val SEARCH_TIMEOUT_MS = 15_000L
 
-        /** How much longer [searchTimeoutMs] waits than the plugin's own search limit. */
+        /** Slack in [searchTimeoutMs] beyond own limit + queue wait: the runtime load. */
         const val SEARCH_BACKSTOP_GRACE_MS = 5_000L
         const val HOME_TIMEOUT_MS = 20_000L
         const val EPISODES_TIMEOUT_MS = 20_000L

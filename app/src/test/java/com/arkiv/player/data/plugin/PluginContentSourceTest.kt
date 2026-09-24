@@ -139,4 +139,28 @@ class PluginContentSourceTest {
         assertEquals("plugin:demo", err.source)
         assertTrue(err.cause is PluginTimeoutException)
     }
+
+    /**
+     * The contended case: the search waits on `PluginRuntimePool`'s per-plugin mutex behind one
+     * slow same-plugin call (home/episodes/resolve, up to 20 s) before its own 15 s clock starts.
+     * Its [PluginTimeoutException] must still arrive before the composite backstop.
+     */
+    @Test fun `a search queued behind the slowest other call still times out on its own clock`() = runTest {
+        val longestOther = maxOf(
+            PluginContentSource.HOME_TIMEOUT_MS,
+            PluginContentSource.EPISODES_TIMEOUT_MS,
+            PluginContentSource.RESOLVE_TIMEOUT_MS,
+        )
+        val caller = PluginCaller { _, function, _, timeoutMs ->
+            kotlinx.coroutines.delay(longestOther) // queued on the pool's mutex
+            kotlinx.coroutines.delay(500) // runtime load
+            kotlinx.coroutines.delay(timeoutMs)
+            throw PluginTimeoutException(function, timeoutMs)
+        }
+        val events = com.arkiv.player.data.gateway.CompositeSource(listOf(source(caller)))
+            .search(GatewaySearchQuery(q = "x")).toList()
+        val err = events.filterIsInstance<SearchEvent.SourceError>().single()
+        assertEquals("plugin:demo", err.source)
+        assertTrue(err.cause is PluginTimeoutException)
+    }
 }
