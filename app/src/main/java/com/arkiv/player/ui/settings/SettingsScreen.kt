@@ -42,6 +42,7 @@ private enum class SettingsTab(val label: String) {
     SUBTITLES("Subtítulos"),
     ACCOUNT("Cuenta"),
     APP("App"),
+    PLUGINS("Plugins"),
     CONNECT("Conectar"),
 }
 
@@ -127,6 +128,7 @@ fun SettingsScreen(contentPadding: PaddingValues, onOpenDownloads: () -> Unit = 
                         accountUnavailable = regionGeoBlocked,
                     )
                     SettingsTab.APP -> AppTab(onOpenDownloads = onOpenDownloads)
+                    SettingsTab.PLUGINS -> com.arkiv.player.ui.plugin.PluginsTab()
                     SettingsTab.CONNECT -> CompanionSettings()
                 }
                 // The bottom shell adds the air below: the tabs don't need to know there's a
