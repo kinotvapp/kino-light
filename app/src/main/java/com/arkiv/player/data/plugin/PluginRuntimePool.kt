@@ -61,12 +61,17 @@ class PluginRuntimePool(
      */
     private suspend fun recoverOnce() {
         val s = sentinel ?: return
-        recovery.withLock {
-            if (recovered) return
-            recovered = true
-            withContext(io) { s.recover() }.forEach { id ->
-                switchedOff += id
-                onUnresponsive(id)
+        // NonCancellable: recover() deletes the markers and the counter it reads, so once it runs
+        // the switch-off must happen too, even if the call that triggered it was cancelled (a
+        // superseded search); and `recovered` is set only after that, so nothing is ever skipped.
+        withContext(NonCancellable) {
+            recovery.withLock {
+                if (recovered) return@withLock
+                withContext(io) { s.recover() }.forEach { id ->
+                    switchedOff += id
+                    onUnresponsive(id)
+                }
+                recovered = true
             }
         }
     }

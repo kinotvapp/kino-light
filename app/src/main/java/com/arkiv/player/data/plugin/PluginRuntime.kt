@@ -280,18 +280,22 @@ class PluginRuntime private constructor(
               const slice = Function.prototype.call.bind(String.prototype.slice);
               const define = Object.defineProperty, freeze = Object.freeze;
               const defineAll = Object.defineProperties, reflectDefine = Reflect.defineProperty;
-              const ownKeys = Reflect.ownKeys, apply = Reflect.apply;
+              const ownKeys = Reflect.ownKeys, apply = Reflect.apply, ownDescriptor = Object.getOwnPropertyDescriptor;
               const OP = Object.prototype, defineGetter = OP.__defineGetter__, defineSetter = OP.__defineSetter__;
               // A function's `name` is read by quickjs-kt's native code when an error is built or
               // a rejection is tracked in that function's frame; at ~20 MB the native side fails
-              // an allocation and crashes the whole process (measured). A function's name can only
-              // be changed through these define APIs (it's non-writable), so they refuse a long
-              // name, an accessor name, or making it writable. Everything else passes through.
+              // an allocation and crashes the whole process (measured). BEST-EFFORT guard: these
+              // define APIs refuse a long name, an accessor name, or making it writable. It is not
+              // airtight -- `delete g.name` + `Object.setPrototypeOf` + assignment, or a huge
+              // computed key, still produce a huge name -- and the crash sentinel
+              // (PluginCrashSentinel) is the backstop. Everything else passes through.
               const nameRefused = () => new TE('el nombre de una función no puede cambiarse a más de $MAX_FUNCTION_NAME_CHARS caracteres');
               const safeNameDescriptor = (desc) => {
                 if (desc === null || typeof desc !== 'object') return desc;
                 const d = {};
                 for (const k of ['value', 'writable', 'enumerable', 'configurable', 'get', 'set']) if (k in desc) d[k] = desc[k];
+                // The flags are booleans the way the engine reads them: `writable: 1` is writable.
+                for (const k of ['writable', 'enumerable', 'configurable']) if (k in d) d[k] = !!d[k];
                 if ('get' in d || 'set' in d || d.writable === true) throw nameRefused();
                 if (typeof d.value === 'string' && d.value.length > $MAX_FUNCTION_NAME_CHARS) throw nameRefused();
                 return d;
@@ -303,13 +307,24 @@ class PluginRuntime private constructor(
               });
               Object.defineProperties = freeze(function defineProperties(o, props) {
                 if (typeof o !== 'function' || props === null || typeof props !== 'object') return defineAll(o, props);
+                // Same keys as the native algorithm (own ENUMERABLE ones, string or symbol), each
+                // descriptor read once; defined on the copy, never assigned, so "__proto__" stays
+                // an ordinary key.
                 const copy = {};
-                for (const k of ownKeys(props)) copy[k] = isName(k) ? safeNameDescriptor(props[k]) : props[k];
+                for (const k of ownKeys(props)) {
+                  const own = ownDescriptor(props, k);
+                  if (own === undefined || !own.enumerable) continue;
+                  const desc = props[k];
+                  define(copy, k, { value: isName(k) ? safeNameDescriptor(desc) : desc, enumerable: true, configurable: true, writable: true });
+                }
                 return defineAll(o, copy);
               });
               Reflect.defineProperty = freeze(function defineProperty(o, key, desc) {
-                if (typeof o === 'function' && isName(key)) {
-                  try { return reflectDefine(o, 'name', safeNameDescriptor(desc)); } catch (e) { if (e instanceof TE) return false; throw e; }
+                // A non-object descriptor goes straight to the native one, which throws TypeError.
+                if (typeof o === 'function' && isName(key) && desc !== null && typeof desc === 'object') {
+                  let safe;
+                  try { safe = safeNameDescriptor(desc); } catch (e) { if (e instanceof TE) return false; throw e; }
+                  return reflectDefine(o, 'name', safe);
                 }
                 return reflectDefine(o, key, desc);
               });

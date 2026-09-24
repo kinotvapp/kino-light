@@ -421,6 +421,44 @@ class PluginRuntimeTest {
         }
     }
 
+    @Test fun `a truthy non-boolean writable cannot open a function name to a huge assignment`() {
+        val rt = runBlocking {
+            open(
+                "export async function home(ok) { if (ok) return [1]; async function g() { throw new Error('x') }\n" +
+                    "let how = 'refused'; try { Object.defineProperty(g, 'name', { writable: 1 }); how = 'defined' } catch (e) {}\n" +
+                    "try { g.name = $huge } catch (e) {}\n" +
+                    "if (g.name.length > 1000) return ['assigned', how]; await g() }",
+            )
+        }
+        val e = failureOf(rt)
+        assertTrue(chainLengths(e).toString(), chainLengths(e).all { it <= PluginRuntime.MAX_ERROR_CHARS })
+        assertEquals("[1]", runBlocking { rt.call("home", "true", 5_000) })
+    }
+
+    @Test fun `defineProperties keeps native behaviour - own enumerable keys only, __proto__ as a key`() = runBlocking {
+        val rt = open(
+            "export async function home() { function f() {}\n" +
+                "const props = { a: { value: 1, enumerable: true }, ['__proto__']: { value: 2, enumerable: true } };\n" +
+                "Object.defineProperty(props, 'hidden', { value: { value: 3 }, enumerable: false });\n" +
+                "Object.defineProperties(f, props); const o = {}; Object.defineProperties(o, props);\n" +
+                "return [f.a, Object.getOwnPropertyDescriptor(f, '__proto__').value, 'hidden' in f, Object.getPrototypeOf(f) === Function.prototype,\n" +
+                "o.a, Object.getOwnPropertyDescriptor(o, '__proto__').value, 'hidden' in o, f.name] }",
+        )
+        assertEquals("[1,2,false,true,1,2,false,\"f\"]", rt.call("home", "null", 5_000))
+    }
+
+    @Test fun `Reflect defineProperty with a non-object descriptor throws like the native one`() = runBlocking {
+        val rt = open("export async function home() { function g() {}; try { Reflect.defineProperty(g, 'name', 5); return ['returned'] } catch (e) { return [e instanceof TypeError] } }")
+        assertEquals("[true]", rt.call("home", "null", 5_000))
+    }
+
+    @Test fun `a huge engine message never survives as a cause - the whole chain is bounded`() {
+        // A module's top-level throw doesn't go through __kinoCall: the engine's own exception
+        // (30 MB message) reaches Kotlin and only boundedCause keeps it out of the chain.
+        val e = assertThrows(PluginScriptException::class.java) { runBlocking { open("throw 'x'.repeat(3000000)") } }
+        assertTrue(chainLengths(e).toString(), chainLengths(e).all { it <= PluginRuntime.MAX_ERROR_CHARS })
+    }
+
     @Test fun `a huge Error prototype name does not inflate any message in the error chain`() {
         val rt = runBlocking { open("export async function home() { Error.prototype.name = 'n'.repeat(30000000); await null; throw new Error('boom') }") }
         val e = failureOf(rt)

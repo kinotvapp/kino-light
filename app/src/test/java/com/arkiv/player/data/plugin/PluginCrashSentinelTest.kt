@@ -1,8 +1,12 @@
 package com.arkiv.player.data.plugin
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -137,5 +141,41 @@ class PluginCrashSentinelTest {
         installer.install(installer.preview("o/r"))
         assertFalse(marker("pa").exists())
         assertFalse(counter("pa").exists())
+    }
+
+    @Test fun `cancelling the first call while the recovery is pending still switches the plugin off`() = runTest {
+        // A manual dispatcher: nothing on `io` runs until this test drains it.
+        val pending = ArrayDeque<Runnable>()
+        val io = object : kotlinx.coroutines.CoroutineDispatcher() {
+            override fun dispatch(context: kotlin.coroutines.CoroutineContext, block: Runnable) { pending += block }
+        }
+        marker("pa").apply { parentFile!!.mkdirs(); writeText("") }
+        counter("pa").writeText("1") // this leftover marker is its second unclean exit in a row
+        val flagged = mutableListOf<String>()
+        val p = PluginRuntimePool(
+            open = { FakeRuntime { "[]" } }, onUnresponsive = { flagged += it }, scope = backgroundScope,
+            sentinel = PluginCrashSentinel(dataRoot), io = io,
+        )
+        val first = launch { p.call("pb", "home", "null", 1_000) }
+        runCurrent() // the call is now waiting for the recovery to be dispatched on `io`
+        first.cancel()
+        runCurrent()
+        while (pending.isNotEmpty()) { pending.removeFirst().run(); advanceUntilIdle() }
+        assertTrue(first.isCancelled)
+        assertEquals(listOf("pa"), flagged)
+        assertFalse(marker("pa").exists())
+    }
+
+    @Test fun `a call cancelled mid-flight leaves no marker and neither counts nor resets`() = runTest {
+        counter("pa").apply { parentFile!!.mkdirs(); writeText("1") }
+        val hang = CompletableDeferred<String>()
+        val p = pool { hang.await() }
+        val call = launch { p.call("pa", "home", "null", 60_000) }
+        runCurrent()
+        assertTrue(marker("pa").exists())
+        call.cancel() // a newer search superseded this one
+        advanceUntilIdle()
+        assertFalse(marker("pa").exists())
+        assertEquals("1", counter("pa").readText())
     }
 }
