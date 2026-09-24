@@ -7,9 +7,12 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -28,9 +31,12 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.arkiv.player.data.SettingsStore
 import com.arkiv.player.data.credentials.SeedResult
+import com.arkiv.player.data.local.FileSizeFormat
+import com.arkiv.player.data.local.StorageUsage
 import com.arkiv.player.data.update.UpdateInfo
 import com.arkiv.player.ui.rememberGraph
 import com.arkiv.player.ui.settings.AdultsLock
@@ -49,6 +55,23 @@ internal fun TvSettingsApp() {
     var manualUpdate by remember { mutableStateOf<UpdateInfo?>(null) }
     var seeding by remember { mutableStateOf(false) }
     var seedMessage by remember { mutableStateOf<String?>(null) }
+
+    // Storage: what Kino takes up, re-measured after every action. See AppStorage. A TV never
+    // downloads, but an older version could have, and a full disk here reboots the whole box.
+    var usageTick by remember { mutableIntStateOf(0) }
+    val usage by produceState<StorageUsage?>(initialValue = null, usageTick) {
+        value = runCatching { graph.appStorage.usage() }.getOrNull()
+    }
+    var storageBusy by remember { mutableStateOf(false) }
+    // No modal on the remote: the first press ARMS the delete, a second one confirms it, and it
+    // disarms by itself so a stray press never leaves it live.
+    var deleteArmed by remember { mutableStateOf(false) }
+    LaunchedEffect(deleteArmed) {
+        if (deleteArmed) {
+            delay(6_000)
+            deleteArmed = false
+        }
+    }
 
     // Manual check: independent of MainActivity's global dialog, so it works even if the user
     // already dismissed that one this session.
@@ -95,6 +118,65 @@ internal fun TvSettingsApp() {
     TvActionOption(
         if (checking) "Buscando…" else "Buscar actualizaciones",
         onClick = { if (!checking) checkForUpdatesNow() },
+    )
+
+    Text("Almacenamiento", style = MaterialTheme.typography.titleMedium, color = Color.White)
+    usage?.let {
+        Text(
+            "Descargas: ${FileSizeFormat.formatSize(it.downloadsBytes)} · " +
+                "Caché: ${FileSizeFormat.formatSize(it.cacheBytes)} · " +
+                "Libre: ${FileSizeFormat.formatSize(it.freeBytes)}",
+            style = MaterialTheme.typography.bodySmall,
+            color = ArkivTextSecondary,
+        )
+    }
+    val cacheBytes = usage?.cacheBytes ?: 0L
+    val downloadsBytes = usage?.downloadsBytes ?: 0L
+    TvActionOption(
+        when {
+            storageBusy -> "Trabajando…"
+            cacheBytes <= 0L -> "Limpiar caché (vacía)"
+            else -> "Limpiar caché"
+        },
+        onClick = {
+            if (!storageBusy && cacheBytes > 0L) {
+                storageBusy = true
+                scope.launch {
+                    val freed = runCatching { graph.appStorage.clearCache() }.getOrDefault(0L)
+                    storageBusy = false
+                    usageTick++
+                    Toast.makeText(context, "Se liberaron ${FileSizeFormat.formatSize(freed)}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        },
+    )
+    TvActionOption(
+        when {
+            downloadsBytes <= 0L -> "Borrar todas las descargas (no hay)"
+            deleteArmed -> "Toca de nuevo para borrar ${FileSizeFormat.formatSize(downloadsBytes)}"
+            else -> "Borrar todas las descargas"
+        },
+        onClick = {
+            if (!storageBusy && downloadsBytes > 0L) {
+                if (!deleteArmed) {
+                    deleteArmed = true
+                } else {
+                    deleteArmed = false
+                    storageBusy = true
+                    scope.launch {
+                        runCatching { graph.appStorage.deleteAllDownloads() }
+                        storageBusy = false
+                        usageTick++
+                        Toast.makeText(context, "Descargas borradas", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        },
+    )
+    Text(
+        "La caché son imágenes y copias temporales: la app las vuelve a crear.",
+        style = MaterialTheme.typography.bodySmall,
+        color = ArkivTextSecondary,
     )
 
     Text("Sesiones de respaldo", style = MaterialTheme.typography.titleMedium, color = Color.White)

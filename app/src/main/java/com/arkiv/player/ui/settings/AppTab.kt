@@ -7,15 +7,19 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -27,6 +31,8 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import com.arkiv.player.BuildConfig
 import com.arkiv.player.data.credentials.SeedResult
+import com.arkiv.player.data.local.FileSizeFormat
+import com.arkiv.player.data.local.StorageUsage
 import com.arkiv.player.data.update.UpdateInfo
 import com.arkiv.player.ui.rememberGraph
 import com.arkiv.player.ui.update.UpdateDialog
@@ -44,6 +50,14 @@ internal fun AppTab(onOpenDownloads: () -> Unit = {}) {
     val funFactsEnabled by graph.settings.funFactsEnabled.collectAsState()
     val seedAutoRefreshEnabled by graph.settings.seedAutoRefreshEnabled.collectAsState()
     val forceTvDesign by graph.settings.forceTvDesign.collectAsState()
+
+    // Storage: what Kino takes up, re-measured after every action. See AppStorage.
+    var usageTick by remember { mutableIntStateOf(0) }
+    val usage by produceState<StorageUsage?>(initialValue = null, usageTick) {
+        value = runCatching { graph.appStorage.usage() }.getOrNull()
+    }
+    var storageBusy by remember { mutableStateOf(false) }
+    var confirmDeleteDownloads by remember { mutableStateOf(false) }
 
     // The country we recognize for this phone -- the same free, no-permission, no-network signal
     // (SIM -> time zone -> locale) the live-channels row uses. Shown next to the version so support
@@ -114,14 +128,84 @@ internal fun AppTab(onOpenDownloads: () -> Unit = {}) {
         }
     }
 
+    // Frees the regenerable files only (covers, Chromecast copies...): nothing the person saved.
+    fun limpiarCache() {
+        storageBusy = true
+        scope.launch {
+            val freed = runCatching { graph.appStorage.clearCache() }.getOrDefault(0L)
+            storageBusy = false
+            usageTick++
+            Toast.makeText(context, "Se liberaron ${FileSizeFormat.formatSize(freed)}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // Destructive: only reached through the confirmation dialog below.
+    fun borrarDescargas() {
+        storageBusy = true
+        scope.launch {
+            runCatching { graph.appStorage.deleteAllDownloads() }
+            storageBusy = false
+            usageTick++
+            Toast.makeText(context, "Descargas borradas", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    if (confirmDeleteDownloads) {
+        AlertDialog(
+            onDismissRequest = { confirmDeleteDownloads = false },
+            title = { Text("¿Borrar todas las descargas?") },
+            text = {
+                Text(
+                    "Se eliminarán ${FileSizeFormat.formatSize(usage?.downloadsBytes ?: 0L)} de películas y " +
+                        "capítulos guardados en este dispositivo. No se puede deshacer.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { confirmDeleteDownloads = false; borrarDescargas() }) { Text("Borrar") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDeleteDownloads = false }) { Text("Cancelar") }
+            },
+        )
+    }
+
     Text(
-        "Descargas",
+        "Almacenamiento",
         style = MaterialTheme.typography.titleMedium,
         modifier = Modifier.padding(top = 24.dp, bottom = 8.dp),
     )
+    usage?.let {
+        Text(
+            "Descargas: ${FileSizeFormat.formatSize(it.downloadsBytes)} · " +
+                "Caché: ${FileSizeFormat.formatSize(it.cacheBytes)} · " +
+                "Libre: ${FileSizeFormat.formatSize(it.freeBytes)}",
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(bottom = 8.dp),
+        )
+    }
     Button(onClick = onOpenDownloads) {
         Text("Ver descargas")
     }
+    Button(
+        onClick = ::limpiarCache,
+        enabled = !storageBusy && (usage?.cacheBytes ?: 0L) > 0L,
+        modifier = Modifier.padding(top = 8.dp),
+    ) {
+        Text("Limpiar caché")
+    }
+    Button(
+        onClick = { confirmDeleteDownloads = true },
+        enabled = !storageBusy && (usage?.downloadsBytes ?: 0L) > 0L,
+        modifier = Modifier.padding(top = 8.dp),
+    ) {
+        Text("Borrar todas las descargas")
+    }
+    Text(
+        "La caché son imágenes y copias temporales: la app las vuelve a crear. Las descargas son tus " +
+            "películas y capítulos guardados.",
+        style = MaterialTheme.typography.bodySmall,
+        modifier = Modifier.padding(top = 4.dp),
+    )
 
     Text(
         "Actualizaciones",

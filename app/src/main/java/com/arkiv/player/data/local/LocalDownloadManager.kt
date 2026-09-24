@@ -20,6 +20,9 @@ enum class EnqueueOutcome {
 
     /** That content is already on the device: this episode, or its twin under another item. */
     ALREADY_DOWNLOADED,
+
+    /** Refused: downloads never happen on a TV (see [DownloadAvailability]). Nothing was queued. */
+    UNAVAILABLE_ON_TV,
 }
 
 /**
@@ -43,6 +46,12 @@ class LocalDownloadManager(
      * with `AppGraph`: the strategies need the repository, which gets built after this.
      */
     private val strategies: () -> Map<String, DownloadStrategy> = { emptyMap() },
+    /**
+     * Whether this device is a TV, where downloads are never allowed ([DownloadAvailability]). A
+     * lambda so it's read at the moment of each call (the "Forzar diseño TV" switch can change it)
+     * and so tests need no Android to say `true`.
+     */
+    private val isTelevision: () -> Boolean = { false },
 ) {
     private val appContext = context.applicationContext
     private val downloadDao = db.downloadDao()
@@ -78,6 +87,8 @@ class LocalDownloadManager(
      * user know they already have it (see `DuplicateDownloadPolicy.skippedNotice`).
      */
     suspend fun enqueue(episodeId: String, source: String): EnqueueOutcome = withContext(Dispatchers.IO) {
+        // Downloads never happen on a TV, whatever screen asked: see [DownloadAvailability].
+        if (!DownloadAvailability.allowed(isTelevision())) return@withContext EnqueueOutcome.UNAVAILABLE_ON_TV
         val existing = downloadDao.get(episodeId)
         if (existing != null && existing.state != LocalDownloadState.FAILED) {
             return@withContext if (existing.state == LocalDownloadState.COMPLETED) {
@@ -116,6 +127,7 @@ class LocalDownloadManager(
      * from there with `Range` instead of starting from zero.
      */
     suspend fun retry(episodeId: String) = withContext(Dispatchers.IO) {
+        if (!DownloadAvailability.allowed(isTelevision())) return@withContext
         val row = downloadDao.get(episodeId) ?: return@withContext
         if (!DownloadQueuePolicy.isRetryable(row.state)) return@withContext
         // An old row might be left pointing at the wrong strategy (see [DownloadSource]);
@@ -148,6 +160,40 @@ class LocalDownloadManager(
         // `downloading` and picks it up again immediately (nextToProcess prefers what's already started).
         downloadDao.updateState(episodeId, LocalDownloadState.FAILED, "Cancelada")
         if (inFlight) restartWorker(appContext)
+    }
+
+    /**
+     * Deletes EVERY download (finished or not) with its files: what "Borrar todas las descargas" in
+     * Settings does, the way out for someone whose disk is full. Each row goes through [remove], so
+     * the running worker is cut and Caracol's cache is cleaned by whoever wrote it.
+     *
+     * Then it sweeps the FILES in the downloads folder that no row claimed: leftovers from older
+     * versions or a killed download. Only plain files, never sub-folders: `caracol/` is media3's
+     * cache, open right now, and deleting it from under `SimpleCache` would corrupt it (`remove`
+     * already cleaned what belonged to each row). Returns how many rows were removed.
+     */
+    suspend fun removeAll(): Int = withContext(Dispatchers.IO) {
+        val ids = downloadDao.getAll().map { it.episodeId }
+        ids.forEach { remove(it) }
+        runCatching {
+            targetDir().listFiles { f -> f.isFile }.orEmpty().forEach { runCatching { it.delete() } }
+        }
+        ids.size
+    }
+
+    /**
+     * TV only: removes every download that never finished, with its `.part` files (see
+     * [DownloadAvailability.unfinishedOnTv]). Finished downloads are left alone. Does nothing on a
+     * phone/tablet. Called once at startup: an older version could download on a TV, and what it left
+     * half-done can never be resumed there, so it would just sit on a disk that's already tight.
+     * Returns how many rows were removed.
+     */
+    suspend fun discardUnfinishedOnTv(): Int = withContext(Dispatchers.IO) {
+        if (DownloadAvailability.allowed(isTelevision())) return@withContext 0
+        val rows = downloadDao.getAll().map { QueueRow(it.episodeId, it.state, it.createdAt) }
+        val ids = DownloadAvailability.unfinishedOnTv(rows)
+        ids.forEach { remove(it) }
+        ids.size
     }
 
     /**

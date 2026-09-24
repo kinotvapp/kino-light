@@ -97,6 +97,17 @@ fun TvLibraryScreen(
     var section by remember { mutableStateOf(LibrarySection.ALL_SAVED) }
     var menuFor by remember { mutableStateOf<LibraryGroup?>(null) }
 
+    // A TV never downloads (see `DownloadAvailability`), but an older version could have, and those
+    // files must still be reachable to watch or delete: hiding the tab outright (0.9.33) left them
+    // holding gigabytes with no screen to free them from. So "Descargas" shows ONLY while some exist.
+    val downloadRows by remember(graph) { graph.localDownloads.observeRows() }
+        .collectAsStateWithLifecycle(initialValue = emptyList())
+    val hasDownloads = downloadRows.isNotEmpty()
+    // The last one was deleted while its tab was open: the tab disappears, so don't stay on it.
+    LaunchedEffect(hasDownloads) {
+        if (!hasDownloads && section == LibrarySection.DOWNLOADS) section = LibrarySection.ALL_SAVED
+    }
+
     BackHandler(enabled = menuFor == null) { onBack() }
 
     // Focus starts on the menu. Same retry pattern as the home: at 150 ms the row may not be
@@ -141,10 +152,10 @@ fun TvLibraryScreen(
                 fontWeight = FontWeight.Black,
                 modifier = Modifier.padding(start = SAFE_H, bottom = 28.dp),
             )
-            // Downloads are hidden on TV (no offline UI there): the "Descargas" section is dropped
-            // from the menu. `LibrarySection` is shared with the phone, so filter at the call site
-            // rather than removing the enum value. (The when-branch below is now unreachable.)
-            LibrarySection.entries.filter { it != LibrarySection.DOWNLOADS }.forEachIndexed { i, s ->
+            // No new downloads on TV, so "Descargas" only appears when there are leftovers to manage
+            // (see `hasDownloads`). `LibrarySection` is shared with the phone, so filter at the call
+            // site rather than removing the enum value.
+            LibrarySection.entries.filter { it != LibrarySection.DOWNLOADS || hasDownloads }.forEachIndexed { i, s ->
                 TvMenuItem(
                     label = s.label,
                     selected = s == section,

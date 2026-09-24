@@ -115,6 +115,14 @@ class ArkivApp : Application(), ImageLoaderFactory {
             }
         }
 
+        // TV only: downloads never happen there, but an older version could start them, and what it
+        // left unfinished (half-downloaded `.part` files, stuck rows) can never be resumed on a TV
+        // and just holds gigabytes on a disk that's already tight. Finished downloads are kept (the
+        // TV library lists them so they can be watched or deleted). A no-op on phones/tablets.
+        graph.applicationScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching { graph.localDownloads.discardUnfinishedOnTv() }
+        }
+
         // Proactive telemetry: the backup seed pool ran dry for a device that needs it -> the user
         // can't play, and nothing throws. Report the rising edge so we learn about pool exhaustion
         // (and can re-mint) without a user having to tell us. StateFlow only re-emits on change.
@@ -305,7 +313,7 @@ class ArkivApp : Application(), ImageLoaderFactory {
             // default (2% of free space) can be huge on a phone with a lot of disk.
             .diskCache {
                 DiskCache.Builder()
-                    .directory(cacheDir.resolve("image_cache"))
+                    .directory(cacheDir.resolve(com.arkiv.player.data.local.AppStorage.IMAGE_CACHE_DIR))
                     .maxSizeBytes(if (tv) 64L * 1024 * 1024 else 192L * 1024 * 1024)
                     .build()
             }

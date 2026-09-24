@@ -496,6 +496,25 @@ class AppGraph(context: Context) {
             // By lambda: `downloadStrategies` needs `repository`, which gets built after this.
             // Evaluating it here would close the circle and blow up on startup.
             strategies = { downloadStrategies },
+            // Downloads are never allowed on a TV (see `DownloadAvailability`).
+            isTelevision = { com.arkiv.player.DeviceType.isTelevision(appContext) },
+        )
+    }
+
+    /** What Kino takes up and the way to free it, for the Settings screens. See `AppStorage`. */
+    val appStorage: com.arkiv.player.data.local.AppStorage by lazy {
+        com.arkiv.player.data.local.AppStorage(
+            appContext,
+            downloadsDir = { localDownloads.targetDir() },
+            // Through Coil's own API: deleting its files from under it would corrupt its journal.
+            clearImageCaches = {
+                coil.Coil.imageLoader(appContext).let { loader ->
+                    loader.diskCache?.clear()
+                    loader.memoryCache?.clear()
+                }
+            },
+            clearRemux = { tsRemuxer.clear() },
+            removeAllDownloads = { localDownloads.removeAll() },
         )
     }
 
@@ -680,7 +699,9 @@ class AppGraph(context: Context) {
     private var networkWatchdog: com.arkiv.player.playback.NetworkWatchdog? = null
 
     val archiveCacheProxy: com.arkiv.player.playback.ArchiveCacheProxy by lazy {
-        com.arkiv.player.playback.ArchiveCacheProxy(java.io.File(appContext.cacheDir, "archive-cache"))
+        com.arkiv.player.playback.ArchiveCacheProxy(
+            java.io.File(appContext.cacheDir, com.arkiv.player.data.local.AppStorage.ARCHIVE_CACHE_DIR),
+        )
             .also { proxy ->
                 networkWatchdog = com.arkiv.player.playback.NetworkWatchdog(appContext) { reason ->
                     proxy.abandonConnections(reason)

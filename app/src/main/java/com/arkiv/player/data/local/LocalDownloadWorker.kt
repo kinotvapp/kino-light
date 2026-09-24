@@ -35,6 +35,12 @@ import kotlinx.coroutines.runBlocking
 class LocalDownloadWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
+        // Hard stop: a TV never writes a download, even if a row was left in the queue by an older
+        // version. The startup sweep removes those rows; this guarantees no bytes are written in
+        // the meantime. See [DownloadAvailability].
+        if (!DownloadAvailability.allowed(com.arkiv.player.DeviceType.isTelevision(applicationContext))) {
+            return Result.success()
+        }
         val graph = AppGraph.from(applicationContext)
         val dao = graph.database.downloadDao()
 

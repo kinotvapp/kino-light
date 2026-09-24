@@ -33,7 +33,7 @@ class ApkDownloader(private val context: Context) {
      */
     fun download(url: String): Flow<DownloadState> = flow {
         try {
-            val dest = File(context.cacheDir, "update.apk")
+            val dest = File(context.cacheDir, com.arkiv.player.data.local.AppStorage.UPDATE_APK)
             if (dest.exists()) dest.delete()
             val response = client.newCall(Request.Builder().url(url).build()).execute()
             if (!response.isSuccessful) {
