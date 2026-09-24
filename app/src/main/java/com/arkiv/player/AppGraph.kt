@@ -26,6 +26,7 @@ import com.google.android.gms.cast.framework.CastContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.take
@@ -409,6 +410,21 @@ class AppGraph(context: Context) {
     }
 
     val pluginAdmin: PluginAdmin by lazy { DefaultPluginAdmin(pluginRegistry, pluginInstaller, pluginRuntimes) }
+
+    val pluginHomeRows: PluginHomeRows by lazy {
+        PluginHomeRows(
+            plugins = { pluginRegistry.usable() },
+            caller = pluginRuntimes,
+            // In the plugin's data dir: uninstalling deletes it with the rest.
+            cacheFileFor = { id -> java.io.File(pluginStore.dataDir(id), "home.json") },
+        )
+    }
+
+    /** Emits when the set (or versions) of usable plugins changes: Home re-asks for rows then. */
+    val pluginsChanged: kotlinx.coroutines.flow.Flow<List<Pair<String, String>>>
+        get() = pluginRegistry.plugins
+            .map { list -> list.filter { it.isUsable }.map { it.id to it.record.version } }
+            .distinctUntilChanged()
 
     /** UpdateWorker's plugin step: each plugin at most once per 24 h; see PluginInstaller.checkDueUpdates. */
     suspend fun checkPluginUpdates() {

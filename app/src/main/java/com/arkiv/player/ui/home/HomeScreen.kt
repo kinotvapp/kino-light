@@ -74,6 +74,7 @@ import com.arkiv.player.ui.live.countryChannelsForHome
 import com.arkiv.player.ui.live.recentChannelsForHome
 import com.arkiv.player.ui.live.homeChannelsRow
 import com.arkiv.player.ui.isLandscapeTablet
+import com.arkiv.player.ui.plugin.rememberPluginOpener
 import com.arkiv.player.ui.rememberGraph
 import com.arkiv.player.ui.theme.ArkivBlack
 import com.arkiv.player.ui.theme.ArkivRed
@@ -128,7 +129,7 @@ fun HomeScreen(
     val graph = rememberGraph()
     val sizes = homeSizes()
     val vm: HomeViewModel = viewModel(
-        factory = viewModelFactory { initializer { HomeViewModel(graph.repository, graph.settings, graph.magisHomeCatalog, graph.hasInternet, graph.homeReloads) } },
+        factory = viewModelFactory { initializer { HomeViewModel(graph.repository, graph.settings, graph.magisHomeCatalog, graph.hasInternet, graph.homeReloads, graph.pluginHomeRows, graph.pluginsChanged) } },
     )
     // A Magis root that failed on the way in (e.g. a cold start before the network is up) gets
     // another chance each time this screen comes back to the front; see HomeViewModel.magisRows.
@@ -140,8 +141,10 @@ fun HomeScreen(
     val continueWatching by vm.continueWatching.collectAsStateWithLifecycle()
     val artwork by vm.artwork.collectAsStateWithLifecycle()
     val magisRows by vm.magisRows.collectAsStateWithLifecycle()
+    val pluginRows by vm.pluginRows.collectAsStateWithLifecycle()
     val seedsExhausted by graph.seedsExhausted.collectAsStateWithLifecycle()
     val magisActions = rememberMagisActions(onPlay = onPlayEpisode)
+    val openPlugin = rememberPluginOpener(onPlay = onPlayEpisode)
     val scope = rememberCoroutineScope()
     // Card whose long-press menu is open: null = no menu. Long-pressing any Magis card (a row's
     // poster or the hero) opens the sheet below to watch OR download it -- the same choice the
@@ -462,6 +465,13 @@ fun HomeScreen(
                 }
             }
         }
+
+        // 6. Plugin rows, after Magis's: each titled by the plugin's row with the plugin as a chip.
+        pluginRows.forEach { row ->
+            item(key = "plugin-${row.pluginId}-${row.id}") {
+                PluginRow(row = row, sizes = sizes, onOpen = openPlugin)
+            }
+        }
     }
 
     // Long-press menu for a Magis card: watch it, or (if a download strategy is registered) save it
@@ -719,6 +729,39 @@ private fun MagisRow(
             }
             item(key = "${row.id}-ver-mas") {
                 SeeMorePosterCard(width = sizes.posterWidth, onClick = onSeeMore)
+            }
+        }
+    }
+}
+
+/** A plugin's Home row: its title, the plugin's name as a chip, and its cards (no "Ver todo" in v1). */
+@Composable
+private fun PluginRow(
+    row: com.arkiv.player.data.plugin.PluginHomeRow,
+    sizes: HomeSizes,
+    onOpen: (com.arkiv.player.data.gateway.GatewayResult) -> Unit,
+) {
+    Column(Modifier.padding(top = 16.dp)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(start = 16.dp, bottom = 8.dp),
+        ) {
+            Text(row.title, style = MaterialTheme.typography.titleMedium, color = Color.White)
+            com.arkiv.player.ui.catalog.MetaChip(row.pluginName, Color(row.color))
+        }
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            items(row.items, key = { "${row.pluginId}-${row.id}-${it.extra["pluginItemId"]}" }) { item ->
+                com.arkiv.player.ui.components.PosterCard(
+                    title = item.title,
+                    imageUrl = item.extra["poster"]?.ifBlank { null },
+                    modifier = Modifier.width(sizes.posterWidth),
+                    onClick = { onOpen(item) },
+                    onLongClick = { onOpen(item) },
+                )
             }
         }
     }
