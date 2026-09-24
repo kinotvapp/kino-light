@@ -201,6 +201,25 @@ private fun MessageBubble(text: String, fromUser: Boolean) {
 
 @Composable
 private fun ThinkingBubble() {
+    // The first reply is slow (catalog fetch + model pick + the free tier's queue), so rotate a few
+    // playful lines instead of a single frozen "pensando…" — it makes the wait feel alive.
+    val phrases = remember {
+        listOf(
+            "Kinobot está pensando…",
+            "Buscando la mejor recomendación…",
+            "Preguntando a los cinéfilos…",
+            "Revisando la filmoteca…",
+            "Indagando entre miles de títulos…",
+            "Consultando a los otakus…",
+        )
+    }
+    var idx by remember { mutableStateOf(0) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(2200)
+            idx = (idx + 1) % phrases.size
+        }
+    }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
         Row(
             modifier = Modifier
@@ -209,12 +228,14 @@ private fun ThinkingBubble() {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             CircularProgressIndicator(color = ArkivRed, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
-            Text(
-                "Kinobot está pensando…",
-                color = ArkivTextSecondary,
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(start = 10.dp),
-            )
+            androidx.compose.animation.Crossfade(targetState = idx, label = "kinobot-thinking") { i ->
+                Text(
+                    phrases[i],
+                    color = ArkivTextSecondary,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(start = 10.dp),
+                )
+            }
         }
     }
 }
