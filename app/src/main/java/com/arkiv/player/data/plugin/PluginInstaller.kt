@@ -73,7 +73,7 @@ class PluginInstaller(
 ) {
     suspend fun preview(input: String): InstallPreview {
         val address = PluginAddress.parse(input)
-            ?: throw InstallException("Escribe usuario/repositorio, por ejemplo lordmacu/kino-plugin-archive")
+            ?: throw InstallException("Escribe usuario/repositorio, por ejemplo kinotvapp/kino-plugin-archive")
         return previewFor(address)
     }
 

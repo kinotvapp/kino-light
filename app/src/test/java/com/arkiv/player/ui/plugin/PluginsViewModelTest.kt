@@ -81,10 +81,10 @@ class PluginsViewModelTest {
     }
 
     @Test fun `a refused address shows the installer's message`() {
-        val admin = FakeAdmin().apply { previewResult = { throw InstallException("Escribe usuario/repositorio, por ejemplo lordmacu/kino-plugin-archive") } }
+        val admin = FakeAdmin().apply { previewResult = { throw InstallException("Escribe usuario/repositorio, por ejemplo kinotvapp/kino-plugin-archive") } }
         val vm = vm(admin)
         vm.onAddressChange("nope"); vm.add()
-        assertEquals("Escribe usuario/repositorio, por ejemplo lordmacu/kino-plugin-archive", vm.state.value.message)
+        assertEquals("Escribe usuario/repositorio, por ejemplo kinotvapp/kino-plugin-archive", vm.state.value.message)
         assertFalse(vm.state.value.busy)
     }
 
