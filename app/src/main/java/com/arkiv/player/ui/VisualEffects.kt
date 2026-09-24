@@ -110,7 +110,8 @@ fun cardFocusScale(reduced: Boolean): CardScale = CardDefaults.scale(focusedScal
  * Measures once per process, after [SETTLE_MS] (the startup credential warm-up takes 4-34 s on these
  * boxes and competes for the same cores, which would make any device look slow), and only when it can
  * matter: not already reduced, and not when the person picked a mode explicitly. A slow verdict is a
- * strike, and it takes [EffectsPolicy.STRIKES_TO_REDUCE] on separate launches to switch the effects off.
+ * strike, and it takes [EffectsPolicy.STRIKES_TO_REDUCE] on separate launches to switch the effects off,
+ * unless the sample is so bad ([EffectsPolicy.SEVERE_SHARE]) that one is enough.
  */
 @Composable
 fun EffectsAutoTune(reduced: Boolean) {
@@ -129,14 +130,20 @@ fun EffectsAutoTune(reduced: Boolean) {
             graph.settings.recordSmoothEffectsSample()
             return@LaunchedEffect
         }
-        if (graph.settings.recordSlowEffectsSample()) {
-            val dropped = (EffectsPolicy.droppedShare(frames, budgetMs) * 100).toInt()
+        val severe = EffectsPolicy.isSevere(frames, budgetMs)
+        if (graph.settings.recordSlowEffectsSample(severe)) {
+            // Stable message, the numbers as extras: one GlitchTip issue collects every device.
             Crash.report(
-                EffectsReduced(
-                    "model=${Build.MODEL} ram=${DeviceEffects.totalRamMb(context)}MB " +
-                        "budget=${"%.1f".format(budgetMs)}ms dropped=$dropped% frames=${frames.size}",
-                ),
+                EffectsReduced("decorative effects turned off: device measured slow"),
                 "effects-auto-reduced",
+                extras = mapOf(
+                    "model" to Build.MODEL,
+                    "ram_mb" to DeviceEffects.totalRamMb(context).toString(),
+                    "budget_ms" to "%.1f".format(budgetMs),
+                    "dropped_pct" to (EffectsPolicy.droppedShare(frames, budgetMs) * 100).toInt().toString(),
+                    "frames" to frames.size.toString(),
+                    "severe" to severe.toString(),
+                ),
             )
         }
     }

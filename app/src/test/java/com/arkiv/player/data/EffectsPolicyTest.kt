@@ -86,6 +86,26 @@ class EffectsPolicyTest {
     }
 
     @Test
+    fun `half the frames dropped is severe, enough to turn the effects off on one launch`() {
+        assertTrue(EffectsPolicy.isSevere(frames(fast = 90, slow = 90), budget)) // exactly 50%
+        assertTrue(EffectsPolicy.isSevere(frames(fast = 0, slow = 180), budget))
+    }
+
+    @Test
+    fun `a merely slow sample is not severe and still needs the second launch`() {
+        val borderline = frames(fast = 144, slow = 36) // 20%: slow, not severe
+        assertEquals(true, EffectsPolicy.isSlow(borderline, budget))
+        assertFalse(EffectsPolicy.isSevere(borderline, budget))
+        assertFalse(EffectsPolicy.isSevere(frames(fast = 91, slow = 89), budget)) // just under 50%
+    }
+
+    @Test
+    fun `nothing to judge is never severe`() {
+        assertFalse(EffectsPolicy.isSevere(emptyList(), budget))
+        assertFalse(EffectsPolicy.isSevere(frames(fast = 0, slow = 180), budgetMs = 0f))
+    }
+
+    @Test
     fun `the dropped share is reported for telemetry`() {
         assertEquals(0.2f, EffectsPolicy.droppedShare(frames(fast = 144, slow = 36), budget), 0.0001f)
         assertEquals(0f, EffectsPolicy.droppedShare(emptyList(), budget), 0f)

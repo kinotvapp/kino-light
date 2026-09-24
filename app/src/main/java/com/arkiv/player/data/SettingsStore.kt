@@ -143,14 +143,16 @@ class SettingsStore(context: Context) {
     }
 
     /**
-     * A measured-slow launch. Returns true when this was the strike that turns the effects off for good
-     * ([EffectsPolicy.STRIKES_TO_REDUCE]); before that it only counts, so one contaminated sample
-     * (the startup warm-up competing for the CPU) can't condemn a device.
+     * A measured-slow launch. Returns true when this turned the effects off for good: either it was the
+     * strike that reached [EffectsPolicy.STRIKES_TO_REDUCE], or the sample was [severe] (see
+     * [EffectsPolicy.SEVERE_SHARE]) and needs no confirmation. Otherwise it only counts, so one
+     * borderline, possibly contaminated sample (the startup warm-up competing for the CPU) can't
+     * condemn a device.
      */
-    fun recordSlowEffectsSample(): Boolean {
+    fun recordSlowEffectsSample(severe: Boolean = false): Boolean {
         val strikes = prefs.getInt(KEY_EFFECTS_SLOW_STRIKES, 0) + 1
         prefs.edit().putInt(KEY_EFFECTS_SLOW_STRIKES, strikes).apply()
-        if (strikes < EffectsPolicy.STRIKES_TO_REDUCE || _effectsAutoReduced.value) return false
+        if ((!severe && strikes < EffectsPolicy.STRIKES_TO_REDUCE) || _effectsAutoReduced.value) return false
         prefs.edit().putBoolean(KEY_EFFECTS_AUTO_REDUCED, true).apply()
         _effectsAutoReduced.value = true
         return true

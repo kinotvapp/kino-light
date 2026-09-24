@@ -72,10 +72,16 @@ object Crash {
      * every `runCatching { ... }.onFailure { ... }` call site that already reports through here
      * (see `ArkivApp.report`) reaches GlitchTip too, not just the local [guard] store -- without
      * touching each call site. See [reportToSentry].
+     *
+     * [extras] carry the VARYING detail (a model, a duration, a size) as structured fields, so the
+     * exception message can stay constant. GlitchTip groups by type + message: putting the numbers in
+     * the message makes one issue per distinct value and floods the board (what the "warm-up" reports
+     * do); with a stable message and the numbers here, one issue collects every event. They go to
+     * Sentry only, not to the local store.
      */
-    fun report(error: Throwable, tag: String) {
+    fun report(error: Throwable, tag: String, extras: Map<String, String> = emptyMap()) {
         guard?.report(error, tag)
-        reportToSentry(error, tag)
+        reportToSentry(error, tag, extras)
     }
 
     /**
@@ -85,10 +91,13 @@ object Crash {
      * [io.sentry.Sentry.isEnabled] is false here and this is a no-op -- no separate flag to keep in
      * sync. `runCatching`: a reporting path must never become a NEW reason something fails.
      */
-    private fun reportToSentry(error: Throwable, tag: String) {
+    private fun reportToSentry(error: Throwable, tag: String, extras: Map<String, String>) {
         runCatching {
             if (io.sentry.Sentry.isEnabled()) {
-                io.sentry.Sentry.captureException(error) { scope -> scope.setTag("kino.report_tag", tag) }
+                io.sentry.Sentry.captureException(error) { scope ->
+                    scope.setTag("kino.report_tag", tag)
+                    extras.forEach { (key, value) -> scope.setExtra(key, value) }
+                }
             }
         }
     }

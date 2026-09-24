@@ -57,9 +57,16 @@ object EffectsPolicy {
     /**
      * Separate slow launches needed before the effects are turned off for good. The measurement can be
      * contaminated (the credential warm-up runs at startup and takes 4-34 s on these boxes, on the same
-     * few cores), so one slow sample isn't proof: it takes a second one on another launch.
+     * few cores), so one BORDERLINE sample isn't proof: it takes a second one on another launch.
      */
     const val STRIKES_TO_REDUCE = 2
+
+    /**
+     * A sample this bad (half the frames dropped) is proof on its own, and waiting for a second launch
+     * would only make the person sit through two more stuttering sessions. Contamination can push a
+     * healthy device over [SLOW_SHARE], but not to half its frames.
+     */
+    const val SEVERE_SHARE = 0.50f
 
     /**
      * Whether the specs alone say "low-end". [totalRamMb] <= 0 or absurdly large means the device
@@ -81,7 +88,11 @@ object EffectsPolicy {
         return dropped.toFloat() / frameDurationsMs.size >= SLOW_SHARE
     }
 
-    /** Share of dropped frames, for the telemetry message. */
+    /** Is the sample bad enough ([SEVERE_SHARE]) to skip the second-launch confirmation? */
+    fun isSevere(frameDurationsMs: List<Float>, budgetMs: Float): Boolean =
+        frameDurationsMs.isNotEmpty() && budgetMs > 0f && droppedShare(frameDurationsMs, budgetMs) >= SEVERE_SHARE
+
+    /** Share of dropped frames, for the telemetry. */
     fun droppedShare(frameDurationsMs: List<Float>, budgetMs: Float): Float =
         if (frameDurationsMs.isEmpty()) 0f
         else frameDurationsMs.count { it > budgetMs * DROPPED_FRAME_FACTOR }.toFloat() / frameDurationsMs.size

@@ -56,7 +56,8 @@ class OfflineDownloadFailed(message: String) : Exception(message)
  *  from field data instead of guesses. One-shot per process; see ArkivApp. */
 class DeviceProfile(message: String) : Exception(message)
 
-/** A device was measured too slow for the decorative effects (the drifting hero backdrop) on more than
- *  one launch, so they were turned off for it. Carries its model, RAM and the share of dropped frames,
- *  to tune the thresholds from real devices. One-shot per device: only the strike that flips it reports. */
+/** A device was measured too slow for the decorative effects (the drifting hero backdrop), so they were
+ *  turned off for it. The message is constant; its model, RAM, share of dropped frames and whether the
+ *  sample was severe travel as Sentry extras (see `Crash.report`), to tune the thresholds from real
+ *  devices. One-shot per device: only the sample that flips it reports. */
 class EffectsReduced(message: String) : Exception(message)
