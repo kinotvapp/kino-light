@@ -2,11 +2,6 @@ package com.arkiv.player.ui.tv
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandHorizontally
@@ -98,9 +93,15 @@ import com.arkiv.player.ui.home.HomeViewModel
 import com.arkiv.player.ui.home.homeMeta
 import com.arkiv.player.ui.home.magisFeatured
 import com.arkiv.player.ui.live.deviceCountry
+import com.arkiv.player.ui.EffectsAutoTune
+import com.arkiv.player.ui.LocalReducedEffects
+import com.arkiv.player.ui.backdropFadeSpec
+import com.arkiv.player.ui.cardFocusScale
 import com.arkiv.player.ui.heroFallback
 import com.arkiv.player.ui.heroSubtitle
 import com.arkiv.player.ui.libraryMeta
+import com.arkiv.player.ui.rememberHeroDrift
+import com.arkiv.player.ui.rememberReducedEffects
 import com.arkiv.player.data.SettingsStore
 import com.arkiv.player.ui.live.LiveZappingSource
 import com.arkiv.player.ui.live.countryChannelsForHome
@@ -518,18 +519,16 @@ fun TvHomeScreen(
     val rowUnit = labelHeight + cardHeight + rowGap
     val rowsRegionHeight = rowUnit * 2 + rowsTopPad
 
+    // Decorative motion off? The person's choice, or this device measured too slow for it (see
+    // EffectsPolicy). It drives the hero drift and the backdrop crossfade below; the Home is also where
+    // a slow device gets judged, because it's the screen with the most going on.
+    val reducedEffects = rememberReducedEffects()
+    EffectsAutoTune(reducedEffects)
+
     // Hero background drift: 0 = all the way to the left of the slack, 1 = all the way to the
     // right. Goes back and forth so there's no jump on restarting, and slow enough that it reads
     // as the image "breathing", not as an animation. See the AsyncImage's graphicsLayer.
-    val heroDrift by rememberInfiniteTransition(label = "heroDrift").animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = HERO_DRIFT_MS, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "heroDriftX",
-    )
+    val heroDrift by rememberHeroDrift(reducedEffects, HERO_DRIFT_MS)
 
     Box(Modifier.fillMaxSize().background(ArkivBlack)) {
         if (!hasInternet) {
@@ -559,7 +558,7 @@ fun TvHomeScreen(
         }
 
         // Fixed immersive background: focused item's backdrop + gradients.
-        Crossfade(targetState = featured?.imageUrl, animationSpec = tween(450), label = "bg") { url ->
+        Crossfade(targetState = featured?.imageUrl, animationSpec = backdropFadeSpec(reducedEffects), label = "bg") { url ->
             Box(Modifier.fillMaxSize()) {
                 AsyncImage(
                     model = url,
@@ -929,7 +928,7 @@ private fun TvLiveChannelCard(
     Card(
         onClick = onClick,
         modifier = modifier.height(cardHeight).onFocusChanged { if (it.isFocused) onFocus() },
-        scale = CardDefaults.scale(focusedScale = 1.08f),
+        scale = cardFocusScale(LocalReducedEffects.current),
         colors = CardDefaults.colors(containerColor = ArkivSurfaceHigh),
         border = CardDefaults.border(
             focusedBorder = Border(androidx.compose.foundation.BorderStroke(3.dp, Color.White)),
@@ -982,7 +981,7 @@ private fun TvSeeMoreChannelsCard(
     Card(
         onClick = onClick,
         modifier = modifier.height(cardHeight).onFocusChanged { if (it.isFocused) onFocus() },
-        scale = CardDefaults.scale(focusedScale = 1.08f),
+        scale = cardFocusScale(LocalReducedEffects.current),
         colors = CardDefaults.colors(containerColor = ArkivSurfaceHigh),
         border = CardDefaults.border(
             focusedBorder = Border(androidx.compose.foundation.BorderStroke(3.dp, Color.White)),
@@ -1029,7 +1028,7 @@ internal fun TvSeeMoreRowCard(
     Card(
         onClick = onClick,
         modifier = modifier.height(cardHeight).onFocusChanged { if (it.isFocused) onFocus() },
-        scale = CardDefaults.scale(focusedScale = 1.08f),
+        scale = cardFocusScale(LocalReducedEffects.current),
         colors = CardDefaults.colors(containerColor = ArkivSurfaceHigh),
         border = CardDefaults.border(
             focusedBorder = Border(androidx.compose.foundation.BorderStroke(3.dp, Color.White)),

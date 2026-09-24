@@ -8,6 +8,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -23,6 +24,8 @@ import com.arkiv.player.security.LockedScreen
 import com.arkiv.player.security.RootSignalCollector
 import com.arkiv.player.ui.ArkivRoot
 import com.arkiv.player.ui.ArkivSplash
+import com.arkiv.player.ui.LocalReducedEffects
+import com.arkiv.player.ui.rememberReducedEffects
 import com.arkiv.player.ui.theme.ArkivTheme
 import com.arkiv.player.ui.tv.ArkivTvRoot
 import kotlinx.coroutines.delay
@@ -139,10 +142,14 @@ class MainActivity : AppCompatActivity() {
                                 )
                             }
                         } else if (isTv) {
-                            ArkivTvRoot(
-                                deepLinkEpisodeId = pendingEpisode,
-                                onDeepLinkConsumed = { pendingEpisode = null },
-                            )
+                            // Decorative motion switch (see EffectsPolicy) for everything under the
+                            // TV root, read by the cards' focus zoom without each one touching settings.
+                            CompositionLocalProvider(LocalReducedEffects provides rememberReducedEffects()) {
+                                ArkivTvRoot(
+                                    deepLinkEpisodeId = pendingEpisode,
+                                    onDeepLinkConsumed = { pendingEpisode = null },
+                                )
+                            }
                         } else {
                             ArkivRoot(
                                 deepLinkEpisodeId = pendingEpisode,

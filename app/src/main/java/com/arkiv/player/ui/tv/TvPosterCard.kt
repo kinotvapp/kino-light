@@ -24,6 +24,8 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil.compose.AsyncImage
+import com.arkiv.player.ui.LocalReducedEffects
+import com.arkiv.player.ui.cardFocusScale
 import com.arkiv.player.ui.theme.ArkivSurfaceHigh
 import com.arkiv.player.ui.theme.ArkivTextPrimary
 import com.arkiv.player.ui.theme.ArkivTextSecondary
@@ -56,7 +58,7 @@ fun TvPosterCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .onFocusChanged { if (it.isFocused) onFocus() },
-            scale = CardDefaults.scale(focusedScale = 1.08f),
+            scale = cardFocusScale(LocalReducedEffects.current),
             colors = CardDefaults.colors(containerColor = ArkivSurfaceHigh),
             border = CardDefaults.border(
                 focusedBorder = Border(androidx.compose.foundation.BorderStroke(3.dp, Color.White)),

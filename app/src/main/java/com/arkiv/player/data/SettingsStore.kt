@@ -62,6 +62,15 @@ class SettingsStore(context: Context) {
     private val _forceTvDesign = MutableStateFlow(prefs.getBoolean(com.arkiv.player.DeviceType.KEY_FORCE_TV, false))
     val forceTvDesign: StateFlow<Boolean> = _forceTvDesign
 
+    // Decorative motion (the drifting hero backdrop and its crossfade): the person's choice, plus the
+    // app's own verdict for "Automático". See [EffectsPolicy]. `effectsAutoReduced` is set once a
+    // device has been measured slow on [EffectsPolicy.STRIKES_TO_REDUCE] separate launches, and stays
+    // until the person picks "Automático" again (which clears it and the strike count).
+    private val _effectsMode = MutableStateFlow(EffectsMode.fromKey(prefs.getString(KEY_EFFECTS_MODE, null)))
+    val effectsMode: StateFlow<EffectsMode> = _effectsMode
+    private val _effectsAutoReduced = MutableStateFlow(prefs.getBoolean(KEY_EFFECTS_AUTO_REDUCED, false))
+    val effectsAutoReduced: StateFlow<Boolean> = _effectsAutoReduced
+
     // Marker for the 2026-08-14 one-time recents purge (see `ArkivApp.onCreate`). Same rescue as
     // [adultsUnlocked]: if it's lost, the purge simply runs once more -- no StateFlow needed
     // since nothing observes it, it's only read on launch.
@@ -110,6 +119,41 @@ class SettingsStore(context: Context) {
         if (_forceTvDesign.value == v) return
         prefs.edit().putBoolean(com.arkiv.player.DeviceType.KEY_FORCE_TV, v).apply()
         _forceTvDesign.value = v
+    }
+
+    /**
+     * Picking "Automático" wipes the earlier verdict (and the strikes toward it): whoever goes back to
+     * Automático wants the device judged again, not the old conclusion kept.
+     */
+    fun setEffectsMode(mode: EffectsMode) {
+        if (_effectsMode.value == mode) return
+        prefs.edit().putString(KEY_EFFECTS_MODE, mode.key).apply {
+            if (mode == EffectsMode.AUTO) {
+                putBoolean(KEY_EFFECTS_AUTO_REDUCED, false)
+                putInt(KEY_EFFECTS_SLOW_STRIKES, 0)
+            }
+        }.apply()
+        if (mode == EffectsMode.AUTO) _effectsAutoReduced.value = false
+        _effectsMode.value = mode
+    }
+
+    /** A measured-smooth launch clears the strikes: two slow samples must be close together to count, not scattered over months. */
+    fun recordSmoothEffectsSample() {
+        if (prefs.getInt(KEY_EFFECTS_SLOW_STRIKES, 0) != 0) prefs.edit().putInt(KEY_EFFECTS_SLOW_STRIKES, 0).apply()
+    }
+
+    /**
+     * A measured-slow launch. Returns true when this was the strike that turns the effects off for good
+     * ([EffectsPolicy.STRIKES_TO_REDUCE]); before that it only counts, so one contaminated sample
+     * (the startup warm-up competing for the CPU) can't condemn a device.
+     */
+    fun recordSlowEffectsSample(): Boolean {
+        val strikes = prefs.getInt(KEY_EFFECTS_SLOW_STRIKES, 0) + 1
+        prefs.edit().putInt(KEY_EFFECTS_SLOW_STRIKES, strikes).apply()
+        if (strikes < EffectsPolicy.STRIKES_TO_REDUCE || _effectsAutoReduced.value) return false
+        prefs.edit().putBoolean(KEY_EFFECTS_AUTO_REDUCED, true).apply()
+        _effectsAutoReduced.value = true
+        return true
     }
 
     /** When "For you" was last attempted (0 = never). See `ForYouGate`. */
@@ -215,6 +259,9 @@ class SettingsStore(context: Context) {
         private const val KEY_FOR_YOU_MODEL_FAILURE = "para_ti_fallo_modelo"
         private const val KEY_FUN_FACTS_ENABLED = "datos_curiosos_habilitados"
         private const val KEY_SEED_AUTO_REFRESH = "semillas_auto_refresco"
+        private const val KEY_EFFECTS_MODE = "efectos_modo"
+        private const val KEY_EFFECTS_AUTO_REDUCED = "efectos_reducidos_auto"
+        private const val KEY_EFFECTS_SLOW_STRIKES = "efectos_muestras_lentas"
 
         /** The encrypted file `SecureDeviceStore` used to write (deleted in Task 9). */
         private const val OLD_ACCOUNTS_STORE_FILE = "arkiv_pb_secure"

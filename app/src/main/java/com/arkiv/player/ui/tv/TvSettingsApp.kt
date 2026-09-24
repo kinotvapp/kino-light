@@ -33,12 +33,14 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import com.arkiv.player.data.EffectsMode
 import com.arkiv.player.data.SettingsStore
 import com.arkiv.player.data.credentials.SeedResult
 import com.arkiv.player.data.local.FileSizeFormat
 import com.arkiv.player.data.local.StorageUsage
 import com.arkiv.player.data.update.UpdateInfo
 import com.arkiv.player.ui.rememberGraph
+import com.arkiv.player.ui.rememberReducedEffects
 import com.arkiv.player.ui.settings.AdultsLock
 import com.arkiv.player.ui.theme.ArkivRed
 import com.arkiv.player.ui.theme.ArkivTextSecondary
@@ -221,6 +223,25 @@ internal fun TvSettingsApp() {
                 Runtime.getRuntime().exit(0)
             }
         },
+    )
+
+    // Decorative motion (the zooming/drifting backdrop and its crossfade): automatic by default, judged
+    // from how this device actually performs (see EffectsPolicy). This is the manual override for when
+    // that judgment is wrong in either direction, and it shows what the app is applying right now.
+    val effectsMode by graph.settings.effectsMode.collectAsState()
+    val reducedNow = rememberReducedEffects()
+    TvActionOption(
+        when (effectsMode) {
+            EffectsMode.AUTO -> "Efectos visuales: automático (ahora ${if (reducedNow) "reducidos" else "completos"})"
+            EffectsMode.FULL -> "Efectos visuales: completos"
+            EffectsMode.REDUCED -> "Efectos visuales: reducidos"
+        },
+        onClick = { graph.settings.setEffectsMode(effectsMode.next()) },
+    )
+    Text(
+        "Reducidos quita el zoom del fondo y de las tarjetas, y las transiciones: más fluido en TV lentas.",
+        style = MaterialTheme.typography.bodySmall,
+        color = ArkivTextSecondary,
     )
 
     TvAdultsSection(graph.settings)

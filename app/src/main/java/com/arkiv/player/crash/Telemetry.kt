@@ -55,3 +55,8 @@ class OfflineDownloadFailed(message: String) : Exception(message)
  *  box (large landscape screen). Carries its raw DeviceType signals so a real threshold can be set
  *  from field data instead of guesses. One-shot per process; see ArkivApp. */
 class DeviceProfile(message: String) : Exception(message)
+
+/** A device was measured too slow for the decorative effects (the drifting hero backdrop) on more than
+ *  one launch, so they were turned off for it. Carries its model, RAM and the share of dropped frames,
+ *  to tune the thresholds from real devices. One-shot per device: only the strike that flips it reports. */
+class EffectsReduced(message: String) : Exception(message)

@@ -2,12 +2,6 @@ package com.arkiv.player.ui.tv
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
@@ -50,9 +44,12 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import coil.compose.AsyncImage
+import com.arkiv.player.ui.backdropFadeSpec
 import com.arkiv.player.ui.home.CategoriesViewModel
 import com.arkiv.player.ui.home.CategorySpec
 import com.arkiv.player.ui.rememberGraph
+import com.arkiv.player.ui.rememberHeroDrift
+import com.arkiv.player.ui.rememberReducedEffects
 import com.arkiv.player.ui.theme.ArkivBlack
 import com.arkiv.player.ui.theme.ArkivTextSecondary
 
@@ -99,15 +96,9 @@ fun TvCategoriesScreen(
     val rowUnit = labelHeight + cardHeight + rowGap
     val rowsRegionHeight = rowUnit * 2 + rowsTopPad
 
-    val heroDrift by rememberInfiniteTransition(label = "heroDrift").animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = HERO_DRIFT_MS, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "heroDriftX",
-    )
+    // Decorative motion off? The person's choice, or a device measured too slow (see EffectsPolicy).
+    val reducedEffects = rememberReducedEffects()
+    val heroDrift by rememberHeroDrift(reducedEffects, HERO_DRIFT_MS)
 
     if (loading && rows.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -134,7 +125,7 @@ fun TvCategoriesScreen(
     Box(Modifier.fillMaxSize().background(ArkivBlack)) {
 
         // Immersive background: the focused category's preview + gradients.
-        Crossfade(targetState = featured?.imageUrl, animationSpec = tween(450), label = "bg") { url ->
+        Crossfade(targetState = featured?.imageUrl, animationSpec = backdropFadeSpec(reducedEffects), label = "bg") { url ->
             Box(Modifier.fillMaxSize()) {
                 AsyncImage(
                     model = url,
