@@ -288,7 +288,7 @@ r.json()    // JSON.parse of the body
 Parses `html` and returns `[{ text, html, attrs }]` for every element matching the CSS selector
 (Jsoup's selector syntax): `text` is its text, `html` its inner HTML, `attrs` an object of its
 attributes. Only the first 2,000,000 characters of `html` are read, at most 500 elements come back,
-and it throws if the combined text and HTML of the matches goes over 5 million characters. **It
+and it throws if the combined text and HTML of the matches goes over 5,242,880 characters (5 MB). **It
 exists only inside Kino**: the Node kit's version throws, so test anything that uses it in the app.
 
 ### `kino.storage`
@@ -320,7 +320,7 @@ characters. Under the Node kit they go to stderr.
 | Time per call | `search` 15 s; `home`, `episodes`, `resolve` 20 s each, counting all your fetches together |
 | Loading the module (its top level) | 10 s |
 | Idle sandbox | closed after 5 minutes without calls |
-| Consecutive timeouts | 3 in a row and Kino disables the plugin ("No responde") until the person re-enables it |
+| Consecutive timeouts | 3 in a row and Kino disables the plugin ("No responde — actívalo para volver a intentar") until the person re-enables it |
 | `kino.fetch` | https only; 15 s default, 30 s maximum; body at most 5 MB; at most 60 requests per call; at most 10 redirects per request |
 | `kino.storage` | 64 KB per plugin |
 | Results | `search` 50 items; `home` 10 rows of 40; `episodes` 2000; `ref` 4096 characters; `id` matches `^[A-Za-z0-9._~-]{1,128}$` |
@@ -466,7 +466,7 @@ differences:
    "Buscar actualización".
    - If the new version does not add anything to `hosts` and needs a supported `apiVersion`, it is
      installed silently.
-   - If `hosts` grows, Kino does **not** apply it: the plugin shows "Actualización disponible: requiere
+   - If `hosts` grows, Kino does **not** apply it: the plugin shows "Actualización disponible — requiere
      tu aprobación" and the person sees the new hosts (marked "nuevo") before accepting. Removing
      hosts needs no approval.
    - If the new version needs a higher `apiVersion` than the app supports, the check reports "Este
@@ -497,10 +497,10 @@ Before you publish, check that:
   `color`), next to the app's own sources; your `home` rows appear on Home after the app's own; your
   titles play in Kino's player and appear in "Continuar viendo" and the library. Not available for
   plugin titles in this version: downloads, Chromecast and DLNA.
-- **Status of each plugin** in Ajustes > Plugins: "Activo", "Desactivado", "No responde" (three
-  timeouts in a row; the person can re-enable it), "Actualización disponible: requiere tu
-  aprobación", and "Archivos dañados, reinstálalo" (the installed file no longer matches what was
-  installed).
+- **Status of each plugin** in Ajustes > Plugins: "Activo", "Desactivado", "No responde — actívalo
+  para volver a intentar" (three timeouts in a row; the person can re-enable it), "Actualización
+  disponible — requiere tu aprobación", and "Archivos dañados, reinstálalo" (the installed file no
+  longer matches what was installed).
 - **Disable and uninstall.** A disabled plugin disappears from search and Home; its titles stay in
   the library and say "Activa el plugin <name> para ver esto". Uninstalling deletes the plugin's
   files, its storage and its cached Home rows immediately, but keeps the person's library titles and

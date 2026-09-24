@@ -10,6 +10,10 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
+// Captured at load: the runner later replaces console.error to keep stdout clean, and kino.log
+// must not be routed through that replacement (it would print two prefixes).
+const writeErr = console.error.bind(console);
+
 export function hostAllowed(host, patterns) {
   const h = String(host).toLowerCase().replace(/\.$/, "");
   return patterns.some((p) => (p.startsWith("*.") ? h.endsWith("." + p.slice(2)) : h === p));
@@ -37,7 +41,10 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", stora
         headers["User-Agent"] = `Kino/${appVersion} (plugin ${manifest.id})`;
       }
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), Math.min(opts.timeoutMs || 15000, 30000));
+      // Same rule as the app: a missing, non-numeric or non-positive timeout means the 15 s default.
+      const requested = Math.trunc(Number(opts.timeoutMs));
+      const timeoutMs = Number.isFinite(requested) && requested > 0 ? Math.min(requested, 30000) : 15000;
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
       let r;
       try {
         r = await fetch(current, { method, headers, body, redirect: "manual", signal: controller.signal });
@@ -86,7 +93,7 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", stora
       },
       remove: (k) => { delete storage[String(k)]; save(); },
     }),
-    log: (...args) => console.error("[kino.log]", ...args),
+    log: (...args) => writeErr("[kino.log]", ...args),
   });
 
   return { kino, resetBudget: () => { requests = 0; } };
