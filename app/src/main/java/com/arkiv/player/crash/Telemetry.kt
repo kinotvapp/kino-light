@@ -61,3 +61,9 @@ class DeviceProfile(message: String) : Exception(message)
  *  sample was severe travel as Sentry extras (see `Crash.report`), to tune the thresholds from real
  *  devices. One-shot per device: only the sample that flips it reports. */
 class EffectsReduced(message: String) : Exception(message)
+
+/** How fast a device is at startup: time to the first frame since the process started, plus a fixed CPU
+ *  benchmark, next to its model, RAM and cores. TELEMETRY ONLY, once per device per app version, to pick
+ *  real "slow device" thresholds from field data. The message is constant; the figures are Sentry extras
+ *  (see `Crash.report`), so one GlitchTip issue collects every device. See `StartupProfiler`. */
+class StartupProfile(message: String) : Exception(message)

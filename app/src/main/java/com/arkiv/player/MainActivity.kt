@@ -95,6 +95,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         val isTv = isTelevision() || intent.getBooleanExtra("force_tv", false)
+        // Telemetry only: how fast this device is at startup, reported once per version.
+        StartupProfiler.start(this, (application as ArkivApp).graph.settings, isTv)
         setContent {
             ArkivTheme {
                 val graph = (application as ArkivApp).graph

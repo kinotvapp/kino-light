@@ -137,6 +137,13 @@ class SettingsStore(context: Context) {
         _effectsMode.value = mode
     }
 
+    /** The app version (code) whose startup profile was already reported: each device reports once per release. See `StartupProfiler`. */
+    val startupProfileReportedVersion: Int get() = prefs.getInt(KEY_STARTUP_PROFILE_VERSION, 0)
+
+    fun markStartupProfileReported(versionCode: Int) {
+        prefs.edit().putInt(KEY_STARTUP_PROFILE_VERSION, versionCode).apply()
+    }
+
     /** A measured-smooth launch clears the strikes: two slow samples must be close together to count, not scattered over months. */
     fun recordSmoothEffectsSample() {
         if (prefs.getInt(KEY_EFFECTS_SLOW_STRIKES, 0) != 0) prefs.edit().putInt(KEY_EFFECTS_SLOW_STRIKES, 0).apply()
@@ -264,6 +271,7 @@ class SettingsStore(context: Context) {
         private const val KEY_EFFECTS_MODE = "efectos_modo"
         private const val KEY_EFFECTS_AUTO_REDUCED = "efectos_reducidos_auto"
         private const val KEY_EFFECTS_SLOW_STRIKES = "efectos_muestras_lentas"
+        private const val KEY_STARTUP_PROFILE_VERSION = "perfil_arranque_version"
 
         /** The encrypted file `SecureDeviceStore` used to write (deleted in Task 9). */
         private const val OLD_ACCOUNTS_STORE_FILE = "arkiv_pb_secure"
