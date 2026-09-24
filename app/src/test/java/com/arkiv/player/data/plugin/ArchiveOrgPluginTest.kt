@@ -12,6 +12,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.io.File
+import java.net.URLDecoder
 import java.security.MessageDigest
 
 /**
@@ -34,11 +35,13 @@ class ArchiveOrgPluginTest {
         is ManifestResult.Invalid -> error("the app's ManifestParser rejects the manifest: ${parsed.field}: ${parsed.message}")
     }
     private val recording = System.getenv("KINO_RECORD_FIXTURES") == "1"
+    private val requested = mutableListOf<String>()
     private lateinit var runtime: PluginRuntime
 
     private inner class FixtureHost : PluginHost {
         override suspend fun fetch(requestJson: String): String {
             val url = JSONObject(requestJson).getString("url")
+            requested += url
             val u = url.toHttpUrl()
             assertEquals("https", u.scheme)
             assertTrue("plugin asked for undeclared host ${u.host}", HostRules.matches(u.host, manifest.hosts))
@@ -56,7 +59,10 @@ class ArchiveOrgPluginTest {
                 .execute().use { r -> check(r.isSuccessful) { "$url -> ${r.code}" }; r.body!!.string() }
             file.parentFile!!.mkdirs()
             file.writeText(body)
-            File(fixtures, "index.txt").appendText("${file.name} $url\n")
+            // Sorted by URL so a re-recording gives a diff a person can review, whatever order the tests ran in.
+            val index = File(fixtures, "index.txt")
+            val lines = (if (index.exists()) index.readLines() else emptyList()) + "${file.name} $url"
+            index.writeText(lines.sortedBy { it.substringAfter(' ') }.joinToString("\n", postfix = "\n"))
         }
 
         override fun select(html: String, css: String) = PluginHtml.selectJson(html, css)
@@ -127,6 +133,21 @@ class ArchiveOrgPluginTest {
         for ((q, expected) in listOf("Romeo AND Juliet" to "romeo-and-juliet-1933", "the -general/" to "TheGeneral")) {
             val json = runtime.call("search", PluginContentSource.queryJson(GatewaySearchQuery(q = q, type = "movie")), 15_000)
             assertTrue(q, PluginOutput.items(json, allowSeries = true).any { it.id == expected })
+        }
+    }
+
+    @Test fun `cleaning a query never cuts a word next to a non-ASCII letter`() = runBlocking {
+        // "Señor" holds "or" and "Ñandú" is one word: an ASCII-only \b took "or" out of the first ("Señ").
+        val cases = listOf(
+            Triple("El Señor de los Anillos", "El Señor de los Anillos", null),
+            Triple("Un Señor Mucamo!", "Un Señor Mucamo", "un-senor-mucamo-1940"),
+        )
+        for ((typed, cleaned, expectedId) in cases) {
+            requested.clear()
+            val json = runtime.call("search", PluginContentSource.queryJson(GatewaySearchQuery(q = typed, type = "movie")), 15_000)
+            val asked = requested.single { "advancedsearch" in it }
+            assertTrue("$typed: asked $asked", URLDecoder.decode(asked, "UTF-8").contains("q=title:($cleaned) AND "))
+            if (expectedId != null) assertTrue(typed, PluginOutput.items(json, allowSeries = true).any { it.id == expectedId })
         }
     }
 

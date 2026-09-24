@@ -13,22 +13,17 @@ for plugin authors: one manifest, one JavaScript file, no build step.
 | `episodes` | The video files of an item, in natural order. Files named `S01E02` get that season and number; otherwise they are numbered 1, 2, 3 in order. |
 | `resolve` | The file to play: the item's own mp4/m4v/webm, or the best mp4 archive.org derived from the original (`.avi`, `.mpg`, `.mkv`, `.divx`...). Sibling `.vtt`/`.srt` files become subtitles. |
 
+Two things it does not try to be clever about, so do not copy them as intended behavior:
+an item that bundles several films (a collection) is exposed as a single `movie`, and `resolve`
+plays its first video in natural name order; and episodes numbered `S01E00` (a pilot, a special)
+are dropped by Kino, whose episode numbers start at 1.
+
 ## Hosts, and why `*.archive.org`
 
 The manifest declares `archive.org` and `*.archive.org`, and the plugin can only talk to those.
 `https://archive.org/download/...` answers with a redirect to a storage node such as
 `dn720705.ca.archive.org`, and a wildcard does not cover its own bare domain (`*.archive.org` does
 not match `archive.org`), so both are listed. Kino shows the list to the person before installing.
-
-## Run it locally
-
-With Kino's authoring kit (Node 18+), from a Kino checkout:
-
-```
-node plugins/sdk/run.mjs plugins/archive-org search metropolis
-node plugins/sdk/run.mjs plugins/archive-org episodes Dragnet1951
-node plugins/sdk/run.mjs plugins/archive-org resolve TheGiantOfMetropolis1961
-```
 
 ## Install it in Kino
 

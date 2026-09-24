@@ -1,6 +1,6 @@
 // Kino plugin: Internet Archive (archive.org) — public-domain films and classic TV.
-// Contract and host API: docs/plugins/README.md. Declared hosts: archive.org and *.archive.org
-// (downloads redirect to a storage node such as dn600309.us.archive.org).
+// Declared hosts: archive.org and *.archive.org (downloads redirect to a storage node such as
+// dn720705.ca.archive.org).
 
 const BASE = "https://archive.org";
 const FIELDS = ["identifier", "title", "year", "description"];
@@ -20,8 +20,8 @@ function advancedUrl(query, rows) {
   return BASE + "/advancedsearch.php?" + parts.join("&");
 }
 
-// Throws only AFTER its first await: in the app a throw before the first await can't be caught
-// by the caller (see "Known engine limits" in docs/plugins/README.md).
+// Throws only AFTER its first await: in Kino a throw before a function's first await can't be
+// caught by its caller.
 async function getJson(url) {
   const r = await kino.fetch(url);
   if (!r.ok) throw new Error("archive.org respondió " + r.status);
@@ -56,11 +56,12 @@ export async function search(query) {
   // Letters, digits and apostrophes inside words only: any other character can be query syntax to
   // advancedsearch (a stray "/", "-", "&" or "'" makes it answer {"error": ...}). So are the words
   // and/or/not in any case (a dangling one is an error too); dropping them never changes which
-  // titles match.
+  // titles match. Word edges are spelled out with \p{} classes: \b is ASCII-only, so it would cut
+  // the "or" out of "Señor".
   const text = String(query.q || "")
     .replace(/[^\p{L}\p{M}\p{N}' ]+/gu, " ")
-    .replace(/(?<![\p{L}\p{N}])'|'(?![\p{L}\p{N}])/gu, " ")
-    .replace(/\b(and|or|not)\b/gi, " ")
+    .replace(/(?<![\p{L}\p{M}\p{N}])'|'(?![\p{L}\p{M}\p{N}])/gu, " ")
+    .replace(/(?<![\p{L}\p{M}\p{N}])(and|or|not)(?![\p{L}\p{M}\p{N}])/giu, " ")
     .replace(/\s+/g, " ")
     .trim();
   if (!text) return [];
@@ -112,7 +113,11 @@ function natural(a, b) {
 // hold .avi, .mpg, .mkv and .divx originals next to their derived mp4.
 function videoOriginals(files) {
   const playable = new Set();
-  for (const f of files) if (PLAYABLE_EXT.test(f.name)) playable.add(f.source === "original" ? f.name : f.original);
+  for (const f of files) {
+    if (!PLAYABLE_EXT.test(f.name)) continue;
+    const from = f.source === "original" ? f.name : f.original;
+    if (from) playable.add(from);
+  }
   return files
     .filter((f) => f.source === "original" && playable.has(f.name))
     .sort((a, b) => natural(a.name, b.name));
