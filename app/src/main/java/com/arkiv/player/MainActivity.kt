@@ -46,7 +46,15 @@ private const val CONTENT_SETTLE_MS = 400L
 
 /** Longest the splash waits for the heavy credential/Magis chain to warm up before composing the
  *  root anyway. The wait itself never blocks the UI thread (the splash keeps animating), so this is
- *  generous: it only caps a warm-up that hangs. On a fast device warm-up finishes well under it. */
+ *  only a hang-guard; on a normal device the wait ends as soon as warm-up finishes, well under it.
+ *
+ *  Kept SHORT (8 s) on purpose: the HOME composition does NOT force the slow lazy (it reads
+ *  `magisHomeCatalog`, which defers `liveCatalog`/`magisPortal` into a lambda that runs off-main in
+ *  the flow, and `repository`/`tmdbApi`, which only decrypt credentials -- not the O-MVLL 3DES). So
+ *  the home never blocks the UI thread on the 3DES, and telemetry (SlowStartup) confirms it: weak TV
+ *  boxes report 12-16 s warm-ups with NO paired ANR. Waiting longer here would just make the splash
+ *  as long as the warm-up (12-16 s) for no benefit. Search/Live DO force the 3DES on main, but the
+ *  user reaches them after the background warm-up has had time to finish. */
 private const val WARMUP_MAX_WAIT_MS = 8000L
 
 /**

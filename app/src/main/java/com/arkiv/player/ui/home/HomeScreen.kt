@@ -3,6 +3,7 @@ package com.arkiv.player.ui.home
 import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,6 +25,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SignalWifiOff
@@ -139,8 +141,12 @@ fun HomeScreen(
     val artwork by vm.artwork.collectAsStateWithLifecycle()
     val magisRows by vm.magisRows.collectAsStateWithLifecycle()
     val seedsExhausted by graph.seedsExhausted.collectAsStateWithLifecycle()
-    val openMagis = rememberMagisOpener(onPlay = onPlayEpisode)
+    val magisActions = rememberMagisActions(onPlay = onPlayEpisode)
     val scope = rememberCoroutineScope()
+    // Card whose long-press menu is open: null = no menu. Long-pressing any Magis card (a row's
+    // poster or the hero) opens the sheet below to watch OR download it -- the same choice the
+    // library gives, brought to the discovery home.
+    var menuItem by remember { mutableStateOf<CatalogItem?>(null) }
 
     // On tapping a library item: if it's a movie, play it directly; if it's a series, open the detail screen.
     fun open(row: LibraryRow) {
@@ -338,7 +344,8 @@ fun HomeScreen(
                         subtitle = featured.homeMeta(),
                         actionLabel = null,
                         onAction = null,
-                        onClick = { openMagis(featured) },
+                        onClick = { magisActions.open(featured) },
+                        onLongClick = { menuItem = featured },
                     )
                 }
             }
@@ -448,16 +455,98 @@ fun HomeScreen(
                     MagisRow(
                         row = row,
                         sizes = sizes,
-                        onOpen = openMagis,
+                        onOpen = magisActions.open,
+                        onLongPress = { menuItem = it },
                         onSeeMore = { onBrowseMagisRow(row.id, row.title) },
                     )
                 }
             }
         }
     }
+
+    // Long-press menu for a Magis card: watch it, or (if a download strategy is registered) save it
+    // to the device -- a movie enqueues, a series opens its chapter picker. Same choice the library
+    // offers, brought to the home's discovery rows and hero.
+    menuItem?.let { item ->
+        MagisCardMenu(
+            item = item,
+            canDownload = magisActions.canDownload,
+            onDismiss = { menuItem = null },
+            onPlay = {
+                menuItem = null
+                magisActions.open(item)
+            },
+            onDownload = {
+                menuItem = null
+                magisActions.download(item)
+            },
+        )
+    }
+}
+
+/**
+ * Bottom sheet raised by long-pressing a Magis card: "watch" always, "download" only when a
+ * strategy is registered ([MagisCardActions.canDownload]). The wording follows the item's kind so a
+ * series reads as chapters, not a single file. Choosing an action closes the sheet; the action
+ * itself (playing, or opening the chapter picker) is driven by the caller through [MagisCardActions].
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun MagisCardMenu(
+    item: CatalogItem,
+    canDownload: Boolean,
+    onDismiss: () -> Unit,
+    onPlay: () -> Unit,
+    onDownload: () -> Unit,
+) {
+    val isSeries = item.isMagisSeries
+    androidx.compose.material3.ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.padding(bottom = 24.dp)) {
+            Text(
+                text = item.title,
+                style = MaterialTheme.typography.titleMedium,
+                color = Color.White,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+            )
+            MagisCardMenuRow(
+                icon = Icons.Default.PlayArrow,
+                label = if (isSeries) "Ver capítulos" else "Reproducir",
+                onClick = onPlay,
+            )
+            if (canDownload) {
+                MagisCardMenuRow(
+                    icon = Icons.Default.Download,
+                    label = if (isSeries) "Descargar capítulos" else "Descargar",
+                    onClick = onDownload,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MagisCardMenuRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 20.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Icon(icon, contentDescription = null, tint = Color.White)
+        Text(label, style = MaterialTheme.typography.bodyLarge, color = Color.White)
+    }
 }
 
 /** Full-width feature: backdrop, bottom gradient, title/subtitle and optional action. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun Hero(
     sizes: HomeSizes,
@@ -467,12 +556,13 @@ private fun Hero(
     actionLabel: String?,
     onAction: (() -> Unit)?,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
 ) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(sizes.heroHeight)
-            .clickable(onClick = onClick),
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
     ) {
         AsyncImage(
             model = backdropUrl,
@@ -604,6 +694,7 @@ private fun MagisRow(
     row: MagisHomeRow,
     sizes: HomeSizes,
     onOpen: (CatalogItem) -> Unit,
+    onLongPress: (CatalogItem) -> Unit,
     onSeeMore: () -> Unit,
 ) {
     Column(Modifier.padding(top = 16.dp)) {
@@ -623,6 +714,7 @@ private fun MagisRow(
                     imageUrl = item.poster,
                     modifier = Modifier.width(sizes.posterWidth),
                     onClick = { onOpen(item) },
+                    onLongClick = { onLongPress(item) },
                 )
             }
             item(key = "${row.id}-ver-mas") {

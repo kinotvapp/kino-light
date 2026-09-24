@@ -183,34 +183,6 @@ fun TvSearchScreen(
         scope.launch { applyResult(playback.playDitu(r)) }
     }
 
-    // Saves a whole Magis season. Chapter by chapter, same as the phone: each one is a separate
-    // file on the CDN and the queue already groups them by series in Descargas.
-    fun saveMagisSeason(
-        season: com.arkiv.player.data.gateway.GatewayResult,
-        chapters: List<com.arkiv.player.data.gateway.GatewayEpisode>,
-        // Same as on the phone: the series travels along in the save too, because saving rewrites
-        // the whole episode row. See `SearchPlayback.magisEpisodeIdFor`.
-        series: com.arkiv.player.data.gateway.GatewaySeries?,
-    ) {
-        preparing = true; playError = null
-        scope.launch {
-            var queued = 0
-            for (chapter in chapters) {
-                val epId = playback.magisEpisodeIdFor(season, chapter, series) ?: continue
-                if (graph.localDownloads.enqueue(epId, "magis") ==
-                    com.arkiv.player.data.local.EnqueueOutcome.QUEUED
-                ) queued++
-            }
-            preparing = false
-            magisSeasonFor = null
-            playError = when {
-                queued == 0 -> "Esos capítulos ya estaban guardados."
-                queued == chapters.size -> null
-                else -> "Se encolaron $queued de ${chapters.size} (el resto ya estaba)."
-            }
-        }
-    }
-
     fun playResult(source: PlaySource) = when (source) {
         is PlaySource.Magis ->
             if (source.result.extra["program_type"] in com.arkiv.player.data.gateway.MAGIS_SERIES) {
@@ -529,7 +501,9 @@ fun TvSearchScreen(
                                 applyResult(playback.playMagisSeason(currentMagis, chapters, chapter, series))
                             }
                         },
-                        onSaveAll = { chapters, series -> saveMagisSeason(currentMagis, chapters, series) },
+                        // Downloads are hidden on TV: no "Guardar toda la temporada" (same as the
+                        // Caracol path already does). Offline is a phone-only feature.
+                        onSaveAll = null,
                     )
                 } else if (currentDitu != null) {
                     TvCaracolChapters(

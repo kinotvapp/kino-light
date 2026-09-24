@@ -2,14 +2,18 @@ package com.arkiv.player.playback
 
 import android.app.PendingIntent
 import android.content.Intent
+import android.net.Uri
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.arkiv.player.MainActivity
+import com.arkiv.player.data.local.OfflineSubtitleFiles
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
+import java.io.File
 
 /** Reference to the episode currently playing (for the notification's deep-link). */
 object NowPlaying {
@@ -98,9 +102,12 @@ class PlaybackService : MediaSessionService() {
             this, 0, openIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
+        // The downloads dir, captured so the resolver can find a downloaded file's subtitle sidecars
+        // by episodeId without touching a Context on the session thread (see onAddMediaItems).
+        val downloadsDir = (application as com.arkiv.player.ArkivApp).graph.localDownloads.targetDir()
         mediaSession = MediaSession.Builder(this, player)
             .setSessionActivity(sessionActivity)
-            .setCallback(MediaItemResolverCallback)
+            .setCallback(MediaItemResolverCallback(downloadsDir))
             .build()
     }
 
@@ -112,7 +119,7 @@ class PlaybackService : MediaSessionService() {
      * preserves in `requestMetadata.mediaUri` (that field DOES survive the IPC). This is media3's
      * recommended pattern.
      */
-    private object MediaItemResolverCallback : MediaSession.Callback {
+    private class MediaItemResolverCallback(private val downloadsDir: File) : MediaSession.Callback {
         override fun onAddMediaItems(
             mediaSession: MediaSession,
             controller: MediaSession.ControllerInfo,
@@ -127,10 +134,27 @@ class PlaybackService : MediaSessionService() {
                 // PlayerSourceTagIpc: the codec lives there and not here so the round trip is
                 // testable without Robolectric.
                 PlayerSourceTagIpc.decodeFromBundle(ex)?.let { b.setTag(it) }
+                // Offline subtitles: sidecars saved next to a downloaded file (see
+                // MagisDownloadStrategy/OfflineSubtitleFiles) are attached HERE, by episodeId. The
+                // SubtitleConfiguration lives in `localConfiguration`, which the controller→session
+                // IPC drops exactly like the URI, so it has to be rebuilt on this side. `mediaId`
+                // (the episodeId, PlayerScreen.setMediaId) DOES survive the IPC and is the key.
+                // Empty for anything without saved sidecars, so it's a no-op for streaming.
+                subtitleConfigsFor(item.mediaId).takeIf { it.isNotEmpty() }
+                    ?.let { b.setSubtitleConfigurations(it) }
                 b.build()
             }
             return Futures.immediateFuture(resolved)
         }
+
+        private fun subtitleConfigsFor(episodeId: String): List<MediaItem.SubtitleConfiguration> =
+            OfflineSubtitleFiles.read(downloadsDir, episodeId).map { s ->
+                MediaItem.SubtitleConfiguration.Builder(Uri.fromFile(s.file))
+                    .setMimeType(if (s.srt) MimeTypes.APPLICATION_SUBRIP else MimeTypes.TEXT_VTT)
+                    .setLanguage(s.lang)
+                    .setLabel(s.lang)
+                    .build()
+            }
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession

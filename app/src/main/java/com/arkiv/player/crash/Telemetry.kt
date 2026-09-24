@@ -50,3 +50,8 @@ class StoragePressure(message: String) : Exception(message)
 
 /** An offline (Caracol) download failed. Tells us which titles/devices can't download. */
 class OfflineDownloadFailed(message: String) : Exception(message)
+
+/** A device that auto-detection classified as a HANDHELD but looks like it could be a misread TV
+ *  box (large landscape screen). Carries its raw DeviceType signals so a real threshold can be set
+ *  from field data instead of guesses. One-shot per process; see ArkivApp. */
+class DeviceProfile(message: String) : Exception(message)

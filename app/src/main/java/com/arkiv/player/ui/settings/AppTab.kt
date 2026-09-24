@@ -1,5 +1,6 @@
 package com.arkiv.player.ui.settings
 
+import android.content.Intent
 import android.widget.Toast
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -42,6 +43,7 @@ internal fun AppTab(onOpenDownloads: () -> Unit = {}) {
     var seedMessage by remember { mutableStateOf<String?>(null) }
     val funFactsEnabled by graph.settings.funFactsEnabled.collectAsState()
     val seedAutoRefreshEnabled by graph.settings.seedAutoRefreshEnabled.collectAsState()
+    val forceTvDesign by graph.settings.forceTvDesign.collectAsState()
 
     // The country we recognize for this phone -- the same free, no-permission, no-network signal
     // (SIM -> time zone -> locale) the live-channels row uses. Shown next to the version so support
@@ -71,6 +73,29 @@ internal fun AppTab(onOpenDownloads: () -> Unit = {}) {
 
     manualUpdate?.let { info ->
         UpdateDialog(info = info, graph = graph, onDismiss = { manualUpdate = null })
+    }
+
+    // The device type is read once per process (MainActivity picks the root, the graph wires
+    // itself), so applying the override means restarting the app cleanly: launch our own restart
+    // task, then kill the process so it comes back up fresh and re-reads DeviceType.
+    fun applyForceTv(v: Boolean) {
+        // Turning it ON means auto-detection got this device wrong: report its raw signals (only on
+        // the ON edge, so correctly-detected devices add ZERO noise) to tune the detection with real
+        // field data. See DeviceType.debugSignals / crash.DeviceProfile.
+        if (v) {
+            com.arkiv.player.crash.Crash.report(
+                com.arkiv.player.crash.DeviceProfile(com.arkiv.player.DeviceType.debugSignals(context)),
+                "device-misdetected-tv",
+            )
+        }
+        graph.settings.setForceTvDesign(v)
+        Toast.makeText(context, "Aplicando… la app se reiniciará", Toast.LENGTH_SHORT).show()
+        val launch = context.packageManager.getLaunchIntentForPackage(context.packageName)
+        val component = launch?.component
+        if (component != null) {
+            context.startActivity(Intent.makeRestartActivityTask(component))
+            Runtime.getRuntime().exit(0)
+        }
     }
 
     // Manual re-seed: the backup-session pool is otherwise fetched only once, at activation. A
@@ -182,6 +207,28 @@ internal fun AppTab(onOpenDownloads: () -> Unit = {}) {
         Switch(
             checked = funFactsEnabled,
             onCheckedChange = { graph.settings.setFunFactsEnabled(it) },
+        )
+    }
+
+    Text(
+        "Pantalla",
+        style = MaterialTheme.typography.titleMedium,
+        modifier = Modifier.padding(top = 24.dp, bottom = 8.dp),
+    )
+    Row(
+        modifier = Modifier.fillMaxWidth(0.9f),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Forzar diseño TV", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                "Actívalo si tu TV box abre la versión de tablet en vez de la de TV. La app se reiniciará.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        Switch(
+            checked = forceTvDesign,
+            onCheckedChange = { applyForceTv(it) },
         )
     }
 

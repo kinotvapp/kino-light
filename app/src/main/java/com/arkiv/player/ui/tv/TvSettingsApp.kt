@@ -1,5 +1,6 @@
 package com.arkiv.player.ui.tv
 
+import android.content.Intent
 import android.widget.Toast
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.text.KeyboardActions
@@ -120,6 +121,24 @@ internal fun TvSettingsApp() {
     TvActionOption(
         if (funFactsEnabled) "Datos curiosos: activados" else "Datos curiosos: desactivados",
         onClick = { graph.settings.setFunFactsEnabled(!funFactsEnabled) },
+    )
+
+    // Same "force TV layout" escape as the phone settings, mirrored here so it can be turned back
+    // OFF from a device already in TV mode (otherwise forcing it on would be a one-way trip). The
+    // device type is read once per process, so applying it restarts the app.
+    Text("Pantalla", style = MaterialTheme.typography.titleMedium, color = Color.White)
+    val forceTvDesign by graph.settings.forceTvDesign.collectAsState()
+    TvActionOption(
+        if (forceTvDesign) "Diseño TV forzado: sí (tocar para volver a automático)" else "Forzar diseño TV",
+        onClick = {
+            graph.settings.setForceTvDesign(!forceTvDesign)
+            Toast.makeText(context, "Aplicando… la app se reiniciará", Toast.LENGTH_SHORT).show()
+            val component = context.packageManager.getLaunchIntentForPackage(context.packageName)?.component
+            if (component != null) {
+                context.startActivity(Intent.makeRestartActivityTask(component))
+                Runtime.getRuntime().exit(0)
+            }
+        },
     )
 
     TvAdultsSection(graph.settings)

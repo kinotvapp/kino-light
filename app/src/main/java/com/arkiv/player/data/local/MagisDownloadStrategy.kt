@@ -1,7 +1,9 @@
 package com.arkiv.player.data.local
 
+import android.util.Log
 import com.arkiv.player.data.ArkivRepository
 import com.arkiv.player.data.gateway.ContentSource
+import com.arkiv.player.data.gateway.GatewaySubtitle
 import java.io.File
 
 /**
@@ -53,7 +55,13 @@ class MagisDownloadStrategy(
             resumeKey = episodeId,
             onProgress = onProgress,
         ).fold(
-            onSuccess = { DownloadOutcome.Done(it) },
+            onSuccess = { file ->
+                // The media file carries the audio but NO subtitles (Magis serves those as external
+                // VTT/SRT). Fetch them into sidecars next to it so offline playback has them. It's
+                // best-effort: a subtitle that won't download must NOT fail the movie that already did.
+                saveSubtitles(episodeId, playable.subtitles, targetDir)
+                DownloadOutcome.Done(file)
+            },
             onFailure = {
                 DownloadOutcome.Failed(
                     it.message ?: "Falló la descarga",
@@ -61,6 +69,40 @@ class MagisDownloadStrategy(
                 )
             },
         )
+    }
+
+    /**
+     * Downloads each external subtitle into a sidecar and records the manifest (see
+     * [OfflineSubtitleFiles]). Already-present sidecars are kept (a re-run doesn't re-fetch them).
+     * Everything here is wrapped so a subtitle failure only loses that subtitle, never the download.
+     */
+    private suspend fun saveSubtitles(
+        episodeId: String,
+        subtitles: List<GatewaySubtitle>,
+        targetDir: File,
+    ) {
+        if (subtitles.isEmpty()) return
+        val saved = mutableListOf<OfflineSubtitleFiles.Saved>()
+        subtitles.forEachIndexed { index, sub ->
+            if (sub.url.isBlank()) return@forEachIndexed
+            val target = OfflineSubtitleFiles.fileFor(targetDir, episodeId, index, sub.format)
+            val ok = target.exists() && target.length() > 0 || runCatching {
+                // No headers (same as the online SubtitleConfiguration, which loads the URL bare)
+                // and a stable resumeKey so a retry doesn't discard the tiny partial.
+                http.download(sub.url, target, resumeKey = "$episodeId.sub.$index", onProgress = { _, _ -> })
+                    .getOrThrow()
+                true
+            }.getOrElse {
+                Log.w(TAG, "subtitle #$index (${sub.lang}) failed: ${it.message}")
+                false
+            }
+            if (ok) saved += OfflineSubtitleFiles.Saved(target, sub.lang, sub.format.contains("srt", true))
+        }
+        runCatching { OfflineSubtitleFiles.writeManifest(targetDir, episodeId, saved) }
+    }
+
+    private companion object {
+        const val TAG = "ArkivMagisDl"
     }
 }
 

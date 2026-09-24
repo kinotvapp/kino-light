@@ -141,7 +141,10 @@ fun TvLibraryScreen(
                 fontWeight = FontWeight.Black,
                 modifier = Modifier.padding(start = SAFE_H, bottom = 28.dp),
             )
-            LibrarySection.entries.forEachIndexed { i, s ->
+            // Downloads are hidden on TV (no offline UI there): the "Descargas" section is dropped
+            // from the menu. `LibrarySection` is shared with the phone, so filter at the call site
+            // rather than removing the enum value. (The when-branch below is now unreachable.)
+            LibrarySection.entries.filter { it != LibrarySection.DOWNLOADS }.forEachIndexed { i, s ->
                 TvMenuItem(
                     label = s.label,
                     selected = s == section,

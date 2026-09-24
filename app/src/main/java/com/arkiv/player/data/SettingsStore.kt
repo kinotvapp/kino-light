@@ -55,6 +55,13 @@ class SettingsStore(context: Context) {
     private val _seedAutoRefreshEnabled = MutableStateFlow(prefs.getBoolean(KEY_SEED_AUTO_REFRESH, true))
     val seedAutoRefreshEnabled: StateFlow<Boolean> = _seedAutoRefreshEnabled
 
+    // "Force TV layout": the manual escape for a TV box that every auto-detection signal misreads as
+    // a tablet (see DeviceType). The KEY is DeviceType's, and DeviceType reads this same pref file
+    // directly -- so turning it on takes effect for EVERY device-type consumer after the app
+    // relaunches (the graph picks the type once per process). This store only persists + mirrors it.
+    private val _forceTvDesign = MutableStateFlow(prefs.getBoolean(com.arkiv.player.DeviceType.KEY_FORCE_TV, false))
+    val forceTvDesign: StateFlow<Boolean> = _forceTvDesign
+
     // Marker for the 2026-08-14 one-time recents purge (see `ArkivApp.onCreate`). Same rescue as
     // [adultsUnlocked]: if it's lost, the purge simply runs once more -- no StateFlow needed
     // since nothing observes it, it's only read on launch.
@@ -97,6 +104,12 @@ class SettingsStore(context: Context) {
         if (_seedAutoRefreshEnabled.value == v) return
         prefs.edit().putBoolean(KEY_SEED_AUTO_REFRESH, v).apply()
         _seedAutoRefreshEnabled.value = v
+    }
+
+    fun setForceTvDesign(v: Boolean) {
+        if (_forceTvDesign.value == v) return
+        prefs.edit().putBoolean(com.arkiv.player.DeviceType.KEY_FORCE_TV, v).apply()
+        _forceTvDesign.value = v
     }
 
     /** When "For you" was last attempted (0 = never). See `ForYouGate`. */
