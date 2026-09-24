@@ -77,7 +77,13 @@ fun UpdateDialog(info: UpdateInfo, graph: AppGraph, onDismiss: () -> Unit) {
         downloading = true
         error = null
         downloadJob = scope.launch {
-            graph.apkDownloader.download(info.url, info.sha256).collect { state ->
+            // Re-fetch the manifest (cache-busted) right before downloading, so we use the CURRENT
+            // url + sha256 even when the pending this dialog opened with is stale -- a CDN-cached
+            // older manifest whose sha no longer matches the overwritten kino.apk. That mismatch is
+            // exactly what surfaced as "descarga corrupta". Falls back to the pending info if the
+            // re-check can't be made (offline). Covers both "Actualizar ahora" and "Reintentar".
+            val fresh = runCatching { graph.checkForUpdateNow() }.getOrNull() ?: info
+            graph.apkDownloader.download(fresh.url, fresh.sha256).collect { state ->
                 when (state) {
                     is DownloadState.Downloading -> progress = state.progress
                     // Verified (sha256 matched, if the manifest carried one): hand it to the person

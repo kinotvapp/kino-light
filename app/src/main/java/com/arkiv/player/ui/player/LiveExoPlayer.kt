@@ -180,6 +180,7 @@ internal fun LiveExoPlayer(
             override fun onPlayerError(error: PlaybackException) {
                 val msg = error.message ?: "Error de reproducción (${error.errorCode})"
                 Log.e(TAG, "onPlayerError errorCode=${error.errorCode} msg=$msg", error)
+                com.arkiv.player.crash.Crash.report(error, "live-playback-${PlaybackException.getErrorCodeName(error.errorCode)}")
                 onError(msg)
             }
         }

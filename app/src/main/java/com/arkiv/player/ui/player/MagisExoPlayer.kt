@@ -262,6 +262,9 @@ internal fun MagisExoPlayer(
             override fun onPlayerError(error: PlaybackException) {
                 val msg = error.message ?: "Error de reproducción (${error.errorCode})"
                 Log.e(TAG, "onPlayerError errorCode=${error.errorCode} msg=$msg", error)
+                // Also to Sentry: VOD playback failures (codec init, source, decoder) used to vanish
+                // into Logcat -- this is proactive signal on which content/devices can't play.
+                com.arkiv.player.crash.Crash.report(error, "magis-playback-${androidx.media3.common.PlaybackException.getErrorCodeName(error.errorCode)}")
                 onError(msg)
             }
         }

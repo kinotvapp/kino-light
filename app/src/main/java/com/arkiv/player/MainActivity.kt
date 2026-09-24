@@ -26,6 +26,8 @@ import com.arkiv.player.ui.ArkivSplash
 import com.arkiv.player.ui.theme.ArkivTheme
 import com.arkiv.player.ui.tv.ArkivTvRoot
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Head start given to the intro before starting to compose the app: without this the main thread
@@ -41,6 +43,11 @@ private val INTRO_HEAD_START_MS = com.arkiv.player.ui.INTRO_DURATION_MS.toLong()
 
 /** Margin after starting the root's composition before uncovering the app with the fade. */
 private const val CONTENT_SETTLE_MS = 400L
+
+/** Longest the splash waits for the heavy credential/Magis chain to warm up before composing the
+ *  root anyway. The wait itself never blocks the UI thread (the splash keeps animating), so this is
+ *  generous: it only caps a warm-up that hangs. On a fast device warm-up finishes well under it. */
+private const val WARMUP_MAX_WAIT_MS = 8000L
 
 /**
  * Whether a rooted device gets blocked. **Off on purpose**: today we want a device with root to
@@ -92,6 +99,12 @@ class MainActivity : AppCompatActivity() {
                 var contentSettled by remember { mutableStateOf(false) }
                 LaunchedEffect(Unit) {
                     delay(INTRO_HEAD_START_MS)
+                    // Also wait for the heavy credential/Magis chain to finish warming up OFF the
+                    // main thread before composing the root. Otherwise, on a slow phone / TV box the
+                    // composition reads a still-building `by lazy` (the native 3DES key resolution,
+                    // seconds long) and blocks the UI thread past the ANR threshold. The wait keeps
+                    // the main thread free (the splash animates), and is capped so it never hangs.
+                    withTimeoutOrNull(WARMUP_MAX_WAIT_MS) { graph.warmedUp.first { it } }
                     loadContent = true
                     // The root's composition blocks the main thread; this wait only resumes once
                     // it's done, so the fade uncovers something already drawn.

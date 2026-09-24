@@ -279,6 +279,12 @@ private fun MediaController.asSoftwareReloadPlayer(): SoftwareReloadPlayer =
  * ordering, the rescue is a silent no-op. Split out from `watchLocalDecoder` so a recording fake
  * [SoftwareReloadPlayer] can pin it without needing the whole composition.
  */
+/** The Format of the currently-SELECTED video track, for telemetry. `Player.getVideoFormat()` only
+ *  exists on ExoPlayer, not on the base Player/MediaController, so it's read from the tracks. */
+internal fun selectedVideoFormat(tracks: Tracks): androidx.media3.common.Format? =
+    tracks.groups.firstOrNull { it.type == C.TRACK_TYPE_VIDEO && it.isSelected }
+        ?.let { g -> (0 until g.length).firstOrNull { g.isTrackSelected(it) }?.let { g.getTrackFormat(it) } }
+
 internal fun reloadInSoftware(
     player: SoftwareReloadPlayer,
     mediaItems: List<MediaItem>,
@@ -1742,6 +1748,30 @@ private fun PlayerContent(
         onDispose { controller.removeListener(listener) }
     }
 
+    // Telemetry for the in-screen players (Magis VOD, Ditu, live): playing audio but never painting
+    // a frame -- "suena pero no se ve". Restarts per item, so it reports once each. Nothing crashes
+    // in this case, so this Crash.report is the only signal; it carries the codec/resolution so we
+    // can see WHICH content fails. Gated on playWhenReady (a silent decoder can hold BUFFERING with
+    // audio running or a frozen clock -- either way the user wanted to play and sees no picture).
+    LaunchedEffect(isExo, magisItem, dituPlay, liveItem, casting) {
+        if (!isExo || casting) return@LaunchedEffect
+        kotlinx.coroutines.delay(com.arkiv.player.playback.DecoderWatchdog.NO_VIDEO_REPORT_MS)
+        val p = activePlayer
+        val hasVideo = p.currentTracks.groups.any { it.type == C.TRACK_TYPE_VIDEO }
+        if (!exoRenderedSomething && p.playWhenReady && p.playerError == null && hasVideo) {
+            val f = selectedVideoFormat(p.currentTracks)
+            val audio = p.currentTracks.groups.count { it.type == C.TRACK_TYPE_AUDIO }
+            com.arkiv.player.crash.Crash.report(
+                com.arkiv.player.playback.NoVideoFrame(
+                    "in-screen audio-only after ${com.arkiv.player.playback.DecoderWatchdog.NO_VIDEO_REPORT_MS}ms · " +
+                        "codec=${f?.sampleMimeType} ${f?.width}x${f?.height} audioTracks=$audio " +
+                        "src=${if (isMagis) "magis" else if (isDitu) "ditu" else "live"} state=${p.playbackState}",
+                ),
+                "video-no-frame",
+            )
+        }
+    }
+
     /**
      * Local counterpart of `exoRenderedSomething`: the first-frame spinner rule, fed by [localVideo].
      *
@@ -1772,6 +1802,28 @@ private fun PlayerContent(
         val now = android.os.SystemClock.elapsedRealtime()
         val waitMs = localVideo.msWithSurface(now)
         val videoTracks = controller.currentTracks.groups.count { it.type == C.TRACK_TYPE_VIDEO }
+
+        // Telemetry (once per load): the player has had a surface for a long time, wants to play,
+        // isn't in error, yet never painted a frame -- even the software reload above didn't help.
+        // The user is stuck with audio and a black screen ("suena pero no se ve"). Nothing crashes,
+        // so this is the only signal; carry the codec/resolution so we can see WHICH content fails.
+        if (!localVideo.renderedFirstFrame && !localVideo.noVideoReported &&
+            controller.playWhenReady && localVideo.hasSurface && controller.playerError == null &&
+            waitMs >= DecoderWatchdog.NO_VIDEO_REPORT_MS
+        ) {
+            localVideo.markNoVideoReported()
+            val f = selectedVideoFormat(controller.currentTracks)
+            val audioTracks = controller.currentTracks.groups.count { it.type == C.TRACK_TYPE_AUDIO }
+            com.arkiv.player.crash.Crash.report(
+                com.arkiv.player.playback.NoVideoFrame(
+                    "audio-only after ${waitMs}ms · codec=${f?.sampleMimeType} ${f?.width}x${f?.height} " +
+                        "videoTracks=$videoTracks audioTracks=$audioTracks software=${localVideo.loadPrefersSoftware} " +
+                        "state=${controller.playbackState}",
+                ),
+                "video-no-frame",
+            )
+        }
+
         val reload = DecoderWatchdog.shouldReloadInSoftware(
             waitingMs = waitMs,
             renderedFirstFrame = localVideo.renderedFirstFrame,
@@ -1856,6 +1908,7 @@ private fun PlayerContent(
                 val id = playlistRef.value?.items
                     ?.getOrNull(controller.currentMediaItemIndex)?.episodeId ?: episodeId
                 android.util.Log.w("ArkivPlay", "onPlayerError episodeId=$id → ${error.message}")
+                com.arkiv.player.crash.Crash.report(error, "local-playback-${androidx.media3.common.PlaybackException.getErrorCodeName(error.errorCode)}")
                 vm.onPlaybackFailed(id)
             }
         }

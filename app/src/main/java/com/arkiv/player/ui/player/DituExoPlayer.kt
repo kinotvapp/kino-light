@@ -279,6 +279,9 @@ internal fun DituExoPlayer(
                     exoPlayer.prepare()
                     return
                 }
+                // Non-recoverable (the recover path above already returned): report the one that
+                // actually reaches the user.
+                com.arkiv.player.crash.Crash.report(error, "ditu-playback-${error.errorCodeName}")
                 onError(error.errorCode, arranque.wantedToPlay(exoPlayer.playWhenReady))
             }
         }

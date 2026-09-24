@@ -101,7 +101,34 @@ class ArkivApp : Application(), ImageLoaderFactory {
         // file is a regenerable leftover; wiping them all here keeps steady-state usage near zero.
         // Off the main thread; a fresh install is a no-op.
         graph.applicationScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            runCatching { graph.tsRemuxer.clear() }
+            runCatching {
+                val bytes = graph.tsRemuxer.bytesOnDisk()
+                graph.tsRemuxer.clear()
+                // Telemetry: how big the remux cache actually got before we swept it. A large value
+                // is the storage-bloat / SQLITE_FULL risk made visible.
+                if (bytes >= 1_073_741_824L) { // 1 GB
+                    com.arkiv.player.crash.Crash.report(
+                        com.arkiv.player.crash.StoragePressure("remux cache was ${bytes / 1_048_576L}MB at startup"),
+                        "storage-pressure",
+                    )
+                }
+            }
+        }
+
+        // Proactive telemetry: the backup seed pool ran dry for a device that needs it -> the user
+        // can't play, and nothing throws. Report the rising edge so we learn about pool exhaustion
+        // (and can re-mint) without a user having to tell us. StateFlow only re-emits on change.
+        graph.applicationScope.launch {
+            graph.seedsExhausted.collect { exhausted ->
+                if (exhausted) {
+                    com.arkiv.player.crash.Crash.report(
+                        com.arkiv.player.crash.SeedPoolExhausted(
+                            "backup seed pool exhausted (device needs seeds; every fresh seed came back dead)",
+                        ),
+                        "seeds-exhausted",
+                    )
+                }
+            }
         }
 
         // New episodes of the series you're watching. Runs in the background and blocks nothing:

@@ -148,6 +148,14 @@ class LocalDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
             }
             is DownloadOutcome.Failed -> {
                 Log.w(TAG, "failed ${entity.episodeId}: ${outcome.reason} (transient=${outcome.transient})")
+                // Telemetry: a PERMANENT download failure (transient ones just retry) -> this title
+                // won't finish for the user. Tells us which titles/devices can't download offline.
+                if (!outcome.transient) {
+                    com.arkiv.player.crash.Crash.report(
+                        com.arkiv.player.crash.OfflineDownloadFailed("${entity.episodeId}: ${outcome.reason}"),
+                        "offline-download",
+                    )
+                }
                 // The same check ISN'T needed here: this branch notifies nothing visible (it only
                 // logs and writes state), and an `UPDATE`/`Result.retry()` on a row already deleted
                 // doesn't reintroduce the row or mislead anyone — worst case, if the user re-queued

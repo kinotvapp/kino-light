@@ -1,6 +1,15 @@
 package com.arkiv.player.playback
 
 /**
+ * A handled telemetry signal (NOT a real crash): the player is playing audio but never painted a
+ * video frame -- the user is left with sound and a black screen ("suena pero no se ve"). Reported
+ * through `Crash.report` so we finally get signal on which codec/device it happens on; nothing
+ * crashes in this case, so it never reached the logs or GlitchTip before. Its message carries the
+ * video format (codec + resolution) and whether the software reload had already been tried.
+ */
+class NoVideoFrame(message: String) : Exception(message)
+
+/**
  * Whether local playback should be reloaded ONCE preferring a software video decoder.
  *
  * It replaces the hardware→software rescue libVLC used to do for downloaded files. The failure it
@@ -24,6 +33,14 @@ object DecoderWatchdog {
      * so the reload happens while the first-frame spinner still covers the screen.
      */
     const val NO_FRAME_MS = 10_000L
+
+    /**
+     * How long the player can be playing (with a surface, no error) without EVER painting a frame
+     * before it's reported as a [NoVideoFrame] telemetry event. Comfortably past [NO_FRAME_MS] so the
+     * software-decoder reload has had its own chance first -- reaching this means even that didn't
+     * paint, i.e. the user really is stuck on audio-only.
+     */
+    const val NO_VIDEO_REPORT_MS = 20_000L
 
     /**
      * @param waitingMs how long the current load has had a surface to paint on: since the load, or

@@ -229,9 +229,18 @@ class AppGraph(context: Context) {
      * ANRs. Called once at startup on Dispatchers.IO (see [ArkivApp.onCreate]); a no-op before
      * activation (nothing reaching [magisPortal] is reachable then, and its `!!` would NPE).
      */
+    private val _warmedUp = kotlinx.coroutines.flow.MutableStateFlow(false)
+    /** Flips true once [warmUpCredentials] has finished building (or given up on) the heavy chain.
+     *  The startup splash waits for this before composing the home, so a slow device never blocks
+     *  the main thread on a half-built `by lazy` (the ANRs seen on weak phones / TV boxes). Fresh
+     *  installs flip it immediately (nothing to warm -> the activation screen shows at once). */
+    val warmedUp: kotlinx.coroutines.flow.StateFlow<Boolean> = _warmedUp
+
     fun warmUpCredentials() {
-        runCatching {
-            if (credentialsStore.read() == null) return
+        val t0 = android.os.SystemClock.elapsedRealtime()
+        var built = false
+        try {
+            if (credentialsStore.read() == null) return // fresh install: nothing to warm
             magisPortal   // -> MagisCrypto(...) -> NativeCredentialResolver.magisActivate (the slow part)
             magisSession  // depends on magisPortal + magisStore; warm it too
             // Also pre-build every heavy lazy a screen's ViewModel factory reads on the MAIN thread
@@ -245,6 +254,17 @@ class AppGraph(context: Context) {
             magisHomeCatalog
             contentSource
             magisAccount
+            built = true
+        } catch (_: Throwable) {
+            // The UI must never hang on a warm-up failure; it will retry the chain on demand.
+        } finally {
+            _warmedUp.value = true
+            // Telemetry: a warm-up this slow is what makes a weak device risk an ANR at startup
+            // (the splash waits for it -- see MainActivity). Report the duration so we can see it.
+            val ms = android.os.SystemClock.elapsedRealtime() - t0
+            if (built && ms >= SLOW_WARMUP_MS) {
+                com.arkiv.player.crash.Crash.report(com.arkiv.player.crash.SlowStartup("credential/Magis warm-up ${ms}ms"), "slow-startup")
+            }
         }
     }
 
@@ -851,6 +871,9 @@ class AppGraph(context: Context) {
         /** At most how often new episodes are looked for. See [lookForNewChapters]. */
         private const val HOURS_BETWEEN_SEARCHES = 6L
         private const val KEY_LAST_SEARCH = "ultima_busqueda_ms"
+
+        /** Warm-up slower than this is reported as a startup-ANR risk (see [warmUpCredentials]). */
+        private const val SLOW_WARMUP_MS = 4000L
 
         fun from(context: Context): AppGraph =
             instance ?: synchronized(this) {

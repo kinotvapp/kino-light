@@ -41,6 +41,13 @@ internal class LocalVideoState {
     var loadPrefersSoftware = false
         private set
 
+    /** A "playing audio but never painted a frame" telemetry event was already sent for this load,
+     *  so the per-tick watchdog reports it once, not on every tick. Reset by [onLoad]. */
+    var noVideoReported = false
+        private set
+
+    fun markNoVideoReported() { noVideoReported = true }
+
     private var loadedAtMs = 0L
     private var surfaceSinceMs = 0L
     private var framesAtAttach = 0
@@ -56,6 +63,7 @@ internal class LocalVideoState {
         loadedAtMs = nowMs
         renderedFirstFrame = false
         loadPrefersSoftware = prefersSoftware
+        noVideoReported = false
     }
 
     fun onFirstFrame() {

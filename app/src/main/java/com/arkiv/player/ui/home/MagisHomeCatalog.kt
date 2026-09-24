@@ -45,7 +45,18 @@ class MagisHomeCatalog(
         MagisHome(
             rows = MagisHomeClassifier.classify(roots.associate { (kind, sections) -> kind.root to sections }),
             missing = roots.filter { (_, sections) -> sections.isEmpty() }.mapTo(mutableSetOf()) { it.first },
-        ).also { home -> if (home.missing.isEmpty()) store?.write(home.rows, now()) }
+        ).also { home ->
+            if (home.missing.isEmpty()) {
+                store?.write(home.rows, now())
+            } else if (home.missing.size == MagisKind.entries.size) {
+                // Every VOD root came back empty (this only runs post-activation): the "home cargó
+                // pero no pintó nada" symptom -- a dead session, a geo-block, or a portal change.
+                com.arkiv.player.crash.Crash.report(
+                    com.arkiv.player.crash.EmptyCatalog("all ${MagisKind.entries.size} VOD roots empty"),
+                    "empty-catalog",
+                )
+            }
+        }
     }
 
     /**

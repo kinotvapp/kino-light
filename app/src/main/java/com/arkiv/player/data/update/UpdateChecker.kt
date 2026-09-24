@@ -18,11 +18,20 @@ class UpdateChecker(
         // releases URL 404'd once the repo went private. The `<item>` (kino-app) also hosts the
         // versioned APKs the manifest's `url` points at.
         const val DEFAULT_URL = "https://archive.org/download/kino-app/latest.json"
+
+        /**
+         * A unique query string per fetch so archive.org's CDN can't serve a STALE cached
+         * `latest.json`. FORCE_NETWORK only bypasses OkHttp's own cache, not the CDN's -- and a CDN
+         * edge holding an old manifest (whose `sha256` no longer matches the current `kino.apk`) is
+         * exactly what made the app report a fresh download as "corrupt". Different URL = cache miss
+         * = fresh bytes.
+         */
+        private fun busted(u: String): String = u + (if ('?' in u) "&" else "?") + "cb=" + System.currentTimeMillis()
     }
 
     suspend fun check(currentVersionCode: Int): UpdateInfo? = withContext(Dispatchers.IO) {
         runCatching {
-            val raw = client.newCall(Request.Builder().url(url).cacheControl(CacheControl.FORCE_NETWORK).build()).execute()
+            val raw = client.newCall(Request.Builder().url(busted(url)).cacheControl(CacheControl.FORCE_NETWORK).build()).execute()
                 .use { if (it.isSuccessful) it.body?.string() else null } ?: return@withContext null
             val json = JSONObject(raw)
             val remote = UpdateInfo(
@@ -46,7 +55,7 @@ class UpdateChecker(
      */
     suspend fun downloadUrl(): String? = withContext(Dispatchers.IO) {
         runCatching {
-            val raw = client.newCall(Request.Builder().url(url).cacheControl(CacheControl.FORCE_NETWORK).build()).execute()
+            val raw = client.newCall(Request.Builder().url(busted(url)).cacheControl(CacheControl.FORCE_NETWORK).build()).execute()
                 .use { if (it.isSuccessful) it.body?.string() else null } ?: return@withContext null
             JSONObject(raw).getString("url")
         }.getOrNull()

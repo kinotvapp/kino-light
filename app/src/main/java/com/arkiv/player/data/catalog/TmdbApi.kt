@@ -108,6 +108,13 @@ data class TmdbDetail(
     val type: String,
     val title: String,
     val originalTitle: String,
+    /**
+     * The ENGLISH title (from TMDB `translations`), when different from [title]. A lot of anime and
+     * international content lives in Xuper under its ENGLISH name/alias ("The Rising of the Shield
+     * Hero") while [title] is Spanish and [originalTitle] is the native script (Japanese) -- so
+     * neither of those matches Xuper, but the English one does. Empty when TMDB has no English title.
+     */
+    val englishTitle: String = "",
     val posterUrl: String,
     val backdropUrl: String,
     val overview: String,
@@ -238,11 +245,21 @@ class TmdbApi(
             }
             val localized = if (isTv) o.optString("name") else o.optString("title")
             val original = if (isTv) o.optString("original_name") else o.optString("original_title")
+            // English title from the `translations` block (already appended to this response): the
+            // en-US entry's `data.name` (tv) / `data.title` (movie). Xuper often stores anime and
+            // international titles under this English name, so it's worth searching by too.
+            val english = o.optJSONObject("translations")?.optJSONArray("translations")?.let { arr ->
+                (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
+                    .firstOrNull { it.optString("iso_639_1") == "en" }
+                    ?.optJSONObject("data")
+                    ?.let { if (isTv) it.optString("name") else it.optString("title") }
+            }.orEmpty()
             TmdbDetail(
                 id = id,
                 type = type,
                 title = localized,
                 originalTitle = original,
+                englishTitle = english,
                 posterUrl = imgUrl(o.optString("poster_path"), "w500"),
                 backdropUrl = imgUrl(o.optString("backdrop_path"), "w1280"),
                 overview = o.optString("overview"),

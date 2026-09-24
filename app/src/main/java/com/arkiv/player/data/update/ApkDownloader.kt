@@ -36,8 +36,12 @@ class ApkDownloader(private val context: Context) {
             if (dest.exists()) dest.delete()
             val response = client.newCall(Request.Builder().url(url).build()).execute()
             if (!response.isSuccessful) {
+                val code = response.code
                 response.close()
-                emit(DownloadState.Failed("HTTP ${response.code}"))
+                com.arkiv.player.crash.Crash.report(
+                    com.arkiv.player.crash.OtaDownloadFailed("HTTP $code for $url"), "ota-download",
+                )
+                emit(DownloadState.Failed("HTTP $code"))
                 return@flow
             }
             val body = response.body ?: run {
@@ -65,6 +69,12 @@ class ApkDownloader(private val context: Context) {
                 val actual = toHex(digest.digest())
                 if (!actual.equals(expectedSha256.trim(), ignoreCase = true)) {
                     dest.delete()
+                    com.arkiv.player.crash.Crash.report(
+                        com.arkiv.player.crash.OtaDownloadFailed(
+                            "sha mismatch: got ${actual.take(12)} expected ${expectedSha256.trim().take(12)} for $url",
+                        ),
+                        "ota-download",
+                    )
                     emit(DownloadState.Failed("La descarga no coincide con la esperada (archivo corrupto o incompleto). Se reintentará."))
                     return@flow
                 }
