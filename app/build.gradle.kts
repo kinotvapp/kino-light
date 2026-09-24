@@ -311,6 +311,14 @@ android {
     }
 }
 
+// Unit tests get quickjs-kt-jvm (desktop natives) instead of quickjs-kt-android. Both publish the
+// same classes; with both on the classpath the Android one could win and fail to load its .so.
+configurations.configureEach {
+    if (name.endsWith("UnitTestRuntimeClasspath") || name.endsWith("UnitTestCompileClasspath")) {
+        exclude(group = "io.github.dokar3", module = "quickjs-kt-android")
+    }
+}
+
 fun writeSecretsHeader(bindCert: Boolean, outputDir: File) {
     outputDir.mkdirs()
     val certHash = if (bindCert) releaseCertSha256Bytes() else ByteArray(0)
@@ -684,6 +692,11 @@ dependencies {
     // Image loading
     implementation("io.coil-kt:coil-compose:2.7.0")
 
+    // Plugin sandbox (see docs/superpowers/specs/2026-09-24-plugin-sources-design.md). alpha13 is the
+    // last quickjs-kt built with Kotlin 2.0; every later release needs Kotlin >= 2.3. Its engine
+    // quirks are pinned by QuickJsSpikeTest.
+    implementation("io.github.dokar3:quickjs-kt:1.0.0-alpha13")
+
     testImplementation("junit:junit:4.13.2")
     // Real org.json for JVM unit tests: Android's own (android.jar) is a stub that throws at
     // runtime, so any test that parses JSON would fail without this.
@@ -698,6 +711,10 @@ dependencies {
     // Real SQLite to test the DDL Room doesn't validate (the `updatedAt` triggers): they're plain
     // SQL, so running them is the only honest way to know whether they seal what they must seal.
     testImplementation("org.xerial:sqlite-jdbc:3.45.3.0")
+    // The same engine with desktop natives (macOS/Linux), so PluginRuntime runs in JVM unit tests.
+    // The Android artifact is excluded from the unit-test classpaths below: its loader calls
+    // System.loadLibrary, which can't find an Android .so on the host JVM.
+    testImplementation("io.github.dokar3:quickjs-kt-jvm:1.0.0-alpha13")
 
     // Instrumented tests: the native 3DES key/crypto path (MagisNativeCryptoInstrumentedTest) has
     // to run on a device/emulator where libcredentials.so loads -- it cannot run on the JVM.
