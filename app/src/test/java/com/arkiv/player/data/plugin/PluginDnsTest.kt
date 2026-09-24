@@ -32,6 +32,16 @@ class PluginDnsTest {
         ).forEach { a -> assertThrows(a.toString(), UnknownHostException::class.java) { dns(a).lookup("x") } }
     }
 
+    @Test fun `reserved 240 slash 4, broadcast, 6to4 and Teredo answers are refused`() {
+        listOf(ip(240, 0, 0, 1), ip(250, 1, 2, 3), ip(255, 255, 255, 255), v6("2002:c0a8:101::1"), v6("2001:0:4136:e378::1"))
+            .forEach { a -> assertThrows(a.toString(), UnknownHostException::class.java) { dns(a).lookup("x") } }
+    }
+
+    @Test fun `the edges of 240 slash 4, 6to4 and Teredo stay public`() {
+        listOf(ip(223, 255, 255, 254), v6("2003::1"), v6("2001:1::1"), v6("2001:db9::1"))
+            .forEach { a -> assertEquals(a.toString(), listOf(a), dns(a).lookup("x")) }
+    }
+
     @Test fun `the edges of CGNAT and NAT64 stay public`() {
         listOf(ip(100, 63, 255, 255), ip(100, 128, 0, 1), v6("64:ff9c::1"), v6("2606:4700::1111"))
             .forEach { a -> assertEquals(a.toString(), listOf(a), dns(a).lookup("x")) }

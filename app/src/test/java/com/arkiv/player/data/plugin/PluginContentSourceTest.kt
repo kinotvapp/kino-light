@@ -66,6 +66,12 @@ class PluginContentSourceTest {
         assertTrue(err.cause is PluginTimeoutException)
     }
 
+    @Test fun `a load timeout is worded with its own seconds, never the search limit`() = runTest {
+        val caller = PluginCaller { _, _, _, _ -> throw PluginTimeoutException("La carga del plugin", 10_000) }
+        val err = source(caller).search(GatewaySearchQuery(q = "x")).toList().filterIsInstance<SearchEvent.SourceError>().single()
+        assertEquals("tardó más de 10 s", err.error)
+    }
+
     @Test fun `no search capability means no search at all`() = runTest {
         val events = source(FakeCaller(emptyMap()), plugin(caps = setOf("home", "resolve"))).search(GatewaySearchQuery(q = "x")).toList()
         assertEquals(emptyList<SearchEvent>(), events)

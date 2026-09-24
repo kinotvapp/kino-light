@@ -39,8 +39,9 @@ object PluginHostGate {
 
 /**
  * Refuses a declared name that resolves into the local network: loopback, RFC 1918, link-local,
- * "this network" 0.0.0.0/8, carrier-grade NAT 100.64.0.0/10, multicast, IPv6 unique-local and
- * NAT64 64:ff9b::/96 (which maps onto any IPv4 address, private ones included). A public-looking
+ * "this network" 0.0.0.0/8, carrier-grade NAT 100.64.0.0/10, multicast, reserved 240.0.0.0/4
+ * (with the broadcast address), IPv6 unique-local, and NAT64 64:ff9b::/96, 6to4 2002::/16 and
+ * Teredo 2001::/32 (which embed an IPv4 address, private ones included). A public-looking
  * domain must not become a way into the home LAN.
  */
 class PluginDns(
@@ -59,9 +60,12 @@ class PluginDns(
         }
         val b = a.address.map { it.toInt() and 0xFF }
         return if (a is Inet6Address) {
-            (b[0] and 0xFE) == 0xFC || b.take(12) == NAT64_PREFIX
+            (b[0] and 0xFE) == 0xFC || b.take(12) == NAT64_PREFIX ||
+                // 6to4 2002::/16 and Teredo 2001::/32 embed an IPv4 address, private ones included.
+                (b[0] == 0x20 && b[1] == 0x02) || (b[0] == 0x20 && b[1] == 0x01 && b[2] == 0 && b[3] == 0)
         } else {
-            b[0] == 0 || (b[0] == 100 && (b[1] and 0xC0) == 64)
+            // 240.0.0.0/4 is reserved (and holds the 255.255.255.255 broadcast).
+            b[0] == 0 || (b[0] == 100 && (b[1] and 0xC0) == 64) || b[0] >= 240
         }
     }
 
