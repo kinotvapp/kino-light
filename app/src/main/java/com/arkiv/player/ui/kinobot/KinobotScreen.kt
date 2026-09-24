@@ -132,7 +132,8 @@ internal fun KinobotScreen(onBack: () -> Unit, onSearch: (String) -> Unit) {
 
         // Input
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            // A bit more bottom room so the field doesn't sit flush against the keyboard.
+            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             OutlinedTextField(
