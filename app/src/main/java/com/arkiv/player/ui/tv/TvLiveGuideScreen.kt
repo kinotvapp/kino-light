@@ -207,6 +207,18 @@ fun TvLiveGuideScreen(onWatchChannel: (LiveChannel) -> Unit, onBack: () -> Unit)
                     modifier = Modifier.padding(bottom = 12.dp),
                 )
                 TvKeyboardWithNative(text = search, onTextChange = { search = it })
+                Spacer(Modifier.height(12.dp))
+                Surface(
+                    onClick = { vm.reload() },
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+                    colors = arkivTvSurfaceColors(),
+                    border = arkivTvSurfaceBorder(),
+                ) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("Recargar canales", style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
                 if (search.isNotBlank()) {
                     Spacer(Modifier.height(12.dp))
                     Surface(

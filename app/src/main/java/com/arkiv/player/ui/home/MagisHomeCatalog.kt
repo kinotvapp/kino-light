@@ -21,8 +21,23 @@ data class MagisHome(val rows: List<MagisHomeRow>, val missing: Set<MagisKind>)
  * error, timeout) just contributes nothing to [load] -- it doesn't take the other three down with
  * it. Failures aren't cached, so another [load] asks again only for the roots that are missing.
  */
-class MagisHomeCatalog(private val tree: suspend (root: String) -> List<CatalogSection>) {
+class MagisHomeCatalog(
+    private val tree: suspend (root: String) -> List<CatalogSection>,
+    /** The persistent cache. Null in the JVM tests, which exercise the classification with no Room. */
+    private val store: HomeCatalogStore? = null,
+    /** A cold snapshot older than this is refreshed instead of served (see [rows]/[magisHomeRows]). */
+    private val ttlMs: Long = TTL_MS,
+    private val now: () -> Long = System::currentTimeMillis,
+) {
 
+    /** The last snapshot [store] persisted, or null when there's none (or no store). */
+    suspend fun cached(): CachedRows? = store?.read()
+
+    /**
+     * A fresh pass over the portal. Persists the rows it produced, but ONLY when every root
+     * answered ([MagisHome.missing] empty): a partial pass is transient -- the flow refetches the
+     * missing roots -- and must not overwrite a complete snapshot with a degraded one.
+     */
     suspend fun load(): MagisHome = coroutineScope {
         val roots = MagisKind.entries.map { kind ->
             async { kind to runCatching { tree(kind.root) }.getOrDefault(emptyList()) }
@@ -30,8 +45,21 @@ class MagisHomeCatalog(private val tree: suspend (root: String) -> List<CatalogS
         MagisHome(
             rows = MagisHomeClassifier.classify(roots.associate { (kind, sections) -> kind.root to sections }),
             missing = roots.filter { (_, sections) -> sections.isEmpty() }.mapTo(mutableSetOf()) { it.first },
-        )
+        ).also { home -> if (home.missing.isEmpty()) store?.write(home.rows, now()) }
     }
 
-    suspend fun rows(): List<MagisHomeRow> = load().rows
+    /**
+     * Cache-first rows for the Categorías screen: the persisted snapshot while it's within [ttlMs],
+     * otherwise a fresh [load]. (The home uses [magisHomeRows] instead, which paints the snapshot
+     * AND then refreshes it.)
+     */
+    suspend fun rows(): List<MagisHomeRow> {
+        cached()?.let { if (now() - it.fetchedAt < ttlMs) return it.rows }
+        return load().rows
+    }
+
+    companion object {
+        /** 6 h, the interval the user chose and the same one MagisLiveCatalog's in-memory cache uses. */
+        const val TTL_MS = 6 * 60 * 60 * 1000L
+    }
 }

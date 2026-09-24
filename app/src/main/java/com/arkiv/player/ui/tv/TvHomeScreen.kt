@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.SignalWifiOff
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -267,7 +268,7 @@ fun TvHomeScreen(
 ) {
     val graph = rememberGraph()
     val vm: HomeViewModel = viewModel(
-        factory = viewModelFactory { initializer { HomeViewModel(graph.repository, graph.settings, graph.magisHomeCatalog, graph.hasInternet) } },
+        factory = viewModelFactory { initializer { HomeViewModel(graph.repository, graph.settings, graph.magisHomeCatalog, graph.hasInternet, graph.homeReloads) } },
     )
     // A Magis root that failed on the way in (e.g. a cold start before the network is up) gets
     // another chance each time this screen comes back to the front; see HomeViewModel.magisRows.
@@ -611,6 +612,7 @@ fun TvHomeScreen(
                         modifier = Modifier.padding(end = 16.dp),
                     )
                     TvNavButton(icon = Icons.Default.Search, label = "Buscar", onClick = onOpenSearch)
+                    TvNavButton(icon = Icons.Default.Refresh, label = "Recargar", onClick = { graph.reloadHomeCatalog() })
                     TvNavButton(
                         icon = Icons.Default.GridView,
                         label = "Categorías",

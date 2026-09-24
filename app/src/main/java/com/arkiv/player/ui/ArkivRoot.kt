@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Theaters
@@ -240,6 +241,9 @@ fun ArkivRoot(
                     },
                     actions = {
                         if (currentRoute == "home") {
+                            IconButton(onClick = { graph.reloadHomeCatalog() }) {
+                                Icon(Icons.Default.Refresh, contentDescription = "Recargar catálogo", tint = Color.White)
+                            }
                             IconButton(onClick = { navController.navigate("search") }) {
                                 Icon(Icons.Default.Search, contentDescription = "Buscar", tint = Color.White)
                             }

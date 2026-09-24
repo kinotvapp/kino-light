@@ -66,7 +66,7 @@ fun LibraryScreen(
 ) {
     val graph = rememberGraph()
     val vm: HomeViewModel = viewModel(
-        factory = viewModelFactory { initializer { HomeViewModel(graph.repository, graph.settings, graph.magisHomeCatalog, graph.hasInternet) } },
+        factory = viewModelFactory { initializer { HomeViewModel(graph.repository, graph.settings, graph.magisHomeCatalog, graph.hasInternet, graph.homeReloads) } },
     )
     // Ordered by what you last watched: what you're currently watching comes first, no need to
     // scroll down for it.

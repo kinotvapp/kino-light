@@ -107,7 +107,7 @@ private class FakeLiveApi : LiveCatalogGateway {
 
     override suspend fun categories(includeAdults: Boolean): List<LiveCategory> = categoriesResult
 
-    override suspend fun channels(category: Int): List<LiveChannel> {
+    override suspend fun channels(category: Int, force: Boolean): List<LiveChannel> {
         channelsCalls.add(category)
         gates[category]?.await()
         return channelsByCategory[category].orEmpty()

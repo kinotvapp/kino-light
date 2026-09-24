@@ -309,6 +309,10 @@ class TsRemuxer(
         if (!folder.exists() && !folder.mkdirs()) {
             return RemuxResult.Failed("could not create ${folder.path}")
         }
+        // Bound the chunk path too: without this, casting via the chunk queue accumulated
+        // `<hash>-<index>.mp4` files with no eviction ever (only export() called makeRoom), so the
+        // folder grew until the disk filled -- the source of the reported storage bloat + SQLITE_FULL.
+        makeRoom()
         val destination = File(folder, RemuxPolicy.chunkFileName(key, index))
         val partial = File(folder, "${destination.name}.part")
         runCatching { partial.delete() }
@@ -388,7 +392,14 @@ class TsRemuxer(
         job.cancel()
     }
 
-    /** Drops every remux on disk. For the settings screen, and for tests. */
+    /**
+     * Drops every remux on disk. Called at app startup (off the main thread, [ArkivApp]) and from
+     * the settings screen / tests. Safe to nuke everything on startup: a cold start means a fresh
+     * process, so no cast is in flight and every file is a leftover from an earlier session -- a
+     * derived copy the app can always regenerate. This is what keeps the Chromecast remux cache from
+     * accumulating gigabytes (the reported storage bloat + SQLITE_FULL), since makeRoom only evicts
+     * when a NEW remux pushes over the 4 GB ceiling.
+     */
     fun clear(): Int {
         val files = folder.listFiles().orEmpty()
         var n = 0

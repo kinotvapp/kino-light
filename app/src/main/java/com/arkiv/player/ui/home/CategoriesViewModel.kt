@@ -2,10 +2,16 @@ package com.arkiv.player.ui.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** One category tile: a Magis home row's id (also its "Ver todo" browse key), its label, and a
  *  preview image taken from the row's first title. */
@@ -23,6 +29,8 @@ data class CategorySpec(val id: String, val title: String, val previewUrl: Strin
  */
 class CategoriesViewModel(
     private val magisHome: MagisHomeCatalog,
+    /** Manual "recargar catálogo" pulses from the home's top bar (`AppGraph.homeReloads`). */
+    reload: Flow<Unit> = emptyFlow(),
 ) : ViewModel() {
 
     private val _rows = MutableStateFlow<List<CategorySpec>>(emptyList())
@@ -36,16 +44,32 @@ class CategoriesViewModel(
     var tvScrollOffset: Int = 0
 
     init {
+        refresh(force = false)
+        // The top-bar reload refetches the shared catalog, bypassing the cache.
+        reload.onEach { refresh(force = true) }.launchIn(viewModelScope)
+    }
+
+    /**
+     * (Re)builds the category tiles. [force] bypasses the 6 h cache and asks the portal (the reload
+     * button); otherwise it's cache-first. A refetch that comes back empty keeps the current tiles
+     * instead of blanking them -- unless there were none to begin with.
+     */
+    private fun refresh(force: Boolean) {
         viewModelScope.launch {
-            val rows = runCatching { magisHome.rows() }.getOrDefault(emptyList())
-            _rows.value = rows
-                // Genre rows (magis_g_*) plus the featured "Estrenos"/"mejor valoradas" rows.
-                .filter { it.id.startsWith("magis_g_") || it.id.startsWith("magis_new_") || it.id.startsWith("magis_top_") }
-                .map { row ->
-                    val item = row.shown.firstOrNull()
-                    val preview = item?.let { it.backdrop?.ifBlank { null } ?: it.poster?.ifBlank { null } }
-                    CategorySpec(id = row.id, title = row.title, previewUrl = preview)
-                }
+            _loading.value = true
+            // Fetch + classification + tile building run off the main thread (weak-device jank).
+            val specs = withContext(Dispatchers.Default) {
+                runCatching { if (force) magisHome.load().rows else magisHome.rows() }
+                    .getOrDefault(emptyList())
+                    // Genre rows (magis_g_*) plus the featured "Estrenos"/"mejor valoradas" rows.
+                    .filter { it.id.startsWith("magis_g_") || it.id.startsWith("magis_new_") || it.id.startsWith("magis_top_") }
+                    .map { row ->
+                        val item = row.shown.firstOrNull()
+                        val preview = item?.let { it.backdrop?.ifBlank { null } ?: it.poster?.ifBlank { null } }
+                        CategorySpec(id = row.id, title = row.title, previewUrl = preview)
+                    }
+            }
+            if (specs.isNotEmpty() || _rows.value.isEmpty()) _rows.value = specs
             _loading.value = false
         }
     }

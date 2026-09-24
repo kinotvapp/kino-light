@@ -12,8 +12,11 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
@@ -25,6 +28,8 @@ class HomeViewModel(
     magisHome: MagisHomeCatalog,
     /** `AppGraph.hasInternet`: its false → true flips retry a home pass that left a root out. */
     online: Flow<Boolean>,
+    /** Manual "recargar catálogo" pulses from the top bar (`AppGraph.homeReloads`). */
+    reload: Flow<Unit>,
 ) : ViewModel() {
 
     val library: StateFlow<List<LibraryRow>> = repo.observeLibrary()
@@ -57,7 +62,17 @@ class HomeViewModel(
      * up) is asked again when connectivity comes back or the home resumes, see [magisHomeRows].
      */
     val magisRows: StateFlow<List<MagisHomeRow>?> =
-        magisHomeRows(fetch = magisHome::load, retry = merge(online.reconnections(), resumed))
+        magisHomeRows(
+            cached = magisHome::cached,
+            fetch = magisHome::load,
+            signals = merge(
+                merge(online.reconnections(), resumed).map { Refetch.IfMissing },
+                reload.map { Refetch.Force },
+            ),
+        )
+            // Cache read, portal fetch and on-device classification all run off the main thread;
+            // only the resulting StateFlow is observed on it. Keeps a weak device's UI thread free.
+            .flowOn(Dispatchers.Default)
             .stateIn(viewModelScope, SharingStarted.Lazily, null)
 
     init {

@@ -167,6 +167,9 @@ interface LiveCatalogGateway {
      *   not a security boundary: whoever builds the request by hand can set it either way.
      */
     suspend fun categories(includeAdults: Boolean = false): List<LiveCategory>
-    suspend fun channels(category: Int): List<LiveChannel>
+
+    /** @param force skips any in-memory cache and re-hits the portal (the "recargar" button); the
+     *   normal path reuses a fresh in-process copy. The Room cache is written either way. */
+    suspend fun channels(category: Int, force: Boolean = false): List<LiveChannel>
     suspend fun epg(codes: List<String>): Pair<Map<String, List<LiveProgram>>, List<String>>
 }

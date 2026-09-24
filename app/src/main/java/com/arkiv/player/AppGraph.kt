@@ -53,6 +53,15 @@ class AppGraph(context: Context) {
     private val _hasInternet = kotlinx.coroutines.flow.MutableStateFlow(true)
     val hasInternet: kotlinx.coroutines.flow.StateFlow<Boolean> = _hasInternet
 
+    private val _homeReloads = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(
+        extraBufferCapacity = 1,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
+    )
+    /** Manual "recargar catálogo" pulses from the top bar's reload button; whoever is collecting
+     *  (the home, the Categorías screen) refetches the shared catalog, bypassing the 6 h cache. */
+    val homeReloads: kotlinx.coroutines.flow.SharedFlow<Unit> = _homeReloads
+    fun reloadHomeCatalog() { _homeReloads.tryEmit(Unit) }
+
     private val networkMonitor: android.net.ConnectivityManager.NetworkCallback by lazy {
         object : android.net.ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: android.net.Network) { _hasInternet.value = true }
@@ -225,6 +234,17 @@ class AppGraph(context: Context) {
             if (credentialsStore.read() == null) return
             magisPortal   // -> MagisCrypto(...) -> NativeCredentialResolver.magisActivate (the slow part)
             magisSession  // depends on magisPortal + magisStore; warm it too
+            // Also pre-build every heavy lazy a screen's ViewModel factory reads on the MAIN thread
+            // during composition (HomeScreen/LibraryScreen/TvHome build with magisHomeCatalog +
+            // repository; Live/Search read liveCatalog/contentSource; the account prompt reads
+            // magisAccount). Front-loading them here on IO means composition hits fully-built lazies
+            // instead of triggering this chain -- and blocking on it -- on the UI thread.
+            tmdbApi
+            repository
+            liveCatalog
+            magisHomeCatalog
+            contentSource
+            magisAccount
         }
     }
 
@@ -255,6 +275,7 @@ class AppGraph(context: Context) {
                 apkVersion = creds.iptvApkVersion,
             ),
             tmdb = tmdbApi,
+            vodStore = com.arkiv.player.data.magis.VodSearchStore(database.vodSearchCacheDao()),
         )
     }
 
@@ -299,9 +320,14 @@ class AppGraph(context: Context) {
         com.arkiv.player.data.magis.MagisLiveCatalog(magisCatalog, magisPortal, magisSession)
     }
 
-    /** The home's rows, from the Magis catalog (see [com.arkiv.player.ui.home.MagisHomeCatalog]). */
+    /** The home's rows, from the Magis catalog (see [com.arkiv.player.ui.home.MagisHomeCatalog]).
+     *  Backed by the persistent [com.arkiv.player.ui.home.HomeCatalogStore] so a cold start paints
+     *  the last-known home instantly. */
     val magisHomeCatalog: com.arkiv.player.ui.home.MagisHomeCatalog by lazy {
-        com.arkiv.player.ui.home.MagisHomeCatalog { root -> liveCatalog.tree(root) }
+        com.arkiv.player.ui.home.MagisHomeCatalog(
+            tree = { root -> liveCatalog.tree(root) },
+            store = com.arkiv.player.ui.home.HomeCatalogStore(database.homeCatalogCacheDao()),
+        )
     }
 
     /**
@@ -770,30 +796,51 @@ class AppGraph(context: Context) {
         onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
     )
 
-    /** Chromecast's CastContext, or null if Google Play Services isn't available. */
-    val castContext: CastContext? by lazy {
-        runCatching { CastContext.getSharedInstance(appContext) }.getOrNull()
-    }
+    @Volatile private var _castContext: CastContext? = null
+    @Volatile private var _castSession: com.arkiv.player.cast.CastSessionManager? = null
+    private val castSessionLock = Any()
 
-    /** Owner of the CastPlayer with app-long lifetime: without this, leaving the player cuts the cast. */
-    val castSession: com.arkiv.player.cast.CastSessionManager? by lazy {
-        castContext?.let {
-            com.arkiv.player.cast.CastSessionManager(it, repository, applicationScope)
+    /** Chromecast's CastContext, or null if Google Play Services isn't available OR the async init
+     *  below hasn't finished yet. Never blocks: the heavy `getSharedInstance` runs off the main thread. */
+    val castContext: CastContext? get() = _castContext
+
+    /**
+     * Owner of the CastPlayer with app-long lifetime (without it, leaving the player cuts the cast).
+     * Built lazily on the MAIN THREAD -- CastPlayer/CastContext demand it -- the first time it's read
+     * with a ready [castContext] and credentials present; null before that. UI reads this on the main
+     * thread, so the construction lands there.
+     */
+    val castSession: com.arkiv.player.cast.CastSessionManager?
+        get() {
+            _castSession?.let { return it }
+            val ctx = _castContext ?: return null
+            if (credentialsStore.read() == null) return null
+            return synchronized(castSessionLock) {
+                _castSession ?: com.arkiv.player.cast.CastSessionManager(ctx, repository, applicationScope)
+                    .also { _castSession = it }
+            }
         }
-    }
 
     init {
-        // CastPlayer/CastContext demand the main thread. We force its construction there so the
-        // manager exists from startup (and adopts an already-live session) without depending on
-        // who touches it first -- but ONLY once credentials exist (see below).
-        android.os.Handler(android.os.Looper.getMainLooper()).post {
-            // Skipped pre-activation: a device that hasn't activated yet cannot have a pre-existing
-            // live Cast session to adopt (there is nothing to adopt on a fresh install), and forcing
-            // `castSession` here would force `repository` -> `tmdbApi` -> `credentialsStore.read()!!`,
-            // which is null before activation and crashes the app on startup on any Play-Services
-            // device. `castSession` stays a normal `by lazy` and initializes the first time real UI
-            // touches it, which can only happen post-activation anyway (MainActivity's gate).
-            if (credentialsStore.read() != null) castSession
+        // Cast init is offloaded to a background executor. `CastContext.getSharedInstance` is a heavy,
+        // blocking Play-Services call; running it on the UI thread ANRs slow devices (measured on
+        // 0.9.29: an ANR inside the player's composition, where PlayerScreen reads `graph.castContext`,
+        // and this very startup post used to force it on the main thread too). The async overload does
+        // the init off-thread; only the CastSessionManager/CastPlayer construction, which genuinely
+        // requires the main thread, is posted back once the context is ready -- and ONLY once
+        // credentials exist (pre-activation there's no live session to adopt, and forcing it would
+        // pull `repository` -> `tmdbApi` -> `credentialsStore.read()!!`, null before activation).
+        runCatching {
+            CastContext.getSharedInstance(appContext, java.util.concurrent.Executors.newSingleThreadExecutor())
+                .addOnSuccessListener { ctx ->
+                    _castContext = ctx
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        if (credentialsStore.read() != null) castSession // builds + adopts a live session
+                    }
+                }
+                .addOnFailureListener {
+                    // No Play Services / no Cast support on this device: stays null, exactly as before.
+                }
         }
     }
 

@@ -70,7 +70,7 @@ fun TvCategoriesScreen(
 
     val graph = rememberGraph()
     val vm: CategoriesViewModel = viewModel(
-        factory = viewModelFactory { initializer { CategoriesViewModel(graph.magisHomeCatalog) } },
+        factory = viewModelFactory { initializer { CategoriesViewModel(graph.magisHomeCatalog, graph.homeReloads) } },
     )
     val rows by vm.rows.collectAsStateWithLifecycle()
     val loading by vm.loading.collectAsStateWithLifecycle()

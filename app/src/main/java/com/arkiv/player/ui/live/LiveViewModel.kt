@@ -136,6 +136,10 @@ class LiveViewModel(
 
     fun chooseCategory(id: Int) = load(id)
 
+    /** The "recargar" button: re-fetches the active category from the portal, bypassing the
+     *  in-process channel cache, and overwrites the Room cache with what comes back. */
+    fun reload() = load(_state.value.activeCategory, force = true)
+
     fun search(text: String) = _state.update { it.copy(search = text) }
 
     /**
@@ -151,7 +155,7 @@ class LiveViewModel(
      * review). The cache IS always written even if the response arrives late: it's useful for the
      * next time that category is requested, not just for this screen.
      */
-    private fun load(category: Int) {
+    private fun load(category: Int, force: Boolean = false) {
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
             _state.update { it.copy(loading = true, error = null, activeCategory = category) }
@@ -177,7 +181,7 @@ class LiveViewModel(
                     val cats = api.categories(includeAdults = adultsUnlocked())
                     _state.update { it.copy(categories = cats) }
                 }
-                api.channels(category)
+                api.channels(category, force)
             }.onSuccess { fresh ->
                 val nowMs = System.currentTimeMillis()
                 cacheDao.replace(category, fresh.map {

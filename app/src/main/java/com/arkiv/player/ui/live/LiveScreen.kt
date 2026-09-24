@@ -24,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.ViewAgenda
@@ -149,7 +150,12 @@ fun LiveScreen(
     // player's zapping goes through, not the full catalog. Set in LiveZappingSource BEFORE
     // opening: a list of LiveChannel doesn't cross the navigation route (a String) well, see
     // LiveZappingSource's KDoc (LiveZapping.kt).
-    val activeList = if (view == LocalView.RECENT) filterChannels(recents, state.search) else state.visible
+    // filterChannels normalizes every channel name; over the 1000+ live grid that's thousands of
+    // allocations, so memoize it instead of recomputing on each recomposition / EPG tick (the TV
+    // screens already do this). Reused below for the empty check and the grid/guide.
+    val visible = remember(state.channels, state.search) { filterChannels(state.channels, state.search) }
+    val visibleRecents = remember(recents, state.search) { filterChannels(recents, state.search) }
+    val activeList = if (view == LocalView.RECENT) visibleRecents else visible
     fun open(channel: LiveChannel) {
         LiveZappingSource.list = activeList
         onOpenChannel(channel.code)
@@ -176,6 +182,9 @@ fun LiveScreen(
                 singleLine = true,
                 modifier = Modifier.weight(1f),
             )
+            IconButton(onClick = { vm.reload() }) {
+                Icon(Icons.Default.Refresh, contentDescription = "Recargar canales", tint = ArkivTextSecondary)
+            }
             IconButton(onClick = { guideMode = !guideMode }) {
                 Icon(
                     imageVector = if (guideMode) Icons.Default.GridView else Icons.Default.ViewAgenda,
@@ -248,7 +257,7 @@ fun LiveScreen(
             state.loading && state.channels.isEmpty() -> {
                 PlaceholderGrid(gridPadding)
             }
-            state.visible.isEmpty() -> {
+            visible.isEmpty() -> {
                 val (title, subtitle) = when {
                     state.search.isNotBlank() -> "Sin resultados" to "Prueba con otro nombre o número de canal."
                     state.activeCategory == CATEGORY_FAVORITES -> "Sin favoritos todavía" to
@@ -257,8 +266,8 @@ fun LiveScreen(
                 }
                 EmptyState(title, subtitle, modifier = Modifier.fillMaxSize())
             }
-            guideMode -> LiveGuideList(state.visible, state.programming, ::open, vm::requestEpg, gridPadding)
-            else -> ChannelGrid(state.visible, state.current, state.favorites, gridPadding, ::open, ::favorite)
+            guideMode -> LiveGuideList(visible, state.programming, ::open, vm::requestEpg, gridPadding)
+            else -> ChannelGrid(visible, state.current, state.favorites, gridPadding, ::open, ::favorite)
         }
     }
 }

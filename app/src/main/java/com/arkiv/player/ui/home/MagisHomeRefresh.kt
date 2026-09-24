@@ -22,24 +22,48 @@ fun Flow<Boolean>.reconnections(): Flow<Unit> = flow {
     }
 }
 
+/** Why the home is refetching: [Force] is a manual reload (always), [IfMissing] a reconnect/resume
+ *  that only pays a trip when the last pass left a root out ([shouldRefetch]). */
+enum class Refetch { Force, IfMissing }
+
 /**
- * The home's Magis rows over time: one pass as soon as it's collected, then another each time
- * [retry] fires while the last pass left a root out ([shouldRefetch]). So a cold start with no
- * network yet doesn't hide a whole kind until the process dies, and a complete home never asks
- * again.
+ * The home's Magis rows over time. On subscribe it paints the persisted [cached] snapshot INSTANTLY
+ * (a cold start no longer shows a blank home while the portal answers), then refreshes only when
+ * that snapshot is missing or older than [ttlMs]. After that it refetches on each [signals] pulse:
+ * a [Refetch.Force] (the top-bar reload) always, a [Refetch.IfMissing] (connectivity back, home
+ * resumed) only while the last pass left a root out.
  *
- * [retry] is listened to from the start, not after the first pass: a signal that arrives mid-pass
+ * A refetch that comes back empty (portal down) never overwrites what's on screen -- the stale
+ * cache stays -- except on the very first run with nothing cached, where the empty result is sent
+ * to leave the loading state. [fetch] itself persists a complete pass (see [MagisHomeCatalog.load]).
+ *
+ * [signals] is listened to from the start, not after the first pass: a pulse that arrives mid-pass
  * is kept (conflated to one) and weighed when the pass lands. Otherwise connectivity that came back
  * while a doomed request was still timing out would be lost -- by then it's just "online".
  */
-fun magisHomeRows(fetch: suspend () -> MagisHome, retry: Flow<Unit>): Flow<List<MagisHomeRow>> = channelFlow {
-    val signals = retry.buffer(Channel.CONFLATED).produceIn(this)
-    var last = fetch()
-    send(last.rows)
-    for (signal in signals) {
-        if (shouldRefetch(last)) {
+fun magisHomeRows(
+    cached: suspend () -> CachedRows?,
+    fetch: suspend () -> MagisHome,
+    signals: Flow<Refetch>,
+    ttlMs: Long = MagisHomeCatalog.TTL_MS,
+    now: () -> Long = System::currentTimeMillis,
+): Flow<List<MagisHomeRow>> = channelFlow {
+    val queue = signals.buffer(Channel.CONFLATED).produceIn(this)
+    val snap = cached()
+    if (snap != null) send(snap.rows)
+    var last: MagisHome? = null
+    if (snap == null || now() - snap.fetchedAt >= ttlMs) {
+        last = fetch()
+        if (last.rows.isNotEmpty() || snap == null) send(last.rows)
+    }
+    for (signal in queue) {
+        val doFetch = when (signal) {
+            Refetch.Force -> true
+            Refetch.IfMissing -> last?.let { shouldRefetch(it) } ?: false
+        }
+        if (doFetch) {
             last = fetch()
-            send(last.rows)
+            if (last.rows.isNotEmpty()) send(last.rows)
         }
     }
 }

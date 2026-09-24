@@ -24,7 +24,14 @@ class ArkivApp : Application(), ImageLoaderFactory {
 
     override fun onCreate() {
         super.onCreate()
-        installSentry()
+        // Off the first-frame critical path: SentryAndroid.init does ~100-300ms of main-thread work
+        // (manifest read, integration wiring, ANR watchdog, outbox disk cache) that used to run
+        // before anything else -- costly on a weak device, every launch. Posted so it lands after
+        // the first frame is scheduled; still on the main thread (its watchdog/lifecycle need it).
+        // Early crashes stay covered by Crash.install's chained handler (attachBaseContext), and
+        // AnrV2 reads the PREVIOUS process's exit info on the next launch, so a one-frame delay
+        // loses nothing there.
+        android.os.Handler(android.os.Looper.getMainLooper()).post { installSentry() }
         graph = AppGraph.from(this)
 
         // Companion link, app-wide: a TV hosts + receives "play" and a phone auto-connects to its
@@ -85,6 +92,16 @@ class ArkivApp : Application(), ImageLoaderFactory {
         // built instead of running that on the UI thread and ANRing. See AppGraph.warmUpCredentials.
         graph.applicationScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             runCatching { graph.warmUpCredentials() }
+        }
+
+        // Reclaim the Chromecast remux cache (cacheDir/remux/*.mp4) on every cold start: those files
+        // reach gigabytes and are otherwise only evicted when a NEW remux pushes over the 4 GB cap,
+        // so between casts they just sit and fill the disk (the reported storage bloat + the
+        // SQLiteFullException crashes). A cold start = fresh process = no cast in flight, so every
+        // file is a regenerable leftover; wiping them all here keeps steady-state usage near zero.
+        // Off the main thread; a fresh install is a no-op.
+        graph.applicationScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching { graph.tsRemuxer.clear() }
         }
 
         // New episodes of the series you're watching. Runs in the background and blocks nothing:

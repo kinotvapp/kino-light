@@ -126,7 +126,7 @@ fun HomeScreen(
     val graph = rememberGraph()
     val sizes = homeSizes()
     val vm: HomeViewModel = viewModel(
-        factory = viewModelFactory { initializer { HomeViewModel(graph.repository, graph.settings, graph.magisHomeCatalog, graph.hasInternet) } },
+        factory = viewModelFactory { initializer { HomeViewModel(graph.repository, graph.settings, graph.magisHomeCatalog, graph.hasInternet, graph.homeReloads) } },
     )
     // A Magis root that failed on the way in (e.g. a cold start before the network is up) gets
     // another chance each time this screen comes back to the front; see HomeViewModel.magisRows.

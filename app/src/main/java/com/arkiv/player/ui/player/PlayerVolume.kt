@@ -42,8 +42,8 @@ private val TRACK_HEIGHT = 140.dp
 /**
  * Phone volume control: a speaker button in the transport's secondary row that, on tap, pops a
  * vertical slider just above it. The slider drives the system media volume through [GesturesState]
- * (STREAM_MUSIC) -- the same target as the right-edge volume swipe -- for people who prefer a button
- * to the gesture, like other players. Lives only where the secondary row does (phone, not casting).
+ * (STREAM_MUSIC). This is now the ONLY in-player way to change volume: the right-edge volume swipe
+ * was removed. Lives only where the secondary row does (phone, not casting).
  */
 @Composable
 internal fun VolumeButton(gestures: GesturesState) {
@@ -54,7 +54,7 @@ internal fun VolumeButton(gestures: GesturesState) {
 
     Box {
         IconButton(onClick = {
-            volume = gestures.currentVolume() // reflect any change from the swipe / hardware keys
+            volume = gestures.currentVolume() // reflect any change from the hardware volume keys
             open = !open
         }) {
             Icon(

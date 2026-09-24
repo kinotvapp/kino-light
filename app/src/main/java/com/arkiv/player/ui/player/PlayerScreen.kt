@@ -2785,8 +2785,8 @@ private fun PlayerContent(
 
         // GESTURE layer (phone only, both sources; ported from TorrentPlayerScreen): tap = controls;
         // left/right double-tap = ∓10s; long-press = temporary 2×; horizontal swipe = seek;
-        // vertical swipe right = volume / left = brightness. For archive, a large downward swipe
-        // opens the episode list ("as today" is kept).
+        // vertical swipe LEFT = brightness (volume-by-swipe removed: volume is the on-screen slider
+        // button now, see PlayerVolume). For archive, a large downward swipe opens the episode list.
         if (!isTv) {
             Box(
                 Modifier.fillMaxSize()
@@ -2878,15 +2878,12 @@ private fun PlayerContent(
                                     val dur = activePlayer.duration.coerceAtLeast(1)
                                     seekTarget = (seekTarget + (drag.x / size.width * 90_000f).toLong()).coerceIn(0L, dur)
                                     gestures.showHud("⏱ ${formatDuration(seekTarget)}")
-                                } else if (startX > size.width / 2) {
-                                    // Not while casting: the volume is read/adjusted on the local
-                                    // player, which isn't what plays on the Chromecast receiver —
-                                    // inert gesture.
-                                    if (!casting) {
-                                        val v = (gestures.currentVolume() - (drag.y / size.height * 150f).toInt()).coerceIn(0, 100)
-                                        gestures.setVolume(v); gestures.showHud("🔊 $v%")
-                                    }
-                                } else {
+                                } else if (startX <= size.width / 2) {
+                                    // Volume-by-swipe was REMOVED (user request): the only way to
+                                    // change volume is now the on-screen slider button (see
+                                    // PlayerVolume). The vertical swipe keeps ONLY brightness, and
+                                    // only on the LEFT half; a right-half vertical swipe no longer
+                                    // changes anything.
                                     activity?.window?.let { w ->
                                         val cur = w.attributes.screenBrightness.let { if (it < 0f) 0.5f else it }
                                         val nb = (cur - drag.y / size.height).coerceIn(0.02f, 1f)
@@ -3197,7 +3194,9 @@ private fun PlayerContent(
                         .padding(horizontal = 6.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    if (!isTv) {
+                    // Phone: back button hidden in LANDSCAPE (fullscreen video) -- the user asked to
+                    // keep the horizontal player clean; portrait still has it.
+                    if (!isTv && !isLandscape) {
                         IconButton(onClick = onBack) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Atrás", tint = Color.White)
                         }
@@ -3274,9 +3273,10 @@ private fun PlayerContent(
                     }
                     // (The phone's CC/audio button moved down to the right, next to the transport
                     // row; on TV it was always in the bottom icon row.)
-                    // DLNA + Chromecast (phone only). Buttons shared with live mode, see
+                    // DLNA + Chromecast (phone only, and PORTRAIT only -- hidden in landscape
+                    // fullscreen at the user's request). Buttons shared with live mode, see
                     // `DlnaCastButtons`.
-                    if (!isTv) {
+                    if (!isTv && !isLandscape) {
                         // Note specific to this Row: since `dlnaState.active != null` hides the
                         // whole controls overlay (visible = ... && dlnaState.active == null
                         // above), casting would have no way to be managed from the app if DLNA is
@@ -3775,7 +3775,9 @@ private fun PlayerContent(
             // Phone only: on TV this band had nothing left to show once the "EN VIVO" badge was
             // dropped (its back button and cast buttons were already phone-only, see LiveBanner's
             // KDoc), so it's skipped here instead of composing it empty.
-            if (!isTv) {
+            // Phone PORTRAIT only: the live band carries the back + cast buttons, both hidden in
+            // landscape fullscreen at the user's request (same as VOD above).
+            if (!isTv && !isLandscape) {
                 LiveBanner(onBack = onBack) {
                     // Task 18: the SAME buttons as VOD (`dlnaState` is a single instance for the
                     // whole screen), just hung off THIS strip because the VOD block is hidden here

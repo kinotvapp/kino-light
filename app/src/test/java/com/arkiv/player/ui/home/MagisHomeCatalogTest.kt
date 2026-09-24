@@ -21,7 +21,7 @@ class MagisHomeCatalogTest {
     @Test
     fun `asks for the four roots and never the adults one`() = runTest {
         val asked = mutableListOf<String>()
-        MagisHomeCatalog { root -> synchronized(asked) { asked += root }; emptyList() }.rows()
+        MagisHomeCatalog(tree = { root -> synchronized(asked) { asked += root }; emptyList() }).rows()
 
         assertEquals(setOf("peliculas", "series", "anime", "infantil"), asked.toSet())
         assertEquals(4, asked.size)
@@ -29,13 +29,13 @@ class MagisHomeCatalogTest {
 
     @Test
     fun `a root that fails doesn't take the others down`() = runTest {
-        val rows = MagisHomeCatalog { root ->
+        val rows = MagisHomeCatalog(tree = { root ->
             when (root) {
                 "peliculas" -> error("portal down")
                 "series" -> dramas("teleplay")
                 else -> emptyList()
             }
-        }.rows()
+        }).rows()
 
         assertTrue(rows.any { it.id == "magis_g_series_drama" })
         assertTrue(rows.none { it.id.contains("peliculas") })
@@ -43,14 +43,14 @@ class MagisHomeCatalogTest {
 
     @Test
     fun `reports the roots that failed or came back empty as missing`() = runTest {
-        val home = MagisHomeCatalog { root ->
+        val home = MagisHomeCatalog(tree = { root ->
             when (root) {
                 "peliculas" -> error("portal down")
                 "anime" -> emptyList()
                 "series" -> dramas("teleplay")
                 else -> dramas("kids")
             }
-        }.load()
+        }).load()
 
         assertEquals(setOf(MagisKind.PELICULAS, MagisKind.ANIME), home.missing)
         assertTrue(home.rows.any { it.id == "magis_g_series_drama" })
@@ -58,7 +58,7 @@ class MagisHomeCatalogTest {
 
     @Test
     fun `a pass where every root answered misses nothing`() = runTest {
-        val home = MagisHomeCatalog { dramas("teleplay") }.load()
+        val home = MagisHomeCatalog(tree = { dramas("teleplay") }).load()
 
         assertEquals(emptySet<MagisKind>(), home.missing)
     }
