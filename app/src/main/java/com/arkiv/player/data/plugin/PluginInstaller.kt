@@ -107,7 +107,7 @@ class PluginInstaller(
             // commit below, not from one taken before the fetch/probe above (see its KDoc) --
             // nothing outside this store observes the staged one before that commit.
             store.writeFiles(staging, preview.manifestJson, m.entry, script, icon, buildRecord(true))
-            return store.finishInstall(staging, m.id) { previous -> buildRecord(previous?.enabled ?: true) }
+            return store.finishInstall(staging, m.id, isUpdate = preview.isUpdate) { previous -> buildRecord(previous?.enabled ?: true) }
         } catch (e: IOException) {
             throw InstallException("No se pudo guardar el plugin: ${e.message}")
         } finally {

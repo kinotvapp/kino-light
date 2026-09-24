@@ -157,6 +157,33 @@ class PluginInstallerTest {
         assertFalse(store.get("demo")!!.record.enabled)
     }
 
+    @Test fun `an uninstall while a silent update is fetching wins - the plugin does not come back`() = runBlocking {
+        publish("1.0.0"); installFresh()
+        publish("1.1.0")
+        // The person taps Desinstalar while UpdateWorker's update is downloading the new script.
+        val racyFetcher = PluginFetcher { url, max ->
+            val bytes = fetcher.fetch(url, max)
+            if (url == base + "plugin.js") store.remove("demo", "Demo")
+            bytes
+        }
+        val racyInstaller = PluginInstaller(store, racyFetcher, probe = { exports(it) }, clock = { now })
+        assertEquals(UpdateOutcome.Failed("El plugin se desinstaló mientras se actualizaba"), racyInstaller.checkUpdate("demo"))
+        assertNull(store.get("demo"))
+        assertEquals("Demo", store.removedName("demo"))
+        assertTrue(File(tmp.root, "plugins").list()!!.none { it.startsWith(".staging") || it.startsWith(".old") || it == "demo" })
+    }
+
+    @Test fun `approving an update after the plugin was uninstalled installs nothing`() {
+        publish("1.0.0"); installFresh()
+        publish("2.0.0", hosts = listOf("example.com", "cdn.example.net"))
+        val outcome = runBlocking { installer.checkUpdate("demo") } as UpdateOutcome.NeedsApproval
+        store.remove("demo", "Demo")
+        val e = assertThrows(InstallException::class.java) { runBlocking { installer.install(outcome.preview) } }
+        assertEquals("El plugin se desinstaló mientras se actualizaba", e.message)
+        assertNull(store.get("demo"))
+        assertTrue(File(tmp.root, "plugins").list()!!.none { it.startsWith(".staging") || it.startsWith(".old") || it == "demo" })
+    }
+
     @Test fun `a tampered script is detected`() {
         publish(); installFresh()
         File(store.get("demo")!!.dir, "plugin.js").writeText("evil")

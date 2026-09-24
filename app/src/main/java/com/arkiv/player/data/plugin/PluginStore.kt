@@ -92,9 +92,20 @@ class PluginStore(private val root: File, private val dataRoot: File) {
      * (e.g. `enabled`) that changed while that work was running, without clobbering it with a value
      * read before the change happened. The record [build] returns replaces the one already staged
      * (nothing outside this store observes the staged one before [commit] swaps it in).
+     *
+     * [isUpdate]: this replaces an installed plugin. If that plugin is gone by now, the person
+     * uninstalled it while the update was downloading or waiting for approval: committing would
+     * bring it back, enabled, undoing their withdrawal of consent, so it throws instead.
      */
-    @Synchronized fun finishInstall(staging: File, id: String, build: (InstalledRecord?) -> InstalledRecord): InstalledRecord {
-        val record = build(get(id)?.record)
+    @Synchronized fun finishInstall(
+        staging: File,
+        id: String,
+        isUpdate: Boolean,
+        build: (InstalledRecord?) -> InstalledRecord,
+    ): InstalledRecord {
+        val previous = get(id)?.record
+        if (isUpdate && previous == null) throw InstallException("El plugin se desinstaló mientras se actualizaba")
+        val record = build(previous)
         File(staging, RECORD_FILE).writeText(record.toJson())
         commit(staging, id)
         return record
