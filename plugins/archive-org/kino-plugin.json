@@ -1,0 +1,13 @@
+{
+  "id": "archive-org",
+  "name": "Internet Archive",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "entry": "plugin.js",
+  "description": "Películas de dominio público y televisión clásica de archive.org",
+  "author": "kinotvapp",
+  "homepage": "https://github.com/kinotvapp/kino-plugin-archive",
+  "hosts": ["archive.org", "*.archive.org"],
+  "capabilities": ["search", "home", "episodes", "resolve"],
+  "color": "#E0A030"
+}
