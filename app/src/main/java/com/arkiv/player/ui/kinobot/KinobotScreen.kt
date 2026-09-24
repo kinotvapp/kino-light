@@ -9,9 +9,16 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.view.WindowManager
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -84,9 +91,20 @@ internal fun KinobotScreen(onBack: () -> Unit, onSearch: (String) -> Unit) {
         if (count > 0) listState.animateScrollToItem(count - 1)
     }
 
-    // No imePadding here on purpose: this app's window resizes for the keyboard (adjustResize), so
-    // the content already lifts; adding imePadding on top double-lifted the input to mid-screen.
-    Column(Modifier.fillMaxSize().background(ArkivBlack)) {
+    // Force this screen's window to NOT resize for the keyboard (the app's default is adjustResize,
+    // which fought `imePadding` and left the input either double-lifted or flush against the
+    // keyboard). With adjustNothing, `imePadding` alone lifts the input by exactly the keyboard
+    // height, so the input's own bottom padding is a predictable gap above the keyboard. Restored on
+    // leaving the screen so the rest of the app keeps its normal behavior.
+    val context = LocalContext.current
+    DisposableEffect(Unit) {
+        val window = context.findActivity()?.window
+        val previous = window?.attributes?.softInputMode
+        window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
+        onDispose { if (previous != null) window?.setSoftInputMode(previous) }
+    }
+
+    Column(Modifier.fillMaxSize().background(ArkivBlack).imePadding()) {
         // Header
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
@@ -133,7 +151,7 @@ internal fun KinobotScreen(onBack: () -> Unit, onSearch: (String) -> Unit) {
         // Input
         Row(
             // A bit more bottom room so the field doesn't sit flush against the keyboard.
-            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 16.dp),
+            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             OutlinedTextField(
@@ -306,4 +324,14 @@ private fun Welcome(onExample: (String) -> Unit) {
             )
         }
     }
+}
+
+/** The hosting [Activity], unwrapping any [ContextWrapper] chain (Compose's LocalContext). */
+private fun Context.findActivity(): Activity? {
+    var current: Context? = this
+    while (current is ContextWrapper) {
+        if (current is Activity) return current
+        current = current.baseContext
+    }
+    return null
 }
