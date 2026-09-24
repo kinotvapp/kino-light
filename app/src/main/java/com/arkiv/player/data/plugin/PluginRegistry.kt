@@ -89,9 +89,11 @@ class PluginRegistry(private val store: PluginStore) : PluginPlayback {
     override fun nameOf(pluginId: String?): String? =
         pluginId?.let { find(it)?.manifest?.name ?: store.removedName(it) }
 
-    @Synchronized private fun update(id: String, change: (InstalledRecord) -> InstalledRecord) {
-        val p = store.get(id) ?: return
-        store.writeRecord(id, change(p.record))
+    /** [PluginStore.updateRecord] re-reads the record fresh under its own lock right before
+     *  writing, so this never clobbers a concurrent write (e.g. PluginInstaller.checkUpdate
+     *  landing mid-fetch) with a value read here before that write happened. */
+    private fun update(id: String, change: (InstalledRecord) -> InstalledRecord) {
+        store.updateRecord(id, change)
         reload()
     }
 }

@@ -94,37 +94,47 @@ class PluginInstaller(
         }
         val missing = m.capabilities - exports
         if (missing.isNotEmpty()) throw InstallException("El plugin no carga: le falta ${missing.sorted().joinToString(", ")}")
-        val previous = store.get(m.id)?.record
-        val record = InstalledRecord(
-            address = preview.address.canonical, version = m.version, sha256 = sha256Hex(script),
-            hosts = m.hosts, installedAt = clock(), enabled = previous?.enabled ?: true,
-            lastUpdateCheckAt = clock(),
+        val sha = sha256Hex(script)
+        val installedAt = clock()
+        fun buildRecord(enabled: Boolean) = InstalledRecord(
+            address = preview.address.canonical, version = m.version, sha256 = sha,
+            hosts = m.hosts, installedAt = installedAt, enabled = enabled, lastUpdateCheckAt = installedAt,
         )
         val staging = store.newStaging(m.id)
         try {
-            store.writeFiles(staging, preview.manifestJson, m.entry, script, icon, record)
-            store.commit(staging, m.id)
+            // The record staged here is a placeholder: store.finishInstall rewrites it from a
+            // record built with a FRESH read of any previous state, taken right before the atomic
+            // commit below, not from one taken before the fetch/probe above (see its KDoc) --
+            // nothing outside this store observes the staged one before that commit.
+            store.writeFiles(staging, preview.manifestJson, m.entry, script, icon, buildRecord(true))
+            return store.finishInstall(staging, m.id) { previous -> buildRecord(previous?.enabled ?: true) }
         } catch (e: IOException) {
             throw InstallException("No se pudo guardar el plugin: ${e.message}")
         } finally {
             if (staging.exists()) staging.deleteRecursively()
         }
-        return record
     }
 
     suspend fun checkUpdate(id: String): UpdateOutcome {
         val current = store.get(id) ?: return UpdateOutcome.Failed("El plugin no está instalado")
-        val checked = current.record.copy(lastUpdateCheckAt = clock())
-        fun fail(message: String): UpdateOutcome { store.writeRecord(id, checked); return UpdateOutcome.Failed(message) }
+        // touch() patches ONLY lastUpdateCheckAt (+ the pending fields, when given) onto whatever
+        // is on disk for `id` at write time -- via store.updateRecord's own fresh read -- never
+        // onto a snapshot taken here before previewFor()'s network fetch below, which can take
+        // seconds and during which the person could disable the plugin, or the pool could mark it
+        // unresponsive/damaged. Using a stale snapshot would silently undo that change.
+        fun touch(patch: (InstalledRecord) -> InstalledRecord = { it }) {
+            store.updateRecord(id) { fresh -> patch(fresh).copy(lastUpdateCheckAt = clock()) }
+        }
+        fun fail(message: String): UpdateOutcome { touch(); return UpdateOutcome.Failed(message) }
         val address = PluginAddress.parse(current.record.address) ?: return fail("Dirección inválida: ${current.record.address}")
         val preview = try { previewFor(address) } catch (e: InstallException) { return fail(e.message.orEmpty()) }
         if (preview.manifest.id != id) return fail("El repositorio ahora publica otro plugin (${preview.manifest.id})")
         if (SemVer.compare(preview.manifest.version, current.record.version) <= 0) {
-            store.writeRecord(id, checked.copy(pendingVersion = null, pendingHosts = emptyList()))
+            touch { it.copy(pendingVersion = null, pendingHosts = emptyList()) }
             return UpdateOutcome.UpToDate
         }
         if (preview.newHosts.isNotEmpty()) {
-            store.writeRecord(id, checked.copy(pendingVersion = preview.manifest.version, pendingHosts = preview.newHosts))
+            touch { it.copy(pendingVersion = preview.manifest.version, pendingHosts = preview.newHosts) }
             return UpdateOutcome.NeedsApproval(preview)
         }
         return try {

@@ -139,6 +139,24 @@ class PluginInstallerTest {
         assertEquals("1.0.0", store.get("demo")!!.record.version)
     }
 
+    @Test fun `a change made while checkUpdate is still fetching is not lost (no stale write-back)`() = runBlocking {
+        publish("1.0.0"); installFresh()
+        // A fetcher that simulates the person disabling the plugin WHILE the manifest fetch that
+        // this checkUpdate call kicked off is still in flight -- checkUpdate must not silently
+        // revert that disable when it later writes back its own result (lastUpdateCheckAt here,
+        // since the manifest is unchanged so the outcome is UpToDate).
+        val racyFetcher = PluginFetcher { url, max ->
+            val bytes = fetcher.fetch(url, max)
+            if (url == base + "kino-plugin.json") {
+                store.writeRecord("demo", store.get("demo")!!.record.copy(enabled = false))
+            }
+            bytes
+        }
+        val racyInstaller = PluginInstaller(store, racyFetcher, probe = { exports(it) }, clock = { now })
+        assertEquals(UpdateOutcome.UpToDate, racyInstaller.checkUpdate("demo"))
+        assertFalse(store.get("demo")!!.record.enabled)
+    }
+
     @Test fun `a tampered script is detected`() {
         publish(); installFresh()
         File(store.get("demo")!!.dir, "plugin.js").writeText("evil")

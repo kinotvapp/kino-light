@@ -85,10 +85,40 @@ class PluginStore(private val root: File, private val dataRoot: File) {
         forgetRemoved(id)
     }
 
+    /**
+     * Finishes an install/update under this store's lock: [build] gets a fresh read of whatever
+     * record is on disk for [id] right now -- taken here, not by the caller before its own slow
+     * network fetch + sandbox probe -- so it can carry forward a person-controlled/health field
+     * (e.g. `enabled`) that changed while that work was running, without clobbering it with a value
+     * read before the change happened. The record [build] returns replaces the one already staged
+     * (nothing outside this store observes the staged one before [commit] swaps it in).
+     */
+    @Synchronized fun finishInstall(staging: File, id: String, build: (InstalledRecord?) -> InstalledRecord): InstalledRecord {
+        val record = build(get(id)?.record)
+        File(staging, RECORD_FILE).writeText(record.toJson())
+        commit(staging, id)
+        return record
+    }
+
     @Synchronized fun writeRecord(id: String, record: InstalledRecord) {
         val dir = File(root, id)
         if (!dir.isDirectory) return
         writeFileAtomically(File(dir, RECORD_FILE), record.toJson().toByteArray(Charsets.UTF_8))
+    }
+
+    /**
+     * Read-modify-write under this store's lock: [change] is applied to a record read fresh from
+     * disk right here, not to a snapshot the caller may have taken before something slow (e.g. a
+     * network fetch in [PluginInstaller.checkUpdate]) -- so a concurrent change to a field [change]
+     * doesn't touch (the person disabling the plugin, the pool marking it unresponsive/damaged)
+     * survives instead of being silently overwritten by this write. Returns the record written, or
+     * null if [id] isn't installed (any more).
+     */
+    @Synchronized fun updateRecord(id: String, change: (InstalledRecord) -> InstalledRecord): InstalledRecord? {
+        val fresh = get(id)?.record ?: return null
+        val next = change(fresh)
+        writeRecord(id, next)
+        return next
     }
 
     /** The entry script, only if its sha256 still matches `installed.json`. */
