@@ -1,5 +1,6 @@
 package com.arkiv.player.data.gateway
 
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.toList
@@ -171,5 +172,32 @@ class CompositeSourceTest {
         val hasSourceError = events.any { it is SearchEvent.SourceError }
         assertTrue("The collector's exception was wrongly converted to SourceError", !hasSourceError)
         assertTrue("Expected IllegalArgumentException, got ${e?.javaClass?.simpleName}", e is IllegalArgumentException)
+    }
+
+    @Test fun `the source list is read on every call`() = runTest {
+        val sources = mutableListOf<ContentSource>(FakeSource("a", "a:", listOf("uno")))
+        val composite = CompositeSource { sources.toList() }
+        assertEquals(1, composite.search(GatewaySearchQuery(q = "x")).toList().count { it is SearchEvent.ResultEvent })
+        sources += FakeSource("b", "b:", listOf("dos"))
+        assertEquals(2, composite.search(GatewaySearchQuery(q = "x")).toList().count { it is SearchEvent.ResultEvent })
+        assertTrue(composite.recognizes("b:dos"))
+    }
+
+    /** A plugin can hang; it must not keep "Todo" spinning or hold back the other sources. */
+    @Test fun `a hanging source with a time limit is cut off without blocking the others`() = runTest {
+        val hanging = object : ContentSource by FakeSource("slow", "s:") {
+            override val searchTimeoutMs: Long? = 15_000
+            override fun search(ctx: GatewaySearchQuery): Flow<SearchEvent> = flow {
+                emit(SearchEvent.SourceStart("slow"))
+                awaitCancellation()
+            }
+        }
+        val events = CompositeSource(listOf(hanging, FakeSource("fast", "f:", listOf("uno"))))
+            .search(GatewaySearchQuery(q = "x")).toList()
+        assertEquals("uno", events.filterIsInstance<SearchEvent.ResultEvent>().single().item.title)
+        val err = events.filterIsInstance<SearchEvent.SourceError>().single()
+        assertEquals("slow", err.source)
+        assertEquals("no respondió a tiempo", err.error)
+        assertTrue(events.last() is SearchEvent.Done)
     }
 }

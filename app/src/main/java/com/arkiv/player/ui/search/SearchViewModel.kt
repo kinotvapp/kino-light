@@ -262,6 +262,7 @@ class SearchViewModel(
                         season = season ?: 0,
                         episode = episode ?: 0,
                         tmdbId = card.tmdbId ?: 0,
+                        year = d?.year?.toIntOrNull() ?: 0,
                     )
                     // Results accumulate and get published IN A BATCH. Publishing one at a time
                     // fires a recomposition per result: with 20 from magis on top of 50+ sources

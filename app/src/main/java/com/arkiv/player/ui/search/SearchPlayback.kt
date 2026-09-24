@@ -306,4 +306,40 @@ class SearchPlayback(private val graph: AppGraph) {
             // With no TMDB match, `GatewaySeries.title` is Caracol's name, not the canonical one.
             tituloCanonico = series?.takeIf { it.tmdbId > 0 }?.title,
         )
+
+    /** Plays a plugin movie: saves it (see `ArkivRepository.addPluginMovie`) and returns where to navigate. */
+    suspend fun playPlugin(r: com.arkiv.player.data.gateway.GatewayResult): PlaybackResult {
+        val epId = graph.repository.addPluginMovie(
+            ref = r.ref, title = r.title,
+            posterUrl = r.extra["poster"].orEmpty(), backdropUrl = r.extra["backdrop"].orEmpty(),
+        )
+        return if (epId != null) PlaybackResult.Ready(epId)
+        else PlaybackResult.Failed("No se pudo preparar la reproducción de ${r.extra["pluginName"] ?: "este plugin"}.")
+    }
+
+    /**
+     * Saves the whole plugin series with the chapters the list already loaded, and returns the
+     * tapped one. Caracol's [playDituSeason] path, for plugins: looked up by season AND number.
+     */
+    suspend fun playPluginSeason(
+        season: com.arkiv.player.data.gateway.GatewayResult,
+        chapters: List<com.arkiv.player.data.gateway.GatewayEpisode>,
+        chosen: com.arkiv.player.data.gateway.GatewayEpisode,
+        series: com.arkiv.player.data.gateway.GatewaySeries?,
+    ): PlaybackResult {
+        fun chapter(e: com.arkiv.player.data.gateway.GatewayEpisode) =
+            com.arkiv.player.data.PluginChapter(e.number, e.title, e.ref, e.season ?: 1)
+        val epId = graph.repository.addPluginSeason(
+            seriesRef = season.ref,
+            title = season.title,
+            chapters = chapters.map(::chapter),
+            chosen = chapter(chosen),
+            posterUrl = season.extra["poster"].orEmpty().ifBlank { series?.posterUrl.orEmpty() },
+            backdropUrl = season.extra["backdrop"].orEmpty().ifBlank { series?.backdropUrl.orEmpty() },
+            tmdbId = series?.tmdbId?.takeIf { it > 0 },
+            tituloCanonico = series?.takeIf { it.tmdbId > 0 }?.title,
+        )
+        return if (epId != null) PlaybackResult.Ready(epId)
+        else PlaybackResult.Failed("No se pudo preparar el capítulo de ${season.extra["pluginName"] ?: "este plugin"}.")
+    }
 }

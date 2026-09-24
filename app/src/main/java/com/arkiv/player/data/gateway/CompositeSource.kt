@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.filterNot
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Several sources behind a single one. Exists so that adding Caracol -- and later RCN -- doesn't
@@ -25,10 +26,16 @@ import kotlinx.coroutines.flow.onEach
  * For resolving and for listing chapters there's no mixing: the `ref` decides. Each source knows
  * how to read its own (`recognizes`), including the gateway's old ones, which carry no visible
  * prefix.
+ *
+ * The list is a PROVIDER, read on every call: installed plugins come and go, and the next search or
+ * resolve must see the change without rebuilding `AppGraph`. A source with a
+ * [ContentSource.searchTimeoutMs] is cut off after that long with a `SourceError`; the rest keep going.
  */
-internal class CompositeSource(private val sources: List<ContentSource>) : ContentSource {
+internal class CompositeSource(private val sources: () -> List<ContentSource>) : ContentSource {
 
-    override fun recognizes(ref: String): Boolean = sources.any { it.recognizes(ref) }
+    constructor(sources: List<ContentSource>) : this({ sources })
+
+    override fun recognizes(ref: String): Boolean = sources().any { it.recognizes(ref) }
 
     override fun search(ctx: GatewaySearchQuery): Flow<SearchEvent> = flow {
         val t0 = System.currentTimeMillis()
@@ -38,28 +45,32 @@ internal class CompositeSource(private val sources: List<ContentSource>) : Conte
         // `.catch` doesn't trap CancellationException (if the coroutine is cancelled, the
         // exception propagates). A plain `try/catch` WOULD trap it, only the emit afterward would
         // fail silently.
-        val merged = sources
+        val merged = sources()
             .map { source ->
                 flow {
                     var sourceName = "desconocida"
                     var resultCount = 0
                     val sourceT0 = System.currentTimeMillis()
-                    emitAll(
-                        source.search(ctx)
-                            .filterNot { it is SearchEvent.Done }
-                            .onEach { event ->
-                                if (event is SearchEvent.SourceStart) {
-                                    sourceName = event.source
-                                }
-                                if (event is SearchEvent.ResultEvent) {
-                                    resultCount++
-                                }
-                            }
-                            .catch { e ->
-                                emit(SearchEvent.SourceError(sourceName, e.message ?: "Error desconocido",
-                                    System.currentTimeMillis() - sourceT0, resultCount))
-                            }
-                    )
+                    val events = source.search(ctx)
+                        .filterNot { it is SearchEvent.Done }
+                        .onEach { event ->
+                            if (event is SearchEvent.SourceStart) sourceName = event.source
+                            if (event is SearchEvent.ResultEvent) resultCount++
+                        }
+                        .catch { e ->
+                            emit(SearchEvent.SourceError(sourceName, e.message ?: "Error desconocido",
+                                System.currentTimeMillis() - sourceT0, resultCount))
+                        }
+                    val limit = source.searchTimeoutMs
+                    if (limit == null) {
+                        emitAll(events)
+                    } else {
+                        val finished = withTimeoutOrNull(limit) { emitAll(events); true }
+                        if (finished == null) {
+                            emit(SearchEvent.SourceError(sourceName, "no respondió a tiempo",
+                                System.currentTimeMillis() - sourceT0, resultCount))
+                        }
+                    }
                 }
             }
             .merge()
@@ -73,6 +84,6 @@ internal class CompositeSource(private val sources: List<ContentSource>) : Conte
         sourceFor(ref).episodesWithSeries(ref)
 
     private fun sourceFor(ref: String): ContentSource =
-        sources.firstOrNull { it.recognizes(ref) }
+        sources().firstOrNull { it.recognizes(ref) }
             ?: throw GatewayException("No hay ninguna fuente que sepa abrir esto")
 }

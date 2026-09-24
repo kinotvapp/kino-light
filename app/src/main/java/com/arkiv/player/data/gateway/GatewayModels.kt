@@ -13,10 +13,10 @@ class GatewayException(message: String, cause: Throwable? = null) : RuntimeExcep
 class GatewayBlockedException(message: String) : RuntimeException(message)
 
 /**
- * What's being searched for. Only the fields the actual source uses are left: `year`,
- * `anilistId`, `lang`, `sources`, `maxBytes` and `budgetMs` were gateway parameters -filter by
- * language, pick sources, cap torrents, cut off by time- and the Magis portal receives none of
- * that. Keeping them was promising a filter nobody applies.
+ * What's being searched for. Only the fields a source actually uses are left: `anilistId`,
+ * `lang`, `sources`, `maxBytes` and `budgetMs` were gateway parameters -filter by language, pick
+ * sources, cap torrents, cut off by time- and no source receives any of that. Keeping them was
+ * promising a filter nobody applies. [year] was dropped with them and is back: plugins read it.
  *
  * [tmdbId] IS used, and not for filtering: that's where the ORIGINAL title comes from that ranks
  * what the portal returns (see `MagisSource.formasDelTitulo`).
@@ -27,6 +27,8 @@ data class GatewaySearchQuery(
     val season: Int = 0,
     val episode: Int = 0,
     val tmdbId: Int = 0,
+    /** Release year from TMDB when known (0 = unknown). Only plugins read it (`PluginContentSource.queryJson`). */
+    val year: Int = 0,
 )
 
 /** A search result, built by the source (today `MagisSource`) against what the portal returns. */
@@ -147,7 +149,8 @@ data class GatewaySeries(
  * which existed to be able to ignore lines from a newer server).
  */
 sealed interface SearchEvent {
-    data class SourceStart(val source: String) : SearchEvent
+    /** [label] is the human name when the source knows it (plugins: their manifest name); "" otherwise. */
+    data class SourceStart(val source: String, val label: String = "") : SearchEvent
     data class ResultEvent(val source: String, val item: GatewayResult) : SearchEvent
     data class SourceDone(val source: String, val count: Int, val ms: Long) : SearchEvent
     /**

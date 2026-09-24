@@ -786,6 +786,48 @@ class ArkivRepository(
     }
 
     /**
+     * Saves a plugin movie and returns its episodeId, or null if [ref] isn't a plugin movie ref.
+     * Modeled on [addDituSource]; rows come from [PluginEntities].
+     */
+    suspend fun addPluginMovie(ref: String, title: String, posterUrl: String = "", backdropUrl: String = ""): String? {
+        val itemId = PluginEntities.movieItemId(ref) ?: return null
+        val existing = itemDao.getItem(itemId)
+        val (item, ep) = PluginEntities.buildMovie(ref, title, posterUrl, clock(), existing) ?: return null
+        itemDao.replaceItem(item, listOf(ep))
+        saveMagisBackdrop(itemId, backdropUrl)
+        return ep.id
+    }
+
+    /**
+     * Saves a plugin series with every chapter the list already loaded and returns the chosen
+     * chapter's episodeId (null if it couldn't be saved). Modeled on [addDituSeason].
+     */
+    suspend fun addPluginSeason(
+        seriesRef: String,
+        title: String,
+        chapters: List<PluginChapter>,
+        chosen: PluginChapter,
+        posterUrl: String = "",
+        backdropUrl: String = "",
+        tmdbId: Int? = null,
+        tituloCanonico: String? = null,
+    ): String? {
+        val itemId = PluginEntities.seriesItemId(seriesRef) ?: return null
+        val existing = itemDao.getItem(itemId)
+        val saveable = PluginEntities.saveableChapters(seriesRef, chapters)
+        val live = itemDao.getEpisodesOf(itemId).map { it.id }.toSet()
+        val newIds = saveable.map { PluginEntities.chapterId(itemId, it.season.coerceAtLeast(1), it.number) }.toSet()
+        val seen = com.arkiv.player.data.newcontent.NewEpisodeCounter.reseal(existing?.episodiosVistosEnLista, (live + newIds).size)
+        val series = PluginEntities.buildSeries(
+            seriesRef, title, chapters, chosen, posterUrl, clock(), existing, seen, tmdbId, tituloCanonico,
+        ) ?: return null
+        itemDao.upsertItem(series.item)
+        itemDao.upsertEpisodes(series.episodes)
+        saveMagisBackdrop(itemId, backdropUrl)
+        return series.chosenId
+    }
+
+    /**
      * The ref to ask the gateway for the identity of a Magis item saved with none, or null if
      * there's nothing to repair. The rule lives in [MagisEntities.refToRepair]; this just reads
      * the row.

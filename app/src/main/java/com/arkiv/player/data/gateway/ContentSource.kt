@@ -23,6 +23,13 @@ interface ContentSource {
      */
     fun recognizes(ref: String): Boolean
 
+    /**
+     * How long [search] may take before `CompositeSource` cuts it off with a `SourceError`; null
+     * (Magis, Caracol) = no limit, as before. Plugins set it: a plugin can hang, and it must not
+     * keep the whole search spinning.
+     */
+    val searchTimeoutMs: Long? get() = null
+
     fun search(ctx: GatewaySearchQuery): Flow<SearchEvent>
 
     suspend fun resolve(ref: String): GatewayPlayable

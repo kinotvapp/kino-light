@@ -325,9 +325,18 @@ class AppGraph(context: Context) {
      * Where the titles the app searches and plays come from: Magis and Caracol behind a single
      * object. To resolve and list episodes it dispatches by `ref` (each source recognizes its
      * own); to search, it merges both. See [com.arkiv.player.data.gateway.CompositeSource].
+     * Plus every usable installed plugin, read on EACH call: installing, disabling or
+     * uninstalling a plugin applies to the next search/resolve with no restart. A ref of a plugin
+     * that isn't usable falls through to [UnusablePluginSource], last, which answers with the
+     * registry's reason ("Activa el plugin X…") instead of "no source can open this".
      */
     val contentSource: com.arkiv.player.data.gateway.ContentSource by lazy {
-        com.arkiv.player.data.gateway.CompositeSource(listOf(magisSource, dituSource))
+        val unusablePlugins = UnusablePluginSource(pluginRegistry)
+        com.arkiv.player.data.gateway.CompositeSource {
+            listOf(magisSource, dituSource) +
+                pluginRegistry.usable().map { PluginContentSource(it, pluginRuntimes) } +
+                unusablePlugins
+        }
     }
 
     // --- Plugins (docs/superpowers/specs/2026-09-24-plugin-sources-design.md) ---
