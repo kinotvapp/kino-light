@@ -25,6 +25,21 @@ class FreeSpacePolicyTest {
     }
 
     @Test
+    fun `a disk under the reserve is exhausted, at or over it is not`() {
+        assertTrue(FreeSpacePolicy.isExhausted(availableBytes = 0))
+        assertTrue(FreeSpacePolicy.isExhausted(availableBytes = FreeSpacePolicy.MARGIN_BYTES - 1))
+        assertFalse(FreeSpacePolicy.isExhausted(availableBytes = FreeSpacePolicy.MARGIN_BYTES))
+        assertFalse(FreeSpacePolicy.isExhausted(availableBytes = 10 * gb))
+    }
+
+    /** `fits` lets an unknown size through on purpose; `isExhausted` is what still stops a full disk. */
+    @Test
+    fun `an unknown size fits but a full disk is still exhausted`() {
+        assertTrue(FreeSpacePolicy.fits(availableBytes = 0, neededBytes = 0))
+        assertTrue(FreeSpacePolicy.isExhausted(availableBytes = 0))
+    }
+
+    @Test
     fun `unknown size always fits`() {
         assertTrue(FreeSpacePolicy.fits(availableBytes = 0, neededBytes = 0))
         assertTrue(FreeSpacePolicy.fits(availableBytes = 0, neededBytes = -1))

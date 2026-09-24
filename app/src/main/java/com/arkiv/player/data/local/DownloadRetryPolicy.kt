@@ -51,8 +51,17 @@ object DownloadRetryPolicy {
         // Cutoff mid-transfer: this is exactly the `.part` + `Range` case.
         is IncompleteDownloadException -> true
         is UnknownHostException, is SocketException, is InterruptedIOException, is SSLException -> true
-        is IOException -> true
+        // A full disk never fixes itself in 30 seconds, and every retry writes more onto it. Our
+        // own guard throws the typed one; the raw OS one (ENOSPC, raised when the guard is beaten
+        // by something else filling the disk) has to be recognized by its message.
+        is InsufficientSpaceException -> false
+        is IOException -> !isNoSpaceLeft(t)
         else -> false
+    }
+
+    private fun isNoSpaceLeft(t: IOException): Boolean {
+        val message = t.message.orEmpty()
+        return message.contains("ENOSPC") || message.contains("No space left", ignoreCase = true)
     }
 
     /**

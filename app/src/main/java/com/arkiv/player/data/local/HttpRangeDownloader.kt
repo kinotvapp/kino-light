@@ -31,7 +31,17 @@ object RangeMath {
  * it's thrown away and started from zero. Losing what's downloaded once is infinitely better than
  * gluing one file's tail to another's prefix and marking it "Listo".
  */
-class HttpRangeDownloader(private val client: OkHttpClient) {
+class HttpRangeDownloader(
+    private val client: OkHttpClient,
+    /**
+     * Bytes free on the disk holding the given directory. `File.usableSpace` rather than `StatFs`:
+     * on Android it's the same `statvfs` (space available to the app) and it also works on the JVM,
+     * so the tests run without Robolectric. Injectable so they can simulate a full disk.
+     */
+    private val freeSpace: (File) -> Long = { it.usableSpace },
+    /** Bytes written between two measurements of the disk; see [FreeSpacePolicy.CHECK_EVERY_BYTES]. */
+    private val checkEveryBytes: Long = FreeSpacePolicy.CHECK_EVERY_BYTES,
+) {
 
     suspend fun download(
         url: String,
@@ -63,6 +73,12 @@ class HttpRangeDownloader(private val client: OkHttpClient) {
             }
             val startByte = if (sameOrigin) part.length() else 0L
 
+            // Disk guard, part 1: if the disk is ALREADY at the reserve, don't even open the
+            // connection (no data spent, no bytes written). The declared-size check comes below,
+            // once the response says how big the file is.
+            val dir = target.parentFile ?: target
+            freeSpace(dir).let { if (FreeSpacePolicy.isExhausted(it)) throw InsufficientSpaceException(it) }
+
             val builder = Request.Builder().url(url)
             headers.forEach { (k, v) -> builder.header(k, v) }
             RangeMath.rangeHeaderFor(startByte)?.let { builder.header("Range", it) }
@@ -79,12 +95,21 @@ class HttpRangeDownloader(private val client: OkHttpClient) {
                 val effectiveStart = if (appending) startByte else 0L
                 val total = RangeMath.totalBytesOf(body.contentLength(), effectiveStart)
 
+                // Disk guard, part 2: the declared size against the free space, BEFORE writing
+                // anything. A 6 GB file on 3 GB free fails in a second with a clear message instead
+                // of after filling the disk. What's left to write is the total minus what's already
+                // in the partial; an unknown size (<= 0) is let through here and caught by part 3.
+                val available = freeSpace(dir)
+                val remaining = if (total > 0) total - effectiveStart else 0L
+                if (!FreeSpacePolicy.fits(available, remaining)) throw InsufficientSpaceException(available)
+
                 // The mark gets (re)written BEFORE the first byte: if the process dies halfway,
                 // whatever partial is left is already labeled and the next attempt knows where it
                 // came from.
                 runCatching { origin.writeText(resumeKey) }
 
                 var written = effectiveStart
+                var sinceDiskCheck = 0L
                 java.io.FileOutputStream(part, appending).use { out ->
                     val buf = ByteArray(64 * 1024)
                     body.byteStream().use { input ->
@@ -99,6 +124,15 @@ class HttpRangeDownloader(private val client: OkHttpClient) {
                             if (n < 0) break
                             out.write(buf, 0, n)
                             written += n
+                            // Disk guard, part 3: the disk can fill DURING the download (another
+                            // app, a second download in parallel, a size that wasn't declared). The
+                            // partial is kept on purpose so "Reintentar" resumes it once there's room.
+                            sinceDiskCheck += n
+                            if (sinceDiskCheck >= checkEveryBytes) {
+                                sinceDiskCheck = 0L
+                                val left = freeSpace(dir)
+                                if (FreeSpacePolicy.isExhausted(left)) throw InsufficientSpaceException(left)
+                            }
                             onProgress(written, total)
                         }
                     }

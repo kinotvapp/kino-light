@@ -45,6 +45,24 @@ class DownloadRetryPolicyTest {
     }
 
     @Test
+    fun `a full disk is definitive, retrying only writes more onto it`() {
+        // Our own guard's typed exception...
+        assertFalse(DownloadRetryPolicy.isTransient(InsufficientSpaceException(availableBytes = 100L * 1024 * 1024)))
+        // ...and the raw OS error, which is an IOException and used to be retried as "network".
+        assertFalse(DownloadRetryPolicy.isTransient(IOException("write failed: ENOSPC (No space left on device)")))
+        assertFalse(DownloadRetryPolicy.isTransient(IOException("No space left on device")))
+        // An ordinary IOException stays transient: only the full-disk ones changed.
+        assertTrue(DownloadRetryPolicy.isTransient(IOException("connection reset")))
+    }
+
+    @Test
+    fun `the full-disk message tells the user what to do`() {
+        val message = InsufficientSpaceException(availableBytes = 380L * 1024 * 1024).message.orEmpty()
+        assertTrue(message, message.contains("380 MB"))
+        assertTrue(message, message.contains("Reintentar"))
+    }
+
+    @Test
     fun `what's definitive never gets retried even with attempts to spare`() {
         assertFalse(DownloadRetryPolicy.shouldRetry(transient = false, attempt = 0))
     }

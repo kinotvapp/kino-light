@@ -25,7 +25,8 @@ class HttpRangeDownloaderTest {
 
     @Before fun setUp() {
         server = MockWebServer().apply { start() }
-        downloader = HttpRangeDownloader(OkHttpClient())
+        // Hermetic: the real free space of whatever machine runs the tests must not decide the result.
+        downloader = HttpRangeDownloader(OkHttpClient(), freeSpace = { Long.MAX_VALUE })
     }
 
     @After fun tearDown() { server.shutdown() }
@@ -68,6 +69,60 @@ class HttpRangeDownloaderTest {
         assertEquals(1000, target.length())
         assertEquals(body, target.readText())
         assertFalse(LocalFilePaths.partOf(target).exists())
+    }
+
+    // --- disk guard (a full disk must stop the download, not the whole device) ---------------------
+
+    private val mb = 1024L * 1024
+    private val gb = 1024L * mb
+
+    @Test
+    fun `a disk already at the reserve is not even asked`() = runBlocking {
+        val guarded = HttpRangeDownloader(OkHttpClient(), freeSpace = { 100 * mb }) // < 500 MB margin
+        server.enqueue(MockResponse().setBody("would-be-bytes"))
+        val target = File(tmp.root, "peli.mp4")
+
+        val result = guarded.download(server.url("/f").toString(), target, emptyMap()) { _, _ -> }
+
+        assertTrue(result.exceptionOrNull() is InsufficientSpaceException)
+        assertEquals("no request should have been made", 0, server.requestCount)
+        assertFalse(target.exists())
+        assertFalse(LocalFilePaths.partOf(target).exists())
+    }
+
+    @Test
+    fun `a declared size that does not fit is refused before writing anything`() = runBlocking {
+        val guarded = HttpRangeDownloader(OkHttpClient(), freeSpace = { 1 * gb })
+        // The server declares a 2 GB file; only a byte of body is ever needed because the guard
+        // throws right after reading the headers.
+        server.enqueue(MockResponse().setBody("x").setHeader("Content-Length", (2 * gb).toString()))
+        val target = File(tmp.root, "peli.mp4")
+
+        val result = guarded.download(server.url("/f").toString(), target, emptyMap()) { _, _ -> }
+
+        val error = result.exceptionOrNull()
+        assertTrue("expected InsufficientSpaceException, got $error", error is InsufficientSpaceException)
+        assertEquals(1 * gb, (error as InsufficientSpaceException).availableBytes)
+        assertFalse("nothing may be written", LocalFilePaths.partOf(target).exists())
+    }
+
+    @Test
+    fun `a disk that fills up mid-download stops it and keeps the partial to resume`() = runBlocking {
+        var measurements = 0
+        // Plenty of room for the two checks before writing, then the disk drops under the reserve.
+        val guarded = HttpRangeDownloader(
+            OkHttpClient(),
+            freeSpace = { if (++measurements <= 2) 10 * gb else 100 * mb },
+            checkEveryBytes = 1024,
+        )
+        server.enqueue(MockResponse().setBody(Buffer().writeUtf8("0123456789".repeat(1000)))) // 10 KB
+        val target = File(tmp.root, "peli.mp4")
+
+        val result = guarded.download(server.url("/f").toString(), target, emptyMap()) { _, _ -> }
+
+        assertTrue(result.exceptionOrNull() is InsufficientSpaceException)
+        assertFalse("the incomplete file must never be presented as done", target.exists())
+        assertTrue("the partial is kept so Reintentar resumes it", LocalFilePaths.partOf(target).exists())
     }
 
     @Test
