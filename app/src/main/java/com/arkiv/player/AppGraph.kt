@@ -376,6 +376,8 @@ class AppGraph(context: Context) {
             onUnresponsive = { id -> pluginRegistry.markUnresponsive(id); pluginHttps.remove(id) },
             scope = applicationScope,
             beforeCall = { id -> pluginHttps[id]?.beginCall() },
+            // Same dir as PluginStore's data root: uninstall deletes the markers with the rest.
+            sentinel = PluginCrashSentinel(java.io.File(appContext.filesDir, "plugin-data")),
         )
     }
 

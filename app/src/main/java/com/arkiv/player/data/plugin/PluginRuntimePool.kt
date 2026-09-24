@@ -1,11 +1,15 @@
 package com.arkiv.player.data.plugin
 
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 
 /** Calls one exported function of one plugin. */
@@ -31,6 +35,10 @@ class PluginRuntimePool(
     private val beforeCall: (pluginId: String) -> Unit = {},
     private val idleMs: Long = 5 * 60_000L,
     private val maxConsecutiveTimeouts: Int = 3,
+    /** Leaves an on-disk trace around each call so a plugin that kills the app gets switched off. */
+    private val sentinel: PluginCrashSentinel? = null,
+    /** Where the sentinel's small file writes run. */
+    private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : PluginCaller {
     private class Slot {
         val mutex = Mutex()
@@ -41,14 +49,44 @@ class PluginRuntimePool(
 
     private val slots = ConcurrentHashMap<String, Slot>()
 
+    private val recovery = Mutex()
+    private var recovered = false
+
+    /** Plugins the start-up recovery just switched off: their first call in this process is refused. */
+    private val switchedOff = ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * The sentinel's start-up check, once per process and before any plugin call: leftover markers
+     * are the previous process dying inside a plugin. Runs on [io], not on whoever calls first.
+     */
+    private suspend fun recoverOnce() {
+        val s = sentinel ?: return
+        recovery.withLock {
+            if (recovered) return
+            recovered = true
+            withContext(io) { s.recover() }.forEach { id ->
+                switchedOff += id
+                onUnresponsive(id)
+            }
+        }
+    }
+
     override suspend fun call(pluginId: String, function: String, argJson: String, timeoutMs: Long): String {
+        recoverOnce()
+        // The caller picked this plugin before the recovery switched it off: don't run it a third time.
+        if (switchedOff.remove(pluginId)) throw PluginScriptException("El plugin cerró Kino dos veces seguidas y se desactivó")
         val slot = slots.getOrPut(pluginId) { Slot() }
         return slot.mutex.withLock {
             slot.idleJob?.cancel()
+            var completedNormally = false
             try {
+                sentinel?.let { s -> withContext(io) { s.begin(pluginId) } }
                 val runtime = slot.runtime?.takeUnless { it.isDiscarded } ?: open(pluginId).also { slot.runtime = it }
                 beforeCall(pluginId)
-                runtime.call(function, argJson, timeoutMs).also { slot.timeouts = 0 }
+                runtime.call(function, argJson, timeoutMs).also {
+                    slot.timeouts = 0
+                    completedNormally = true
+                }
             } catch (e: PluginTimeoutException) {
                 slot.runtime = null
                 if (++slot.timeouts >= maxConsecutiveTimeouts) {
@@ -57,6 +95,8 @@ class PluginRuntimePool(
                 }
                 throw e
             } finally {
+                // Control is back in Kotlin whatever happened: the process survived this call.
+                sentinel?.let { s -> withContext(NonCancellable + io) { s.end(pluginId, completedNormally) } }
                 slot.idleJob = scope.launch {
                     delay(idleMs)
                     slot.mutex.withLock {

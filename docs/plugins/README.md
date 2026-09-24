@@ -330,6 +330,7 @@ characters. Under the Node kit they go to stderr.
 | Loading the module (its top level) | 10 s |
 | Idle sandbox | closed after 5 minutes without calls |
 | Consecutive timeouts | 3 in a row and Kino disables the plugin ("No responde — actívalo para volver a intentar") until the person re-enables it |
+| App closed during a call | if the app dies while your plugin is running (a crash inside the engine, killed for lack of memory) twice in a row, with no call finishing normally in between, Kino disables the plugin the same way ("No responde") at the next start |
 | `kino.fetch` | https only; 15 s default, 30 s maximum; response body at most 5 MB; the request (URL, headers and body together) at most 1,048,576 characters, or it throws `Error("solicitud demasiado grande (más de 1 MB)")`; at most 60 requests per call; at most 10 redirects per request |
 | What a function returns | at most 2,000,000 characters once turned into JSON, or the call fails with `Error("respuesta del plugin demasiado grande (más de 2 millones de caracteres)")` |
 | `kino.storage` | 64 KB per plugin |
@@ -375,6 +376,13 @@ literals, spread, `replaceAll`, `Array.prototype.at` and `flat`, `Object.fromEnt
   `{ numeric: true }` and `{ sensitivity: "base" }` do nothing; it compares code units), and
   `(1234.5).toLocaleString("es-CO")` gives `"1234.5"`. Write the comparison you need; the reference
   plugin has a small `natural()` for numbered names.
+- **Function names are guarded.** `kino.*`, `console.*` and the other functions Kino provides are
+  frozen. On any function, `Object.defineProperty`, `Object.defineProperties`,
+  `Reflect.defineProperty` and `__defineGetter__`/`__defineSetter__` refuse to set `name` to a
+  string longer than 1000 characters, to a getter or setter, or to make it writable: they throw a
+  `TypeError` (`Reflect.defineProperty` returns `false`). A huge function name makes the engine's
+  native code crash the whole app. Setting `name` on ordinary objects, and `this.name = "MyError"`
+  in an `Error` subclass, work as usual.
 
 ### The trap: a rejection nobody is listening to yet
 
