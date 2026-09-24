@@ -9,6 +9,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
@@ -92,6 +93,13 @@ class PluginRuntime private constructor(
             close()
             throw PluginTimeoutException(function, timeoutMs)
         } catch (e: CancellationException) {
+            // The CALLER was cancelled (e.g. a superseded search), not our own timeout: `job` keeps
+            // running on the runtime's thread regardless, since it's on `scope`, not the caller's.
+            // Left alone, it would be an orphaned evaluation a later call queues behind on the same
+            // single thread, so that call's own timeout clock would run against the orphan's work
+            // instead of its own. Discard the runtime instead: close() is deferred until `job`
+            // (still active) actually completes, so nothing here is torn down mid-evaluation.
+            if (job.isActive) close()
             throw e
         } catch (e: QuickJsException) {
             // Out of memory (and similar engine-level failures) can leave the runtime unusable:
@@ -137,6 +145,7 @@ class PluginRuntime private constructor(
          * throw at module top level, and [PluginTimeoutException] if loading takes longer than
          * [PluginEnv.loadTimeoutMs] (a top-level infinite loop leaks that thread, see the class KDoc).
          */
+        @OptIn(ExperimentalCoroutinesApi::class) // Deferred.getCompleted(), read only after completion is confirmed
         suspend fun open(label: String, script: String, host: PluginHost, env: PluginEnv): PluginRuntime {
             val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "plugin-$label").apply { isDaemon = true } }
             val dispatcher = executor.asCoroutineDispatcher()
@@ -167,6 +176,14 @@ class PluginRuntime private constructor(
             return try {
                 withTimeout(env.loadTimeoutMs) { loading.await() }
             } catch (e: TimeoutCancellationException) {
+                // `loading` runs on its own scope, independent of this withTimeout block, so it
+                // keeps going after we give up on it — a script whose top level is merely slow, not
+                // stuck, still finishes. Left alone that builds a PluginRuntime nobody holds (its
+                // QuickJs and executor thread leaked forever) or, on failure, leaves the executor
+                // never shut down (the async block below only closes `js` on its own failure path).
+                // Attach a completion handler so whichever happens gets cleaned up once `loading`
+                // actually finishes, instead of right now while it's still running.
+                loading.invokeOnCompletion { t -> if (t == null) loading.getCompleted().close() else executor.shutdown() }
                 throw PluginTimeoutException("La carga del plugin", env.loadTimeoutMs)
             } catch (e: CancellationException) {
                 executor.shutdown()

@@ -1,5 +1,8 @@
 package com.arkiv.player.data.plugin
 
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
@@ -20,8 +23,9 @@ class PluginRuntimeTest {
             JSONObject().put("ok", true).put("status", 200).put("url", JSONObject(req).getString("url"))
                 .put("headers", JSONObject()).put("body", "{\"hello\":\"world\"}").toString()
         }
+        var onSelect: (String, String) -> String = { html, css -> PluginHtml.selectJson(html, css) }
         override suspend fun fetch(requestJson: String) = onFetch(requestJson)
-        override fun select(html: String, css: String) = PluginHtml.selectJson(html, css)
+        override fun select(html: String, css: String) = onSelect(html, css)
         override fun storageGet(key: String) = storage[key]
         override fun storageSet(key: String, value: String) { storage[key] = value }
         override fun storageRemove(key: String) { storage.remove(key) }
@@ -140,5 +144,42 @@ class PluginRuntimeTest {
         } finally {
             server.shutdown()
         }
+    }
+
+    @Test fun `a load that times out but keeps running is closed once it finishes, not leaked`() {
+        // A unique label, not the shared "test" one every other case uses: the assertion below
+        // checks this exact thread has gone, and must not see a different test's thread instead.
+        val label = "slowload-${System.nanoTime()}"
+        val host = FakeHost().apply { onSelect = { _, _ -> Thread.sleep(300); "[]" } }
+        // A synchronous host call at module top level, before any export, stalls loading itself
+        // (not a call) past loadTimeoutMs while still guaranteed to finish afterwards.
+        val script = "kino.html.select('<a></a>', 'a');\nexport async function home() { return [] }"
+        assertThrows(PluginTimeoutException::class.java) {
+            runBlocking { PluginRuntime.open(label, script, host, env.copy(loadTimeoutMs = 50)) }
+        }
+        // Prefix match, not exact: kotlinx-coroutines' debug mode suffixes the live thread name
+        // with " @coroutine#N", so `it.name == threadName` would never match and vacuously pass.
+        val threadPrefix = "plugin-$label"
+        fun stillRunning() = Thread.getAllStackTraces().keys.any { it.name.startsWith(threadPrefix) }
+        assertTrue("expected the load's thread to still be running right after the timeout", stillRunning())
+        val deadline = System.currentTimeMillis() + 5_000
+        while (System.currentTimeMillis() < deadline && stillRunning()) Thread.sleep(20)
+        assertTrue("expected the load's thread to be gone once loading finished, not leaked", !stillRunning())
+    }
+
+    @Test fun `cancelling the caller mid-call discards the runtime instead of leaving an orphaned evaluation`() {
+        val rt = runBlocking { open("export async function search(q) { let i = 0; while (i < 150000000) i++; return [] }") }
+        runBlocking {
+            val caller = launch { rt.call("search", "{}", 10_000) }
+            delay(100) // let the evaluation actually start running on the runtime's thread
+            caller.cancelAndJoin()
+        }
+        assertTrue(rt.isDiscarded)
+        val t0 = System.currentTimeMillis()
+        assertThrows(PluginScriptException::class.java) { runBlocking { rt.call("search", "{}", 5_000) } }
+        assertTrue(
+            "a later call must fail fast, not queue behind the orphaned evaluation: took ${System.currentTimeMillis() - t0} ms",
+            System.currentTimeMillis() - t0 < 1_000,
+        )
     }
 }
