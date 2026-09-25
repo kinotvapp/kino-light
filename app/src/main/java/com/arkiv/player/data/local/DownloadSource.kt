@@ -23,6 +23,9 @@ object DownloadSource {
         // it into the queue anyway gets marked FAILED by `LocalDownloadWorker` with "Fuente no
         // soportada: ditu"). Sending it to "archive" would say it's from archive.org, which it isn't.
         SourceKind.DITU -> "ditu"
+        // Plugin titles have no download in v1 (spec non-goal). "plugin" has no strategy in
+        // `AppGraph.downloadStrategies`, so [canDownload] hides every download button for them.
+        SourceKind.PLUGIN -> "plugin"
         // UNKNOWN (ids from removed sources), LOCAL and LIVE have no download strategy. "archive"
         // is the value this branch has always persisted for them in `downloads.source`; it stays
         // until the Phase 3 audit.

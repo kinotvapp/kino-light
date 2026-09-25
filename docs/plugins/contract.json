@@ -1,0 +1,137 @@
+{
+  "$comment": "Kino plugin contract, apiVersion 1. The single source of truth for every number and rule a plugin meets. The app checks each value against its own code, and a test in the app pins this file to it; sdk/validate.mjs, sdk/run.mjs and the guide's tables read this file.",
+  "apiVersion": 1,
+  "maxApiVersion": 1,
+  "capabilities": {
+    "names": ["search", "home", "browse", "episodes", "resolve"],
+    "required": ["resolve"],
+    "atLeastOneOf": ["search", "home"]
+  },
+  "manifest": {
+    "maxBytes": 16384,
+    "idPattern": "^[a-z0-9][a-z0-9-]{1,39}$",
+    "reservedIds": ["magis", "ditu", "live", "local", "unknown", "plugin"],
+    "nameMaxChars": 40,
+    "descriptionMaxChars": 300,
+    "authorMaxChars": 60,
+    "homepageMaxChars": 200,
+    "minHosts": 1,
+    "maxHosts": 20,
+    "colorPattern": "^#[0-9A-Fa-f]{6}$",
+    "entryMaxBytes": 1048576,
+    "iconMaxBytes": 131072,
+    "versionPattern": "^(0|[1-9]\\d{0,5})\\.(0|[1-9]\\d{0,5})\\.(0|[1-9]\\d{0,5})$",
+    "pathSegmentPattern": "^[A-Za-z0-9._-]+$",
+    "maxPathChars": 200
+  },
+  "hostRules": {
+    "labelPattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
+    "privateSuffixes": [".local", ".lan", ".internal", ".localhost", ".home.arpa"],
+    "maxHostChars": 253
+  },
+  "permissions": [],
+  "settings": {
+    "max": 12,
+    "keyPattern": "^[a-z][a-zA-Z0-9_]{0,31}$",
+    "labelMaxChars": 40,
+    "hintMaxChars": 80,
+    "maxOptions": 20,
+    "optionValueMaxChars": 40,
+    "optionLabelMaxChars": 40,
+    "types": {
+      "text": { "maxChars": 500, "canBeRequired": true, "canHaveDefault": true },
+      "url": { "maxChars": 2048, "canBeRequired": true, "canHaveDefault": false },
+      "password": { "maxChars": 500, "canBeRequired": true, "canHaveDefault": true },
+      "toggle": { "canBeRequired": false, "canHaveDefault": true },
+      "select": { "canBeRequired": false, "canHaveDefault": true }
+    }
+  },
+  "output": {
+    "itemIdPattern": "^[A-Za-z0-9._~-]{1,128}$",
+    "maxSearchItems": 100,
+    "maxHomeRows": 20,
+    "maxRowItems": 60,
+    "maxBrowseItems": 100,
+    "maxEpisodes": 5000,
+    "maxRefChars": 4096,
+    "maxCursorChars": 2048,
+    "maxResultChars": 2000000,
+    "maxImageUrlChars": 2048,
+    "maxGenres": 5,
+    "maxGenreChars": 30,
+    "maxBadges": 3,
+    "maxBadgeChars": 20,
+    "imdbPattern": "^tt\\d{5,10}$",
+    "minRating": 0,
+    "maxRating": 10,
+    "minRuntimeMinutes": 1,
+    "maxRuntimeMinutes": 1000,
+    "minExpiresInSeconds": 30,
+    "maxExpiresInSeconds": 86400,
+    "airDatePattern": "^\\d{4}-\\d{2}-\\d{2}$",
+    "maxTitleChars": 200,
+    "maxTextChars": 2000,
+    "maxSeasonNumber": 999,
+    "maxEpisodeNumber": 99999,
+    "maxSubtitles": 30,
+    "drmKeys": ["drm", "license", "licenseUrl", "drmLicenseUrl", "keySystem", "widevine"]
+  },
+  "search": {
+    "types": ["movie", "series", "any"],
+    "maxAltTitles": 5,
+    "maxAltTitleChars": 200
+  },
+  "timeoutsMs": {
+    "load": 10000,
+    "search": 15000,
+    "home": 20000,
+    "browse": 20000,
+    "episodes": 20000,
+    "resolve": 20000
+  },
+  "runtime": {
+    "memoryBytes": 67108864,
+    "stackBytes": 1048576,
+    "idleCloseMs": 300000,
+    "timeoutsBeforeUnresponsive": 3,
+    "maxLogChars": 2000,
+    "maxErrorChars": 2000
+  },
+  "fetch": {
+    "methods": ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"],
+    "bodyKinds": ["text", "json", "form", "base64"],
+    "redirectModes": ["follow", "manual"],
+    "defaultTimeoutMs": 15000,
+    "maxTimeoutMs": 30000,
+    "maxBodyBytes": 5242880,
+    "maxRequestChars": 1048576,
+    "maxRequestsPerCall": 60,
+    "maxRedirects": 10,
+    "errorCodes": ["host_not_allowed", "timeout", "network", "too_large", "invalid_request"]
+  },
+  "cookies": {
+    "maxPerHost": 50,
+    "maxTotalBytes": 65536
+  },
+  "storage": {
+    "maxTotalBytes": 262144
+  },
+  "crypto": {
+    "hashes": ["md5", "sha1", "sha256", "sha512"],
+    "ciphers": ["aes-128-cbc", "aes-192-cbc", "aes-256-cbc", "aes-128-ecb", "aes-192-ecb", "aes-256-ecb", "aes-128-ctr", "aes-192-ctr", "aes-256-ctr", "aes-128-gcm", "aes-192-gcm", "aes-256-gcm", "des-ede3-cbc", "des-ede3-ecb"],
+    "encodings": ["utf8", "hex", "base64"],
+    "pbkdf2Hashes": ["sha1", "sha256", "sha512"],
+    "pbkdf2MaxIterations": 100000,
+    "pbkdf2MaxKeyBytes": 64,
+    "randomMaxBytes": 1024,
+    "maxDataBytes": 5242880,
+    "errorCode": "crypto_error"
+  },
+  "sleep": {
+    "maxMs": 5000
+  },
+  "errors": {
+    "codes": ["auth_required", "not_found", "geo_blocked", "rate_limited", "unavailable"],
+    "maxMessageChars": 200
+  }
+}

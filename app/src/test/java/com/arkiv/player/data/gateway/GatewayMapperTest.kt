@@ -1,5 +1,6 @@
 package com.arkiv.player.data.gateway
 
+import com.arkiv.player.data.plugin.PluginColors
 import com.arkiv.player.ui.catalog.PlaySource
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -73,5 +74,26 @@ class GatewayMapperTest {
             (GatewayResult(source = "magis", title = "x", ref = "r").toPlaySource()
                 as PlaySource.Magis).result.ref,
         )
+    }
+
+    @Test fun `a plugin result maps to PlaySource Plugin with its name and color`() {
+        val ps = GatewayResult(
+            source = "plugin:archive-org", title = "Metrópolis", ref = "plg1:archive-org:x",
+            extra = mapOf("pluginName" to "Internet Archive", "color" to "#E0A030"),
+        ).toPlaySource() as PlaySource.Plugin
+        assertEquals("archive-org", ps.pluginId)
+        assertEquals("Internet Archive", ps.pluginName)
+        assertEquals(0xFFE0A030, ps.color)
+    }
+
+    @Test fun `a plugin result without name or color still maps, with defaults`() {
+        val ps = GatewayResult(source = "plugin:demo", title = "t", ref = "r").toPlaySource() as PlaySource.Plugin
+        assertEquals("demo", ps.pluginName)
+        assertEquals(PluginColors.DEFAULT, ps.color)
+    }
+
+    @Test fun `malformed plugin sources are ignored`() {
+        assertNull(GatewayResult(source = "plugin:", title = "t", ref = "r").toPlaySource())
+        assertNull(GatewayResult(source = "plugin:a:b", title = "t", ref = "r").toPlaySource())
     }
 }

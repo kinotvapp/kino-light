@@ -19,12 +19,14 @@ import com.arkiv.player.data.recommendations.ForYouVerification
 import com.arkiv.player.data.update.ApkDownloader
 import com.arkiv.player.data.update.UpdateChecker
 import com.arkiv.player.data.update.UpdateInfo
+import com.arkiv.player.data.plugin.*
 import com.arkiv.player.dlna.DlnaController
 import com.arkiv.player.companion.CompanionManager
 import com.google.android.gms.cast.framework.CastContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.take
@@ -255,6 +257,16 @@ class AppGraph(context: Context) {
             repository
             liveCatalog
             magisHomeCatalog
+            // Before `contentSource` (which forces pluginRegistry's first reload()): see
+            // reconcilePluginSecrets's KDoc for why this order matters. The explicit reload() right
+            // after (fix round 3, "also fold in") picks up the just-reconciled config.json even if
+            // `pluginRegistry` had ALREADY been touched earlier (its lazy only reloads once, on
+            // first access) -- without it, an early access from elsewhere could win the race and
+            // this reconciliation would sit unread until some LATER reload().
+            // Guarded: a plugin Keystore failure must never skip Xuper's lazies below.
+            runCatching { reconcilePluginSecrets() }
+                .onFailure { android.util.Log.w("KinoPlugin", "warm-up: plugin secrets not reconciled: ${it.javaClass.simpleName}") }
+            pluginRegistry.reload()
             contentSource
             magisAccount
             built = true
@@ -332,9 +344,259 @@ class AppGraph(context: Context) {
      * Where the titles the app searches and plays come from: Magis and Caracol behind a single
      * object. To resolve and list episodes it dispatches by `ref` (each source recognizes its
      * own); to search, it merges both. See [com.arkiv.player.data.gateway.CompositeSource].
+     * Plus every usable installed plugin, read on EACH call: installing, disabling or
+     * uninstalling a plugin applies to the next search/resolve with no restart. A ref of a plugin
+     * that isn't usable falls through to [UnusablePluginSource], last, which answers with the
+     * registry's reason ("Activa el plugin X…") instead of "no source can open this".
      */
     val contentSource: com.arkiv.player.data.gateway.ContentSource by lazy {
-        com.arkiv.player.data.gateway.CompositeSource(listOf(magisSource, dituSource))
+        val unusablePlugins = UnusablePluginSource(pluginRegistry)
+        com.arkiv.player.data.gateway.CompositeSource {
+            listOf(magisSource, dituSource) +
+                pluginRegistry.usable().map { PluginContentSource(it, pluginCaller, it.hosts) } +
+                unusablePlugins
+        }
+    }
+
+    // --- Plugins (docs/superpowers/specs/2026-09-24-plugin-sources-design.md) ---
+
+    val pluginStore: PluginStore by lazy {
+        PluginStore(java.io.File(appContext.filesDir, "plugins"), java.io.File(appContext.filesDir, "plugin-data"))
+            .also { it.cleanStaging() }
+    }
+
+    /** Base client for plugin traffic; each plugin derives its own (cookie jar, host gate) in PluginHttp. */
+    private val pluginBaseHttp: okhttp3.OkHttpClient by lazy {
+        okhttp3.OkHttpClient.Builder()
+            .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+    }
+
+    /**
+     * Each plugin's settings: `config.json` in its data dir, passwords in the Keystore-backed
+     * [EncryptedSecretStore] (opened lazily, off the main thread). See PluginConfigStore.
+     */
+    val pluginConfigStore: PluginConfigStore by lazy {
+        PluginConfigStore({ id -> pluginStore.dataDir(id) }, EncryptedSecretStore(appContext))
+    }
+
+    /** Reads each plugin's `config.json` (never the Keystore) for its typed servers and "Falta configurar". */
+    val pluginRegistry: PluginRegistry by lazy {
+        PluginRegistry(pluginStore) { p -> pluginConfigStore.setupState(p.manifest.id, p.manifest.settings) }.also { it.reload() }
+    }
+
+    /**
+     * The ONLY place `reload()`'s Keystore correctness (finding 5) actually touches the Keystore
+     * (fix round 2, new breakage 1): `warmUpCredentials()` calls this on IO, BEFORE `contentSource`
+     * or `pluginRegistry` are touched (both force `pluginRegistry`'s first `reload()`), so that
+     * first reload -- and every one after it, from ANY thread, `reload()` itself never does
+     * Keystore IO -- already sees `config.json`'s "secrets" lists telling the truth. Also run once
+     * per [checkPluginUpdates] cycle, so a Keystore loss mid-session (not just across a restart)
+     * eventually self-corrects too. See `PluginConfigStore.reconcileSecrets`'s KDoc.
+     */
+    private fun reconcilePluginSecrets() {
+        pluginConfigStore.reconcileAllSecrets(pluginStore.list().map { it.manifest.id to it.manifest.settings }) { id, e ->
+            android.util.Log.w("KinoPlugin", "secrets of $id not reconciled: ${e.javaClass.simpleName}")
+        }
+    }
+
+    /**
+     * The player's client for one plugin stream, gated to [hosts] (the approved ones plus the
+     * servers typed in its settings, carried in `PlayerData.pluginHosts`) on every request and
+     * redirect hop. See PluginStreamHttp.
+     */
+    fun pluginStreamClient(hosts: EffectiveHosts): okhttp3.OkHttpClient =
+        PluginStreamHttp.client(pluginBaseHttp, hosts)
+
+    /** The live PluginHttp of each open runtime, so the pool can reset its per-call request budget. */
+    private val pluginHttps = java.util.concurrent.ConcurrentHashMap<String, PluginHttp>()
+
+    /** The live cookie jar of each open runtime: a settings change retires it (see forgetPluginSession).
+     *  See [PluginJarRegistry]'s KDoc for why a runtime's own close() must never touch this. */
+    private val pluginJars = PluginJarRegistry()
+
+    /**
+     * Bumped by [forgetPluginHomeCache] AND once more, separately, right after a settings change's
+     * runtime close actually removes the pool's slot (`afterSessionClosed`, wired into
+     * [pluginAdmin]) — lets [pluginHomeRows] discard a `home()` answer that belongs to a session
+     * already forgotten, even one that started before the forget and returns after both bumps (fix
+     * round 1 finding 3, hardened in round 2: a single bump left a narrow gap a call could still
+     * slip through — see [PluginAdmin.saveSettings]'s own comment for the exact race).
+     *
+     * This is DELIBERATELY separate from [InstalledPlugin.configRevision] (persisted, drives
+     * [pluginsChanged] below AND, since fix round 3, also stamped into the Home cache file
+     * alongside this value — see [PluginHomeRows]'s KDoc): that one exists so the registry's
+     * `StateFlow` visibly changes on a save (finding 4) and so staleness is still caught after a
+     * restart (finding 3a) — a value that resets every process start, like this one, can never do
+     * either. This one exists to identify which RUNTIME INSTANCE a live call actually ran against,
+     * which is inherently a live/in-memory question, not a disk one — process-lifetime only,
+     * nothing here needs to (or should) survive a restart.
+     */
+    private val pluginSessionRevisions = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
+    private fun pluginSessionRevision(id: String): Int = pluginSessionRevisions.getOrDefault(id, 0)
+    private fun bumpPluginSessionRevision(id: String) { pluginSessionRevisions.merge(id, 1, Int::plus) }
+
+    /**
+     * Every plugin call goes through here: a plugin whose required settings are empty is refused
+     * with `auth_required` before its runtime is even opened (spec §1.3).
+     */
+    val pluginCaller: PluginCaller by lazy {
+        SetupGatedCaller({ id -> pluginRegistry.find(id)?.needsSetup == true }, pluginRuntimes)
+    }
+
+    /** "Ver más" talks to one plugin directly; null when it isn't usable any more. */
+    fun pluginSource(id: String): PluginContentSource? =
+        pluginRegistry.find(id)?.takeIf { it.isUsable }?.let { PluginContentSource(it, pluginCaller, it.hosts) }
+
+    val pluginRuntimes: PluginRuntimePool by lazy {
+        PluginRuntimePool(
+            open = { id -> openPluginRuntime(id) },
+            // F5: on 3 consecutive timeouts the runtime discards itself internally (see
+            // PluginRuntime.call/close KDoc) without the pool ever calling close() on it, so the
+            // decorator below never runs for this path -- drop the stale PluginHttp here too.
+            onUnresponsive = { id -> pluginRegistry.markUnresponsive(id); pluginHttps.remove(id) },
+            scope = applicationScope,
+            beforeCall = { id -> pluginHttps[id]?.beginCall() },
+            // Same dir as PluginStore's data root: uninstall deletes the markers with the rest.
+            sentinel = PluginCrashSentinel(java.io.File(appContext.filesDir, "plugin-data")),
+        )
+    }
+
+    private suspend fun openPluginRuntime(id: String): ScriptRuntime {
+        val plugin = pluginRegistry.find(id) ?: throw PluginScriptException("El plugin no está instalado")
+        val script = try {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { pluginStore.readVerifiedScript(id) }
+        } catch (e: PluginDamagedException) {
+            pluginRegistry.markDamaged(id)
+            throw e
+        }
+        // The APPROVED hosts from installed.json (never the manifest's: they're what the person
+        // accepted) plus the servers typed in its settings, as the registry read them.
+        val hosts = plugin.hosts
+        val dataDir = pluginStore.dataDir(id)
+        // Config (passwords from the Keystore) is read on IO, never on Main.
+        val config = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            pluginConfigStore.read(id, plugin.manifest.settings)
+        }
+        // The jar persists in the plugin's data dir: a login survives the idle close and app restarts.
+        val cookies = PluginCookies(java.io.File(dataDir, PluginCookies.FILE_NAME), hosts)
+        // Whatever jar this replaces is stopped from writing (see PluginJarRegistry's KDoc).
+        pluginJars.put(id, cookies)
+        val http = PluginHttp(pluginBaseHttp, id, hosts, BuildConfig.VERSION_NAME, cookies = cookies)
+        pluginHttps[id] = http
+        val storage = PluginStorage(java.io.File(dataDir, "storage.json"))
+        val runtime = PluginRuntime.open(id, script, DefaultPluginHost(id, http, storage, config, cookies, hosts), PluginEnv(appVersion = BuildConfig.VERSION_NAME))
+        // F5: drop this plugin's PluginHttp the moment its runtime is closed -- idle timeout, or an
+        // explicit pool.close() from DefaultPluginAdmin's disable/update/uninstall -- so pluginHttps
+        // never keeps a stale, no-longer-approved host list around after the runtime that used it is
+        // gone. remove(id, http) only clears OUR entry: if a newer runtime already replaced it, this
+        // deferred close (see PluginRuntime.close KDoc) must not delete that live one instead.
+        //
+        // pluginJars is deliberately NOT touched here (fix round 1, finding 1): it used to also do
+        // `pluginJars.remove(id, cookies)`, which raced forgetPluginSession -- an async close that
+        // won that race removed the jar WITHOUT retiring it, leaving it free to write the old
+        // session's cookies back after "forget" had already deleted them. See PluginJarRegistry's
+        // KDoc: only put() (superseded) or forget() (a settings change) may ever remove an entry.
+        return object : ScriptRuntime by runtime {
+            override fun close() {
+                runtime.close()
+                pluginHttps.remove(id, http)
+            }
+        }
+    }
+
+    /**
+     * Debug builds only: `src/debug`'s PluginSideloadProbe points this at plugin folders copied
+     * into the app's files dir, so the emulator can install a plugin that isn't on GitHub yet.
+     * Nothing in `src/main` ever sets it; a release APK has no code that can.
+     */
+    @Volatile var debugPluginFetcher: PluginFetcher? = null
+
+    val pluginInstaller: PluginInstaller by lazy {
+        val github = RawGithubFetcher(pluginBaseHttp)
+        PluginInstaller(
+            store = pluginStore,
+            fetcher = PluginFetcher { url, max -> (debugPluginFetcher ?: github).fetch(url, max) },
+            probe = { script ->
+                val runtime = PluginRuntime.open("probe", script, ProbePluginHost, PluginEnv(appVersion = BuildConfig.VERSION_NAME))
+                try { runtime.exports } finally { runtime.close() }
+            },
+        )
+    }
+
+    val pluginAdmin: PluginAdmin by lazy {
+        DefaultPluginAdmin(
+            pluginRegistry, pluginInstaller, pluginRuntimes, pluginConfigStore,
+            forgetHomeCache = ::forgetPluginHomeCache,
+            forgetSession = ::forgetPluginSession,
+            afterSessionClosed = ::bumpPluginSessionRevision,
+        )
+    }
+
+    /**
+     * After a settings change (spec §1.3), the Home-cache half: the session revision is bumped
+     * (the FIRST of two -- see [pluginSessionRevisions]'s KDoc and
+     * [DefaultPluginAdmin.saveSettings]) and `home.json` (rows of the old account) is deleted.
+     * Split from [forgetPluginSession] and called FIRST, before `registry.reload()` (fix round 3,
+     * "new breakage 1") -- see [DefaultPluginAdmin.saveSettings]'s own comment for exactly why:
+     * unlike jar retirement, nothing about the Home cache needs the registry to have reloaded
+     * first, and a re-fetch reload() itself can trigger (finding 4) must never be able to observe
+     * the pre-forget state.
+     */
+    private fun forgetPluginHomeCache(id: String) {
+        bumpPluginSessionRevision(id)
+        java.io.File(pluginStore.dataDir(id), "home.json").delete()
+    }
+
+    /**
+     * After a settings change (spec §1.3), the session/jar half: a new user or server must not
+     * inherit the old session, so the live cookie jar is retired (a call still finishing can't
+     * write it back) and its file deleted. Runs on IO (DefaultPluginAdmin.saveSettings) -- see
+     * that method for why this must run AFTER `registry.reload()` but BEFORE the runtime is
+     * actually closed.
+     */
+    private fun forgetPluginSession(id: String) {
+        pluginJars.forget(id)
+        java.io.File(pluginStore.dataDir(id), PluginCookies.FILE_NAME).delete()
+    }
+
+    val pluginHomeRows: PluginHomeRows by lazy {
+        PluginHomeRows(
+            plugins = { pluginRegistry.usable() },
+            caller = pluginCaller,
+            // In the plugin's data dir: uninstalling deletes it with the rest.
+            cacheFileFor = { id -> java.io.File(pluginStore.dataDir(id), "home.json") },
+            sessionRevision = ::pluginSessionRevision,
+        )
+    }
+
+    /**
+     * Emits when the set (or versions, settings state or config revision) of usable plugins
+     * changes: Home re-asks for rows then — right after a plugin is configured or its server
+     * changes, AND after any OTHER settings save (e.g. only the user/password), via
+     * `InstalledPlugin.configRevision` inside `changeKey()` (finding 4: a save that only changed
+     * the account used to leave every other field bit-for-bit equal, so `registry.plugins` itself
+     * never emitted and this never re-asked — see `InstalledPlugin`'s own KDoc for the root cause).
+     */
+    val pluginsChanged: kotlinx.coroutines.flow.Flow<List<Pair<String, String>>>
+        get() = pluginRegistry.plugins
+            .map { list -> list.filter { it.isUsable }.map { it.id to it.changeKey() } }
+            .distinctUntilChanged()
+
+    /** UpdateWorker's plugin step: each plugin at most once per 24 h; see PluginInstaller.checkDueUpdates. */
+    suspend fun checkPluginUpdates() {
+        val outcomes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            // Catches a Keystore loss that happened mid-session too. Guarded: a failure here must
+            // never cancel every plugin's update check.
+            runCatching { reconcilePluginSecrets() }
+                .onFailure { android.util.Log.w("KinoPlugin", "update check: plugin secrets not reconciled: ${it.javaClass.simpleName}") }
+            pluginInstaller.checkDueUpdates()
+        }
+        // Reload before closing, as in DefaultPluginAdmin: never a new script with the old hosts.
+        pluginRegistry.reload()
+        outcomes.filter { it.second is UpdateOutcome.Applied }.forEach { pluginRuntimes.close(it.first) }
     }
 
     internal val magisLive: com.arkiv.player.data.magis.MagisLive by lazy {

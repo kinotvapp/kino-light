@@ -52,7 +52,7 @@ private fun isRecoverable(error: PlaybackException): Boolean =
 /**
  * The Caracol player: MPEG-DASH with Widevine.
  *
- * ExoPlayer, same as [MagisExoPlayer] and [LiveExoPlayer], feeding the same [PlayerMirror] they
+ * ExoPlayer, same as [StreamExoPlayer] and [LiveExoPlayer], feeding the same [PlayerMirror] they
  * do. libVLC never negotiated Widevine licenses, so Caracol was always going to need ExoPlayer even
  * before the rest of the app dropped VLC.
  *
@@ -72,7 +72,7 @@ private fun isRecoverable(error: PlaybackException): Boolean =
  * measured it yet on this branch.
  *
  * The video goes on the `SurfaceView` that [PlayerView] uses by default, not on a `TextureView`
- * like [MagisExoPlayer]. On `main` it was measured that a Widevine-protected buffer can't be
+ * like [StreamExoPlayer]. On `main` it was measured that a Widevine-protected buffer can't be
  * painted on a `TextureView` (hwui aborts the process). The price is that Caracol loses frame
  * thumbnails: the screen passes `null` to `captureFrame`, and `FrameCapturer.capturar` returns
  * `false` with a null `TextureView`.
@@ -299,7 +299,7 @@ internal fun DituExoPlayer(
         }
     }
 
-    // Position and duration for the bar, same as [MagisExoPlayer]'s polling, and the same reading
+    // Position and duration for the bar, same as [StreamExoPlayer]'s polling, and the same reading
     // for [onPosition], which is how `DituState` knows if playback is going.
     LaunchedEffect(exoPlayer) {
         while (true) {

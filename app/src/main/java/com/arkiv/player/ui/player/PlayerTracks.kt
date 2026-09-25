@@ -158,7 +158,7 @@ internal class TracksState(
 
     /**
      * Populates audio and subtitle from the tracks ExoPlayer reports via onTracksChanged.
-     * Called from MagisExoPlayer's onTracksChanged callback.
+     * Called from StreamExoPlayer's onTracksChanged callback.
      */
     fun updateExoTracks(tracks: Tracks) {
         val audioGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }

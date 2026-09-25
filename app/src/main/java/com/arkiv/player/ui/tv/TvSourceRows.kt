@@ -39,7 +39,7 @@ private val MARGIN = 48.dp
 /**
  * A labeled row with ONE source's results.
  *
- * Magis and Caracol bring their own image, so both go with a cover ([TvPosterCard]).
+ * Magis, Caracol and plugins bring their own image, so all go with a cover ([TvPosterCard]).
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 fun LazyListScope.tvSourceRow(
@@ -51,7 +51,7 @@ fun LazyListScope.tvSourceRow(
     firstCard: FocusRequester?,
     onPlay: (PlaySource) -> Unit,
 ) {
-    item(key = "fila-${source.name}") {
+    item(key = "fila-${source.key}") {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -64,7 +64,7 @@ fun LazyListScope.tvSourceRow(
             }
         }
     }
-    item(key = "row-${source.name}") {
+    item(key = "row-${source.key}") {
         LazyRow(
             contentPadding = PaddingValues(horizontal = MARGIN),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -77,10 +77,11 @@ fun LazyListScope.tvSourceRow(
                 } else {
                     Modifier
                 }
-                // Both sources here bring a cover, so both go as a poster.
+                // Every source here brings a cover, so all go as a poster.
                 val (title, poster) = when (s) {
                     is PlaySource.Magis -> s.result.title to s.result.extra["poster"]
                     is PlaySource.Ditu -> s.result.title to s.result.extra["poster"]
+                    is PlaySource.Plugin -> s.result.title to s.result.extra["poster"]
                 }
                 TvPosterCard(
                     title = title,

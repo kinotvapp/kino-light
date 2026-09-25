@@ -136,6 +136,7 @@ fun ArkivTvRoot(
                 onBrowseMagisRow = { rowId, title ->
                     navController.navigate("magis_row/$rowId?title=${android.net.Uri.encode(title)}")
                 },
+                onBrowsePluginRow = { navController.navigate(com.arkiv.player.ui.plugin.PluginMoreTarget.route(it)) },
             )
         }
         composable(
@@ -155,6 +156,7 @@ fun ArkivTvRoot(
                 shortcutKind = entry.arguments?.getString("kind"),
                 shortcutTmdbId = entry.arguments?.getString("tmdbId")?.toIntOrNull(),
                 shortcutAnilistId = entry.arguments?.getString("anilistId")?.toLongOrNull(),
+                onBrowsePlugin = { navController.navigate(com.arkiv.player.ui.plugin.PluginMoreTarget.route(it)) },
             )
         }
         composable("categorias") {
@@ -280,6 +282,12 @@ fun ArkivTvRoot(
                 onOpenEpisodes = { navController.popBackStack() },
                 onNextEpisode = { goToPlayer(it) },
                 isTv = true,
+                // The player leaves: after configuring, Back returns to where the title was.
+                onOpenPluginSettings = { id ->
+                    navController.navigate("plugin_config/${Uri.encode(id)}") {
+                        popUpTo("player/{episodeId}") { inclusive = true }
+                    }
+                },
             )
         }
         composable(
@@ -297,6 +305,37 @@ fun ArkivTvRoot(
                 onOpenSearchRoute = { route -> navController.navigate(route) },
                 onBack = { navController.popBackStack() },
                 graph = graph,
+            )
+        }
+        composable(
+            com.arkiv.player.ui.plugin.PluginMoreTarget.PATTERN,
+            arguments = listOf(
+                navArgument("pluginId") { type = NavType.StringType },
+                navArgument("title") { type = NavType.StringType; defaultValue = "" },
+                navArgument("ref") { nullable = true; type = NavType.StringType; defaultValue = null },
+                navArgument("query") { nullable = true; type = NavType.StringType; defaultValue = null },
+                navArgument("cursor") { nullable = true; type = NavType.StringType; defaultValue = null },
+            ),
+        ) { entry ->
+            val a = entry.arguments
+            val target = com.arkiv.player.ui.plugin.PluginMoreTarget.fromRoute(
+                a?.getString("pluginId").orEmpty(), a?.getString("title").orEmpty(),
+                a?.getString("ref"), a?.getString("query"), a?.getString("cursor"),
+            )
+            if (target != null) {
+                TvPluginMoreScreen(
+                    target = target,
+                    onPlayEpisode = { goToPlayer(it) },
+                    onOpenPluginSettings = { id -> navController.navigate("plugin_config/${Uri.encode(id)}") },
+                    onBack = { navController.popBackStack() },
+                )
+            }
+        }
+        composable("plugin_config/{pluginId}") { entry ->
+            com.arkiv.player.ui.plugin.PluginConfigRoute(
+                pluginId = Uri.decode(entry.arguments?.getString("pluginId").orEmpty()),
+                isTv = true,
+                onDone = { navController.popBackStack() },
             )
         }
         composable(

@@ -1,0 +1,176 @@
+package com.arkiv.player.data.plugin
+
+import org.json.JSONArray
+import org.json.JSONObject
+import org.junit.Assert.assertEquals
+import org.junit.Test
+import java.io.File
+
+/**
+ * `docs/plugins/contract.json` is what authors, `sdk/validate.mjs`, `sdk/run.mjs` and the guide's
+ * tables read; this pins every value to the Kotlin constant that enforces it. A change on one side
+ * only fails here. (The guide and the code drifted apart once already.)
+ */
+class PluginContractParityTest {
+    private val c = JSONObject(File("../docs/plugins/contract.json").readText())
+
+    private fun JSONObject.strings(key: String): List<String> = getJSONArray(key).let { a -> (0 until a.length()).map { a.getString(it) } }
+    private fun obj(path: String): JSONObject = path.split('.').fold(c) { o, k -> o.getJSONObject(k) }
+
+    @Test fun `api version and capabilities`() {
+        assertEquals(ManifestParser.SUPPORTED_API, c.getInt("apiVersion"))
+        assertEquals(ManifestParser.SUPPORTED_API, c.getInt("maxApiVersion"))
+        assertEquals(ManifestParser.CAPABILITIES, obj("capabilities").strings("names").toSet())
+        assertEquals(ManifestParser.REQUIRED_CAPABILITIES, obj("capabilities").strings("required"))
+        assertEquals(ManifestParser.AT_LEAST_ONE_OF_CAPABILITIES, obj("capabilities").strings("atLeastOneOf"))
+    }
+
+    @Test fun `manifest rules`() {
+        val m = obj("manifest")
+        assertEquals(ManifestParser.MAX_BYTES, m.getInt("maxBytes"))
+        assertEquals(ManifestParser.RESERVED_IDS, m.strings("reservedIds").toSet())
+        assertEquals(ManifestParser.ID.pattern, m.getString("idPattern"))
+        assertEquals(ManifestParser.MAX_NAME_CHARS, m.getInt("nameMaxChars"))
+        assertEquals(ManifestParser.MAX_DESCRIPTION_CHARS, m.getInt("descriptionMaxChars"))
+        assertEquals(ManifestParser.MAX_AUTHOR_CHARS, m.getInt("authorMaxChars"))
+        assertEquals(ManifestParser.MAX_HOMEPAGE_CHARS, m.getInt("homepageMaxChars"))
+        assertEquals(ManifestParser.MIN_HOSTS, m.getInt("minHosts"))
+        assertEquals(ManifestParser.MAX_HOSTS, m.getInt("maxHosts"))
+        assertEquals(ManifestParser.COLOR.pattern, m.getString("colorPattern"))
+        assertEquals(PluginInstaller.MAX_SCRIPT_BYTES, m.getInt("entryMaxBytes"))
+        assertEquals(PluginInstaller.MAX_ICON_BYTES, m.getInt("iconMaxBytes"))
+        assertEquals(SemVer.RE.pattern, m.getString("versionPattern"))
+        assertEquals(ManifestParser.PATH_SEGMENT.pattern, m.getString("pathSegmentPattern"))
+        assertEquals(ManifestParser.MAX_PATH_CHARS, m.getInt("maxPathChars"))
+    }
+
+    @Test fun `host rules`() {
+        val h = obj("hostRules")
+        assertEquals(HostRules.LABEL.pattern, h.getString("labelPattern"))
+        assertEquals(HostRules.PRIVATE_SUFFIXES.toSet(), h.strings("privateSuffixes").toSet())
+        assertEquals(HostRules.MAX_HOST_CHARS, h.getInt("maxHostChars"))
+    }
+
+    @Test fun `permissions and settings`() {
+        assertEquals(PluginSettings.PERMISSIONS, c.strings("permissions").toSet())
+        assertEquals(JSONArray::class, c.get("permissions")::class)
+        val s = obj("settings")
+        assertEquals(PluginSettings.MAX_SETTINGS, s.getInt("max"))
+        assertEquals(PluginSettings.KEY.pattern, s.getString("keyPattern"))
+        assertEquals(PluginSettings.MAX_LABEL_CHARS, s.getInt("labelMaxChars"))
+        assertEquals(PluginSettings.MAX_HINT_CHARS, s.getInt("hintMaxChars"))
+        assertEquals(PluginSettings.MAX_OPTIONS, s.getInt("maxOptions"))
+        assertEquals(PluginSettings.MAX_OPTION_VALUE_CHARS, s.getInt("optionValueMaxChars"))
+        assertEquals(PluginSettings.MAX_OPTION_LABEL_CHARS, s.getInt("optionLabelMaxChars"))
+        val types = s.getJSONObject("types")
+        assertEquals(SettingType.entries.map { it.wire }.toSet(), types.keys().asSequence().toSet())
+        SettingType.entries.forEach { t ->
+            val o = types.getJSONObject(t.wire)
+            assertEquals(t.wire, t.canBeRequired, o.getBoolean("canBeRequired"))
+            assertEquals(t.wire, t.canHaveDefault, o.getBoolean("canHaveDefault"))
+            if (t.maxChars > 0) assertEquals(t.wire, t.maxChars, o.getInt("maxChars")) else assertEquals(t.wire, false, o.has("maxChars"))
+        }
+    }
+
+    @Test fun `runtime, storage, sleep and errors`() {
+        val r = obj("runtime")
+        val env = PluginEnv(appVersion = "x")
+        assertEquals(env.memoryLimitBytes, r.getLong("memoryBytes"))
+        assertEquals(env.maxStackBytes, r.getLong("stackBytes"))
+        assertEquals(PluginRuntime.MAX_LOG_CHARS, r.getInt("maxLogChars"))
+        assertEquals(PluginRuntime.MAX_ERROR_CHARS, r.getInt("maxErrorChars"))
+        assertEquals(PluginRuntimePool.DEFAULT_IDLE_MS, r.getLong("idleCloseMs"))
+        assertEquals(PluginRuntimePool.DEFAULT_MAX_TIMEOUTS, r.getInt("timeoutsBeforeUnresponsive"))
+        assertEquals(PluginStorage.MAX_BYTES, obj("storage").getInt("maxTotalBytes"))
+        assertEquals(PluginRuntime.MAX_SLEEP_MS, obj("sleep").getInt("maxMs"))
+        assertEquals(PluginErrors.CODES, obj("errors").strings("codes"))
+        assertEquals(PluginErrors.MAX_MESSAGE_CHARS, obj("errors").getInt("maxMessageChars"))
+    }
+
+    @Test fun `crypto`() {
+        val k = obj("crypto")
+        assertEquals(PluginCrypto.HASHES, k.strings("hashes"))
+        assertEquals(PluginCrypto.CIPHERS, k.strings("ciphers"))
+        assertEquals(PluginCrypto.ENCODINGS, k.strings("encodings"))
+        assertEquals(PluginCrypto.PBKDF2_HASHES, k.strings("pbkdf2Hashes"))
+        assertEquals(PluginCrypto.PBKDF2_MAX_ITERATIONS, k.getInt("pbkdf2MaxIterations"))
+        assertEquals(PluginCrypto.PBKDF2_MAX_KEY_BYTES, k.getInt("pbkdf2MaxKeyBytes"))
+        assertEquals(PluginCrypto.RANDOM_MAX_BYTES, k.getInt("randomMaxBytes"))
+        assertEquals(PluginCrypto.MAX_DATA_BYTES, k.getInt("maxDataBytes"))
+        assertEquals(PluginCrypto.ERROR_CODE, k.getString("errorCode"))
+    }
+
+    @Test fun `cookies`() {
+        assertEquals(PluginCookies.MAX_PER_HOST, obj("cookies").getInt("maxPerHost"))
+        assertEquals(PluginCookies.MAX_TOTAL_BYTES, obj("cookies").getInt("maxTotalBytes"))
+    }
+
+    @Test fun `fetch`() {
+        val f = obj("fetch")
+        assertEquals(PluginHttp.METHODS, f.strings("methods"))
+        assertEquals(PluginHttp.BODY_KINDS, f.strings("bodyKinds"))
+        assertEquals(PluginHttp.REDIRECT_MODES, f.strings("redirectModes"))
+        assertEquals(PluginHttp.DEFAULT_TIMEOUT_MS, f.getLong("defaultTimeoutMs"))
+        assertEquals(PluginHttp.MAX_TIMEOUT_MS, f.getLong("maxTimeoutMs"))
+        assertEquals(PluginHttp.MAX_BODY_BYTES, f.getInt("maxBodyBytes"))
+        assertEquals(PluginRuntime.MAX_REQUEST_CHARS, f.getInt("maxRequestChars"))
+        assertEquals(PluginHttp.MAX_REQUESTS_PER_CALL, f.getInt("maxRequestsPerCall"))
+        assertEquals(PluginHttp.MAX_REDIRECTS, f.getInt("maxRedirects"))
+        assertEquals(PluginHttp.ERROR_CODES, f.strings("errorCodes"))
+    }
+
+    @Test fun `output limits and the search query`() {
+        val o = obj("output")
+        assertEquals(PluginOutput.ID.pattern, o.getString("itemIdPattern"))
+        assertEquals(PluginOutput.MAX_SEARCH_ITEMS, o.getInt("maxSearchItems"))
+        assertEquals(PluginOutput.MAX_ROWS, o.getInt("maxHomeRows"))
+        assertEquals(PluginOutput.MAX_ROW_ITEMS, o.getInt("maxRowItems"))
+        assertEquals(PluginOutput.MAX_BROWSE_ITEMS, o.getInt("maxBrowseItems"))
+        assertEquals(PluginOutput.MAX_EPISODES, o.getInt("maxEpisodes"))
+        assertEquals(PluginOutput.MAX_REF_CHARS, o.getInt("maxRefChars"))
+        assertEquals(PluginOutput.MAX_CURSOR_CHARS, o.getInt("maxCursorChars"))
+        assertEquals(PluginRuntime.MAX_RESULT_CHARS, o.getInt("maxResultChars"))
+        assertEquals(PluginOutput.MAX_IMAGE_URL_CHARS, o.getInt("maxImageUrlChars"))
+        assertEquals(PluginOutput.MAX_GENRES, o.getInt("maxGenres"))
+        assertEquals(PluginOutput.MAX_GENRE_CHARS, o.getInt("maxGenreChars"))
+        assertEquals(PluginOutput.MAX_BADGES, o.getInt("maxBadges"))
+        assertEquals(PluginOutput.MAX_BADGE_CHARS, o.getInt("maxBadgeChars"))
+        assertEquals(PluginOutput.IMDB.pattern, o.getString("imdbPattern"))
+        assertEquals(PluginOutput.AIR_DATE.pattern, o.getString("airDatePattern"))
+        assertEquals(0, o.getInt("minRating"))
+        assertEquals(10, o.getInt("maxRating"))
+        assertEquals(1, o.getInt("minRuntimeMinutes"))
+        assertEquals(PluginOutput.MAX_RUNTIME_MINUTES, o.getInt("maxRuntimeMinutes"))
+        assertEquals(PluginOutput.MIN_EXPIRES_IN_SECONDS, o.getInt("minExpiresInSeconds"))
+        assertEquals(PluginOutput.MAX_EXPIRES_IN_SECONDS, o.getInt("maxExpiresInSeconds"))
+        assertEquals(PluginOutput.MAX_TITLE_CHARS, o.getInt("maxTitleChars"))
+        assertEquals(PluginOutput.MAX_TEXT_CHARS, o.getInt("maxTextChars"))
+        assertEquals(PluginOutput.MAX_SEASON, o.getInt("maxSeasonNumber"))
+        assertEquals(PluginOutput.MAX_EPISODE_NUMBER, o.getInt("maxEpisodeNumber"))
+        assertEquals(PluginOutput.MAX_SUBTITLES, o.getInt("maxSubtitles"))
+        assertEquals(PluginOutput.DRM_KEYS, o.strings("drmKeys").toSet())
+        val s = obj("search")
+        assertEquals(PluginContentSource.MAX_ALT_TITLES, s.getInt("maxAltTitles"))
+        assertEquals(PluginContentSource.MAX_ALT_TITLE_CHARS, s.getInt("maxAltTitleChars"))
+        assertEquals(listOf("movie", "series", "any"), s.strings("types"))
+    }
+
+    @Test fun `timeouts`() {
+        val t = obj("timeoutsMs")
+        assertEquals(PluginEnv(appVersion = "x").loadTimeoutMs, t.getLong("load"))
+        assertEquals(PluginContentSource.SEARCH_TIMEOUT_MS, t.getLong("search"))
+        assertEquals(PluginContentSource.HOME_TIMEOUT_MS, t.getLong("home"))
+        assertEquals(PluginContentSource.BROWSE_TIMEOUT_MS, t.getLong("browse"))
+        assertEquals(PluginContentSource.EPISODES_TIMEOUT_MS, t.getLong("episodes"))
+        assertEquals(PluginContentSource.RESOLVE_TIMEOUT_MS, t.getLong("resolve"))
+    }
+
+    @Test fun `every section of the contract is checked here`() {
+        assertEquals(
+            setOf("\$comment", "apiVersion", "maxApiVersion", "capabilities", "manifest", "hostRules", "permissions", "settings", "output", "search", "timeoutsMs", "runtime", "fetch", "cookies", "storage", "crypto", "sleep", "errors"),
+            c.keys().asSequence().toSet(),
+        )
+    }
+
+    // Each later task adds the contract section it enforces above this line.
+}

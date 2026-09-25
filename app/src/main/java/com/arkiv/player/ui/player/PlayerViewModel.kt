@@ -8,7 +8,9 @@ import com.arkiv.player.data.db.LiveRecentDao
 import com.arkiv.player.data.db.LiveRecentEntity
 import com.arkiv.player.data.ditu.CaracolFailure
 import com.arkiv.player.data.gateway.GatewayBlockedException
+import com.arkiv.player.data.gateway.GatewaySubtitle
 import com.arkiv.player.data.gateway.LiveChannel
+import com.arkiv.player.data.plugin.blockedMessage
 import com.arkiv.player.playback.ArchiveCacheProxy
 import com.arkiv.player.playback.AdultContent
 import com.arkiv.player.playback.DituLive
@@ -40,7 +42,7 @@ data class PlayerData(
     val openingStartMs: Long?,
     val openingEndMs: Long?,
     val endingStartMs: Long?,
-    val kind: SourceKind,       // source (MAGIS/DITU/LOCAL/LIVE/UNKNOWN) -- PlayerScreen reads it for live detection, the cast LAN URL and the cast-transcode origin
+    val kind: SourceKind,       // source (MAGIS/DITU/LOCAL/LIVE/UNKNOWN/PLUGIN) -- PlayerScreen reads it for live detection, the cast LAN URL and the cast-transcode origin
     val referer: String? = null,    // headers for the web stream (some hosts require Referer)
     val userAgent: String? = null,
     val proxyUrl: String? = null,   // web: backup proxied URL if the direct one fails (403/geo/anti-leech)
@@ -59,6 +61,17 @@ data class PlayerData(
      * pruning -- archive, torrent, web), where the notion doesn't exist.
      */
     val adult: Boolean = false,
+    /** Headers the stream needs on every request (plugins); Magis's travel inside the proxy URL. */
+    val requestHeaders: Map<String, String> = emptyMap(),
+    /**
+     * PLUGIN only: the hosts the person approved for that plugin (installed record) plus the
+     * servers they typed in its settings — never what `resolve()` returned. The player gates every
+     * request of the stream — manifest, segments, keys, subtitles, redirect hops — to them; see
+     * `streamHttpFor`.
+     */
+    val pluginHosts: com.arkiv.player.data.plugin.EffectiveHosts = com.arkiv.player.data.plugin.EffectiveHosts(emptyList()),
+    /** Container MIME the source declared ("" = let ExoPlayer sniff). */
+    val mime: String = "",
     /**
      * Start position to resume (ExoPlayer, e.g. magisItem). The local player uses
      * PlaylistData.startPositionMs instead.
@@ -137,7 +150,16 @@ data class PlaylistData(
  * branch's pruning); [WebExtras] still needs it because magis also uses it, receiving its
  * subtitles from the gateway and not from any web resolver.
  */
-data class ResolvedSub(val lang: String, val url: String)
+data class ResolvedSub(
+    val lang: String,
+    val url: String,
+    /** `"vtt"`/`"srt"` when the source declared it (plugins); "" = guess from the URL. */
+    val format: String = "",
+)
+
+/** A plugin's subtitles, keeping the `format` it declared (its URLs rarely end in `.srt`). */
+internal fun pluginSubtitles(subs: List<GatewaySubtitle>): List<ResolvedSub> =
+    subs.map { ResolvedSub(lang = it.lang, url = it.url, format = it.format) }
 
 /** Extras of a resolved source (subtitles + sniffed headers) to attach in the UI. Despite the
  *  "web" name, [PlayerViewModel.loadMagis] also uses it for the subtitles the portal brings. */
@@ -203,6 +225,48 @@ fun liveErrorMessage(
         "No se pudo abrir $channelName"
     }
 
+/**
+ * What a failed plugin `resolve()` means for the screen (spec §1.3, §3.6): which dialog, if any.
+ * Pure and out here -- like [liveErrorMessage]/[shouldMarkInProgress] above -- on purpose:
+ * `PlayerViewModel` can't be instantiated in a JVM unit test (its `repo: ArkivRepository` needs a
+ * real `ArkivDatabase`, and this module has no Room or Robolectric infrastructure in its JVM unit
+ * tests -- see `RecommendationQueryTest`'s KDoc), so this is where `loadPlugin`'s failure branches
+ * can actually be pinned down with tests.
+ */
+internal sealed interface PluginLoadFailure {
+    /** `geo_blocked`, or any portal/plugin region block: the same dialog as Magis's. */
+    data class Blocked(val message: String) : PluginLoadFailure
+
+    /** `auth_required`, or a required setting left empty: offers the plugin's Configurar screen. */
+    data class SetupRequired(val pluginId: String, val message: String) : PluginLoadFailure
+
+    /** Everything else: a timeout, an unknown typed error, a contract violation, a crash. */
+    data class Generic(val message: String) : PluginLoadFailure
+
+    companion object {
+        /** [pluginDisplayName] is only used for the two messages that don't already name the plugin. */
+        fun from(failure: Throwable?, pluginDisplayName: String): PluginLoadFailure = when (failure) {
+            is GatewayBlockedException -> Blocked(failure.message.orEmpty())
+            is com.arkiv.player.data.plugin.PluginSetupRequiredException ->
+                SetupRequired(failure.pluginId, failure.message ?: "Configura $pluginDisplayName en Ajustes ▸ Plugins")
+            // PluginContentSource already words these for the person ("<plugin>: …", "<plugin> no respondió a tiempo").
+            else -> Generic(failure?.message?.takeIf { it.isNotBlank() } ?: "No se pudo abrir esto con $pluginDisplayName")
+        }
+    }
+}
+
+/**
+ * Whether a PLUGIN item's ExoPlayer failure should resolve the stream again instead of failing
+ * outright (spec §3.5): only when there's a tracked [expiry] AND it says so ([kind] narrows this
+ * to plugin titles -- Magis/Ditu/local/live never carry a [PluginStreamExpiry]). Pure, next to
+ * [PluginLoadFailure] for the same reason.
+ */
+internal fun shouldRetryPluginStream(
+    kind: SourceKind?,
+    expiry: com.arkiv.player.data.plugin.PluginStreamExpiry?,
+    nowMs: Long,
+): Boolean = kind == SourceKind.PLUGIN && expiry != null && expiry.shouldResolveAgain(nowMs)
+
 // `internal constructor` because of [dituSource]: its type is internal to the module, and a public
 // constructor can't take it.
 class PlayerViewModel internal constructor(
@@ -230,12 +294,18 @@ class PlayerViewModel internal constructor(
     /** Whether "Datos curiosos" is enabled in Settings. Read per load; when false the facts aren't
      *  even requested (no model call, no badge/panel/button). Defaults on for tests. */
     private val funFactsEnabled: () -> Boolean = { true },
+    /** Installed plugins: whether a saved plugin title can play, and the plugin's name. */
+    private val plugins: com.arkiv.player.data.plugin.PluginPlayback? = null,
 ) : ViewModel() {
 
     private val _playlist = MutableStateFlow<PlaylistData?>(null)
     val playlist: StateFlow<PlaylistData?> = _playlist.asStateFlow()
 
-    /** Magis item -- played by ExoPlayer through the local proxy, without going through VLC. */
+    /**
+     * Magis item -- played by `StreamExoPlayer` through the local proxy, without going through
+     * VLC. Also carries plugin items (`kind = SourceKind.PLUGIN`), which `StreamExoPlayer` plays
+     * directly with the plugin's headers on the data source.
+     */
     private val _magisItem = MutableStateFlow<PlayerData?>(null)
     val magisItem: StateFlow<PlayerData?> = _magisItem.asStateFlow()
 
@@ -286,6 +356,21 @@ class PlayerViewModel internal constructor(
     fun dismissBlocked() {
         _blocked.value = null
     }
+
+    /**
+     * A plugin title that can't open until the person configures its plugin (a typed
+     * `auth_required`, or a required setting left empty): the screen shows [PluginSetupPrompt.message]
+     * with a "Configurar" button to that plugin's Configurar screen.
+     */
+    private val _pluginSetup = MutableStateFlow<PluginSetupPrompt?>(null)
+    val pluginSetup: StateFlow<PluginSetupPrompt?> = _pluginSetup.asStateFlow()
+
+    fun dismissPluginSetup() {
+        _pluginSetup.value = null
+    }
+
+    /** The loaded plugin stream's expiry (spec §3.5): one more `resolve` after it, see [onMagisExoError]. */
+    private var pluginExpiry: com.arkiv.player.data.plugin.PluginStreamExpiry? = null
 
     /**
      * Whether what's in [_error] came from a player HICCUP and not from being unable to open the
@@ -389,6 +474,7 @@ class PlayerViewModel internal constructor(
                 SourceKind.UNKNOWN -> loadUnknownSource(episodeId)
                 SourceKind.MAGIS -> loadMagis(episodeId)
                 SourceKind.DITU -> loadDitu(episodeId)
+                SourceKind.PLUGIN -> loadPlugin(episodeId)
                 // kindFor() never returns LOCAL: a downloaded file is detected above by
                 // localLibrary.fileFor(). The branch exists because the `when` is exhaustive.
                 SourceKind.LOCAL -> loadUnknownSource(episodeId)
@@ -754,7 +840,30 @@ class PlayerViewModel internal constructor(
     }
 
     fun onMagisExoError(message: String) {
-        _error.value = "Xuper: $message"
+        val item = _magisItem.value
+        // A plugin said its URLs expire, and this one is past that: resolve once more instead of
+        // failing (spec §3.5). The reload resumes from the saved position, like any open.
+        val expiry = pluginExpiry
+        if (item != null && expiry != null && shouldRetryPluginStream(item.kind, expiry, System.currentTimeMillis())) {
+            Log.w(PLAY, "plugin stream failed after ${expiry.expiresInSeconds}s: resolving again")
+            pluginExpiry = expiry.copy(retried = true)
+            // A re-resolve can bring back the EXACT SAME url (routine on a fixed-path server, e.g.
+            // the reference-server plugin's `/stream/<id>.mp4`): PlayerData is a data class, so
+            // `_magisItem.value = <an equal PlayerData>` is silently dropped by StateFlow (it only
+            // notifies collectors when the new value differs) and the screen would never see the
+            // retry happen -- StreamExoPlayer stays stuck showing its old error, with no dialog
+            // either, a dead and silent player. Going through null first forces a real rebuild,
+            // exactly like a fresh load() already does before any source resolves.
+            _magisItem.value = null
+            viewModelScope.launch { loadPlugin(item.episodeId) }
+            return
+        }
+        val label = if (item?.kind == SourceKind.PLUGIN) {
+            plugins?.nameOf(com.arkiv.player.data.plugin.PluginIds.pluginIdOfEpisode(item.episodeId)) ?: "Plugin"
+        } else {
+            "Xuper"
+        }
+        _error.value = "$label: $message"
     }
 
     /**
@@ -1116,6 +1225,77 @@ class PlayerViewModel internal constructor(
     }
 
     /**
+     * A plugin title (`plugin:<id>:…`). The ref comes from the episode's `torrentData` like
+     * Caracol's ([loadDitu]); playback goes through the same slot as Magis ([_magisItem], played by
+     * `StreamExoPlayer`), but the URL is played directly with the plugin's headers on the data
+     * source — see `StreamExoPlayer.requestHeaders` for why not through `archiveCacheProxy`.
+     *
+     * A disabled, damaged or uninstalled plugin never reaches `resolve`: the person gets the
+     * spec's message naming the plugin instead of "No hay ninguna fuente que sepa abrir esto".
+     */
+    private suspend fun loadPlugin(episodeId: String) {
+        val pluginId = com.arkiv.player.data.plugin.PluginIds.pluginIdOfEpisode(episodeId)
+        val access = plugins?.accessFor(pluginId)
+            ?: com.arkiv.player.data.plugin.PluginAccess.Uninstalled(pluginId ?: "desconocido")
+        val blocked = access.blockedMessage()
+        if (blocked != null) {
+            Log.w(PLAY, "loadPlugin() $episodeId blocked: $blocked")
+            _error.value = blocked
+            return
+        }
+        val name = access.name
+        // Ready is the only access that gets past `blocked` above; its hosts are the approved ones.
+        val approvedHosts = (access as? com.arkiv.player.data.plugin.PluginAccess.Ready)?.hosts
+            ?: com.arkiv.player.data.plugin.EffectiveHosts(emptyList())
+        val ref = repo.magisRefForEpisode(episodeId)
+        Log.w(PLAY, "loadPlugin() episodeId=$episodeId plugin=$pluginId ref=${ref?.take(16)}…")
+        if (ref.isNullOrBlank()) { _error.value = "No se encontró la fuente de $name"; return }
+
+        _playlist.value = null
+        _webExtras.value = null
+        _resolving.value = true
+        val resolved = withContext(Dispatchers.IO) { runCatching { source.resolve(ref) } }
+        _resolving.value = false
+        val play = resolved.getOrNull()
+        if (play == null) {
+            val failure = resolved.exceptionOrNull()
+            Log.w(PLAY, "loadPlugin() failed: ${failure?.message}", failure)
+            // geo_blocked: the same dialog as a portal-side region block (spec §3.6).
+            when (val outcome = PluginLoadFailure.from(failure, name)) {
+                is PluginLoadFailure.Blocked -> _blocked.value = outcome.message
+                is PluginLoadFailure.SetupRequired -> _pluginSetup.value = PluginSetupPrompt(outcome.pluginId, outcome.message)
+                is PluginLoadFailure.Generic -> _error.value = outcome.message
+            }
+            return
+        }
+        // Every freshly-resolved stream starts `retried = false`, even one this same retry branch
+        // just brought back: the age gate in `shouldResolveAgain` is what stops a retry loop, not an
+        // extra "only the very first stream of this title" restriction -- a long movie whose URL
+        // keeps expiring gets a retry every time, not just once ever (spec §3.5).
+        pluginExpiry = com.arkiv.player.data.plugin.PluginStreamExpiry(System.currentTimeMillis(), play.expiresInSeconds)
+        val header = repo.headerInfo(episodeId)
+        _webExtras.value = WebExtras(episodeId, play.headers, pluginSubtitles(play.subtitles))
+        val startPos = safeStartPosition(episodeId, SourceKind.PLUGIN)
+        _magisItem.value = PlayerData(
+            episodeId = episodeId,
+            itemId = episodeId.substringBefore("::"),
+            title = header?.itemTitle ?: name,
+            subtitle = header?.episodeLabel.orEmpty(),
+            mediaUrl = play.url,
+            // No cast for plugin titles in v1: without a cast URL no cast path has anything to send.
+            castUrl = null,
+            artworkUrl = "",
+            openingStartMs = null, openingEndMs = null, endingStartMs = null,
+            kind = SourceKind.PLUGIN,
+            requestHeaders = play.headers,
+            pluginHosts = approvedHosts,
+            mime = play.mime,
+            startPositionMs = startPos,
+        )
+        Log.w(PLAY, "loadPlugin() published · mime=${play.mime.ifBlank { "sniff" }} subs=${play.subtitles.size} startPos=$startPos")
+    }
+
+    /**
      * Validated start position (safe resume): applies the saved position only when resuming makes
      * sense -- more than 10s in, and not near the end. See
      * [com.arkiv.player.playback.ResumePolicy] for why nothing more is needed: torrent (a source
@@ -1246,3 +1426,6 @@ class PlayerViewModel internal constructor(
         const val PLAY = "ArkivPlay"
     }
 }
+
+/** See [PlayerViewModel.pluginSetup]. */
+data class PluginSetupPrompt(val pluginId: String, val message: String)

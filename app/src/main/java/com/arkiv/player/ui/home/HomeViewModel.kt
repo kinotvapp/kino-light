@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
@@ -30,6 +31,10 @@ class HomeViewModel(
     online: Flow<Boolean>,
     /** Manual "recargar catálogo" pulses from the top bar (`AppGraph.homeReloads`). */
     reload: Flow<Unit>,
+    /** Rows from installed plugins; see [PluginHomeRows]. */
+    private val pluginHome: com.arkiv.player.data.plugin.PluginHomeRows,
+    /** `AppGraph.pluginsChanged`: install/enable/disable/uninstall/update re-asks for plugin rows. */
+    pluginsChanged: Flow<*>,
 ) : ViewModel() {
 
     val library: StateFlow<List<LibraryRow>> = repo.observeLibrary()
@@ -74,6 +79,18 @@ class HomeViewModel(
             // only the resulting StateFlow is observed on it. Keeps a weak device's UI thread free.
             .flowOn(Dispatchers.Default)
             .stateIn(viewModelScope, SharingStarted.Lazily, null)
+
+    /**
+     * Plugin rows, drawn after Magis's on phone and TV. Empty while loading and when no plugin has
+     * the `home` capability; a failing plugin contributes nothing. Started by the first collector,
+     * like [magisRows].
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val pluginRows: StateFlow<List<com.arkiv.player.data.plugin.PluginHomeRow>> =
+        merge(pluginsChanged.map { }, reload)
+            .flatMapLatest { pluginHome.rows() }
+            .flowOn(Dispatchers.IO)
+            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     init {
         // Every time the library changes, resolves the art of the items that don't have it yet.

@@ -83,6 +83,13 @@ class SearchViewModel(
     private val _sourcesState = MutableStateFlow(SourcesState())
     val sourcesState: StateFlow<SourcesState> = _sourcesState.asStateFlow()
 
+    /**
+     * Plugin sources whose first page came with a `next` cursor: source → where its "Ver más
+     * resultados" goes. Magis and Caracol never appear here. Cleared at the start of each search.
+     */
+    private val _pluginMore = MutableStateFlow<Map<String, com.arkiv.player.ui.plugin.PluginMoreTarget>>(emptyMap())
+    val pluginMore: StateFlow<Map<String, com.arkiv.player.ui.plugin.PluginMoreTarget>> = _pluginMore.asStateFlow()
+
     private val _refineSeason = MutableStateFlow<Int?>(null)
     val refineSeason: StateFlow<Int?> = _refineSeason.asStateFlow()
 
@@ -223,6 +230,7 @@ class SearchViewModel(
         _phase.value = SearchPhase.RESULTS
         _sources.value = emptyList()
         _sourcesState.value = SourcesState()
+        _pluginMore.value = emptyMap()
         val thisSearch = ++sourceSearchCount
         _searchingSources.value = SearchingSources.starting()
         // Only while this is still the current search: see [sourceSearchCount].
@@ -262,6 +270,10 @@ class SearchViewModel(
                         season = season ?: 0,
                         episode = episode ?: 0,
                         tmdbId = card.tmdbId ?: 0,
+                        year = d?.year?.toIntOrNull() ?: 0,
+                        // Only plugins read these (Magis and Caracol rank with their own logic).
+                        originalTitle = d?.originalTitle?.takeIf { it.isNotBlank() && it != card.title }.orEmpty(),
+                        altTitles = listOfNotNull(d?.englishTitle, d?.title).filter { it.isNotBlank() && it != card.title }.distinct(),
                     )
                     // Results accumulate and get published IN A BATCH. Publishing one at a time
                     // fires a recomposition per result: with 20 from magis on top of 50+ sources
@@ -289,9 +301,25 @@ class SearchViewModel(
                             }
                             is com.arkiv.player.data.gateway.SearchEvent.SourceDone -> {
                                 Log.w(GW, "source ${ev.source}: ${ev.count} in ${ev.ms}ms")
+                                // A plugin page with a cursor: its tab/row offers "Ver más resultados".
+                                val pluginId = com.arkiv.player.data.plugin.PluginIds.pluginIdOfSource(ev.source)
+                                val more = ev.more
+                                if (pluginId != null && more != null) {
+                                    val label = _sourcesState.value.labels[ev.source] ?: pluginId
+                                    val target = com.arkiv.player.ui.plugin.PluginMoreTarget.Search(
+                                        pluginId, "$label: ${card.title}",
+                                        com.arkiv.player.data.plugin.PluginContentSource.queryJson(ctx), more,
+                                    )
+                                    _pluginMore.value = _pluginMore.value + (ev.source to target)
+                                }
                                 _sourcesState.value = _sourcesState.value.withResponse(ev.source)
                                 updateSearching { it.sourceFinished(ev.source) }
                                 flushBatch()
+                            }
+                            is com.arkiv.player.data.gateway.SearchEvent.SourceStart -> {
+                                // Plugins announce a human name; the tabs and "no respondió" lines use it.
+                                _sourcesState.value = _sourcesState.value.withLabel(ev.source, ev.label)
+                                updateSearching { it.sourceStarted(ev.source) }
                             }
                             else -> Unit
                         }

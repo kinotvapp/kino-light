@@ -1,0 +1,14 @@
+{
+  "id": "reference-scraper",
+  "name": "Sitio de prueba",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "entry": "plugin.js",
+  "description": "Plugin de referencia (solo pruebas): login con cookies, HTML y enlaces cifrados con AES.",
+  "hosts": ["scraper.example", "cdn.example.com"],
+  "capabilities": ["search", "home", "browse", "resolve"],
+  "settings": [
+    { "key": "user", "label": "Usuario", "type": "text", "required": true },
+    { "key": "password", "label": "Contraseña", "type": "password", "required": true }
+  ]
+}

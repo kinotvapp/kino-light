@@ -1,0 +1,1 @@
+{"responseHeader":{"status":0,"QTime":25,"params":{"query":"title:(Un Se&ntilde;or Mucamo) AND collection:classic_tv AND mediatype:movies","qin":"title:(Un Se&ntilde;or Mucamo) AND collection:(classic_tv) AND mediatype:(movies)","fields":"identifier,title,year,description","wt":"json","sort":"downloads desc","rows":25,"start":0}},"response":{"numFound":0,"start":0,"docs":[]}}

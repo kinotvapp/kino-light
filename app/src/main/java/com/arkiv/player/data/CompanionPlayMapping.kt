@@ -30,6 +30,8 @@ fun buildCompanionPlayItem(
     val kind = when (PlayerSource.kindFor(episodeId)) {
         SourceKind.MAGIS -> CompanionPlayItem.KIND_MAGIS
         SourceKind.DITU -> CompanionPlayItem.KIND_DITU
+        // The paired device can't be assumed to have the same plugin installed: not offered in v1.
+        SourceKind.PLUGIN -> return null
         else -> return null
     }
     if (ref.isNullOrBlank()) return null

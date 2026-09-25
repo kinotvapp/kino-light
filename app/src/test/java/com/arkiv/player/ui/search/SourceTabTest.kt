@@ -17,6 +17,29 @@ class SourceTabTest {
         GatewayResult(source = "ditu", title = title, ref = "ditu1:VOD:$title"),
     )
 
+    private fun plugin(title: String, id: String = "demo", name: String = "Demo") = PlaySource.Plugin(
+        id, name, 0xFFE0A030, GatewayResult(source = "plugin:$id", title = title, ref = "plg1:$id:$title"),
+    )
+
+    @Test fun `plugin tabs come after the fixed ones, in arrival order, only when they bring results`() {
+        val sources = listOf(plugin("a", "p2", "Dos"), magis("m"), plugin("b", "p1", "Uno"))
+        assertEquals(listOf("all", "magis", "ditu", "plugin:p2", "plugin:p1"), tabsFor(sources).map { it.key })
+        assertEquals(listOf("all", "magis", "ditu"), tabsFor(listOf(magis("m"))).map { it.key })
+    }
+
+    @Test fun `a plugin tab filters and counts its own results`() {
+        val sources = listOf(plugin("a"), plugin("b"), caracol("c"))
+        val tab = tabOf(sources[0])
+        assertEquals(2, countsByTab(sources)[tab])
+        assertEquals(listOf("a", "b"), filterByTab(sources, tab).map { (it as PlaySource.Plugin).result.title })
+        assertEquals(listOf(SourceTab.CARACOL, tab), visibleRows(sources, SourceTab.ALL).map { it.first })
+    }
+
+    @Test fun `tabs are equal by key whatever their label`() {
+        assertEquals(tabOf(plugin("a")), tabForSource("plugin:demo"))
+        assertEquals("Demo", tabForSource("plugin:demo", mapOf("plugin:demo" to "Demo"))!!.label)
+    }
+
     @Test fun `a caracol result falls into its tab`() {
         assertEquals(SourceTab.CARACOL, tabOf(caracol("c")))
     }
@@ -41,7 +64,7 @@ class SourceTabTest {
         assertEquals(listOf(caracol("c")), filterByTab(listOf(caracol("c"), magis("m")), SourceTab.CARACOL))
     }
 
-    @Test fun `the rows go in the enum's order`() {
+    @Test fun `the rows go in the fixed order`() {
         val r = visibleRows(listOf(magis("m")), SourceTab.ALL)
         assertEquals(listOf(SourceTab.MAGIS), r.map { it.first })
     }

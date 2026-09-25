@@ -1,0 +1,756 @@
+[
+ {
+  "body": "const u = new URL('https://User:Pa ss@Example.COM:8443/a/./b/../c d?x=1 2&y=ä#frag ment'); return [u.href, u.origin, u.protocol, u.username, u.password, u.host, u.hostname, u.port, u.pathname, u.search, u.hash];",
+  "result": {
+   "ok": [
+    "https://User:Pa%20ss@example.com:8443/a/c%20d?x=1%202&y=%C3%A4#frag%20ment",
+    "https://example.com:8443",
+    "https:",
+    "User",
+    "Pa%20ss",
+    "example.com:8443",
+    "example.com",
+    "8443",
+    "/a/c%20d",
+    "?x=1%202&y=%C3%A4",
+    "#frag%20ment"
+   ]
+  }
+ },
+ {
+  "body": "return new URL('HTTP://example.com:80/').href;",
+  "result": {
+   "ok": "http://example.com/"
+  }
+ },
+ {
+  "body": "return new URL('https://example.com:443').href;",
+  "result": {
+   "ok": "https://example.com/"
+  }
+ },
+ {
+  "body": "return new URL('https://example.com:0443/x').port;",
+  "result": {
+   "ok": ""
+  }
+ },
+ {
+  "body": "return new URL('http://example.com/%7Efoo/%2e%2E/bar').pathname;",
+  "result": {
+   "ok": "/bar"
+  }
+ },
+ {
+  "body": "return new URL('http://example.com/a/b/c/./../../g').pathname;",
+  "result": {
+   "ok": "/a/g"
+  }
+ },
+ {
+  "body": "return new URL('http://example.com/..').pathname;",
+  "result": {
+   "ok": "/"
+  }
+ },
+ {
+  "body": "return new URL('http:\\\\\\\\example.com\\\\a\\\\b').href;",
+  "result": {
+   "ok": "http://example.com/a/b"
+  }
+ },
+ {
+  "body": "return new URL('  https://example.com/x\\t\\n  ').href;",
+  "result": {
+   "ok": "https://example.com/x"
+  }
+ },
+ {
+  "body": "return new URL('https://example.com/?q=\"<>\\'`').href;",
+  "result": {
+   "ok": "https://example.com/?q=%22%3C%3E%27`"
+  }
+ },
+ {
+  "body": "return new URL('https://example.com/#\"<>`{}').href;",
+  "result": {
+   "ok": "https://example.com/#%22%3C%3E%60{}"
+  }
+ },
+ {
+  "body": "return new URL('https://example.com/p{a}^|').pathname;",
+  "result": {
+   "ok": "/p%7Ba%7D%5E|"
+  }
+ },
+ {
+  "body": "return new URL('https://ex%41mple.com/').host;",
+  "result": {
+   "ok": "example.com"
+  }
+ },
+ {
+  "body": "return new URL('http://192.168.0.1:8096/web').host;",
+  "result": {
+   "ok": "192.168.0.1:8096"
+  }
+ },
+ {
+  "body": "return new URL('http://0x7f.1/').hostname;",
+  "result": {
+   "ok": "127.0.0.1"
+  }
+ },
+ {
+  "body": "return new URL('http://3232235777/').hostname;",
+  "result": {
+   "ok": "192.168.1.1"
+  }
+ },
+ {
+  "body": "return new URL('http://010.0.0.1/').hostname;",
+  "result": {
+   "ok": "8.0.0.1"
+  }
+ },
+ {
+  "body": "return new URL('http://[::1]:8080/').host;",
+  "result": {
+   "ok": "[::1]:8080"
+  }
+ },
+ {
+  "body": "return new URL('http://[2001:db8:0:0:0:0:2:1]/').hostname;",
+  "result": {
+   "ok": "[2001:db8::2:1]"
+  }
+ },
+ {
+  "body": "return new URL('http://[0:0:0:0:0:ffff:192.168.1.1]/').hostname;",
+  "result": {
+   "ok": "[::ffff:c0a8:101]"
+  }
+ },
+ {
+  "body": "return new URL('http://[fe80::1:0:0:1]/').hostname;",
+  "result": {
+   "ok": "[fe80::1:0:0:1]"
+  }
+ },
+ {
+  "body": "return new URL('https://example.com./').hostname;",
+  "result": {
+   "ok": "example.com."
+  }
+ },
+ {
+  "body": "return new URL('https://a.b.example.com/x?').href;",
+  "result": {
+   "ok": "https://a.b.example.com/x?"
+  }
+ },
+ {
+  "body": "return new URL('https://example.com/x#').href;",
+  "result": {
+   "ok": "https://example.com/x#"
+  }
+ },
+ {
+  "body": "return [new URL('https://example.com?a=b').pathname, new URL('https://example.com?a=b').href];",
+  "result": {
+   "ok": [
+    "/",
+    "https://example.com/?a=b"
+   ]
+  }
+ },
+ {
+  "body": "return new URL('file:///C:/x/../y').href;",
+  "result": {
+   "ok": "file:///C:/y"
+  }
+ },
+ {
+  "body": "return new URL('file://localhost/etc/hosts').href;",
+  "result": {
+   "ok": "file:///etc/hosts"
+  }
+ },
+ {
+  "body": "return new URL('data:text/plain,hello world').href;",
+  "result": {
+   "ok": "data:text/plain,hello world"
+  }
+ },
+ {
+  "body": "const u = new URL('mailto:someone@example.com?subject=hi'); return [u.href, u.protocol, u.pathname, u.search, u.origin, u.host];",
+  "result": {
+   "ok": [
+    "mailto:someone@example.com?subject=hi",
+    "mailto:",
+    "someone@example.com",
+    "?subject=hi",
+    "null",
+    ""
+   ]
+  }
+ },
+ {
+  "body": "const u = new URL('foo://host:99/p/../q?r#s'); return [u.href, u.host, u.port, u.pathname, u.origin];",
+  "result": {
+   "ok": [
+    "foo://host:99/q?r#s",
+    "host:99",
+    "99",
+    "/q",
+    "null"
+   ]
+  }
+ },
+ {
+  "body": "return new URL('wss://example.com:443/chat').href;",
+  "result": {
+   "ok": "wss://example.com/chat"
+  }
+ },
+ {
+  "body": "return new URL('/b/c?d#e', 'https://example.com/a/x').href;",
+  "result": {
+   "ok": "https://example.com/b/c?d#e"
+  }
+ },
+ {
+  "body": "return new URL('b/../c', 'https://example.com/a/x').href;",
+  "result": {
+   "ok": "https://example.com/a/c"
+  }
+ },
+ {
+  "body": "return new URL('?q=1', 'https://example.com/a/x?old#h').href;",
+  "result": {
+   "ok": "https://example.com/a/x?q=1"
+  }
+ },
+ {
+  "body": "return new URL('#top', 'https://example.com/a/x?old').href;",
+  "result": {
+   "ok": "https://example.com/a/x?old#top"
+  }
+ },
+ {
+  "body": "return new URL('', 'https://example.com/a/x?old#h').href;",
+  "result": {
+   "ok": "https://example.com/a/x?old"
+  }
+ },
+ {
+  "body": "return new URL('//cdn.example.org/lib.js', 'https://example.com/a').href;",
+  "result": {
+   "ok": "https://cdn.example.org/lib.js"
+  }
+ },
+ {
+  "body": "return new URL('../../../z', 'https://example.com/a/b/c').href;",
+  "result": {
+   "ok": "https://example.com/z"
+  }
+ },
+ {
+  "body": "return new URL('http:foo', 'http://example.com/a/b').href;",
+  "result": {
+   "ok": "http://example.com/a/foo"
+  }
+ },
+ {
+  "body": "return new URL('https://other.example/q', 'https://example.com/a').href;",
+  "result": {
+   "ok": "https://other.example/q"
+  }
+ },
+ {
+  "body": "return new URL('./?page=2', 'https://example.com/list/').href;",
+  "result": {
+   "ok": "https://example.com/list/?page=2"
+  }
+ },
+ {
+  "body": "return new URL('\\\\x', 'https://example.com/a/b').href;",
+  "result": {
+   "ok": "https://example.com/x"
+  }
+ },
+ {
+  "body": "return new URL('not a url').href;",
+  "result": {
+   "throws": "TypeError"
+  }
+ },
+ {
+  "body": "return new URL('/relative').href;",
+  "result": {
+   "throws": "TypeError"
+  }
+ },
+ {
+  "body": "return new URL('https://').href;",
+  "result": {
+   "throws": "TypeError"
+  }
+ },
+ {
+  "body": "return new URL('https://exa mple.com/').href;",
+  "result": {
+   "throws": "TypeError"
+  }
+ },
+ {
+  "body": "return new URL('https://example.com:99999/').href;",
+  "result": {
+   "throws": "TypeError"
+  }
+ },
+ {
+  "body": "return new URL('https://example.com:12a/').href;",
+  "result": {
+   "throws": "TypeError"
+  }
+ },
+ {
+  "body": "return new URL('http://[::1/').href;",
+  "result": {
+   "throws": "TypeError"
+  }
+ },
+ {
+  "body": "return new URL('http://1.2.3.4.5/').href;",
+  "result": {
+   "throws": "TypeError"
+  }
+ },
+ {
+  "body": "return new URL('http://256.0.0.1/').href;",
+  "result": {
+   "throws": "TypeError"
+  }
+ },
+ {
+  "body": "return new URL('x', 'mailto:a@b').href;",
+  "result": {
+   "throws": "TypeError"
+  }
+ },
+ {
+  "body": "return [URL.canParse('https://a.example'), URL.canParse('nope'), URL.canParse('p', 'https://a.example/')];",
+  "result": {
+   "ok": [
+    true,
+    false,
+    true
+   ]
+  }
+ },
+ {
+  "body": "const u = new URL('https://example.com/a?x=1'); u.searchParams.append('y', 'dos tres'); u.searchParams.set('x', 'ñ'); return [u.href, u.search];",
+  "result": {
+   "ok": [
+    "https://example.com/a?x=%C3%B1&y=dos+tres",
+    "?x=%C3%B1&y=dos+tres"
+   ]
+  }
+ },
+ {
+  "body": "const u = new URL('https://example.com/a?x=1&x=2'); u.searchParams.delete('x'); return [u.href, u.search];",
+  "result": {
+   "ok": [
+    "https://example.com/a",
+    ""
+   ]
+  }
+ },
+ {
+  "body": "const u = new URL('https://example.com/a?x=1'); u.search = '?z=9 9'; return [u.href, u.searchParams.get('z')];",
+  "result": {
+   "ok": [
+    "https://example.com/a?z=9%209",
+    "9 9"
+   ]
+  }
+ },
+ {
+  "body": "const u = new URL('https://example.com/a?x=1'); u.search = ''; return u.href;",
+  "result": {
+   "ok": "https://example.com/a"
+  }
+ },
+ {
+  "body": "const u = new URL('https://example.com/a'); u.hash = 'part two'; return u.href;",
+  "result": {
+   "ok": "https://example.com/a#part%20two"
+  }
+ },
+ {
+  "body": "const u = new URL('https://example.com/a#h'); u.hash = ''; return u.href;",
+  "result": {
+   "ok": "https://example.com/a"
+  }
+ },
+ {
+  "body": "const u = new URL('https://example.com/a?q'); u.pathname = '/b c/d?e'; return u.href;",
+  "result": {
+   "ok": "https://example.com/b%20c/d%3Fe?q"
+  }
+ },
+ {
+  "body": "const u = new URL('https://example.com/a'); u.href = 'https://other.example/z?k=v'; return [u.host, u.searchParams.get('k')];",
+  "result": {
+   "ok": [
+    "other.example",
+    "v"
+   ]
+  }
+ },
+ {
+  "body": "return JSON.stringify({ u: new URL('https://example.com/a b') });",
+  "result": {
+   "ok": "{\"u\":\"https://example.com/a%20b\"}"
+  }
+ },
+ {
+  "body": "return String(new URL('https://example.com/p'));",
+  "result": {
+   "ok": "https://example.com/p"
+  }
+ },
+ {
+  "body": "return new URLSearchParams('?a=1&b=2&a=3').getAll('a');",
+  "result": {
+   "ok": [
+    "1",
+    "3"
+   ]
+  }
+ },
+ {
+  "body": "return new URLSearchParams('a=%zz&b=%41&c=%E2%82%AC&d=%FF').toString();",
+  "result": {
+   "ok": "a=%25zz&b=A&c=%E2%82%AC&d=%EF%BF%BD"
+  }
+ },
+ {
+  "body": "const p = new URLSearchParams('a=%E2%82%AC&b=%FF'); return [p.get('a'), p.get('b')];",
+  "result": {
+   "ok": [
+    "€",
+    "�"
+   ]
+  }
+ },
+ {
+  "body": "return new URLSearchParams('x=a+b&y=a%2Bb').get('x') + '|' + new URLSearchParams('x=a+b&y=a%2Bb').get('y');",
+  "result": {
+   "ok": "a b|a+b"
+  }
+ },
+ {
+  "body": "return new URLSearchParams({ q: 'a b&c', n: 5, u: undefined }).toString();",
+  "result": {
+   "ok": "q=a+b%26c&n=5&u=undefined"
+  }
+ },
+ {
+  "body": "return new URLSearchParams([['a', '1'], ['b', 'ñ']]).toString();",
+  "result": {
+   "ok": "a=1&b=%C3%B1"
+  }
+ },
+ {
+  "body": "return new URLSearchParams([['a']]).toString();",
+  "result": {
+   "throws": "TypeError"
+  }
+ },
+ {
+  "body": "const p = new URLSearchParams('b=2&a=1&c=3&a=0'); p.sort(); return p.toString();",
+  "result": {
+   "ok": "a=1&a=0&b=2&c=3"
+  }
+ },
+ {
+  "body": "const p = new URLSearchParams('a=1&b=2&a=3'); p.set('a', 'x'); return p.toString();",
+  "result": {
+   "ok": "a=x&b=2"
+  }
+ },
+ {
+  "body": "const p = new URLSearchParams('a=1&b=2&a=3'); p.delete('a', '3'); return [p.toString(), p.has('a'), p.has('a', '3'), p.size];",
+  "result": {
+   "ok": [
+    "a=1&b=2",
+    true,
+    false,
+    2
+   ]
+  }
+ },
+ {
+  "body": "const p = new URLSearchParams('a=1&b=2'); const out = []; p.forEach((v, k) => out.push(k + '=' + v)); return out;",
+  "result": {
+   "ok": [
+    "a=1",
+    "b=2"
+   ]
+  }
+ },
+ {
+  "body": "const p = new URLSearchParams('a=1&b=2'); return [[...p], [...p.keys()], [...p.values()], [...p.entries()]];",
+  "result": {
+   "ok": [
+    [
+     [
+      "a",
+      "1"
+     ],
+     [
+      "b",
+      "2"
+     ]
+    ],
+    [
+     "a",
+     "b"
+    ],
+    [
+     "1",
+     "2"
+    ],
+    [
+     [
+      "a",
+      "1"
+     ],
+     [
+      "b",
+      "2"
+     ]
+    ]
+   ]
+  }
+ },
+ {
+  "body": "return new URLSearchParams('=x&y=&&z').toString();",
+  "result": {
+   "ok": "=x&y=&z="
+  }
+ },
+ {
+  "body": "return new URLSearchParams('a=*-._~!\\'()').toString();",
+  "result": {
+   "ok": "a=*-._%7E%21%27%28%29"
+  }
+ },
+ {
+  "body": "return new URLSearchParams('q=\\uD800').get('q').charCodeAt(0);",
+  "result": {
+   "ok": 65533
+  }
+ },
+ {
+  "body": "return new URLSearchParams(new URLSearchParams('a=1')).toString();",
+  "result": {
+   "ok": "a=1"
+  }
+ },
+ {
+  "body": "return new URLSearchParams('a=1').get('missing');",
+  "result": {
+   "ok": null
+  }
+ },
+ {
+  "body": "return btoa('Hello, Kino!');",
+  "result": {
+   "ok": "SGVsbG8sIEtpbm8h"
+  }
+ },
+ {
+  "body": "return [btoa(''), btoa('a'), btoa('ab'), btoa('abc'), btoa('\\u00ff\\u00fe\\u0000')];",
+  "result": {
+   "ok": [
+    "",
+    "YQ==",
+    "YWI=",
+    "YWJj",
+    "//4A"
+   ]
+  }
+ },
+ {
+  "body": "return btoa('ñ');",
+  "result": {
+   "ok": "8Q=="
+  }
+ },
+ {
+  "body": "return btoa('€');",
+  "result": {
+   "throws": "InvalidCharacterError"
+  }
+ },
+ {
+  "body": "return atob('SGVsbG8sIEtpbm8h');",
+  "result": {
+   "ok": "Hello, Kino!"
+  }
+ },
+ {
+  "body": "return [atob('YQ'), atob('YWI='), atob(' Y W I = '), atob('')];",
+  "result": {
+   "ok": [
+    "a",
+    "ab",
+    "ab",
+    ""
+   ]
+  }
+ },
+ {
+  "body": "return atob('YQ=').length;",
+  "result": {
+   "throws": "InvalidCharacterError"
+  }
+ },
+ {
+  "body": "return atob('Y');",
+  "result": {
+   "throws": "InvalidCharacterError"
+  }
+ },
+ {
+  "body": "return atob('Y*==');",
+  "result": {
+   "throws": "InvalidCharacterError"
+  }
+ },
+ {
+  "body": "return atob('YQ===');",
+  "result": {
+   "throws": "InvalidCharacterError"
+  }
+ },
+ {
+  "body": "return [...atob('/+8=')].map((c) => c.charCodeAt(0));",
+  "result": {
+   "ok": [
+    255,
+    239
+   ]
+  }
+ },
+ {
+  "body": "return Array.from(new TextEncoder().encode('añ€😀'));",
+  "result": {
+   "ok": [
+    97,
+    195,
+    177,
+    226,
+    130,
+    172,
+    240,
+    159,
+    152,
+    128
+   ]
+  }
+ },
+ {
+  "body": "return Array.from(new TextEncoder().encode('\\uD800x'));",
+  "result": {
+   "ok": [
+    239,
+    191,
+    189,
+    120
+   ]
+  }
+ },
+ {
+  "body": "return [new TextEncoder().encoding, new TextDecoder().encoding, new TextDecoder('UTF8').encoding];",
+  "result": {
+   "ok": [
+    "utf-8",
+    "utf-8",
+    "utf-8"
+   ]
+  }
+ },
+ {
+  "body": "return new TextDecoder().decode(new Uint8Array([0x61, 0xc3, 0xb1, 0xe2, 0x82, 0xac, 0xf0, 0x9f, 0x98, 0x80]));",
+  "result": {
+   "ok": "añ€😀"
+  }
+ },
+ {
+  "body": "return new TextDecoder().decode(new Uint8Array([0xef, 0xbb, 0xbf, 0x68, 0x69]));",
+  "result": {
+   "ok": "hi"
+  }
+ },
+ {
+  "body": "return new TextDecoder('utf-8', { ignoreBOM: true }).decode(new Uint8Array([0xef, 0xbb, 0xbf, 0x68])).length;",
+  "result": {
+   "ok": 2
+  }
+ },
+ {
+  "body": "return new TextDecoder().decode(new Uint8Array([0xff, 0x61, 0xc3, 0x28, 0xe2, 0x82, 0x61, 0xf0, 0x9f, 0x98, 0xed, 0xa0, 0x80, 0xc0, 0xaf]));",
+  "result": {
+   "ok": "�a�(�a������"
+  }
+ },
+ {
+  "body": "return new TextDecoder().decode(new Uint8Array([0x68, 0x69]).buffer);",
+  "result": {
+   "ok": "hi"
+  }
+ },
+ {
+  "body": "return new TextDecoder().decode(new DataView(new Uint8Array([0x6f, 0x6b]).buffer));",
+  "result": {
+   "ok": "ok"
+  }
+ },
+ {
+  "body": "return new TextDecoder().decode();",
+  "result": {
+   "ok": ""
+  }
+ },
+ {
+  "body": "return new TextDecoder('utf-8', { fatal: true }).decode(new Uint8Array([0x61, 0xff]));",
+  "result": {
+   "throws": "TypeError"
+  }
+ },
+ {
+  "body": "return new TextDecoder('x-nope');",
+  "result": {
+   "throws": "RangeError"
+  }
+ },
+ {
+  "body": "return new TextDecoder().decode('not bytes');",
+  "result": {
+   "throws": "TypeError"
+  }
+ },
+ {
+  "body": "return [new TextDecoder('utf-8', { fatal: true }).fatal, new TextDecoder().ignoreBOM];",
+  "result": {
+   "ok": [
+    true,
+    false
+   ]
+  }
+ }
+]

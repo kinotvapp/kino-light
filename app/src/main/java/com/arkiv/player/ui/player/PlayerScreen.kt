@@ -329,6 +329,8 @@ fun PlayerScreen(
     onOpenEpisodes: () -> Unit,
     onNextEpisode: (String) -> Unit = {},
     isTv: Boolean = false,
+    /** A plugin title whose plugin needs configuring: opens that plugin's Configurar screen. */
+    onOpenPluginSettings: (pluginId: String) -> Unit = {},
 ) {
     val controller = rememberMediaController()
     // The service's ExoPlayer, used only to bind the local video surface (see PlaybackEngine).
@@ -340,7 +342,7 @@ fun PlayerScreen(
         }
         return
     }
-    PlayerContent(episodeId, onBack, onOpenEpisodes, onNextEpisode, controller, serviceExo, isTv)
+    PlayerContent(episodeId, onBack, onOpenEpisodes, onNextEpisode, controller, serviceExo, isTv, onOpenPluginSettings)
 }
 
 @OptIn(UnstableApi::class, androidx.compose.material3.ExperimentalMaterial3Api::class)
@@ -353,6 +355,7 @@ private fun PlayerContent(
     controller: MediaController,
     serviceExo: ExoPlayer,
     isTv: Boolean,
+    onOpenPluginSettings: (pluginId: String) -> Unit,
 ) {
     val graph = rememberGraph()
     val subtitleStyle by graph.subtitlePrefs.prefs.collectAsStateWithLifecycle()
@@ -384,6 +387,7 @@ private fun PlayerContent(
                     hasMagisAccount = { graph.magisSession.hasAccountLinked },
                     triviaFacts = graph.triviaFacts,
                     funFactsEnabled = { graph.settings.funFactsEnabled.value },
+                    plugins = graph.pluginRegistry,
                 )
             }
         },
@@ -448,6 +452,9 @@ private fun PlayerContent(
         when (PlayerSource.kindFor(episodeId)) {
             SourceKind.MAGIS -> "de Xuper"
             SourceKind.DITU -> "de Caracol"
+            SourceKind.PLUGIN -> "de " + (graph.pluginRegistry.nameOf(
+                com.arkiv.player.data.plugin.PluginIds.pluginIdOfEpisode(episodeId),
+            ) ?: "un plugin")
             else -> "web"
         }
     }
@@ -701,7 +708,7 @@ private fun PlayerContent(
     // PlayerVideoLocal.kt.
     val localVideo = remember { LocalVideoState() }
     // Embedded subtitles of a downloaded file: libVLC painted them itself, ExoPlayer hands the cues
-    // to whoever draws them (same as MagisExoPlayer's SubtitleView). Created by its AndroidView
+    // to whoever draws them (same as StreamExoPlayer's SubtitleView). Created by its AndroidView
     // factory, like the video view: a remembered View can't be re-parented when it is mounted again.
     var localSubtitles by remember { mutableStateOf<SubtitleView?>(null) }
 
@@ -718,7 +725,7 @@ private fun PlayerContent(
     /**
      * The TextureView the video is being painted on, for frame captures.
      *
-     * Magis (ExoPlayer): MagisExoPlayer sets up SURFACE_TYPE_TEXTURE_VIEW and hands it to us via
+     * Magis (ExoPlayer): StreamExoPlayer sets up SURFACE_TYPE_TEXTURE_VIEW and hands it to us via
      * `onTextureViewReady` → `magisTextureView`.
      *
      * Local (downloaded files): this screen's own TextureView, bound to the service's ExoPlayer. It
@@ -1717,7 +1724,7 @@ private fun PlayerContent(
 
     // Transport's index/buffering/state. Follows the active player: on connecting or disconnecting
     // the cast, the effect relaunches itself and the listener re-hooks to the right one.
-    val isMagis = magisItem != null   // MagisExoPlayer handles its own errors.
+    val isMagis = magisItem != null   // StreamExoPlayer handles its own errors.
     val isLiveExo = liveItem != null  // LiveExoPlayer maneja sus propios errores (→ reopenLiveAfterCut).
     val isDitu = dituPlay != null     // DituExoPlayer maneja sus propios errores (→ onDituExoError).
     val isExo = isMagis || isLiveExo || isDitu     // Any in-screen ExoPlayer (vs the local player behind `controller`).
@@ -1906,7 +1913,7 @@ private fun PlayerContent(
             // historical example was the 404 of a file renamed on archive.org, whose
             // self-repair path was removed along with that source) and others can only be counted.
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                if (isExo) return  // MagisExoPlayer / LiveExoPlayer / DituExoPlayer already called their onError
+                if (isExo) return  // StreamExoPlayer / LiveExoPlayer / DituExoPlayer already called their onError
                 val id = playlistRef.value?.items
                     ?.getOrNull(controller.currentMediaItemIndex)?.episodeId ?: episodeId
                 android.util.Log.w("ArkivPlay", "onPlayerError episodeId=$id → ${error.message}")
@@ -2122,6 +2129,20 @@ private fun PlayerContent(
     // sources that job belongs to LaunchedEffect(playlist), which Magis never reaches.
     LaunchedEffect(casting, magisItem?.episodeId) {
         if (casting) {
+            // Plugin titles can't be cast in v1 (spec non-goal). A session that was already open
+            // when one started is ended, so the title keeps playing here instead of the TV going
+            // idle with no explanation.
+            if (magisItem?.kind == SourceKind.PLUGIN) {
+                android.util.Log.w("ArkivCast", "plugin title: cast not available, ending the session")
+                android.widget.Toast.makeText(context, "No disponible para contenido de plugins", android.widget.Toast.LENGTH_SHORT).show()
+                runCatching { castContext?.sessionManager?.endCurrentSession(true) }
+                // Ending the session flips `casting` to false and relaunches this effect; with
+                // `wasCasting` still true the resume branch below would `play()` the plugin's
+                // player, overriding a manual pause made in that window. This branch ends the
+                // session itself, so there is no cast-end resume to run for it.
+                wasCasting = false
+                return@LaunchedEffect
+            }
             // Which guard, if any, stops the send. Kept past the Magis fix: every branch below is
             // conditional, and a cast that silently does nothing is the failure mode of this whole
             // screen -- this line is what tells "no session" from "no item" from "already sent".
@@ -2159,7 +2180,7 @@ private fun PlayerContent(
             }
 
             // MAGIS. Its item never enters `playlist` -- the ViewModel publishes it in `magisItem`
-            // and MagisExoPlayer plays it -- so the block above, which reads `playlistRef`, never
+            // and StreamExoPlayer plays it -- so the block above, which reads `playlistRef`, never
             // ran for it: connecting the Chromecast on a Magis title paused the phone, showed the
             // card, and left the TV on its idle screen forever, with no error anywhere. Measured
             // 2026-09-12: `pl=false loaded=false magis=magis:7B66…`, and `castRequestFor` was
@@ -2253,7 +2274,7 @@ private fun PlayerContent(
                 }
                 // MAGIS: resume on ITS player, not on the service one. Same question as VOD below
                 // -- "did the receiver report a position for THIS episode?" -- but a seek is enough
-                // here: MagisExoPlayer was only paused (see the branch above), never unloaded, so
+                // here: StreamExoPlayer was only paused (see the branch above), never unloaded, so
                 // there is nothing to reload.
                 val mg = magisItem
                 if (mg != null) {
@@ -2743,14 +2764,18 @@ private fun PlayerContent(
             }
         }
 
-        // Magis: ExoPlayer plays the local proxy's stream (headers already injected), without VLC.
+        // Magis (through the local proxy) and plugins (direct, headers on the data source).
         val mItem = magisItem
         if (mItem != null) {
-            MagisExoPlayer(
+            StreamExoPlayer(
                 mediaUrl = mItem.mediaUrl,
                 mirror = mirror,
                 startPositionMs = mItem.startPositionMs,
                 subtitleConfigs = (webExtras?.subtitles ?: emptyList()).toExoSubtitleConfigs(),
+                requestHeaders = mItem.requestHeaders,
+                http = streamHttpFor(mItem.kind, mItem.pluginHosts),
+                mimeType = mItem.mime.ifBlank { null },
+                crashTag = if (mItem.kind == SourceKind.PLUGIN) "plugin" else "magis",
                 onPlayerReady = { player ->
                     magisPlayer = player
                     tracksState.setExoPlayer(player)
@@ -2980,7 +3005,7 @@ private fun PlayerContent(
         // no explanation, and the effect was that as soon as a magis movie loaded, the spinner
         // stopped drawing no matter what. Since the first frame takes a while -- 8 s measured on the Fire
         // Stick -- it left a silent black screen, which is what made it look like the app had
-        // frozen. MagisExoPlayer doesn't draw its own spinner, so there was nothing to duplicate.
+        // frozen. StreamExoPlayer doesn't draw its own spinner, so there was nothing to duplicate.
         if (
             loadError == null && dlnaState.active == null &&
             shouldShowSpinner(
@@ -3325,8 +3350,8 @@ private fun PlayerContent(
                     // row; on TV it was always in the bottom icon row.)
                     // DLNA + Chromecast (phone only, and PORTRAIT only -- hidden in landscape
                     // fullscreen at the user's request). Buttons shared with live mode, see
-                    // `DlnaCastButtons`.
-                    if (!isTv && !isLandscape) {
+                    // `DlnaCastButtons`. Hidden too while a plugin title plays: no cast in v1.
+                    if (!isTv && !isLandscape && magisItem?.kind != SourceKind.PLUGIN) {
                         // Note specific to this Row: since `dlnaState.active != null` hides the
                         // whole controls overlay (visible = ... && dlnaState.active == null
                         // above), casting would have no way to be managed from the app if DLNA is
@@ -4029,6 +4054,22 @@ private fun PlayerContent(
             text = { Text(message) },
             confirmButton = {
                 TextButton(onClick = { vm.dismissBlocked(); onBack() }) { Text("Entendido") }
+            },
+        )
+    }
+
+    // A plugin title whose plugin needs configuring (auth_required): straight to its Configurar.
+    val pluginSetup by vm.pluginSetup.collectAsStateWithLifecycle()
+    pluginSetup?.let { prompt ->
+        AlertDialog(
+            onDismissRequest = { vm.dismissPluginSetup(); onBack() },
+            title = { Text("Falta configurar") },
+            text = { Text(prompt.message) },
+            confirmButton = {
+                TextButton(onClick = { vm.dismissPluginSetup(); onOpenPluginSettings(prompt.pluginId) }) { Text("Configurar") }
+            },
+            dismissButton = {
+                TextButton(onClick = { vm.dismissPluginSetup(); onBack() }) { Text("Cerrar") }
             },
         )
     }

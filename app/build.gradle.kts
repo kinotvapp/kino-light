@@ -319,6 +319,20 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+        // quickjs-kt 1.0.0-alpha13's AAR ships libquickjs.so linked for 4 KB pages, which Android 15+
+        // flags as not 16 KB compatible. src/main/jniLibs has the same sources rebuilt with 16 KB
+        // alignment (see the README there); pin that the app's copy is the one that ships.
+        jniLibs {
+            pickFirsts += "**/libquickjs.so"
+        }
+    }
+}
+
+// Unit tests get quickjs-kt-jvm (desktop natives) instead of quickjs-kt-android. Both publish the
+// same classes; with both on the classpath the Android one could win and fail to load its .so.
+configurations.configureEach {
+    if (name.endsWith("UnitTestRuntimeClasspath") || name.endsWith("UnitTestCompileClasspath")) {
+        exclude(group = "io.github.dokar3", module = "quickjs-kt-android")
     }
 }
 
@@ -670,6 +684,9 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer-hls:1.11.1")
     implementation("androidx.media3:media3-ui:1.11.1")
     implementation("androidx.media3:media3-datasource:1.11.1")
+    // Plugin streams play through OkHttp so every manifest, segment, key and redirect hop is
+    // host-gated in an interceptor before the request leaves the device (PluginStreamHttp).
+    implementation("androidx.media3:media3-datasource-okhttp:1.11.1")
     implementation("androidx.media3:media3-session:1.11.1")
     // Transmux MPEG-TS -> MP4 for cast. Transformer copies the compressed samples when the format
     // already fits (no re-encode, so no quality loss and little CPU), which is what turns a
@@ -691,6 +708,8 @@ dependencies {
 
     // Networking (JSON parsed with bundled org.json)
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // kino.html.select for plugins (CSS selectors over fetched HTML).
+    implementation("org.jsoup:jsoup:1.18.3")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
     // Companion LAN (phone<->TV): WebSocket server+client for the pairing/transport channel.
@@ -698,6 +717,11 @@ dependencies {
 
     // Image loading
     implementation("io.coil-kt:coil-compose:2.7.0")
+
+    // Plugin sandbox (see docs/superpowers/specs/2026-09-24-plugin-sources-design.md). alpha13 is the
+    // last quickjs-kt built with Kotlin 2.0; every later release needs Kotlin >= 2.3. Its engine
+    // quirks are pinned by QuickJsSpikeTest.
+    implementation("io.github.dokar3:quickjs-kt:1.0.0-alpha13")
 
     testImplementation("junit:junit:4.13.2")
     // Real org.json for JVM unit tests: Android's own (android.jar) is a stub that throws at
@@ -713,6 +737,10 @@ dependencies {
     // Real SQLite to test the DDL Room doesn't validate (the `updatedAt` triggers): they're plain
     // SQL, so running them is the only honest way to know whether they seal what they must seal.
     testImplementation("org.xerial:sqlite-jdbc:3.45.3.0")
+    // The same engine with desktop natives (macOS/Linux), so PluginRuntime runs in JVM unit tests.
+    // The Android artifact is excluded from the unit-test classpaths below: its loader calls
+    // System.loadLibrary, which can't find an Android .so on the host JVM.
+    testImplementation("io.github.dokar3:quickjs-kt-jvm:1.0.0-alpha13")
 
     // Instrumented tests: the native 3DES key/crypto path (MagisNativeCryptoInstrumentedTest) has
     // to run on a device/emulator where libcredentials.so loads -- it cannot run on the JVM.

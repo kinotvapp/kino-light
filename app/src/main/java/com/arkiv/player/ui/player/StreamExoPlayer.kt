@@ -38,41 +38,57 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
 import androidx.media3.common.text.CueGroup
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.SubtitleView
+import com.arkiv.player.playback.SourceKind
 import com.arkiv.player.playback.fallbackRenderers
 import com.arkiv.player.ui.rememberGraph
 import kotlinx.coroutines.delay
 
-private const val TAG = "MagisExo"
+private const val TAG = "StreamExo"
 
 /**
- * Plays a Magis stream using ExoPlayer.
+ * Plays a Magis VOD stream or a plugin stream using ExoPlayer.
  *
- * The URL already arrives proxied by [archiveCacheProxy] (http://127.0.0.1:...), which injects the
- * CDN's authentication headers transparently. ExoPlayer downloads it as plain HTTP.
- *
- * [DefaultMediaSourceFactory] auto-detects HLS, DASH or progressive (MP4/TS) based on the content
- * type. For the progress bar and controls it uses the same [PlayerMirror] VLC used to.
+ * Magis's URL already arrives proxied by [archiveCacheProxy] (http://127.0.0.1:...), which injects
+ * the CDN's authentication headers transparently. A plugin's URL is played directly, with the
+ * plugin's headers on the data source ([requestHeaders]) and every request host-gated ([http]).
+ * ExoPlayer downloads either as plain HTTP, and [DefaultMediaSourceFactory] auto-detects HLS, DASH or progressive (MP4/TS) based on
+ * the content type. For the progress bar and controls it uses the same [PlayerMirror] VLC used to.
  *
  * Uses [TextureView] directly so [onTextureViewReady] exposes the surface and `captureFrame`
  * works the same way it did with VLC. The aspect ratio is kept in sync by listening to
  * [Player.Listener.onVideoSizeChanged]: in portrait the video stays centered in landscape format.
  *
- * The portal's external subtitles are passed as [subtitleConfigs] and ExoPlayer loads them
- * automatically; the overlaid [SubtitleView] renders them on screen. Detected audio and subtitle
- * tracks are reported via [onTracksChanged] so [TracksState] can expose them in the menu.
+ * The portal's or plugin's external subtitles are passed as [subtitleConfigs] and ExoPlayer loads
+ * them automatically; the overlaid [SubtitleView] renders them on screen. Detected audio and
+ * subtitle tracks are reported via [onTracksChanged] so [TracksState] can expose them in the menu.
  */
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
-internal fun MagisExoPlayer(
+internal fun StreamExoPlayer(
     mediaUrl: String,
     mirror: PlayerMirror,
     startPositionMs: Long = 0L,
     subtitleConfigs: List<MediaItem.SubtitleConfiguration> = emptyList(),
+    /**
+     * Headers for every request of this stream (plugins). Empty for Magis, whose headers travel
+     * inside the local proxy's URL. Set on the data source, not through `archiveCacheProxy`: that
+     * proxy serves ONE URL's bytes, and an HLS/DASH manifest's relative segments would resolve
+     * against 127.0.0.1 and 404. Also reaches this stream's subtitle requests.
+     */
+    requestHeaders: Map<String, String> = emptyMap(),
+    /** The data source: [StreamHttp.Default] for Magis, host-gated OkHttp for plugins. */
+    http: StreamHttp = StreamHttp.Default,
+    /** Container MIME when the source knows it (e.g. `application/x-mpegURL`); null = sniff. */
+    mimeType: String? = null,
+    /** Prefix of the Sentry tag in `onPlayerError`: `"magis"` or `"plugin"`. */
+    crashTag: String = "magis",
     onPlayerReady: (Player?) -> Unit = {},
     onTextureViewReady: (TextureView?) -> Unit = {},
     onError: (String) -> Unit = {},
@@ -95,16 +111,25 @@ internal fun MagisExoPlayer(
     val graph = rememberGraph()
     val subtitleStyle by graph.subtitlePrefs.prefs.collectAsStateWithLifecycle()
 
-    val exoPlayer = remember(mediaUrl, subtitleConfigs) {
+    val exoPlayer = remember(mediaUrl, subtitleConfigs, requestHeaders, mimeType, http) {
         Log.i(TAG, "Creating ExoPlayer · url=${mediaUrl.take(80)} startMs=$startPositionMs subs=${subtitleConfigs.size}")
-        val httpFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent("okhttp/4.12.0")
-            .setConnectTimeoutMs(30_000)
-            .setReadTimeoutMs(30_000)
+        val httpFactory: DataSource.Factory = when (http) {
+            StreamHttp.Default -> DefaultHttpDataSource.Factory()
+                .setUserAgent(requestHeaders.entries.firstOrNull { it.key.equals("User-Agent", true) }?.value ?: "okhttp/4.12.0")
+                .setDefaultRequestProperties(requestHeaders.filterKeys { !it.equals("User-Agent", true) })
+                .setConnectTimeoutMs(30_000)
+                .setReadTimeoutMs(30_000)
+            // Every request this stream makes — manifest, variants, segments, keys, subtitles and
+            // each redirect hop — is gated to the approved hosts before it leaves the device.
+            is StreamHttp.PluginGated -> OkHttpDataSource.Factory(graph.pluginStreamClient(http.hosts))
+                .setUserAgent(requestHeaders.entries.firstOrNull { it.key.equals("User-Agent", true) }?.value ?: "okhttp/4.12.0")
+                .setDefaultRequestProperties(requestHeaders.filterKeys { !it.equals("User-Agent", true) })
+        }
 
         val mediaItem = MediaItem.Builder()
             .setUri(Uri.parse(mediaUrl))
             .setSubtitleConfigurations(subtitleConfigs)
+            .apply { mimeType?.let { setMimeType(it) } }
             .build()
 
         // Magis's CDN delivers at 70–230 KB/s and its files carry 8 badly interleaved audio
@@ -265,7 +290,7 @@ internal fun MagisExoPlayer(
                 Log.e(TAG, "onPlayerError errorCode=${error.errorCode} msg=$msg", error)
                 // Also to Sentry: VOD playback failures (codec init, source, decoder) used to vanish
                 // into Logcat -- this is proactive signal on which content/devices can't play.
-                com.arkiv.player.crash.Crash.report(error, "magis-playback-${androidx.media3.common.PlaybackException.getErrorCodeName(error.errorCode)}")
+                com.arkiv.player.crash.Crash.report(error, "$crashTag-playback-${androidx.media3.common.PlaybackException.getErrorCodeName(error.errorCode)}")
                 onError(msg)
             }
         }
@@ -477,11 +502,33 @@ internal fun TextureView.fitAspect(videoAspect: Float, zoom: Float) {
 }
 
 /**
- * A subtitle's type from its path. VTT by default: what magis's portal serves; the .srt case is
- * there in case some source ever names one that way with that extension.
+ * Which HTTP data source a [StreamExoPlayer] stream plays through.
+ *
+ * Magis keeps [DefaultHttpDataSource] exactly as it was (its URL is the local proxy). A plugin
+ * stream plays through OkHttp with the host gate on every request and redirect hop
+ * ([com.arkiv.player.data.plugin.PluginStreamHttp]), so what the manifest names can't reach an
+ * undeclared host, plain http, an IP literal or the home network.
  */
-private fun subtitleMimeType(path: String): String = when {
-    path.contains(".srt", ignoreCase = true) -> MimeTypes.APPLICATION_SUBRIP
+internal sealed interface StreamHttp {
+    data object Default : StreamHttp
+
+    /** [hosts]: the ones the person approved or typed (installed record + settings) — never plugin output. */
+    data class PluginGated(val hosts: com.arkiv.player.data.plugin.EffectiveHosts) : StreamHttp
+}
+
+/** Only a PLUGIN stream is gated; an empty host list is still gated (it reaches nothing). */
+internal fun streamHttpFor(kind: SourceKind, pluginHosts: com.arkiv.player.data.plugin.EffectiveHosts): StreamHttp =
+    if (kind == SourceKind.PLUGIN) StreamHttp.PluginGated(pluginHosts) else StreamHttp.Default
+
+/**
+ * A subtitle's type: the `format` the source declared (plugins), else guessed from its path. VTT
+ * by default: what magis's portal serves (Magis passes no format, so it keeps the URL guess); the
+ * .srt case is there in case some source names one that way with that extension.
+ */
+internal fun subtitleMimeType(sub: ResolvedSub): String = when {
+    sub.format == "srt" -> MimeTypes.APPLICATION_SUBRIP
+    sub.format == "vtt" -> MimeTypes.TEXT_VTT
+    sub.url.contains(".srt", ignoreCase = true) -> MimeTypes.APPLICATION_SUBRIP
     else -> MimeTypes.TEXT_VTT
 }
 
@@ -489,7 +536,7 @@ private fun subtitleMimeType(path: String): String = when {
 internal fun List<ResolvedSub>.toExoSubtitleConfigs(): List<MediaItem.SubtitleConfiguration> =
     map { sub ->
         MediaItem.SubtitleConfiguration.Builder(Uri.parse(sub.url))
-            .setMimeType(subtitleMimeType(sub.url))
+            .setMimeType(subtitleMimeType(sub))
             .setLanguage(sub.lang)
             .build()
     }

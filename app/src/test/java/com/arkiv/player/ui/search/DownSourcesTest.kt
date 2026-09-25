@@ -74,4 +74,32 @@ class DownSourcesTest {
         assertEquals(listOf("Una fuente no respondió: boom"), downSourceNotices(state, SourceTab.ALL))
         assertTrue(downSourceNotices(state, SourceTab.CARACOL).isEmpty())
     }
+
+    @Test fun `a plugin that did not respond is named by its label`() {
+        val state = SourcesState().withLabel("plugin:demo", "Demo").withResponse("magis").withFailure("plugin:demo", "no respondió a tiempo")
+        assertEquals(listOf("Demo no respondió: no respondió a tiempo"), downSourceNotices(state, SourceTab.ALL))
+        val tab = tabForSource("plugin:demo", state.labels)!!
+        assertEquals(listOf("Demo no respondió: no respondió a tiempo"), downSourceNotices(state, tab))
+        assertEquals(emptyList<String>(), downSourceNotices(state, SourceTab.MAGIS))
+        assertNull(emptyTabText(tab, false, state))
+        assertEquals("No respondió", emptySectionText(tab, state))
+    }
+
+    @Test fun `a plugin's typed error is its own sentence, not "no respondió"`() {
+        val state = SourcesState().withLabel("plugin:jf", "Jellyfin")
+            .withFailure("plugin:jf", "Configura Jellyfin en Ajustes ▸ Plugins", com.arkiv.player.data.plugin.PluginErrorException("auth_required", ""))
+        assertEquals(listOf("Configura Jellyfin en Ajustes ▸ Plugins"), downSourceNotices(state, SourceTab.ALL))
+    }
+
+    /**
+     * Fix round 1, finding 1 (spec §3.6 "Any other error keeps today's generic handling"): an
+     * UNTYPED plugin error code (outside `PluginErrors.CODES`) must NOT show the plugin's raw text
+     * bare -- that would let a plugin's own text masquerade as the app's message. It falls through
+     * to the same generic wording an untyped/non-plugin failure gets.
+     */
+    @Test fun `an untyped plugin error code still gets the generic "no respondió" wording`() {
+        val state = SourcesState().withLabel("plugin:jf", "Jellyfin")
+            .withFailure("plugin:jf", "algo raro pasó", com.arkiv.player.data.plugin.PluginErrorException("whatever", "algo raro pasó"))
+        assertEquals(listOf("Jellyfin no respondió: algo raro pasó"), downSourceNotices(state, SourceTab.ALL))
+    }
 }

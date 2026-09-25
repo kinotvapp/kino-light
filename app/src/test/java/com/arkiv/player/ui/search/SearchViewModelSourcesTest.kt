@@ -115,6 +115,73 @@ class SearchViewModelSourcesTest {
         assertFalse(vm.searchingSources.value.any)
     }
 
+    /**
+     * Plan-mandated coverage (flagged missing in pre-flight review): a plain ViewModel-level test,
+     * no Compose, for `_pluginMore`'s population straight from `SourceDone.more`.
+     */
+    @Test fun `a plugin's SourceDone cursor populates pluginMore, keyed by source`() = runTest {
+        val vm = vm(TestSource {
+            listOf(
+                SearchEvent.SourceStart("plugin:demo", label = "Demo"),
+                SearchEvent.ResultEvent("plugin:demo", GatewayResult(source = "plugin:demo", title = "X", ref = "r1")),
+                SearchEvent.SourceDone("plugin:demo", 1, 5, more = "cursor2"),
+                SearchEvent.Done(5),
+            )
+        })
+
+        vm.searchSourcesByText("rigo")
+        advanceUntilIdle()
+
+        val more = vm.pluginMore.value["plugin:demo"]
+        assertEquals("demo", more?.pluginId)
+        assertEquals("Demo: rigo", more?.title)
+        assertTrue(more is com.arkiv.player.ui.plugin.PluginMoreTarget.Search)
+        assertEquals("cursor2", (more as com.arkiv.player.ui.plugin.PluginMoreTarget.Search).cursor)
+    }
+
+    /** Magis and Caracol never carry a cursor: `pluginMore` must stay empty for them. */
+    @Test fun `magis and caracol never populate pluginMore, even if SourceDone somehow carried more`() = runTest {
+        val vm = vm(TestSource {
+            listOf(
+                SearchEvent.SourceStart("magis"),
+                SearchEvent.SourceDone("magis", 0, 5, more = "unexpected"),
+                SearchEvent.SourceStart("ditu"),
+                SearchEvent.SourceDone("ditu", 0, 5, more = "unexpected"),
+                SearchEvent.Done(5),
+            )
+        })
+
+        vm.searchSourcesByText("rigo")
+        advanceUntilIdle()
+
+        assertTrue(vm.pluginMore.value.isEmpty())
+    }
+
+    /** A new search clears the previous one's `pluginMore`, same as `sourcesState`. */
+    @Test fun `a new search starts without the previous one's pluginMore`() = runTest {
+        var withCursor = true
+        val vm = vm(TestSource {
+            if (withCursor) {
+                listOf(
+                    SearchEvent.SourceStart("plugin:demo", label = "Demo"),
+                    SearchEvent.SourceDone("plugin:demo", 0, 5, more = "cursor2"),
+                    SearchEvent.Done(5),
+                )
+            } else {
+                listOf(SearchEvent.SourceStart("plugin:demo", label = "Demo"), SearchEvent.SourceDone("plugin:demo", 0, 5), SearchEvent.Done(5))
+            }
+        })
+
+        vm.searchSourcesByText("rigo")
+        advanceUntilIdle()
+        assertTrue(vm.pluginMore.value.containsKey("plugin:demo"))
+
+        withCursor = false
+        vm.searchSourcesByText("rigo")
+        advanceUntilIdle()
+        assertTrue(vm.pluginMore.value.isEmpty())
+    }
+
     @Test fun `a new search starts without the previous one's errors`() = runTest {
         var fails = true
         val vm = vm(TestSource {

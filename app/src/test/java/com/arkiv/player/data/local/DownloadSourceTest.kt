@@ -26,6 +26,11 @@ class DownloadSourceTest {
         assertEquals("ditu", DownloadSource.sourceFor("ditu:12345::e1"))
     }
 
+    @Test fun `a plugin chapter has its own download source, and no strategy offers it`() {
+        assertEquals("plugin", DownloadSource.sourceFor("plugin:demo:m1::0"))
+        assertFalse(DownloadSource.canDownload("plugin:demo:m1::0", setOf("magis", "ditu")))
+    }
+
     /** What `AppGraph.downloadStrategies` has today: Magis only. */
     private val strategies = setOf("magis")
 

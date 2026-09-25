@@ -42,6 +42,7 @@ private enum class TvSettingsTab(val label: String) {
     SUBTITLES("Subtítulos"),
     ACCOUNT("Cuenta"),
     APP("App"),
+    PLUGINS("Plugins"),
     CONNECT("Conectar"),
 }
 
@@ -143,6 +144,7 @@ fun TvSettingsScreen() {
                     accountUnavailable = regionGeoBlocked,
                 )
                 TvSettingsTab.APP -> TvSettingsApp()
+                TvSettingsTab.PLUGINS -> TvSettingsPlugins()
                 TvSettingsTab.CONNECT -> TvCompanionSettings()
             }
         }

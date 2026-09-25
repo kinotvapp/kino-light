@@ -75,6 +75,8 @@ object PlayerTrivia {
     fun wantsFacts(episodeId: String, kind: com.arkiv.player.playback.SourceKind): Boolean = when (kind) {
         com.arkiv.player.playback.SourceKind.MAGIS -> !com.arkiv.player.playback.MagisEphemeral.isEphemeral(episodeId)
         com.arkiv.player.playback.SourceKind.DITU -> !com.arkiv.player.playback.DituLive.isLive(episodeId)
+        // No fun facts for plugin titles in v1: nothing guarantees the title is a real work Kilo knows.
+        com.arkiv.player.playback.SourceKind.PLUGIN -> false
         else -> false
     }
 }

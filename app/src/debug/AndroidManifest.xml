@@ -11,5 +11,14 @@
         <receiver
             android:name="com.arkiv.player.debug.CaracolDownloadProbe"
             android:exported="true" />
+
+        <!-- Does the QuickJS native library load on this device? See QuickJsProbe. -->
+        <receiver
+            android:name="com.arkiv.player.debug.QuickJsProbe"
+            android:exported="true" />
+        <!-- Installs a plugin from the app's files dir through the real install flow; see PluginSideloadProbe. -->
+        <receiver
+            android:name="com.arkiv.player.debug.PluginSideloadProbe"
+            android:exported="true" />
     </application>
 </manifest>

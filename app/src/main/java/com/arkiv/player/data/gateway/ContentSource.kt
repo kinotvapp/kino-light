@@ -23,6 +23,13 @@ interface ContentSource {
      */
     fun recognizes(ref: String): Boolean
 
+    /**
+     * How long [search] may take before `CompositeSource` cuts it off with a `SourceError`; null
+     * (Magis, Caracol) = no limit, as before. Plugins set it: a plugin can hang, and it must not
+     * keep the whole search spinning.
+     */
+    val searchTimeoutMs: Long? get() = null
+
     fun search(ctx: GatewaySearchQuery): Flow<SearchEvent>
 
     suspend fun resolve(ref: String): GatewayPlayable
@@ -34,4 +41,12 @@ interface ContentSource {
     suspend fun episodesWithSeries(ref: String): Pair<List<GatewayEpisode>, GatewaySeries?>
 
     suspend fun episodes(ref: String): List<GatewayEpisode> = episodesWithSeries(ref).first
+
+    /**
+     * One page of a source's "Ver más" listing: [ref] is what a Home row or a page named, [cursor]
+     * null for the first page. Only plugins that declare `browse` implement it; Magis and Caracol
+     * keep this default and are never asked.
+     */
+    suspend fun browse(ref: String, cursor: String?): GatewayPage =
+        throw GatewayException("Esta fuente no tiene más para mostrar")
 }

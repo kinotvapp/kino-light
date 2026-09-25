@@ -45,6 +45,10 @@ class CompanionPlayMappingTest {
         )
     }
 
+    @Test fun `a plugin title is not handed to the companion`() {
+        assertNull(buildCompanionPlayItem("plugin:demo:m1::0", ref = "plg1:demo:x", itemIdentifier = "plugin:demo:m1", title = "t", season = null, episode = null, poster = ""))
+    }
+
     @Test fun `an unknown source is null`() {
         assertNull(
             buildCompanionPlayItem(
