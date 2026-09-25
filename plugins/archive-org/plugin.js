@@ -13,10 +13,10 @@ const FILMS = "collection:(feature_films) AND mediatype:(movies)";
 const TV = "collection:(classic_tv) AND mediatype:(movies)";
 const CARTOONS = "collection:(animationandcartoons) AND mediatype:(movies)";
 
-function advancedUrl(query, rows) {
+function advancedUrl(query, rows, page = 1) {
   const parts = ["q=" + encodeURIComponent(query)];
   for (const f of FIELDS) parts.push("fl%5B%5D=" + f);
-  parts.push("sort%5B%5D=" + encodeURIComponent("downloads desc"), "rows=" + rows, "page=1", "output=json");
+  parts.push("sort%5B%5D=" + encodeURIComponent("downloads desc"), "rows=" + rows, "page=" + page, "output=json");
   return BASE + "/advancedsearch.php?" + parts.join("&");
 }
 
@@ -45,8 +45,8 @@ function toItem(doc, kind) {
   };
 }
 
-async function docs(query, rows) {
-  const data = await getJson(advancedUrl(query, rows));
+async function docs(query, rows, page = 1) {
+  const data = await getJson(advancedUrl(query, rows, page));
   // A query archive.org can't parse still answers 200, with {"error": ...} instead of "response".
   if (!data.response) throw new Error("archive.org no entendió la búsqueda");
   return data.response.docs.filter((d) => VALID_ID.test(d.identifier));
@@ -88,22 +88,37 @@ export async function search(query) {
   return out;
 }
 
+// Home rows; each one's id is also its "Ver más" ref (the browse capability).
+const ROWS = [
+  { id: "films", title: "Películas de dominio público", query: FILMS, kind: "movie" },
+  { id: "tv", title: "Televisión clásica", query: TV, kind: "series" },
+  { id: "cartoons", title: "Animación clásica", query: CARTOONS, kind: "movie" },
+];
+const ROW_SIZE = 30;
+const PAGE_SIZE = 50;
+
 export async function home() {
-  const rows = [
-    { id: "films", title: "Películas de dominio público", query: FILMS, kind: "movie" },
-    { id: "tv", title: "Televisión clásica", query: TV, kind: "series" },
-    { id: "cartoons", title: "Animación clásica", query: CARTOONS, kind: "movie" },
-  ];
   const out = [];
-  for (const row of rows) {
+  for (const row of ROWS) {
     try {
-      const found = await docs(row.query, 30);
-      out.push({ id: row.id, title: row.title, items: found.map((d) => toItem(d, row.kind)) });
+      const found = await docs(row.query, ROW_SIZE);
+      out.push({ id: row.id, title: row.title, ref: row.id, items: found.map((d) => toItem(d, row.kind)) });
     } catch (e) {
       kino.log("home row failed", row.id, e.message);
     }
   }
   return out;
+}
+
+// "Ver más" on a Home row: the same query, a page at a time. The cursor is the next page number.
+export async function browse(ref, cursor) {
+  await null; // the checks below may throw: never before the first await
+  const row = ROWS.find((r) => r.id === ref);
+  if (!row) throw kino.error("not_found", "esa fila ya no existe");
+  const page = cursor ? Number(cursor) : 1;
+  if (!Number.isInteger(page) || page < 1 || page > 100) throw kino.error("not_found", "página inválida");
+  const found = await docs(row.query, PAGE_SIZE, page);
+  return { items: found.map((d) => toItem(d, row.kind)), next: found.length === PAGE_SIZE ? String(page + 1) : undefined };
 }
 
 async function metadata(id) {

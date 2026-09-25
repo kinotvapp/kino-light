@@ -9,7 +9,8 @@ for plugin authors: one manifest, one JavaScript file, no build step.
 | Capability | How |
 | --- | --- |
 | `search` | Titles in both the `feature_films` (movies) and `classic_tv` (series) collections, most downloaded first, up to 25 from each; an item in both is listed once. The `type` Kino sends is only an ordering preference (the collection that matches it comes first), never a filter, because TMDB's movie/tv split does not line up with archive.org's: public-domain films and classic TV are mixed, and a title can exist as both. Characters and words that are query syntax to archive.org (`/`, `-`, `&`, `AND`, `OR`, `NOT`) are cleaned out of what the person typed. |
-| `home` | Three rows: public-domain films, classic TV and classic animation, by downloads. |
+| `home` | Three rows: public-domain films, classic TV and classic animation, by downloads, 30 titles each. Each row carries a `ref`, so Kino ends it with a "Ver más" card. |
+| `browse` | "Ver más" on a Home row: the same query as the row, 50 titles per page, the page number as the cursor (`"2"`, `"3"`, …). |
 | `episodes` | The video files of an item, in natural order. Files named `S01E02` get that season and number; otherwise they are numbered 1, 2, 3 in order. |
 | `resolve` | The file to play: the item's own mp4/m4v/webm, or the best mp4 archive.org derived from the original (`.avi`, `.mpg`, `.mkv`, `.divx`...). Sibling `.vtt`/`.srt` files become subtitles. |
 
@@ -40,14 +41,20 @@ will reach and asks for approval before anything runs.
 
 This repository is also the starting point for your own plugin:
 
-- [`GUIDE.md`](GUIDE.md) is the authoring guide: file layout, manifest, the four functions your
-  code exports, the `kino` API, every limit and the quirks of the JavaScript engine.
+- [`GUIDE.md`](GUIDE.md) is the authoring guide: file layout, manifest and settings, the five
+  functions your code can export, the `kino` API, every limit, the quirks of the JavaScript engine
+  and three cookbook recipes.
+- [`contract.json`](contract.json) holds every number and rule Kino enforces, and
+  [`kino.d.ts`](kino.d.ts) declares the `kino` API for your editor.
 - [`sdk/`](sdk) lets you run and test a plugin on your computer with Node 18 or newer, using the same
-  `kino` API as the app:
+  `kino` API as the app and checking what you return the way Kino does:
 
 ```
 node sdk/run.mjs ./plugin.js search "metropolis"
 node sdk/run.mjs ./plugin.js home
+node sdk/run.mjs ./plugin.js browse films 2
+node sdk/validate.mjs .
+node sdk/init.mjs ../my-plugin --host example.com
 ```
 
 Copy `plugin.js` and `kino-plugin.json`, change them, and publish your repository the same way.

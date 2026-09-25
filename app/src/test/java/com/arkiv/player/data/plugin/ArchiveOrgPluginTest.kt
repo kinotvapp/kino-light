@@ -160,10 +160,28 @@ class ArchiveOrgPluginTest {
         }
     }
 
-    @Test fun `home has its three rows`() = runBlocking {
-        val rows = PluginOutput.rows(runtime.call("home", "null", 20_000), allowSeries = true, allowBrowse = false)
+    @Test fun `home has its three rows, each with its Ver mas ref`() = runBlocking {
+        val rows = PluginOutput.rows(runtime.call("home", "null", 20_000), allowSeries = true, allowBrowse = true)
         assertEquals(listOf("films", "tv", "cartoons"), rows.map { it.id })
+        assertEquals(listOf("films", "tv", "cartoons"), rows.map { it.ref })
         assertTrue(rows.all { it.items.isNotEmpty() })
+    }
+
+    @Test fun `browse pages a Home row fifty at a time`() = runBlocking {
+        val first = PluginOutput.page(runtime.call("browse", """{"ref":"films","cursor":null}""", 20_000), PluginOutput.MAX_BROWSE_ITEMS, true, true)
+        assertEquals(50, first.items.size)
+        assertEquals("2", first.next)
+        val second = PluginOutput.page(runtime.call("browse", """{"ref":"films","cursor":"2"}""", 20_000), PluginOutput.MAX_BROWSE_ITEMS, true, true)
+        assertEquals("3", second.next)
+        assertTrue(second.items.none { it.id in first.items.map { f -> f.id } })
+        assertTrue(requested.any { "page=2" in it })
+    }
+
+    @Test fun `browse of an unknown row is not_found`() {
+        val e = org.junit.Assert.assertThrows(PluginErrorException::class.java) {
+            runBlocking { runtime.call("browse", """{"ref":"nope","cursor":null}""", 20_000) }
+        }
+        assertEquals("not_found", e.code)
     }
 
     @Test fun `episodes of a classic TV item come by season and number`() = runBlocking {
