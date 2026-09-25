@@ -567,6 +567,13 @@ characters. Under the Node kit they go to stderr.
   (`while (true) {}`) **cannot be interrupted**: at the time limit Kino stops waiting for the call
   and discards the sandbox, but the loop keeps spinning on its own thread until it ends, which for a
   real infinite loop means until the app is closed. Three timeouts in a row disable the plugin.
+- **App closed during a call.** A crash inside the engine, or being killed for memory, can take the
+  whole app down mid-call, and nothing in-process can catch that. Kino notices at the next start:
+  whichever plugins were mid-call at that moment each get an unclean exit counted against them —
+  **including a healthy plugin that simply happened to be running at the same time**, not only the
+  one that actually caused the crash. Two unclean exits in a row for the same plugin, with no call
+  finishing normally in between, switch it off ("No responde") exactly like three timeouts in a
+  row; a call that completes normally resets its count.
 
 ### The engine is not Node and not a browser
 
@@ -644,7 +651,7 @@ and 24.14); `node --test sdk/test/kit.test.mjs` runs its own tests.
 ```
 node sdk/run.mjs ./plugin.js search "metropolis"
 node sdk/run.mjs ./plugin.js home
-node sdk/run.mjs ./plugin.js browse movies 2
+node sdk/run.mjs ./plugin.js browse films 2
 node sdk/run.mjs ./plugin.js episodes 'Dragnet1951'
 node sdk/run.mjs ./plugin.js resolve 'Dragnet1951|Dragnet/Season 1/Dragnet (1951) - S01E01 - The Human Bomb.mp4'
 ```
