@@ -224,6 +224,48 @@ fun liveErrorMessage(
         "No se pudo abrir $channelName"
     }
 
+/**
+ * What a failed plugin `resolve()` means for the screen (spec §1.3, §3.6): which dialog, if any.
+ * Pure and out here -- like [liveErrorMessage]/[shouldMarkInProgress] above -- on purpose:
+ * `PlayerViewModel` can't be instantiated in a JVM unit test (its `repo: ArkivRepository` needs a
+ * real `ArkivDatabase`, and this module has no Room or Robolectric infrastructure in its JVM unit
+ * tests -- see `RecommendationQueryTest`'s KDoc), so this is where `loadPlugin`'s failure branches
+ * can actually be pinned down with tests.
+ */
+internal sealed interface PluginLoadFailure {
+    /** `geo_blocked`, or any portal/plugin region block: the same dialog as Magis's. */
+    data class Blocked(val message: String) : PluginLoadFailure
+
+    /** `auth_required`, or a required setting left empty: offers the plugin's Configurar screen. */
+    data class SetupRequired(val pluginId: String, val message: String) : PluginLoadFailure
+
+    /** Everything else: a timeout, an unknown typed error, a contract violation, a crash. */
+    data class Generic(val message: String) : PluginLoadFailure
+
+    companion object {
+        /** [pluginDisplayName] is only used for the two messages that don't already name the plugin. */
+        fun from(failure: Throwable?, pluginDisplayName: String): PluginLoadFailure = when (failure) {
+            is GatewayBlockedException -> Blocked(failure.message.orEmpty())
+            is com.arkiv.player.data.plugin.PluginSetupRequiredException ->
+                SetupRequired(failure.pluginId, failure.message ?: "Configura $pluginDisplayName en Ajustes ▸ Plugins")
+            // PluginContentSource already words these for the person ("<plugin>: …", "<plugin> no respondió a tiempo").
+            else -> Generic(failure?.message?.takeIf { it.isNotBlank() } ?: "No se pudo abrir esto con $pluginDisplayName")
+        }
+    }
+}
+
+/**
+ * Whether a PLUGIN item's ExoPlayer failure should resolve the stream again instead of failing
+ * outright (spec §3.5): only when there's a tracked [expiry] AND it says so ([kind] narrows this
+ * to plugin titles -- Magis/Ditu/local/live never carry a [PluginStreamExpiry]). Pure, next to
+ * [PluginLoadFailure] for the same reason.
+ */
+internal fun shouldRetryPluginStream(
+    kind: SourceKind?,
+    expiry: com.arkiv.player.data.plugin.PluginStreamExpiry?,
+    nowMs: Long,
+): Boolean = kind == SourceKind.PLUGIN && expiry != null && expiry.shouldResolveAgain(nowMs)
+
 // `internal constructor` because of [dituSource]: its type is internal to the module, and a public
 // constructor can't take it.
 class PlayerViewModel internal constructor(
@@ -785,10 +827,18 @@ class PlayerViewModel internal constructor(
         // A plugin said its URLs expire, and this one is past that: resolve once more instead of
         // failing (spec §3.5). The reload resumes from the saved position, like any open.
         val expiry = pluginExpiry
-        if (item?.kind == SourceKind.PLUGIN && expiry != null && expiry.shouldResolveAgain(System.currentTimeMillis())) {
+        if (item != null && expiry != null && shouldRetryPluginStream(item.kind, expiry, System.currentTimeMillis())) {
             Log.w(PLAY, "plugin stream failed after ${expiry.expiresInSeconds}s: resolving again")
             pluginExpiry = expiry.copy(retried = true)
-            viewModelScope.launch { loadPlugin(item.episodeId, afterExpiry = true) }
+            // A re-resolve can bring back the EXACT SAME url (routine on a fixed-path server, e.g.
+            // the reference-server plugin's `/stream/<id>.mp4`): PlayerData is a data class, so
+            // `_magisItem.value = <an equal PlayerData>` is silently dropped by StateFlow (it only
+            // notifies collectors when the new value differs) and the screen would never see the
+            // retry happen -- StreamExoPlayer stays stuck showing its old error, with no dialog
+            // either, a dead and silent player. Going through null first forces a real rebuild,
+            // exactly like a fresh load() already does before any source resolves.
+            _magisItem.value = null
+            viewModelScope.launch { loadPlugin(item.episodeId) }
             return
         }
         val label = if (item?.kind == SourceKind.PLUGIN) {
@@ -1165,7 +1215,7 @@ class PlayerViewModel internal constructor(
      * A disabled, damaged or uninstalled plugin never reaches `resolve`: the person gets the
      * spec's message naming the plugin instead of "No hay ninguna fuente que sepa abrir esto".
      */
-    private suspend fun loadPlugin(episodeId: String, afterExpiry: Boolean = false) {
+    private suspend fun loadPlugin(episodeId: String) {
         val pluginId = com.arkiv.player.data.plugin.PluginIds.pluginIdOfEpisode(episodeId)
         val access = plugins?.accessFor(pluginId)
             ?: com.arkiv.player.data.plugin.PluginAccess.Uninstalled(pluginId ?: "desconocido")
@@ -1192,17 +1242,19 @@ class PlayerViewModel internal constructor(
         if (play == null) {
             val failure = resolved.exceptionOrNull()
             Log.w(PLAY, "loadPlugin() failed: ${failure?.message}", failure)
-            when (failure) {
-                // geo_blocked: the same dialog as a portal-side region block (spec §3.6).
-                is GatewayBlockedException -> _blocked.value = failure.message
-                is com.arkiv.player.data.plugin.PluginSetupRequiredException ->
-                    _pluginSetup.value = PluginSetupPrompt(failure.pluginId, failure.message ?: "Configura $name en Ajustes ▸ Plugins")
-                // PluginContentSource already words these for the person ("<plugin>: …", "<plugin> no respondió a tiempo").
-                else -> _error.value = failure?.message?.takeIf { it.isNotBlank() } ?: "No se pudo abrir esto con $name"
+            // geo_blocked: the same dialog as a portal-side region block (spec §3.6).
+            when (val outcome = PluginLoadFailure.from(failure, name)) {
+                is PluginLoadFailure.Blocked -> _blocked.value = outcome.message
+                is PluginLoadFailure.SetupRequired -> _pluginSetup.value = PluginSetupPrompt(outcome.pluginId, outcome.message)
+                is PluginLoadFailure.Generic -> _error.value = outcome.message
             }
             return
         }
-        pluginExpiry = com.arkiv.player.data.plugin.PluginStreamExpiry(System.currentTimeMillis(), play.expiresInSeconds, retried = afterExpiry)
+        // Every freshly-resolved stream starts `retried = false`, even one this same retry branch
+        // just brought back: the age gate in `shouldResolveAgain` is what stops a retry loop, not an
+        // extra "only the very first stream of this title" restriction -- a long movie whose URL
+        // keeps expiring gets a retry every time, not just once ever (spec §3.5).
+        pluginExpiry = com.arkiv.player.data.plugin.PluginStreamExpiry(System.currentTimeMillis(), play.expiresInSeconds)
         val header = repo.headerInfo(episodeId)
         _webExtras.value = WebExtras(episodeId, play.headers, pluginSubtitles(play.subtitles))
         val startPos = safeStartPosition(episodeId, SourceKind.PLUGIN)

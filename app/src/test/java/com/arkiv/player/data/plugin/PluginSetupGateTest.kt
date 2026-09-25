@@ -25,6 +25,28 @@ class PluginSetupGateTest {
         assertFalse(PluginStreamExpiry(1_000, 0).shouldResolveAgain(1_000_000))
     }
 
+    @Test fun `each freshly re-resolved stream gets its own one retry, not just the title's first one`() {
+        // Review round 1, finding 2: PlayerViewModel.loadPlugin used to carry `retried = afterExpiry`
+        // into the NEW expiry it records after a retry's own resolve, so a title's second expiry
+        // hard-failed even though this age gate alone already stops a tight retry loop. The fix
+        // records every freshly-resolved stream -- including a retry's own republish -- with
+        // `retried = false` (the default), never `retried = afterExpiry`.
+        val first = PluginStreamExpiry(resolvedAtMs = 0, expiresInSeconds = 60)
+        assertTrue(first.shouldResolveAgain(60_000))
+
+        // What loadPlugin recorded for the RETRY's own republish, before the fix: `afterExpiry` is
+        // true on that call, so `retried = afterExpiry` started the renewed stream already "used
+        // up" -- it could never retry again, no matter how long the movie played after that.
+        val beforeTheFix = PluginStreamExpiry(resolvedAtMs = 60_000, expiresInSeconds = 60, retried = true)
+        assertFalse("the bug: a renewed stream started pre-retried and could never retry again", beforeTheFix.shouldResolveAgain(120_000))
+
+        // What loadPlugin now records instead (retried defaults to false): the renewed stream gets
+        // its own single retry when ITS OWN age gate is met -- the fix.
+        val afterTheFix = PluginStreamExpiry(resolvedAtMs = 60_000, expiresInSeconds = 60)
+        assertTrue("the fix: a long movie's SECOND expiry retries too, not just the first", afterTheFix.shouldResolveAgain(120_000))
+        assertFalse("but still only once for THAT stream", afterTheFix.copy(retried = true).shouldResolveAgain(10_000_000))
+    }
+
     @Test fun `consent lines disclose passwords, typed servers and each permission`() {
         val m = PluginManifest("jf", "Jellyfin", "1.0.0", 1, "plugin.js", "", "", "", listOf("jellyfin.org"), setOf("search", "resolve"), null, null,
             permissions = listOf("local-network"),
