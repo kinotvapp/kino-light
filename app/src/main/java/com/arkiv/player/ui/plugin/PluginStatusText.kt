@@ -14,6 +14,7 @@ fun pluginStatusText(status: PluginStatus): String = when (status) {
     PluginStatus.UNRESPONSIVE -> "No responde — actívalo para volver a intentar"
     PluginStatus.UPDATE_PENDING -> "Actualización disponible — requiere tu aprobación"
     PluginStatus.DAMAGED -> "Archivos dañados, reinstálalo"
+    PluginStatus.NEEDS_SETUP -> "Falta configurar"
 }
 
 /**

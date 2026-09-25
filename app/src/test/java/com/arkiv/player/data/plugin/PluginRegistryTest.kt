@@ -81,7 +81,7 @@ class PluginRegistryTest {
     @Test fun `a ready plugin carries the hosts the person approved, from the installed record`() {
         install("pa", "A") { copy(hosts = listOf("approved.example.com", "*.cdn.example.com")) }
         assertEquals(
-            PluginAccess.Ready("A", listOf("approved.example.com", "*.cdn.example.com")),
+            PluginAccess.Ready("A", EffectiveHosts(listOf("approved.example.com", "*.cdn.example.com"))),
             registry.accessFor("pa"),
         )
     }

@@ -7,6 +7,7 @@ import com.arkiv.player.data.plugin.InstalledRecord
 import com.arkiv.player.data.plugin.PluginAddress
 import com.arkiv.player.data.plugin.PluginAdmin
 import com.arkiv.player.data.plugin.PluginManifest
+import com.arkiv.player.data.plugin.PluginSettingsForm
 import com.arkiv.player.data.plugin.PluginTimeoutException
 import com.arkiv.player.data.plugin.UpdateOutcome
 import kotlinx.coroutines.CompletableDeferred
@@ -50,6 +51,11 @@ class PluginsViewModelTest {
         override suspend fun checkUpdate(id: String): UpdateOutcome { updateChecks++; return update() }
         override fun setEnabled(id: String, enabled: Boolean) { this.enabled[id] = enabled }
         override fun uninstall(id: String) { uninstalled += id }
+        var form: PluginSettingsForm? = null
+        var saveResult: String? = null
+        val saved = mutableListOf<Map<String, Any?>>()
+        override suspend fun settingsOf(id: String): PluginSettingsForm? = form
+        override suspend fun saveSettings(id: String, values: Map<String, Any?>): String? { saved += values; return saveResult }
     }
 
     private fun vm(admin: PluginAdmin) = PluginsViewModel(admin, io = dispatcher)

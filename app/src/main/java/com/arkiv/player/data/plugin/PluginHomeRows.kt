@@ -44,7 +44,8 @@ class PluginHomeRows(
     }
 
     fun rows(): Flow<List<PluginHomeRow>> = flow {
-        val targets = plugins().filter { "home" in it.manifest.capabilities }
+        // A plugin that still needs setup isn't asked: its calls would only fail with auth_required.
+        val targets = plugins().filter { "home" in it.manifest.capabilities && !it.needsSetup }
         if (targets.isEmpty()) {
             emit(emptyList())
             return@flow
@@ -77,7 +78,7 @@ class PluginHomeRows(
             json,
             allowSeries = "episodes" in p.manifest.capabilities,
             allowBrowse = "browse" in p.manifest.capabilities,
-            hosts = EffectiveHosts(p.record.hosts),
+            hosts = p.hosts,
         ) { log("[${p.id}] $it") }
 
     private fun assemble(targets: List<InstalledPlugin>, rowsOf: (InstalledPlugin) -> List<PluginRow>): List<PluginHomeRow> =

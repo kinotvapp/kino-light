@@ -7,18 +7,21 @@ import java.util.Base64
 
 /**
  * The production [PluginHost]: [PluginHttp] for the network, [PluginStorage] for `kino.storage`,
- * [PluginCookies] for `kino.cookies`.
+ * [config] for `kino.config`, [PluginCookies] for `kino.cookies`.
  *
  * [PluginHttp]'s 60-request budget is reset with [PluginHttp.beginCall] once per *top-level* plugin
  * capability call (`search`/`home`/`browse`/`episodes`/`resolve`), not once per [fetch]: `fetch`
  * here runs once per `kino.fetch()` inside that call, so resetting here would make the cap
  * unenforceable. `PluginRuntimePool` calls `http.beginCall()` (via AppGraph's `beforeCall`)
  * immediately before `runtime.call(...)` and serializes calls per plugin.
+ *
+ * Nothing here logs a config value: [config] goes only to the plugin.
  */
 class DefaultPluginHost(
     private val pluginId: String,
     private val http: PluginHttp,
     private val storage: PluginStorage,
+    private val config: PluginConfig = PluginConfig.EMPTY,
     private val cookies: PluginCookies? = null,
     private val hosts: EffectiveHosts = EffectiveHosts(emptyList()),
     /** MockWebServer tests only, as in [PluginHttp]. */
@@ -89,6 +92,7 @@ class DefaultPluginHost(
     override fun storageRemove(key: String) = storage.remove(key)
     override fun storageKeys(): String = JSONArray(storage.keys()).toString()
     override fun log(level: String, message: String) = logger("[$pluginId] $level: ${message.take(2000)}")
+    override fun config(): String = config.toJson()
 
     override fun cookieGet(url: String, name: String): String? {
         val u = url.toHttpUrlOrNull() ?: return null

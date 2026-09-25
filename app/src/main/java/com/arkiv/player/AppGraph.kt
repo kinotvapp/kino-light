@@ -335,7 +335,7 @@ class AppGraph(context: Context) {
         val unusablePlugins = UnusablePluginSource(pluginRegistry)
         com.arkiv.player.data.gateway.CompositeSource {
             listOf(magisSource, dituSource) +
-                pluginRegistry.usable().map { PluginContentSource(it, pluginRuntimes) } +
+                pluginRegistry.usable().map { PluginContentSource(it, pluginCaller, it.hosts) } +
                 unusablePlugins
         }
     }
@@ -355,17 +355,44 @@ class AppGraph(context: Context) {
             .build()
     }
 
-    val pluginRegistry: PluginRegistry by lazy { PluginRegistry(pluginStore).also { it.reload() } }
+    /**
+     * Each plugin's settings: `config.json` in its data dir, passwords in the Keystore-backed
+     * [EncryptedSecretStore] (opened lazily, off the main thread). See PluginConfigStore.
+     */
+    val pluginConfigStore: PluginConfigStore by lazy {
+        PluginConfigStore({ id -> pluginStore.dataDir(id) }, EncryptedSecretStore(appContext))
+    }
+
+    /** Reads each plugin's `config.json` (never the Keystore) for its typed servers and "Falta configurar". */
+    val pluginRegistry: PluginRegistry by lazy {
+        PluginRegistry(pluginStore) { p -> pluginConfigStore.setupState(p.manifest.id, p.manifest.settings) }.also { it.reload() }
+    }
 
     /**
-     * The player's client for one plugin stream, gated to [approvedHosts] (the installed record's,
-     * carried in `PlayerData.pluginHosts`) on every request and redirect hop. See PluginStreamHttp.
+     * The player's client for one plugin stream, gated to [hosts] (the approved ones plus the
+     * servers typed in its settings, carried in `PlayerData.pluginHosts`) on every request and
+     * redirect hop. See PluginStreamHttp.
      */
-    fun pluginStreamClient(approvedHosts: List<String>): okhttp3.OkHttpClient =
-        PluginStreamHttp.client(pluginBaseHttp, EffectiveHosts(approvedHosts))
+    fun pluginStreamClient(hosts: EffectiveHosts): okhttp3.OkHttpClient =
+        PluginStreamHttp.client(pluginBaseHttp, hosts)
 
     /** The live PluginHttp of each open runtime, so the pool can reset its per-call request budget. */
     private val pluginHttps = java.util.concurrent.ConcurrentHashMap<String, PluginHttp>()
+
+    /** The live cookie jar of each open runtime: a settings change retires it (see forgetPluginSession). */
+    private val pluginJars = java.util.concurrent.ConcurrentHashMap<String, PluginCookies>()
+
+    /**
+     * Every plugin call goes through here: a plugin whose required settings are empty is refused
+     * with `auth_required` before its runtime is even opened (spec §1.3).
+     */
+    val pluginCaller: PluginCaller by lazy {
+        SetupGatedCaller({ id -> pluginRegistry.find(id)?.needsSetup == true }, pluginRuntimes)
+    }
+
+    /** "Ver más" talks to one plugin directly; null when it isn't usable any more. */
+    fun pluginSource(id: String): PluginContentSource? =
+        pluginRegistry.find(id)?.takeIf { it.isUsable }?.let { PluginContentSource(it, pluginCaller, it.hosts) }
 
     val pluginRuntimes: PluginRuntimePool by lazy {
         PluginRuntimePool(
@@ -389,14 +416,26 @@ class AppGraph(context: Context) {
             pluginRegistry.markDamaged(id)
             throw e
         }
-        // The APPROVED hosts from installed.json, never the manifest's: they're what the person accepted.
-        val hosts = EffectiveHosts(plugin.record.hosts)
+        // The APPROVED hosts from installed.json (never the manifest's: they're what the person
+        // accepted) plus the servers typed in its settings, as the registry read them.
+        val hosts = plugin.hosts
+        val dataDir = pluginStore.dataDir(id)
+        // Config (passwords from the Keystore) is read on IO, never on Main.
+        val config = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            pluginConfigStore.read(id, plugin.manifest.settings)
+        }
         // The jar persists in the plugin's data dir: a login survives the idle close and app restarts.
-        val cookies = PluginCookies(java.io.File(pluginStore.dataDir(id), PluginCookies.FILE_NAME), hosts)
+        val cookies = PluginCookies(java.io.File(dataDir, PluginCookies.FILE_NAME), hosts)
+        // Whatever jar this replaces (an idle reopen, or a runtime whose close was deferred behind
+        // an in-flight call -- see PluginRuntime.close KDoc) is stopped from writing, never cleared:
+        // its session hasn't changed, only a stale in-memory snapshot from that other jar is barred
+        // from landing over whatever this one reads or writes to the SAME file. Task 5's review: two
+        // PluginCookies instances on one file could otherwise clobber each other.
+        pluginJars.put(id, cookies)?.stopWriting()
         val http = PluginHttp(pluginBaseHttp, id, hosts, BuildConfig.VERSION_NAME, cookies = cookies)
         pluginHttps[id] = http
-        val storage = PluginStorage(java.io.File(pluginStore.dataDir(id), "storage.json"))
-        val runtime = PluginRuntime.open(id, script, DefaultPluginHost(id, http, storage, cookies, hosts), PluginEnv(appVersion = BuildConfig.VERSION_NAME))
+        val storage = PluginStorage(java.io.File(dataDir, "storage.json"))
+        val runtime = PluginRuntime.open(id, script, DefaultPluginHost(id, http, storage, config, cookies, hosts), PluginEnv(appVersion = BuildConfig.VERSION_NAME))
         // F5: drop this plugin's PluginHttp the moment its runtime is closed -- idle timeout, or an
         // explicit pool.close() from DefaultPluginAdmin's disable/update/uninstall -- so pluginHttps
         // never keeps a stale, no-longer-approved host list around after the runtime that used it is
@@ -406,6 +445,7 @@ class AppGraph(context: Context) {
             override fun close() {
                 runtime.close()
                 pluginHttps.remove(id, http)
+                pluginJars.remove(id, cookies)
             }
         }
     }
@@ -421,21 +461,37 @@ class AppGraph(context: Context) {
         )
     }
 
-    val pluginAdmin: PluginAdmin by lazy { DefaultPluginAdmin(pluginRegistry, pluginInstaller, pluginRuntimes) }
+    val pluginAdmin: PluginAdmin by lazy {
+        DefaultPluginAdmin(pluginRegistry, pluginInstaller, pluginRuntimes, pluginConfigStore, forgetSession = ::forgetPluginSession)
+    }
+
+    /**
+     * After a settings change (spec §1.3): a new user or server must not inherit the old session.
+     * The live jar is retired (a call still finishing can't write it back), its file and the Home
+     * cache (rows of the old account) are deleted. Runs on IO (DefaultPluginAdmin.saveSettings).
+     */
+    private fun forgetPluginSession(id: String) {
+        pluginJars.remove(id)?.retire()
+        java.io.File(pluginStore.dataDir(id), PluginCookies.FILE_NAME).delete()
+        java.io.File(pluginStore.dataDir(id), "home.json").delete()
+    }
 
     val pluginHomeRows: PluginHomeRows by lazy {
         PluginHomeRows(
             plugins = { pluginRegistry.usable() },
-            caller = pluginRuntimes,
+            caller = pluginCaller,
             // In the plugin's data dir: uninstalling deletes it with the rest.
             cacheFileFor = { id -> java.io.File(pluginStore.dataDir(id), "home.json") },
         )
     }
 
-    /** Emits when the set (or versions) of usable plugins changes: Home re-asks for rows then. */
+    /**
+     * Emits when the set (or versions, or settings state) of usable plugins changes: Home re-asks
+     * for rows then — also right after a plugin is configured, or its server changes.
+     */
     val pluginsChanged: kotlinx.coroutines.flow.Flow<List<Pair<String, String>>>
         get() = pluginRegistry.plugins
-            .map { list -> list.filter { it.isUsable }.map { it.id to it.record.version } }
+            .map { list -> list.filter { it.isUsable }.map { it.id to "${it.record.version}|${it.needsSetup}|${it.userHosts}" } }
             .distinctUntilChanged()
 
     /** UpdateWorker's plugin step: each plugin at most once per 24 h; see PluginInstaller.checkDueUpdates. */

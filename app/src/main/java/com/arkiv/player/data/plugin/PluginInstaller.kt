@@ -18,6 +18,8 @@ data class InstallPreview(
     val isUpdate: Boolean,
     /** Hosts not yet approved for this plugin (all of them on a first install). */
     val newHosts: List<String>,
+    /** Permissions not yet approved (all of them on a first install); each gets its own consent line. */
+    val newPermissions: List<String> = emptyList(),
 )
 
 sealed interface UpdateOutcome {
@@ -70,6 +72,8 @@ class PluginInstaller(
     private val fetcher: PluginFetcher,
     private val probe: suspend (script: String) -> Set<String>,
     private val clock: () -> Long = System::currentTimeMillis,
+    /** [PluginSettings.PERMISSIONS]; tests pass their own (SDK v1 has none, so nothing else can reach this). */
+    private val knownPermissions: Set<String> = PluginSettings.PERMISSIONS,
 ) {
     suspend fun preview(input: String): InstallPreview {
         val address = PluginAddress.parse(input)
@@ -99,6 +103,7 @@ class PluginInstaller(
         fun buildRecord(enabled: Boolean) = InstalledRecord(
             address = preview.address.canonical, version = m.version, sha256 = sha,
             hosts = m.hosts, installedAt = installedAt, enabled = enabled, lastUpdateCheckAt = installedAt,
+            permissions = m.permissions,
         )
         val staging = store.newStaging(m.id)
         try {
@@ -130,11 +135,13 @@ class PluginInstaller(
         val preview = try { previewFor(address) } catch (e: InstallException) { return fail(e.message.orEmpty()) }
         if (preview.manifest.id != id) return fail("El repositorio ahora publica otro plugin (${preview.manifest.id})")
         if (SemVer.compare(preview.manifest.version, current.record.version) <= 0) {
-            touch { it.copy(pendingVersion = null, pendingHosts = emptyList()) }
+            touch { it.copy(pendingVersion = null, pendingHosts = emptyList(), pendingPermissions = emptyList()) }
             return UpdateOutcome.UpToDate
         }
-        if (preview.newHosts.isNotEmpty()) {
-            touch { it.copy(pendingVersion = preview.manifest.version, pendingHosts = preview.newHosts) }
+        // More reach than the person approved -- a host or a permission -- waits for them. A new
+        // REQUIRED setting doesn't: the update applies and the plugin shows "Falta configurar".
+        if (preview.newHosts.isNotEmpty() || preview.newPermissions.isNotEmpty()) {
+            touch { it.copy(pendingVersion = preview.manifest.version, pendingHosts = preview.newHosts, pendingPermissions = preview.newPermissions) }
             return UpdateOutcome.NeedsApproval(preview)
         }
         return try {
@@ -160,7 +167,7 @@ class PluginInstaller(
             throw InstallException("No se pudo leer el plugin de GitHub: ${e.message}")
         }
         val json = bytes.toString(Charsets.UTF_8)
-        val manifest = when (val r = ManifestParser.parse(json)) {
+        val manifest = when (val r = ManifestParser.parse(json, knownPermissions)) {
             is ManifestResult.Valid -> r.manifest
             is ManifestResult.Invalid -> throw InstallException(r.message)
         }
@@ -169,7 +176,12 @@ class PluginInstaller(
             throw InstallException("Ya hay un plugin con ese id (${manifest.id}), instalado desde ${existing.record.address}")
         }
         val approved = existing?.record?.hosts.orEmpty().toSet()
-        return InstallPreview(address, manifest, json, existing != null, manifest.hosts.filterNot { it in approved })
+        val approvedPermissions = existing?.record?.permissions.orEmpty().toSet()
+        return InstallPreview(
+            address, manifest, json, existing != null,
+            newHosts = manifest.hosts.filterNot { it in approved },
+            newPermissions = manifest.permissions.filterNot { it in approvedPermissions },
+        )
     }
 
     companion object {

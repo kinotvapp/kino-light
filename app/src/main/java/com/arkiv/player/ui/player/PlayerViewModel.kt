@@ -63,11 +63,12 @@ data class PlayerData(
     /** Headers the stream needs on every request (plugins); Magis's travel inside the proxy URL. */
     val requestHeaders: Map<String, String> = emptyMap(),
     /**
-     * PLUGIN only: the hosts the person approved for that plugin, read from the installed record
-     * (never from what `resolve()` returned). The player gates every request of the stream —
-     * manifest, segments, keys, subtitles, redirect hops — to them; see `streamHttpFor`.
+     * PLUGIN only: the hosts the person approved for that plugin (installed record) plus the
+     * servers they typed in its settings — never what `resolve()` returned. The player gates every
+     * request of the stream — manifest, segments, keys, subtitles, redirect hops — to them; see
+     * `streamHttpFor`.
      */
-    val pluginHosts: List<String> = emptyList(),
+    val pluginHosts: com.arkiv.player.data.plugin.EffectiveHosts = com.arkiv.player.data.plugin.EffectiveHosts(emptyList()),
     /** Container MIME the source declared ("" = let ExoPlayer sniff). */
     val mime: String = "",
     /**
@@ -1152,7 +1153,8 @@ class PlayerViewModel internal constructor(
         }
         val name = access.name
         // Ready is the only access that gets past `blocked` above; its hosts are the approved ones.
-        val approvedHosts = (access as? com.arkiv.player.data.plugin.PluginAccess.Ready)?.hosts.orEmpty()
+        val approvedHosts = (access as? com.arkiv.player.data.plugin.PluginAccess.Ready)?.hosts
+            ?: com.arkiv.player.data.plugin.EffectiveHosts(emptyList())
         val ref = repo.magisRefForEpisode(episodeId)
         Log.w(PLAY, "loadPlugin() episodeId=$episodeId plugin=$pluginId ref=${ref?.take(16)}…")
         if (ref.isNullOrBlank()) { _error.value = "No se encontró la fuente de $name"; return }

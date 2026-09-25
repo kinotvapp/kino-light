@@ -99,6 +99,41 @@ class PluginCookiesTest {
         assertEquals(0, j.size())
     }
 
+    /**
+     * Two real [PluginCookies] on the SAME file, as AppGraph.openPluginRuntime produces when a new
+     * runtime replaces one whose close is deferred behind an in-flight call (`PluginRuntime.close`
+     * KDoc): the old jar's `saveIfChanged` can still fire after the new one is already live. Once
+     * AppGraph calls `stopWriting()` on the superseded jar, its late write must not land over the
+     * new jar's -- but, unlike `retire`, the FILE stays: a plain reopen must not lose the session.
+     */
+    @Test fun `stopWriting keeps an old jar's late write from clobbering a newer jar's file, but leaves it in place`() {
+        val old = jar()
+        set(old, "https://example.com/", "sid=old")
+        old.saveIfChanged()
+        assertTrue(file().exists())
+
+        // A fresh runtime opens: a NEW PluginCookies on the same file (AppGraph.openPluginRuntime),
+        // loading the session the old jar already persisted.
+        val fresh = jar()
+        assertEquals("old", fresh.get("https://example.com/".toHttpUrl(), "sid"))
+        // AppGraph stops the superseded jar -- not retires it, the session itself hasn't changed.
+        old.stopWriting()
+
+        // The fresh jar does its own work (e.g. a login response) and persists it.
+        set(fresh, "https://example.com/", "sid=new")
+        fresh.saveIfChanged()
+
+        // The OLD jar's in-flight call -- started before it was superseded -- finally lands its own,
+        // now-stale write. It must not resurrect "old" over what the fresh jar already wrote.
+        set(old, "https://example.com/", "sid=stale")
+        old.saveIfChanged()
+
+        // The file still holds the live jar's state; a plain reopen still finds a session (the file
+        // was never deleted -- this isn't a settings-change forget).
+        assertTrue(file().exists())
+        assertEquals("new", jar().get("https://example.com/".toHttpUrl(), "sid"))
+    }
+
     @Test fun `a corrupt or oversized file is ignored`() {
         file().writeText("not json")
         assertEquals(0, jar().size())

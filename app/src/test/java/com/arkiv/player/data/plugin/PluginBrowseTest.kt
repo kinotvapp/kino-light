@@ -15,11 +15,12 @@ import org.junit.Test
 
 /** SDK v1 on the content-source side: pages, cursors, browse, typed errors, typed servers. */
 class PluginBrowseTest {
-    private fun plugin(caps: Set<String> = setOf("search", "browse", "episodes", "resolve")) =
+    private fun plugin(caps: Set<String> = setOf("search", "browse", "episodes", "resolve"), userHosts: List<UserHost> = emptyList()) =
         InstalledPlugin(
             PluginManifest("demo", "Demo", "1.0.0", 1, "plugin.js", "", "", "", listOf("example.com"), caps, null, null),
             InstalledRecord("o/r", "1.0.0", "x", listOf("example.com"), 0L),
             null,
+            userHosts = userHosts,
         )
 
     private class Caller(val answer: (String, String) -> String) : PluginCaller {
@@ -30,8 +31,7 @@ class PluginBrowseTest {
         }
     }
 
-    private fun source(caller: PluginCaller, p: InstalledPlugin = plugin(), hosts: EffectiveHosts = EffectiveHosts(p.record.hosts)) =
-        PluginContentSource(p, caller, hosts, log = {})
+    private fun source(caller: PluginCaller, p: InstalledPlugin = plugin()) = PluginContentSource(p, caller, p.hosts, log = {})
     private val item = """{"id":"m1","ref":"R1","title":"Uno","kind":"movie"}"""
 
     @Test fun `search sends the SDK v1 query and passes the page cursor on SourceDone`() = runTest {
@@ -97,9 +97,9 @@ class PluginBrowseTest {
     }
 
     @Test fun `a stream on the typed server resolves, and its expiry travels`() = runTest {
-        val lan = EffectiveHosts(listOf("example.com"), listOf(UserHost("http", "10.0.2.2", 8096)))
+        val lan = plugin(userHosts = listOf(UserHost("http", "10.0.2.2", 8096)))
         val caller = Caller { _, _ -> """{"url":"http://10.0.2.2:8096/v.mp4","expiresInSeconds":600}""" }
-        val play = source(caller, hosts = lan).resolve(PluginRef("demo", "m1", PluginRef.MOVIE, "R1").encode())
+        val play = source(caller, lan).resolve(PluginRef("demo", "m1", PluginRef.MOVIE, "R1").encode())
         assertEquals("http://10.0.2.2:8096/v.mp4", play.url)
         assertEquals(600, play.expiresInSeconds)
         assertThrows(GatewayException::class.java) {

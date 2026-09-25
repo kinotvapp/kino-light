@@ -5,16 +5,33 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.io.File
 
-enum class PluginStatus { ACTIVE, DISABLED, UNRESPONSIVE, UPDATE_PENDING, DAMAGED }
+enum class PluginStatus { ACTIVE, DISABLED, UNRESPONSIVE, UPDATE_PENDING, DAMAGED, NEEDS_SETUP }
 
-data class InstalledPlugin(val manifest: PluginManifest, val record: InstalledRecord, val iconFile: File?) {
+/**
+ * [userHosts] and [missingSettings] come from the plugin's `config.json` (never the Keystore), read
+ * when the registry reloads: every screen and call reads them from here, with no IO of its own.
+ */
+data class InstalledPlugin(
+    val manifest: PluginManifest,
+    val record: InstalledRecord,
+    val iconFile: File?,
+    val userHosts: List<UserHost> = emptyList(),
+    val missingSettings: List<String> = emptyList(),
+) {
     val id: String get() = manifest.id
+
+    /** What this plugin may reach right now: approved hosts plus the servers typed in its settings. */
+    val hosts: EffectiveHosts get() = EffectiveHosts(record.hosts, userHosts)
+
+    /** A required setting has no value: its calls fail with `auth_required` without running. */
+    val needsSetup: Boolean get() = missingSettings.isNotEmpty()
 
     val status: PluginStatus
         get() = when {
             record.damaged -> PluginStatus.DAMAGED
             record.unresponsive -> PluginStatus.UNRESPONSIVE
             !record.enabled -> PluginStatus.DISABLED
+            needsSetup -> PluginStatus.NEEDS_SETUP
             record.pendingVersion != null -> PluginStatus.UPDATE_PENDING
             else -> PluginStatus.ACTIVE
         }
@@ -26,8 +43,8 @@ data class InstalledPlugin(val manifest: PluginManifest, val record: InstalledRe
 /** Whether a saved plugin title can play now, and the plugin's name for the message if not. */
 sealed interface PluginAccess {
     val name: String
-    /** [hosts] are the ones the person APPROVED (the installed record): the player gates the stream to them. */
-    data class Ready(override val name: String, val hosts: List<String> = emptyList()) : PluginAccess
+    /** [hosts]: the ones the person APPROVED plus the servers they typed; the player gates the stream to them. */
+    data class Ready(override val name: String, val hosts: EffectiveHosts = EffectiveHosts(emptyList())) : PluginAccess
     data class Disabled(override val name: String) : PluginAccess
     data class Uninstalled(override val name: String) : PluginAccess
     data class Damaged(override val name: String) : PluginAccess
@@ -50,13 +67,23 @@ interface PluginPlayback {
  * The installed plugins as a [StateFlow], rebuilt from disk on every change: search, Home and
  * Settings all react to it without a restart.
  */
-class PluginRegistry(private val store: PluginStore) : PluginPlayback {
+/** What a plugin's `config.json` says about it: its typed servers and the required settings still empty. */
+data class PluginSetupState(val userHosts: List<UserHost> = emptyList(), val missing: List<String> = emptyList())
+
+class PluginRegistry(
+    private val store: PluginStore,
+    /** Reads `config.json` only (a small file, like `installed.json`): never the Keystore. */
+    private val setup: (StoredPlugin) -> PluginSetupState = { PluginSetupState() },
+) : PluginPlayback {
     private val _plugins = MutableStateFlow<List<InstalledPlugin>>(emptyList())
     val plugins: StateFlow<List<InstalledPlugin>> = _plugins.asStateFlow()
 
     @Synchronized fun reload() {
         _plugins.value = store.list()
-            .map { InstalledPlugin(it.manifest, it.record, it.iconFile) }
+            .map { stored ->
+                val state = runCatching { setup(stored) }.getOrDefault(PluginSetupState())
+                InstalledPlugin(stored.manifest, stored.record, stored.iconFile, state.userHosts, state.missing)
+            }
             .sortedBy { it.manifest.name.lowercase() }
     }
 
@@ -83,7 +110,7 @@ class PluginRegistry(private val store: PluginStore) : PluginPlayback {
             p == null -> PluginAccess.Uninstalled(pluginId?.let(store::removedName) ?: pluginId ?: "desconocido")
             p.record.damaged -> PluginAccess.Damaged(p.manifest.name)
             !p.isUsable -> PluginAccess.Disabled(p.manifest.name)
-            else -> PluginAccess.Ready(p.manifest.name, p.record.hosts)
+            else -> PluginAccess.Ready(p.manifest.name, p.hosts)
         }
     }
 

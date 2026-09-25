@@ -20,6 +20,11 @@ import java.io.File
  * after each request that changed it — always on the caller's thread, which is `PluginHttp`'s IO
  * thread, never Main. Cleared by [clear] (`kino.cookies.clear()`), by any settings change and by
  * uninstall (both delete the file with the rest of the plugin's data).
+ *
+ * AppGraph creates a fresh instance on every runtime open, always over the SAME [file] for a given
+ * plugin: whichever instance it replaces is stopped from writing ([stopWriting]), so a write that
+ * was still in flight on the superseded one can't land on top of the new one's — see [stopWriting]
+ * and [retire] for the two ways an instance stops.
  */
 class PluginCookies(
     private val file: File,
@@ -64,6 +69,18 @@ class PluginCookies(
      */
     @Synchronized fun retire() {
         clear()
+        retired = true
+    }
+
+    /**
+     * Stops this jar from ever writing to [file] again, WITHOUT clearing it: for a jar that's been
+     * superseded by a fresh one on the SAME file (an idle reopen, or a runtime whose close is
+     * deferred behind an in-flight call it lost the race to finish first — see `PluginRuntime.close`)
+     * but whose session hasn't actually changed. Unlike [retire], the file is left alone: the new
+     * jar may still be reading (or have already written) the very state this one would otherwise
+     * overwrite with a stale snapshot once its lingering write finally lands.
+     */
+    @Synchronized fun stopWriting() {
         retired = true
     }
 

@@ -21,6 +21,10 @@ data class InstalledRecord(
     val lastUpdateCheckAt: Long = 0L,
     val pendingVersion: String? = null,
     val pendingHosts: List<String> = emptyList(),
+    /** The permissions the person APPROVED (from the closed list in contract.json; none exist in SDK v1). */
+    val permissions: List<String> = emptyList(),
+    /** Permissions a pending update adds, shown on its consent sheet. */
+    val pendingPermissions: List<String> = emptyList(),
 ) {
     fun toJson(): String = JSONObject()
         .put("address", address).put("version", version).put("sha256", sha256)
@@ -29,6 +33,8 @@ data class InstalledRecord(
         .put("lastUpdateCheckAt", lastUpdateCheckAt)
         .put("pendingVersion", pendingVersion ?: JSONObject.NULL)
         .put("pendingHosts", JSONArray(pendingHosts))
+        .put("permissions", JSONArray(permissions))
+        .put("pendingPermissions", JSONArray(pendingPermissions))
         .toString()
 
     companion object {
@@ -43,6 +49,8 @@ data class InstalledRecord(
                 lastUpdateCheckAt = o.optLong("lastUpdateCheckAt"),
                 pendingVersion = if (o.isNull("pendingVersion")) null else o.optString("pendingVersion").ifEmpty { null },
                 pendingHosts = list("pendingHosts"),
+                permissions = list("permissions"),
+                pendingPermissions = list("pendingPermissions"),
             )
         }.getOrNull()
     }

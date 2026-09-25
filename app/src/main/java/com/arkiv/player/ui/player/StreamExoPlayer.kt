@@ -511,12 +511,12 @@ internal fun TextureView.fitAspect(videoAspect: Float, zoom: Float) {
 internal sealed interface StreamHttp {
     data object Default : StreamHttp
 
-    /** [hosts]: the ones the person approved, from the installed record — never plugin output. */
-    data class PluginGated(val hosts: List<String>) : StreamHttp
+    /** [hosts]: the ones the person approved or typed (installed record + settings) — never plugin output. */
+    data class PluginGated(val hosts: com.arkiv.player.data.plugin.EffectiveHosts) : StreamHttp
 }
 
 /** Only a PLUGIN stream is gated; an empty host list is still gated (it reaches nothing). */
-internal fun streamHttpFor(kind: SourceKind, pluginHosts: List<String>): StreamHttp =
+internal fun streamHttpFor(kind: SourceKind, pluginHosts: com.arkiv.player.data.plugin.EffectiveHosts): StreamHttp =
     if (kind == SourceKind.PLUGIN) StreamHttp.PluginGated(pluginHosts) else StreamHttp.Default
 
 /**

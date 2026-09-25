@@ -29,6 +29,9 @@ class PluginAdminTest {
     private lateinit var registry: PluginRegistry
     private lateinit var pool: PluginRuntimePool
     private lateinit var admin: DefaultPluginAdmin
+    private val secrets = mutableMapOf<String, String>()
+    private val forgotten = mutableListOf<String>()
+    private lateinit var config: PluginConfigStore
 
     private inner class FakeRuntime : ScriptRuntime {
         override val exports = setOf("search", "resolve")
@@ -42,17 +45,26 @@ class PluginAdminTest {
 
     @Before fun setUp() {
         store = PluginStore(File(tmp.root, "plugins"), File(tmp.root, "plugin-data"))
-        registry = PluginRegistry(store)
+        config = PluginConfigStore({ store.dataDir(it) }, object : SecretStore {
+            override fun get(key: String) = secrets[key]
+            override fun put(key: String, value: String) { secrets[key] = value }
+            override fun remove(key: String) { secrets.remove(key) }
+        })
+        registry = PluginRegistry(store) { p -> config.setupState(p.manifest.id, p.manifest.settings) }
         pool = PluginRuntimePool(open = { FakeRuntime() }, onUnresponsive = {}, scope = CoroutineScope(Dispatchers.Unconfined))
         val installer = PluginInstaller(store, fetcher, probe = { setOf("search", "resolve") }, clock = { 1_000L })
-        admin = DefaultPluginAdmin(registry, installer, pool)
+        admin = DefaultPluginAdmin(registry, installer, pool, config, forgetSession = { forgotten += it }, io = Dispatchers.Unconfined)
     }
 
-    private fun publish(version: String) {
+    private val passwordSetting = JSONArray("""[{"key":"password","label":"Contraseña","type":"password","required":true}]""")
+
+    private fun publish(version: String, settings: JSONArray? = null) {
         files[base + "kino-plugin.json"] = JSONObject()
             .put("id", "demo").put("name", "Demo").put("version", version).put("apiVersion", 1)
             .put("entry", "plugin.js").put("hosts", JSONArray(listOf("example.com")))
-            .put("capabilities", JSONArray(listOf("search", "resolve"))).toString().toByteArray()
+            .put("capabilities", JSONArray(listOf("search", "resolve")))
+            .apply { settings?.let { put("settings", it) } }
+            .toString().toByteArray()
         files[base + "plugin.js"] = "export async function search(){}\nexport async function resolve(){}".toByteArray()
     }
 
@@ -81,5 +93,34 @@ class PluginAdminTest {
         installAndOpen("1.0.0")
         admin.uninstall("demo")
         assertEquals(listOf("gone"), registryAtClose)
+    }
+
+    @Test fun `saving settings closes the runtime, forgets the session and clears Falta configurar`() = runBlocking {
+        publish("1.0.0", passwordSetting)
+        admin.install(admin.preview("o/r"))
+        assertEquals(true, registry.find("demo")!!.needsSetup)
+        assertEquals(null, admin.saveSettings("demo", mapOf("password" to "s3cr3t")))
+        assertEquals(false, registry.find("demo")!!.needsSetup)
+        assertEquals(listOf("demo"), forgotten)
+        assertEquals("s3cr3t", secrets["plugin.demo.password"])
+        assertEquals(mapOf<String, Any>("password" to "s3cr3t"), admin.settingsOf("demo")!!.values)
+    }
+
+    @Test fun `a refused save changes nothing`() = runBlocking {
+        publish("1.0.0", passwordSetting)
+        admin.install(admin.preview("o/r"))
+        pool.call("demo", "search", "{}", 1_000)
+        registryAtClose.clear()
+        assertEquals("Completa \"Contraseña\"", admin.saveSettings("demo", mapOf("password" to "")))
+        assertEquals(emptyList<String>(), forgotten)
+        assertEquals(emptyList<String>(), registryAtClose)
+    }
+
+    @Test fun `uninstall forgets the plugin's passwords`() = runBlocking {
+        publish("1.0.0", passwordSetting)
+        admin.install(admin.preview("o/r"))
+        admin.saveSettings("demo", mapOf("password" to "s3cr3t"))
+        admin.uninstall("demo")
+        assertEquals(emptyMap<String, String>(), secrets)
     }
 }
