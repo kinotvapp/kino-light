@@ -61,5 +61,20 @@ class PluginContractParityTest {
         }
     }
 
+    @Test fun `runtime, storage, sleep and errors`() {
+        val r = obj("runtime")
+        val env = PluginEnv(appVersion = "x")
+        assertEquals(env.memoryLimitBytes, r.getLong("memoryBytes"))
+        assertEquals(env.maxStackBytes, r.getLong("stackBytes"))
+        assertEquals(PluginRuntime.MAX_LOG_CHARS, r.getInt("maxLogChars"))
+        assertEquals(PluginRuntime.MAX_ERROR_CHARS, r.getInt("maxErrorChars"))
+        assertEquals(PluginRuntimePool.DEFAULT_IDLE_MS, r.getLong("idleCloseMs"))
+        assertEquals(PluginRuntimePool.DEFAULT_MAX_TIMEOUTS, r.getInt("timeoutsBeforeUnresponsive"))
+        assertEquals(PluginStorage.MAX_BYTES, obj("storage").getInt("maxTotalBytes"))
+        assertEquals(PluginRuntime.MAX_SLEEP_MS, obj("sleep").getInt("maxMs"))
+        assertEquals(PluginErrors.CODES, obj("errors").strings("codes"))
+        assertEquals(PluginErrors.MAX_MESSAGE_CHARS, obj("errors").getInt("maxMessageChars"))
+    }
+
     // Each later task adds the contract section it enforces above this line.
 }

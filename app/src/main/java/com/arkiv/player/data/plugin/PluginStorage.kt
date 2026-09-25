@@ -3,8 +3,8 @@ package com.arkiv.player.data.plugin
 import org.json.JSONObject
 import java.io.File
 
-/** `kino.storage`: strings per plugin, ≤ 64 KB in total, persisted as one JSON file (tmp + rename). */
-class PluginStorage(private val file: File, private val maxBytes: Int = 64 * 1024) {
+/** `kino.storage`: strings per plugin, ≤ 256 KB in total, persisted as one JSON file (tmp + rename). */
+class PluginStorage(private val file: File, private val maxBytes: Int = MAX_BYTES) {
     private val values: MutableMap<String, String> by lazy { load() }
 
     @Synchronized fun get(key: String): String? = values[key]
@@ -19,6 +19,9 @@ class PluginStorage(private val file: File, private val maxBytes: Int = 64 * 102
         values[key] = value
     }
 
+    /** Every key, in insertion order. */
+    @Synchronized fun keys(): List<String> = values.keys.toList()
+
     @Synchronized fun remove(key: String) {
         if (values.remove(key) != null) write(encode(values))
     }
@@ -32,7 +35,8 @@ class PluginStorage(private val file: File, private val maxBytes: Int = 64 * 102
 
     private fun write(json: String) = writeFileAtomically(file, json.toByteArray(Charsets.UTF_8))
 
-    private companion object {
-        const val FULL = "almacenamiento del plugin lleno (64 KB)"
+    companion object {
+        const val MAX_BYTES = 256 * 1024
+        private const val FULL = "almacenamiento del plugin lleno (256 KB)"
     }
 }

@@ -21,14 +21,25 @@ import org.json.JSONObject
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
-/** What a plugin can reach: everything else (files, settings, other plugins, app clients) is absent. */
+/**
+ * What a plugin can reach: everything else (files, other plugins, app clients) is absent. Every
+ * string arrives already capped by the prelude. The members with a body are SDK v1 additions whose
+ * default is "nothing configured / nothing stored": test hosts and the install probe keep them.
+ */
 interface PluginHost {
+    /** `kino.fetch`: the request as the prelude built it; answers the response JSON or `{"error":{code,message}}`. */
     suspend fun fetch(requestJson: String): String
     fun select(html: String, css: String): String
     fun storageGet(key: String): String?
     fun storageSet(key: String, value: String)
     fun storageRemove(key: String)
+    /** `kino.storage.keys()` as a JSON array. */
+    fun storageKeys(): String = "[]"
     fun log(level: String, message: String)
+    /** `kino.config`: every setting's value (defaults applied) as one JSON object; read once per runtime. */
+    fun config(): String = "{}"
+    /** `kino.sleep`: [ms] already checked to be 0..5000 by the prelude. */
+    suspend fun sleep(ms: Long) = kotlinx.coroutines.delay(ms)
 }
 
 data class PluginEnv(
@@ -46,7 +57,14 @@ class PluginTimeoutException(function: String, ms: Long) :
     /** The limit that was exceeded, rounded up to whole seconds: what the person is told. */
     val seconds: Long = (ms + 999) / 1000
 }
-class PluginScriptException(message: String, cause: Throwable? = null) : PluginException(message, cause)
+open class PluginScriptException(message: String, cause: Throwable? = null) : PluginException(message, cause)
+
+/**
+ * A typed error: the plugin threw `kino.error(code, message)` (or a `kino.fetch`/`kino.crypto`
+ * failure carrying its code went uncaught). [code] is `[a-z_]{1,32}`; [message] is the plugin's
+ * detail, at most 200 characters. The app words what the person sees ([PluginErrors]).
+ */
+class PluginErrorException(val code: String, message: String) : PluginScriptException(message)
 class PluginDamagedException : PluginException("Archivos dañados, reinstálalo")
 
 /** What `PluginRuntimePool` needs from a runtime; lets the pool be tested without QuickJS. */
@@ -89,7 +107,7 @@ class PluginRuntime private constructor(
         val job = synchronized(lock) {
             if (isDiscarded) throw PluginScriptException("El plugin se reinició, vuelve a intentar")
             val code = "await __kinoCall(${JSONObject.quote(function)}, ${JSONObject.quote(argJson)})"
-            scope.async { js.evaluate<String>(code) }.also { inFlight = it }
+            scope.async { guarded { js.evaluate<String>(code) } }.also { inFlight = it }
         }
         try {
             val result = withTimeout(timeoutMs) { job.await() }
@@ -109,19 +127,33 @@ class PluginRuntime private constructor(
             // (still active) actually completes, so nothing here is torn down mid-evaluation.
             if (job.isActive) close()
             throw e
-        } catch (e: QuickJsException) {
+        } catch (failure: EngineFailure) {
+            val e = failure.error
             // Out of memory (and similar engine-level failures) can leave the runtime unusable:
             // measured, the next evaluate threw "Result promise not found". Probe it; if it's
             // broken, discard it so the pool opens a fresh one.
             if (!isHealthy()) close()
-            throw PluginScriptException(errorText(e.message, "Error del plugin"), boundedCause(e))
-        } catch (e: Exception) {
-            // A Kotlin exception from a binding (e.g. HostNotAllowedException) that JS didn't catch.
+            if (e is QuickJsException) {
+                PluginErrors.fromEngineMessage(e.message)?.let { throw it }
+                throw PluginScriptException(errorText(e.message, "Error del plugin"), boundedCause(e))
+            }
+            // A Kotlin exception from a binding that JS didn't catch, or whatever Throwable
+            // quickjs-kt built from a plugin error's `name` (see EngineFailure).
             throw PluginScriptException(errorText(e.message, e.javaClass.simpleName), boundedCause(e))
         } finally {
             synchronized(lock) { if (inFlight === job && job.isCompleted) inFlight = null }
         }
     }
+
+    /**
+     * Whatever `evaluate` threw, carried as a plain Exception. quickjs-kt turns an uncaught JS
+     * error into a Java one by calling JNI `FindClass` with the error's `name` and, when that names
+     * a real class with a `(String)` constructor, instantiating it: a plugin whose error is named
+     * `java.lang.OutOfMemoryError` or `java.util.concurrent.CancellationException` made `evaluate`
+     * throw exactly that (measured on the JVM) — an Error nothing catches, or a fake cancellation.
+     * Wrapped here, inside the runtime's own job, it can only ever surface as a script failure.
+     */
+    private class EngineFailure(val error: Throwable) : Exception(null, null, false, false)
 
     private suspend fun isHealthy(): Boolean =
         runCatching { withTimeout(1_000) { scope.async { js.evaluate<Long>("1") }.await() } == 1L }.getOrDefault(false)
@@ -188,8 +220,8 @@ class PluginRuntime private constructor(
         /** The longest CSS selector `kino.html.select` accepts. */
         const val MAX_SELECTOR_CHARS = 10_000
 
-        /** `kino.storage` holds 64 KB in total, so a key plus value longer than this can never fit. */
-        private const val STORAGE_CHARS = 64 * 1024
+        /** `kino.sleep(ms)`: 0..this per call. */
+        const val MAX_SLEEP_MS = 5_000
 
         /**
          * Loads [script] as an ES module. Fails with [PluginScriptException] on a syntax error or a
@@ -222,7 +254,9 @@ class PluginRuntime private constructor(
                     PluginRuntime(executor, dispatcher, js, names.split(',').filter { it.isNotEmpty() }.toSet())
                 } catch (e: Throwable) {
                     runCatching { js.close() }
-                    throw e
+                    // Also covers a module that throws, at top level, an error named after a Java
+                    // class (see EngineFailure): it must fail the load, not the app.
+                    throw EngineFailure(e)
                 }
             }
             return try {
@@ -240,13 +274,22 @@ class PluginRuntime private constructor(
             } catch (e: CancellationException) {
                 executor.shutdown()
                 throw e
-            } catch (e: QuickJsException) {
+            } catch (failure: EngineFailure) {
                 executor.shutdown()
-                throw PluginScriptException(errorText(e.message, "El plugin no carga"), boundedCause(e))
+                val e = failure.error
+                if (e is QuickJsException) throw PluginScriptException(errorText(e.message, "El plugin no carga"), boundedCause(e))
+                throw PluginScriptException(errorText(e.message, e.javaClass.simpleName), boundedCause(e))
             } catch (e: Exception) {
                 executor.shutdown()
                 throw PluginScriptException(errorText(e.message, e.javaClass.simpleName), boundedCause(e))
             }
+        }
+
+        /** Runs [block] (an `evaluate`) so that nothing it throws escapes as anything but [EngineFailure]. */
+        private inline fun <T> guarded(block: () -> T): T = try {
+            block()
+        } catch (t: Throwable) {
+            throw EngineFailure(t)
         }
 
         private fun bind(js: QuickJs, host: PluginHost) {
@@ -256,7 +299,10 @@ class PluginRuntime private constructor(
                 function("storageGet") { args -> host.storageGet(args[0] as String) }
                 function("storageSet") { args -> host.storageSet(args[0] as String, args[1] as String) }
                 function("storageRemove") { args -> host.storageRemove(args[0] as String) }
+                function("storageKeys") { _ -> host.storageKeys() }
                 function("log") { args -> host.log(args[0] as String, args[1] as String) }
+                function("config") { _ -> host.config() }
+                asyncFunction("sleep") { args -> host.sleep((args[0] as Number).toLong()); null }
             }
         }
 
@@ -277,11 +323,13 @@ class PluginRuntime private constructor(
             .put("maxFunctionNameChars", MAX_FUNCTION_NAME_CHARS)
             .put("maxLogChars", MAX_LOG_CHARS)
             .put("maxErrorChars", MAX_ERROR_CHARS)
+            .put("maxErrorMessageChars", PluginErrors.MAX_MESSAGE_CHARS)
             .put("maxResultChars", MAX_RESULT_CHARS)
             .put("maxRequestChars", MAX_REQUEST_CHARS)
             .put("maxSelectorChars", MAX_SELECTOR_CHARS)
             .put("maxHtmlChars", PluginHtml.MAX_HTML_CHARS)
-            .put("storageMaxBytes", STORAGE_CHARS)
+            .put("storageMaxBytes", PluginStorage.MAX_BYTES)
+            .put("sleepMaxMs", MAX_SLEEP_MS)
             .put("thrownFallback", THROWN_FALLBACK)
             .put("resultTooBig", RESULT_TOO_BIG)
             .toString()

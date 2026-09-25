@@ -235,10 +235,10 @@ class PluginRuntimeTest {
     @Test fun `an oversized storage value is refused in JS and never reaches the host`() = runBlocking {
         val host = FakeHost()
         val rt = open(
-            "export async function home() { try { kino.storage.set('k', 'x'.repeat(70000)) } catch (e) { return [e.message] } return ['stored'] }",
+            "export async function home() { try { kino.storage.set('k', 'x'.repeat(270000)) } catch (e) { return [e.message] } return ['stored'] }",
             host,
         )
-        assertEquals("[\"almacenamiento del plugin lleno (64 KB)\"]", rt.call("home", "null", 5_000))
+        assertEquals("[\"almacenamiento del plugin lleno (256 KB)\"]", rt.call("home", "null", 5_000))
         assertEquals(emptyMap<String, String>(), host.storage)
     }
 

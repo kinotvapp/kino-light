@@ -33,8 +33,8 @@ class PluginRuntimePool(
     private val onUnresponsive: (pluginId: String) -> Unit,
     private val scope: CoroutineScope,
     private val beforeCall: (pluginId: String) -> Unit = {},
-    private val idleMs: Long = 5 * 60_000L,
-    private val maxConsecutiveTimeouts: Int = 3,
+    private val idleMs: Long = DEFAULT_IDLE_MS,
+    private val maxConsecutiveTimeouts: Int = DEFAULT_MAX_TIMEOUTS,
     /** Leaves an on-disk trace around each call so a plugin that kills the app gets switched off. */
     private val sentinel: PluginCrashSentinel? = null,
     /** Where the sentinel's small file writes run. */
@@ -126,4 +126,9 @@ class PluginRuntimePool(
     }
 
     fun closeAll() = slots.keys.toList().forEach(::close)
+
+    companion object {
+        const val DEFAULT_IDLE_MS = 5 * 60_000L
+        const val DEFAULT_MAX_TIMEOUTS = 3
+    }
 }

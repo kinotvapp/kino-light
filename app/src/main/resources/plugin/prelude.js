@@ -17,10 +17,13 @@
   Object.freeze(native);
   const S = String, E = Error, TE = TypeError, stringify = JSON.stringify, parse = JSON.parse;
   const slice = Function.prototype.call.bind(String.prototype.slice);
-  const define = Object.defineProperty, freeze = Object.freeze;
+  const charCodeAt = Function.prototype.call.bind(String.prototype.charCodeAt);
+  const define = Object.defineProperty, freeze = Object.freeze, keysOf = Object.keys;
   const defineAll = Object.defineProperties, reflectDefine = Reflect.defineProperty;
   const ownKeys = Reflect.ownKeys, apply = Reflect.apply, ownDescriptor = Object.getOwnPropertyDescriptor;
+  const isInteger = Number.isInteger;
   const OP = Object.prototype, defineGetter = OP.__defineGetter__, defineSetter = OP.__defineSetter__;
+  const hasOwn = Function.prototype.call.bind(OP.hasOwnProperty);
 
   // A function's `name` is read by quickjs-kt's native code when an error is built or a rejection
   // is tracked in that function's frame; at ~20 MB the native side fails an allocation and
@@ -81,6 +84,30 @@
   const line = (args) => { let out = ''; for (let i = 0; i < args.length && out.length <= L.maxLogChars; i++) out += (i ? ' ' : '') + str(args[i]); return cut(out, L.maxLogChars); };
   const log = (level, args) => n.log(level, line(args));
 
+  // Typed errors. The name carries the code -- "KinoError_auth_required" -- because a throw
+  // before an async function's first await never reaches __kinoCall (quickjs-kt alpha13 aborts the
+  // whole evaluate with it): Kotlin then reads the code from the engine's "<name>: <message>" text.
+  // Both parts are short by construction (validated code, message cut to L.maxErrorMessageChars),
+  // so native code never formats a plugin-sized name; and the name is a valid JNI class name that
+  // names no class, because quickjs-kt hands it to FindClass (a '[' aborted a debug build). See
+  // PluginErrors.
+  // [a-z_]{1,32}, checked without RegExp: RegExp.prototype.test looks up `exec` at call time, and
+  // a plugin that replaced it could pass a 30 MB "code" into an error name.
+  const isCode = (c) => {
+    if (typeof c !== 'string' || c.length < 1 || c.length > 32) return false;
+    for (let i = 0; i < c.length; i++) { const x = charCodeAt(c, i); if (!((x >= 97 && x <= 122) || x === 95)) return false; }
+    return true;
+  };
+  const codedError = (code, message) => {
+    const c = isCode(code) ? code : 'unknown';
+    let m;
+    try { m = message === undefined || message === null ? '' : toStr(message); } catch (e) { m = ''; }
+    const err = new E(cut(m, L.maxErrorMessageChars));
+    define(err, 'name', { value: 'KinoError_' + c, writable: false, configurable: false, enumerable: false });
+    define(err, 'code', { value: c, writable: false, configurable: false, enumerable: true });
+    return err;
+  };
+
   // --- kino.fetch ---
   const fetch = async function fetch(url, opts) {
     const o = opts || {};
@@ -99,15 +126,30 @@
              text: () => r.body, json: () => parse(r.body) };
   };
 
+  // --- kino.sleep ---
+  const sleep = async function sleep(ms) {
+    await null; // see kino.fetch: checks go after the first await
+    if (!isInteger(ms) || ms < 0 || ms > L.sleepMaxMs) throw codedError('invalid_request', 'kino.sleep acepta de 0 a ' + L.sleepMaxMs + ' ms');
+    await n.sleep(ms);
+  };
+
   // --- kino.storage ---
   const storage = freeze({
-    get: freeze((k) => { const key = toStr(k); if (key.length > L.storageMaxBytes) return null; const v = n.storageGet(key); return v == null ? null : v; }),
-    set: freeze((k, v) => {
+    get: freeze(function get(k) { const key = toStr(k); if (key.length > L.storageMaxBytes) return null; const v = n.storageGet(key); return v == null ? null : v; }),
+    set: freeze(function set(k, v) {
       const key = toStr(k), value = toStr(v);
-      if (key.length + value.length > L.storageMaxBytes) throw new E('almacenamiento del plugin lleno (64 KB)');
+      if (key.length + value.length > L.storageMaxBytes) throw new E('almacenamiento del plugin lleno (256 KB)');
       n.storageSet(key, value);
     }),
-    remove: freeze((k) => { const key = toStr(k); if (key.length <= L.storageMaxBytes) n.storageRemove(key); }),
+    remove: freeze(function remove(k) { const key = toStr(k); if (key.length <= L.storageMaxBytes) n.storageRemove(key); }),
+    keys: freeze(function keys() { return parse(n.storageKeys()); }),
+  });
+
+  // --- kino.config: read once, read-only. Values are bounded by the manifest's settings schema. ---
+  const configValues = freeze(parse(n.config()));
+  const config = freeze({
+    get: freeze(function get(key) { const k = toStr(key); return hasOwn(configValues, k) ? configValues[k] : undefined; }),
+    all: freeze(function all() { const out = {}; for (const k of keysOf(configValues)) out[k] = configValues[k]; return out; }),
   });
 
   const kino = {
@@ -123,6 +165,9 @@
       }),
     }),
     storage,
+    config,
+    sleep: freeze(sleep),
+    error: freeze(function error(code, message) { return codedError(code, message); }),
     log: freeze((...a) => log('info', a)),
   };
   globalThis.kino = freeze(kino);
@@ -141,9 +186,9 @@
   // "<name>: <message>" and would otherwise read a plugin-controlled Error.prototype.name (30 MB,
   // measured). The prototype itself is left alone so `this.name = 'MyErr'` in a plugin's Error
   // subclass keeps working.
-  const kinoError = (message) => {
+  const kinoError = (message, code) => {
     const err = new E(message);
-    define(err, 'name', { value: 'Error', writable: false, configurable: false, enumerable: false });
+    define(err, 'name', { value: code ? 'KinoError_' + code : 'Error', writable: false, configurable: false, enumerable: false });
     return err;
   };
   const errorText = (e) => {
@@ -161,6 +206,16 @@
       return L.thrownFallback;
     }
   };
+  // The code of a typed error, read without running plugin code (own data property only).
+  const errorCode = (e) => {
+    try {
+      if (e === null || typeof e !== 'object') return null;
+      const d = ownDescriptor(e, 'code');
+      return d && isCode(d.value) ? d.value : null;
+    } catch (_) {
+      return null;
+    }
+  };
   // Frozen too: its `name` is read natively when the rethrow below builds an error in its frame
   // (a plugin renamed it to 20 MB and crashed the process, measured).
   define(globalThis, '__kinoCall', {
@@ -171,10 +226,13 @@
         if (typeof fn !== 'function') throw new E('el plugin no exporta ' + name);
         out = stringify(await fn(parse(argJson)));
       } catch (e) {
-        throw kinoError(errorText(e));
+        const text = errorText(e);
+        // A thrown value with no message leaves nothing to go on: log at least its type.
+        if (text === L.thrownFallback) log('warn', ['a call failed with a value that has no message, of type', typeof e]);
+        throw kinoError(text, errorCode(e));
       }
       if (typeof out !== 'string') return 'null';
-      if (out.length > L.maxResultChars) throw kinoError(L.resultTooBig);
+      if (out.length > L.maxResultChars) throw kinoError(L.resultTooBig, null);
       return out;
     }),
     writable: false, configurable: false, enumerable: false,
