@@ -308,6 +308,12 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+        // quickjs-kt 1.0.0-alpha13's AAR ships libquickjs.so linked for 4 KB pages, which Android 15+
+        // flags as not 16 KB compatible. src/main/jniLibs has the same sources rebuilt with 16 KB
+        // alignment (see the README there); pin that the app's copy is the one that ships.
+        jniLibs {
+            pickFirsts += "**/libquickjs.so"
+        }
     }
 }
 
