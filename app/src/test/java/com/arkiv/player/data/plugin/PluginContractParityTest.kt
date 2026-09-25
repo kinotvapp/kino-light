@@ -39,6 +39,16 @@ class PluginContractParityTest {
         assertEquals(ManifestParser.COLOR.pattern, m.getString("colorPattern"))
         assertEquals(PluginInstaller.MAX_SCRIPT_BYTES, m.getInt("entryMaxBytes"))
         assertEquals(PluginInstaller.MAX_ICON_BYTES, m.getInt("iconMaxBytes"))
+        assertEquals(SemVer.RE.pattern, m.getString("versionPattern"))
+        assertEquals(ManifestParser.PATH_SEGMENT.pattern, m.getString("pathSegmentPattern"))
+        assertEquals(ManifestParser.MAX_PATH_CHARS, m.getInt("maxPathChars"))
+    }
+
+    @Test fun `host rules`() {
+        val h = obj("hostRules")
+        assertEquals(HostRules.LABEL.pattern, h.getString("labelPattern"))
+        assertEquals(HostRules.PRIVATE_SUFFIXES.toSet(), h.strings("privateSuffixes").toSet())
+        assertEquals(HostRules.MAX_HOST_CHARS, h.getInt("maxHostChars"))
     }
 
     @Test fun `permissions and settings`() {
@@ -132,6 +142,12 @@ class PluginContractParityTest {
         assertEquals(PluginOutput.MAX_RUNTIME_MINUTES, o.getInt("maxRuntimeMinutes"))
         assertEquals(PluginOutput.MIN_EXPIRES_IN_SECONDS, o.getInt("minExpiresInSeconds"))
         assertEquals(PluginOutput.MAX_EXPIRES_IN_SECONDS, o.getInt("maxExpiresInSeconds"))
+        assertEquals(PluginOutput.MAX_TITLE_CHARS, o.getInt("maxTitleChars"))
+        assertEquals(PluginOutput.MAX_TEXT_CHARS, o.getInt("maxTextChars"))
+        assertEquals(PluginOutput.MAX_SEASON, o.getInt("maxSeasonNumber"))
+        assertEquals(PluginOutput.MAX_EPISODE_NUMBER, o.getInt("maxEpisodeNumber"))
+        assertEquals(PluginOutput.MAX_SUBTITLES, o.getInt("maxSubtitles"))
+        assertEquals(PluginOutput.DRM_KEYS, o.strings("drmKeys").toSet())
         val s = obj("search")
         assertEquals(PluginContentSource.MAX_ALT_TITLES, s.getInt("maxAltTitles"))
         assertEquals(PluginContentSource.MAX_ALT_TITLE_CHARS, s.getInt("maxAltTitleChars"))
@@ -150,7 +166,7 @@ class PluginContractParityTest {
 
     @Test fun `every section of the contract is checked here`() {
         assertEquals(
-            setOf("\$comment", "apiVersion", "maxApiVersion", "capabilities", "manifest", "permissions", "settings", "output", "search", "timeoutsMs", "runtime", "fetch", "cookies", "storage", "crypto", "sleep", "errors"),
+            setOf("\$comment", "apiVersion", "maxApiVersion", "capabilities", "manifest", "hostRules", "permissions", "settings", "output", "search", "timeoutsMs", "runtime", "fetch", "cookies", "storage", "crypto", "sleep", "errors"),
             c.keySet(),
         )
     }

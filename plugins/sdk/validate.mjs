@@ -11,28 +11,34 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { checkOutput, contract, validateManifest } from "./contract.mjs";
+import { checkOutput, contract, kb, validateManifest } from "./contract.mjs";
 import { createKino } from "./kino-shim.mjs";
 import { call, parseArgs } from "./run.mjs";
+
+// Every return carries { ok, problems, drops, output } — even the early ones, before a `kino` even
+// exists — so a caller (this file's own CLI included) never has to guess which fields are present.
+const refused = (problems) => ({ ok: false, problems, drops: [], output: null });
 
 export async function validate(dirArg, { run = null, args = [], config = {}, replay = null } = {}) {
   const problems = [];
   const dir = resolve(dirArg);
   const manifestFile = join(dir, "kino-plugin.json");
-  if (!existsSync(manifestFile)) return { ok: false, problems: [`no kino-plugin.json in ${dir}`] };
+  if (!existsSync(manifestFile)) return refused([`no kino-plugin.json in ${dir}`]);
   const checked = validateManifest(readFileSync(manifestFile, "utf8"));
-  if (!checked.ok) return { ok: false, problems: [`kino-plugin.json: ${checked.field}: ${checked.message}`] };
+  if (!checked.ok) return refused([`kino-plugin.json: ${checked.field}: ${checked.message}`]);
   const m = checked.manifest;
   const entry = join(dir, m.entry);
-  if (!existsSync(entry)) return { ok: false, problems: [`entry ${m.entry} not found`] };
-  if (statSync(entry).size > contract.manifest.entryMaxBytes) problems.push(`${m.entry} is bigger than 1 MB: Kino refuses it`);
-  if (m.icon && existsSync(join(dir, m.icon)) && statSync(join(dir, m.icon)).size > contract.manifest.iconMaxBytes) problems.push(`${m.icon} is bigger than 128 KB: Kino skips it`);
-  const { kino, servers } = createKino(m, { config, replay: replay && resolve(replay) });
-  globalThis.kino = kino;
+  if (!existsSync(entry)) return refused([`entry ${m.entry} not found`]);
+  if (statSync(entry).size > contract.manifest.entryMaxBytes) problems.push(`${m.entry} is bigger than ${kb(contract.manifest.entryMaxBytes)}: Kino refuses it`);
+  if (m.icon && existsSync(join(dir, m.icon)) && statSync(join(dir, m.icon)).size > contract.manifest.iconMaxBytes) problems.push(`${m.icon} is bigger than ${kb(contract.manifest.iconMaxBytes)}: Kino skips it`);
   const scratch = mkdtempSync(join(tmpdir(), "kino-validate-"));
   const drops = [];
   let output = null;
   try {
+    // Inside the try too: an invalid --replay path (or any other setup failure) must become a
+    // problem, not an uncaught rejection.
+    const { kino, servers } = createKino(m, { config, replay: replay && resolve(replay) });
+    globalThis.kino = kino;
     const copy = join(scratch, "plugin.mjs");
     writeFileSync(copy, readFileSync(entry));
     const plugin = await import(pathToFileURL(copy).href);

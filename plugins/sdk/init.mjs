@@ -53,7 +53,7 @@ function toItem(x) {
   return { id: String(x.id), ref: String(x.id), title: x.title, kind: "movie", year: x.year, poster: x.poster };
 }
 `,
-    "README.md": `# ${name || pluginId}\n\nA [Kino](https://github.com/kinotvapp/kino-plugin-archive) plugin. Install it in Kino (Ajustes ▸ Plugins) with this repository's \`owner/repo\`.\n\n## Develop\n\n\`\`\`\nnode sdk/validate.mjs .\nnode sdk/run.mjs --record test/fixtures.json . search "algo"\nnode --test test/\n\`\`\`\n`,
+    "README.md": `# ${name || pluginId}\n\nA [Kino](https://github.com/kinotvapp/kino-plugin-archive) plugin. Install it in Kino (Ajustes ▸ Plugins) with this repository's \`owner/repo\`.\n\n## Develop\n\n\`\`\`\nnode sdk/validate.mjs .\nnode sdk/run.mjs --record test/fixtures.json . search "algo"\nnode --test test/plugin.test.mjs\n\`\`\`\n`,
     "test/plugin.test.mjs": `// Offline test: answers come from test/fixtures.json (record it once with
 //   node sdk/run.mjs --record test/fixtures.json . search "algo").
 import { test } from "node:test";
@@ -99,6 +99,6 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     const opt = (k) => { const i = rest.indexOf(k); return i === -1 ? undefined : rest[i + 1]; };
     const written = scaffold(folder, { id: opt("--id"), name: opt("--name"), host: opt("--host") });
     console.error(written.length ? `wrote ${written.join(", ")}` : "nothing written: every file already exists");
-    console.error("next: copy sdk/ (and contract.json) next to it, then node sdk/validate.mjs " + folder);
+    console.error(`next: copy sdk/ (and contract.json) into ${folder}, then from inside it: node sdk/validate.mjs .`);
   }
 }

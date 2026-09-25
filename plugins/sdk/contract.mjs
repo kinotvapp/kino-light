@@ -1,6 +1,6 @@
 // The plugin contract as the Node kit sees it: contract.json (the numbers and rules) plus the same
-// validation the app runs on a manifest and on what each function returns. Kino's Kotlin code is
-// authoritative (PluginOutput, ManifestParser); PluginContractParityTest pins contract.json to it.
+// validation the app runs on a manifest and on what each function returns. Kino's own app code is
+// authoritative; a test in the app pins every value here to it.
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,19 +18,27 @@ export function loadContract() {
 export const contract = loadContract();
 
 const re = (pattern) => new RegExp(pattern);
-const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
-const PATH_SEGMENT = /^[A-Za-z0-9._-]+$/;
-const LABEL = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
-const PRIVATE_SUFFIXES = [".local", ".lan", ".internal", ".localhost", ".home.arpa"];
+// Every regex/list below is read from contract.json, never hand-retyped: a hand-typed copy of the
+// app's version pattern once allowed unbounded digits per segment where the app's own regex bounds
+// each to 6 — the drift a hand-duplicated value invites, and exactly what this avoids.
+const SEMVER = re(contract.manifest.versionPattern);
+const PATH_SEGMENT = re(contract.manifest.pathSegmentPattern);
+const LABEL = re(contract.hostRules.labelPattern);
+const PRIVATE_SUFFIXES = contract.hostRules.privateSuffixes;
+
+/** "5 MB" / "256 KB": how the app phrases a byte limit in its own Spanish messages. */
+export function kb(bytes) {
+  return bytes % (1024 * 1024) === 0 ? `${bytes / 1024 / 1024} MB` : `${bytes / 1024} KB`;
+}
 
 export function isSafeRelativePath(p) {
-  return typeof p === "string" && p.length > 0 && p.length <= 200 && !p.startsWith("/") && !p.includes("\\") &&
+  return typeof p === "string" && p.length > 0 && p.length <= contract.manifest.maxPathChars && !p.startsWith("/") && !p.includes("\\") &&
     p.split("/").every((s) => s !== "" && s !== "." && s !== ".." && PATH_SEGMENT.test(s));
 }
 
 export function isValidHostPattern(pattern) {
   const host = pattern.startsWith("*.") ? pattern.slice(2) : pattern;
-  if (!host || host.includes("*") || host.length > 253 || host.includes(":") || host.includes("[")) return false;
+  if (!host || host.includes("*") || host.length > contract.hostRules.maxHostChars || host.includes(":") || host.includes("[")) return false;
   if (host === "localhost" || PRIVATE_SUFFIXES.some((s) => host.endsWith(s))) return false;
   const labels = host.split(".");
   if (labels.length < 2 || !labels.every((l) => LABEL.test(l))) return false;
@@ -42,7 +50,7 @@ export function hostMatches(host, patterns) {
   return patterns.some((p) => (p.startsWith("*.") ? h.endsWith("." + p.slice(2)) : h === p));
 }
 
-/** Same checks, same order, same Spanish messages as the app's ManifestParser. Returns { ok, field?, message?, manifest? }. */
+/** Same checks, same order, same Spanish messages as the app's own manifest validation. Returns { ok, field?, message?, manifest? }. */
 export function validateManifest(text, { knownPermissions = contract.permissions } = {}) {
   const m = contract.manifest;
   const bad = (field, message) => ({ ok: false, field, message });
@@ -69,8 +77,11 @@ export function validateManifest(text, { knownPermissions = contract.permissions
   const caps = [...new Set(o.capabilities.map((c) => (typeof c === "string" ? c : "")))];
   const unknownCap = caps.find((c) => !contract.capabilities.names.includes(c));
   if (unknownCap !== undefined) return bad("capabilities", `Capacidad desconocida: "${unknownCap}"`);
-  if (!caps.includes("resolve")) return bad("capabilities", 'El plugin debe declarar "resolve"');
-  if (!caps.includes("search") && !caps.includes("home")) return bad("capabilities", 'El plugin debe declarar "search" o "home"');
+  const missingRequiredCap = contract.capabilities.required.find((c) => !caps.includes(c));
+  if (missingRequiredCap !== undefined) return bad("capabilities", `El plugin debe declarar "${missingRequiredCap}"`);
+  if (!contract.capabilities.atLeastOneOf.some((c) => caps.includes(c))) {
+    return bad("capabilities", `El plugin debe declarar "${contract.capabilities.atLeastOneOf.join('" o "')}"`);
+  }
   if (o.color !== undefined && o.color !== "" && !re(m.colorPattern).test(o.color)) return bad("color", 'El campo "color" debe ser del tipo #RRGGBB');
   if (o.icon !== undefined && o.icon !== "" && (!isSafeRelativePath(o.icon) || !o.icon.endsWith(".png"))) return bad("icon", 'El campo "icon" debe ser una ruta relativa a un .png');
   if (o.permissions !== undefined && !Array.isArray(o.permissions)) return bad("permissions", 'El campo "permissions" debe ser una lista');
@@ -184,7 +195,7 @@ function items(list, max, { allowSeries, servers }, drop) {
     const id = typeof x.id === "string" ? x.id : "";
     if (!re(o().itemIdPattern).test(id)) return drop(`item #${i}: invalid id`);
     if (typeof x.ref !== "string" || !x.ref || x.ref.length > o().maxRefChars) return drop(`item ${id}: invalid ref`);
-    const title = text(x.title, 200);
+    const title = text(x.title, o().maxTitleChars);
     if (!title) return drop(`item ${id}: no title`);
     if (x.kind !== "movie" && x.kind !== "series") return drop(`item ${id}: invalid kind '${String(x.kind).slice(0, 20)}'`);
     if (x.kind === "series" && !allowSeries) return drop(`item ${id}: series without the episodes capability`);
@@ -195,8 +206,8 @@ function items(list, max, { allowSeries, servers }, drop) {
     out.push({
       id, ref: x.ref, title, kind: x.kind, year: text(x.year, 10),
       poster: image(x.poster, servers), backdrop: image(x.backdrop, servers),
-      overview: text(x.overview, 2000), lang: text(x.lang, 20), quality: text(x.quality, 20),
-      originalTitle: text(x.originalTitle, 200),
+      overview: text(x.overview, o().maxTextChars), lang: text(x.lang, 20), quality: text(x.quality, 20),
+      originalTitle: text(x.originalTitle, o().maxTitleChars),
       genres: strings(x.genres, o().maxGenres, o().maxGenreChars),
       rating: typeof x.rating === "number" && x.rating >= o().minRating && x.rating <= o().maxRating ? x.rating : null,
       runtimeMinutes: Number.isInteger(x.runtimeMinutes) && x.runtimeMinutes >= o().minRuntimeMinutes && x.runtimeMinutes <= o().maxRuntimeMinutes ? x.runtimeMinutes : 0,
@@ -229,7 +240,7 @@ function rows(value, ctx, drop) {
     if (r === null || typeof r !== "object") return;
     const id = typeof r.id === "string" ? r.id : "";
     if (!re(o().itemIdPattern).test(id)) return drop(`home: row ${i} has an invalid id`);
-    const title = text(r.title, 200);
+    const title = text(r.title, o().maxTitleChars);
     if (!title) return drop(`home: row ${id} has no title`);
     const list = items(r.items, o().maxRowItems, ctx, drop);
     if (!list.length) return;
@@ -251,22 +262,20 @@ function episodes(value, drop) {
   value.episodes.forEach((e, i) => {
     if (eps.length >= o().maxEpisodes) { drop(`episodes: beyond ${o().maxEpisodes} dropped`); return; }
     if (e === null || typeof e !== "object") return;
-    const season = Number.isInteger(e.season) && e.season >= 1 && e.season <= 999 ? e.season : 1;
-    if (!Number.isInteger(e.number) || e.number < 1 || e.number > 99999) return drop(`episodes: #${i} has no valid number`);
+    const season = Number.isInteger(e.season) && e.season >= 1 && e.season <= o().maxSeasonNumber ? e.season : 1;
+    if (!Number.isInteger(e.number) || e.number < 1 || e.number > o().maxEpisodeNumber) return drop(`episodes: #${i} has no valid number`);
     if (typeof e.ref !== "string" || !e.ref || e.ref.length > o().maxRefChars) return drop(`episodes: #${i} has no valid ref`);
     const key = season + "x" + e.number;
     if (seen.has(key)) return drop(`episodes: duplicate S${season}E${e.number} dropped`);
     seen.add(key);
-    eps.push({ season, number: e.number, ref: e.ref, title: text(e.title, 200), airDate: re(o().airDatePattern).test(text(e.airDate, 10)) ? text(e.airDate, 10) : "" });
+    eps.push({ season, number: e.number, ref: e.ref, title: text(e.title, o().maxTitleChars), airDate: re(o().airDatePattern).test(text(e.airDate, 10)) ? text(e.airDate, 10) : "" });
   });
   return { series: value.series && typeof value.series === "object" ? value.series : null, episodes: eps };
 }
 
-const DRM_KEYS = ["drm", "license", "licenseUrl", "drmLicenseUrl", "keySystem", "widevine"];
-
 function stream(value, { hosts, servers }) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("El plugin no devolvió un video");
-  if (DRM_KEYS.some((k) => k in value)) throw new Error("El video tiene DRM y los plugins no lo soportan");
+  if (o().drmKeys.some((k) => k in value)) throw new Error("El video tiene DRM y los plugins no lo soportan");
   const check = (url, what) => {
     let u;
     try { u = new URL(String(url)); } catch { throw new Error(`${what} tiene una dirección inválida`); }
@@ -276,7 +285,7 @@ function stream(value, { hosts, servers }) {
   };
   check(value.url, "El video");
   const expires = Number.isInteger(value.expiresInSeconds) && value.expiresInSeconds >= o().minExpiresInSeconds && value.expiresInSeconds <= o().maxExpiresInSeconds ? value.expiresInSeconds : 0;
-  const subtitles = (Array.isArray(value.subtitles) ? value.subtitles : []).slice(0, 30).filter((s) => {
+  const subtitles = (Array.isArray(value.subtitles) ? value.subtitles : []).slice(0, o().maxSubtitles).filter((s) => {
     try { check(s && s.url, "El subtítulo"); return true; } catch { return false; }
   });
   return { ...value, subtitles, expiresInSeconds: expires };

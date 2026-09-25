@@ -2,8 +2,9 @@
 // The kit against the same rules and vectors the app's JVM tests use.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createServer } from "node:http";
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +12,7 @@ import { checkOutput, contract, validateManifest } from "../contract.mjs";
 import { createKino } from "../kino-shim.mjs";
 import { validate } from "../validate.mjs";
 import { scaffold } from "../init.mjs";
+import { call } from "../run.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const archive = join(here, "..", "..", "archive-org");
@@ -37,6 +39,9 @@ test("manifest rules and Spanish messages match the app", () => {
     [{ capabilities: ["search"] }, "capabilities", 'El plugin debe declarar "resolve"'],
     [{ hosts: ["192.168.1.1"] }, "hosts", 'El dominio "192.168.1.1" no está permitido'],
     [{ id: "magis" }, "id", 'El id "magis" está reservado por Kino'],
+    // The app's version regex bounds each segment to 6 digits (Regex("^(0|[1-9]\\d{0,5})...")); a
+    // hand-typed unbounded copy would wrongly accept this.
+    [{ version: "1234567.0.0" }, "version", 'El campo "version" debe ser del tipo 1.2.3'],
   ];
   for (const [extra, field, message] of cases) {
     assert.deepEqual(validateManifest(manifest(extra)), { ok: false, field, message }, JSON.stringify(extra));
@@ -47,6 +52,47 @@ test("manifest rules and Spanish messages match the app", () => {
 test("the archive-org plugin passes the kit's checks", async () => {
   const r = await validate(archive);
   assert.deepEqual(r.problems, []);
+});
+
+function runValidateCli(args) {
+  // stdio fully piped (never inherited): the child's own stderr must not leak into this test run's
+  // own output, and both cases still capture it on e.stdout/e.stderr for the assertions below.
+  const opts = { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] };
+  try {
+    const stdout = execFileSync(process.execPath, [join(here, "..", "validate.mjs"), ...args], opts);
+    return { code: 0, stdout, stderr: "" };
+  } catch (e) {
+    return { code: e.status, stdout: e.stdout ?? "", stderr: e.stderr ?? "" };
+  }
+}
+
+// A JS stack trace (an uncaught throw) looks nothing like the app's own Spanish refusal text; any
+// of these lines means the CLI crashed instead of reporting cleanly.
+const looksLikeAStackTrace = (s) => /TypeError|ReferenceError|at file:|at Object\.|at async /.test(s);
+
+test("validate.mjs's CLI reports the app's refusal instead of crashing on the most common failures", () => {
+  const dir = mkdtempSync(join(tmpdir(), "kino-badplugin-"));
+  try {
+    const noManifest = runValidateCli([dir]);
+    assert.equal(noManifest.code, 1);
+    assert.ok(!looksLikeAStackTrace(noManifest.stderr), `unexpected stack trace:\n${noManifest.stderr}`);
+    assert.match(noManifest.stderr, /no kino-plugin\.json/);
+
+    writeFileSync(join(dir, "kino-plugin.json"), JSON.stringify({ id: "X" }));
+    const badManifest = runValidateCli([dir]);
+    assert.equal(badManifest.code, 1);
+    assert.ok(!looksLikeAStackTrace(badManifest.stderr), `unexpected stack trace:\n${badManifest.stderr}`);
+    assert.match(badManifest.stderr, /El campo/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("validate() reports a problem instead of throwing when --replay points at a missing file", async () => {
+  const r = await validate(archive, { run: "search", args: ["algo"], replay: join(here, "does-not-exist.json") });
+  assert.equal(r.ok, false);
+  assert.ok(r.problems.some((p) => p.includes("not found")));
+  assert.deepEqual(r.drops, []);
 });
 
 test("crypto gives the app's vectors", () => {
@@ -173,6 +219,13 @@ test("checkOutput drops what the app drops", () => {
   assert.equal(lan.value.expiresInSeconds, 0);
 });
 
+test("run.mjs's call() gives a clear message for a malformed search argument, not a bare JSON error", async () => {
+  await assert.rejects(
+    call({ search: () => {} }, "search", ['{"q": bad json']),
+    (e) => e instanceof Error && !(e instanceof SyntaxError) && /search argument/.test(e.message) && /not valid JSON/.test(e.message),
+  );
+});
+
 test("init scaffolds a plugin the kit accepts, and never overwrites", async () => {
   const dir = mkdtempSync(join(tmpdir(), "kino-init-"));
   const target = join(dir, "mi-plugin");
@@ -183,14 +236,65 @@ test("init scaffolds a plugin the kit accepts, and never overwrites", async () =
   writeFileSync(join(target, "plugin.js"), "// mine");
   assert.deepEqual(scaffold(target, {}), []);
   assert.equal(readFileSync(join(target, "plugin.js"), "utf8"), "// mine");
-  cpSync(join(here, ".."), join(target, "sdk"), { recursive: true });
   rmSync(dir, { recursive: true, force: true });
 });
 
-function declaredKino() {
+// This plan's own recorded trap: `node --test` on a bare directory argument fails on Node 24 (it
+// needs the explicit file). The scaffolded README must not tell an author to hit it.
+test("the scaffolded README points at the explicit test file, never a bare test/ directory", () => {
+  const dir = mkdtempSync(join(tmpdir(), "kino-init-readme-"));
+  try {
+    scaffold(dir, {});
+    const readme = readFileSync(join(dir, "README.md"), "utf8");
+    assert.ok(readme.includes("node --test test/plugin.test.mjs"), "README should point at the explicit test file");
+    assert.doesNotMatch(readme, /node --test test\/\s/, "README must not tell authors to run node --test on a bare directory");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+function dtsPath() {
   const candidates = [join(here, "..", "..", "kino.d.ts"), join(here, "..", "..", "..", "docs", "plugins", "kino.d.ts")];
-  const file = candidates.find((p) => { try { readFileSync(p); return true; } catch { return false; } });
-  const lines = readFileSync(file, "utf8").split("\n");
+  return candidates.find((p) => { try { readFileSync(p); return true; } catch { return false; } });
+}
+
+// kino.d.ts's header claims its numeric comments "come from contract.json"; nothing enforced that
+// claim until now. This ties each documented number to the contract value it describes, so the two
+// can't silently drift apart.
+test("kino.d.ts's documented numbers match contract.json", () => {
+  const dts = readFileSync(dtsPath(), "utf8");
+  const c = contract;
+  const kb = (bytes) => (bytes % (1024 * 1024) === 0 ? `${bytes / 1024 / 1024} MB` : `${bytes / 1024} KB`);
+  const mustContain = [
+    `at most ${c.output.maxRefChars} characters`,
+    `https, at most ${c.output.maxImageUrlChars} characters`,
+    `At most ${c.output.maxGenres}, each at most ${c.output.maxGenreChars} characters`,
+    `${c.output.minRuntimeMinutes}..${c.output.maxRuntimeMinutes}`,
+    `At most ${c.output.maxBadges}, each at most ${c.output.maxBadgeChars} characters`,
+    `at most ${c.output.maxCursorChars} characters`,
+    `1..${c.output.maxSeasonNumber}, default 1.`,
+    `1..${c.output.maxEpisodeNumber}`,
+    `${c.output.minExpiresInSeconds}..${c.output.maxExpiresInSeconds}:`,
+    `at most ${c.fetch.maxRequestChars.toLocaleString("en-US")} characters`,
+    `at most ${c.fetch.maxRedirects} hops`,
+    `Default ${c.fetch.defaultTimeoutMs}, at most ${c.fetch.maxTimeoutMs}.`,
+    `at most ${kb(c.fetch.maxBodyBytes)}`,
+    `at most ${c.errors.maxMessageChars} characters`,
+    `0..${c.sleep.maxMs} ms`,
+    `${c.storage.maxTotalBytes / 1024} KB in total`,
+    `Data at most ${kb(c.crypto.maxDataBytes)}`,
+    `iterations at most ${c.crypto.pbkdf2MaxIterations}, keyLength at most ${c.crypto.pbkdf2MaxKeyBytes} bytes`,
+    `1..${c.crypto.randomMaxBytes} bytes`,
+    `at most ${c.search.maxAltTitles}, each at most ${c.search.maxAltTitleChars} characters`,
+    c.output.itemIdPattern,
+    c.output.imdbPattern,
+    c.search.types.map((t) => `"${t}"`).join(" | "),
+  ];
+  for (const needle of mustContain) assert.ok(dts.includes(needle), `kino.d.ts is out of date with contract.json: missing "${needle}"`);
+});
+
+function declaredKino() {
+  const lines = readFileSync(dtsPath(), "utf8").split("\n");
   const out = new Set();
   const path = [];
   let depth = 0;

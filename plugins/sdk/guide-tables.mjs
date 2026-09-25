@@ -1,16 +1,15 @@
 #!/usr/bin/env node
 // Writes the guide's tables from contract.json, so the numbers people read are the numbers the app
-// enforces (PluginContractParityTest pins contract.json to the Kotlin code).
+// enforces (a test in the app pins contract.json to its code).
 //   node sdk/guide-tables.mjs <guide.md>           rewrite every <!-- contract:NAME:start/end --> block
-//   node sdk/guide-tables.mjs <guide.md> --check   exit 1 if a block is out of date (the kit's test runs this)
+//   node sdk/guide-tables.mjs <guide.md> --check   exit 1 if a block is out of date
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { contract } from "./contract.mjs";
+import { contract, kb } from "./contract.mjs";
 
 const c = contract;
 const n = (x) => x.toLocaleString("en-US");
-const kb = (bytes) => (bytes % (1024 * 1024) === 0 ? `${bytes / 1024 / 1024} MB` : `${bytes / 1024} KB`);
 const table = (head, rows) => [`| ${head.join(" | ")} |`, `| ${head.map(() => "---").join(" | ")} |`, ...rows.map((r) => `| ${r.join(" | ")} |`)].join("\n");
 
 export const TABLES = {

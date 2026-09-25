@@ -79,10 +79,17 @@ object PluginOutput {
     const val MIN_EXPIRES_IN_SECONDS = 30
     const val MAX_EXPIRES_IN_SECONDS = 86_400
     const val MAX_RUNTIME_MINUTES = 1000
-    private const val MAX_TITLE_CHARS = 200
-    private const val MAX_TEXT_CHARS = 2000
+    /** `internal`, not public API: exposed only so a test can pin `contract.json`'s `output.maxTitleChars` to it. */
+    internal const val MAX_TITLE_CHARS = 200
+    /** `internal`, not public API: exposed only so a test can pin `contract.json`'s `output.maxTextChars` to it. */
+    internal const val MAX_TEXT_CHARS = 2000
     private const val MAX_HEADERS = 20
-    private const val MAX_SUBTITLES = 30
+    /** `internal`, not public API: exposed only so a test can pin `contract.json`'s `output.maxSubtitles` to it. */
+    internal const val MAX_SUBTITLES = 30
+    /** `internal`, not public API: exposed only so a test can pin `contract.json`'s `output.maxSeasonNumber` to it. */
+    internal const val MAX_SEASON = 999
+    /** `internal`, not public API: exposed only so a test can pin `contract.json`'s `output.maxEpisodeNumber` to it. */
+    internal const val MAX_EPISODE_NUMBER = 99_999
 
     val ID = Regex("^[A-Za-z0-9._~-]{1,128}$")
     val IMDB = Regex("^tt\\d{5,10}$")
@@ -90,7 +97,8 @@ object PluginOutput {
     private val MIME = Regex("^[a-z]+/[A-Za-z0-9.+-]{1,100}$")
     private val HEADER_NAME = Regex("^[A-Za-z0-9-]{1,64}$")
     private val FORBIDDEN_HEADERS = setOf("host", "content-length", "transfer-encoding", "connection")
-    private val DRM_KEYS = setOf("drm", "license", "licenseUrl", "drmLicenseUrl", "keySystem", "widevine")
+    /** `internal`, not public API: exposed only so a test can pin `contract.json`'s `output.drmKeys` to it. */
+    internal val DRM_KEYS = setOf("drm", "license", "licenseUrl", "drmLicenseUrl", "keySystem", "widevine")
 
     /**
      * `search` (≤ [MAX_SEARCH_ITEMS]) or `browse` (≤ [MAX_BROWSE_ITEMS]): an `Item[]` or a
@@ -162,9 +170,9 @@ object PluginOutput {
         for (i in 0 until list.length()) {
             if (eps.size >= MAX_EPISODES) { log("episodes: beyond $MAX_EPISODES dropped"); break }
             val e = list.optJSONObject(i) ?: continue
-            val season = e.optInt("season", 1).takeIf { it in 1..999 } ?: 1
+            val season = e.optInt("season", 1).takeIf { it in 1..MAX_SEASON } ?: 1
             val number = e.optInt("number", -1)
-            if (number !in 1..99_999) { log("episodes: #$i has no valid number"); continue }
+            if (number !in 1..MAX_EPISODE_NUMBER) { log("episodes: #$i has no valid number"); continue }
             val ref = e.optString("ref")
             if (ref.isEmpty() || ref.length > MAX_REF_CHARS) { log("episodes: #$i has no valid ref"); continue }
             if (!seen.add(season to number)) { log("episodes: duplicate S${season}E$number dropped"); continue }

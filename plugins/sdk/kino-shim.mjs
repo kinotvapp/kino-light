@@ -1,16 +1,16 @@
 // Node stand-in for the `kino` global Kino gives plugins (see GUIDE.md). Same shapes, same host
 // check, same caps and error codes as the app, read from contract.json. Node 18+ (global fetch).
 //
-// Kino's own code is authoritative: the Kotlin `PluginHttp` / `PluginHostGate` inside the app decide
-// what a plugin may really do. This file only APPROXIMATES their host, redirect and request-cap
-// rules so you can develop locally; if the two ever disagree, the app is right. Known differences:
+// Kino's own app code is authoritative: its own network and host-gate logic decide what a plugin
+// may really do. This file only APPROXIMATES their host, redirect and request-cap rules so you can
+// develop locally; if the two ever disagree, the app is right. Known differences:
 // kino.html.select exists only in the app (it uses Jsoup); a host that resolves to a private
 // address is not refused; the cookie jar keeps name/value/domain/path/expiry/secure but not every
 // RFC 6265 corner; nothing enforces the per-call time or memory limits.
 import { createCipheriv, createDecipheriv, createHash, createHmac, pbkdf2Sync, randomBytes, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { contract, hostMatches, isUserServer } from "./contract.mjs";
+import { contract, hostMatches, isUserServer, kb } from "./contract.mjs";
 
 // Captured at load: the runner later replaces console.error to keep stdout clean, and kino.log
 // must not be routed through that replacement (it would print two prefixes).
@@ -154,7 +154,7 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", stora
     for (const k of Object.keys(o.headers || {})) headers[k] = String(o.headers[k]);
     let body = requestBody(o.body, headers);
     const size = String(url).length + JSON.stringify(headers).length + (body ? (typeof body === "string" ? body.length : body.length * 2) : 0);
-    if (size > f.maxRequestChars) throw kinoError("too_large", "solicitud demasiado grande (más de 1 MB)");
+    if (size > f.maxRequestChars) throw kinoError("too_large", `solicitud demasiado grande (más de ${kb(f.maxRequestChars)})`);
     let current;
     try { current = new URL(String(url)); } catch { throw kinoError("invalid_request", "URL inválida: " + String(url).slice(0, 200)); }
     let previous = null;
@@ -190,7 +190,7 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", stora
         if (o.cookies !== false) storeCookies(current, r.headers);
         if (tape) tape.push({ key, status, headers: headerList.filter(([k]) => !k.startsWith("set-cookie")), body: bytes.toString("base64") });
       }
-      if (bytes.length > f.maxBodyBytes) throw kinoError("too_large", "respuesta demasiado grande (más de 5 MB)");
+      if (bytes.length > f.maxBodyBytes) throw kinoError("too_large", `respuesta demasiado grande (más de ${kb(f.maxBodyBytes)})`);
       const location = headerList.find(([k]) => k === "location");
       if ([301, 302, 303, 307, 308].includes(status) && location && redirect === "follow") {
         if (status === 303 || ((status === 301 || status === 302) && method === "POST")) { method = "GET"; body = undefined; }
@@ -211,14 +211,13 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", stora
     if (enc === "hex" && (v.length % 2 !== 0 || /[^0-9a-f]/i.test(v))) throw kinoError("crypto_error", `"${field}" no es hexadecimal válido`);
     if (enc === "base64" && /[^A-Za-z0-9+/=_\-\s]/.test(v)) throw kinoError("crypto_error", `"${field}" no es base64 válido`);
     const b = Buffer.from(v, enc === "utf8" ? "utf8" : enc === "hex" ? "hex" : "base64");
-    if (b.length > k.maxDataBytes) throw kinoError("crypto_error", `"${field}" pasa de 5 MB`);
+    if (b.length > k.maxDataBytes) throw kinoError("crypto_error", `"${field}" pasa de ${kb(k.maxDataBytes)}`);
     return b;
   };
   const out = (b, enc) => {
     if (!k.encodings.includes(enc)) throw kinoError("crypto_error", "codificación desconocida: " + String(enc).slice(0, 20));
     return b.toString(enc === "utf8" ? "utf8" : enc);
   };
-  const NODE_HASH = { md5: "md5", sha1: "sha1", sha256: "sha256", sha512: "sha512" };
   function cipher(decrypt, alg, p = {}) {
     if (!k.ciphers.includes(alg)) throw kinoError("crypto_error", "cifrado desconocido: " + String(alg).slice(0, 20));
     const key = buf(p.key, p.keyEncoding || "utf8", "key");
@@ -251,14 +250,14 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", stora
   }
   const crypto = Object.freeze({
     hash(alg, data, p = {}) {
-      if (!NODE_HASH[alg]) throw kinoError("crypto_error", "algoritmo de hash desconocido: " + String(alg).slice(0, 20));
-      return out(createHash(NODE_HASH[alg]).update(buf(String(data), p.inputEncoding || "utf8", "data")).digest(), p.outputEncoding || "hex");
+      if (!k.hashes.includes(alg)) throw kinoError("crypto_error", "algoritmo de hash desconocido: " + String(alg).slice(0, 20));
+      return out(createHash(alg).update(buf(String(data), p.inputEncoding || "utf8", "data")).digest(), p.outputEncoding || "hex");
     },
     hmac(alg, key, data, p = {}) {
-      if (!NODE_HASH[alg]) throw kinoError("crypto_error", "algoritmo de hmac desconocido: " + String(alg).slice(0, 20));
-      const kb = buf(String(key), p.keyEncoding || "utf8", "key");
-      if (!kb.length) throw kinoError("crypto_error", "la clave del hmac está vacía");
-      return out(createHmac(NODE_HASH[alg], kb).update(buf(String(data), p.inputEncoding || "utf8", "data")).digest(), p.outputEncoding || "hex");
+      if (!k.hashes.includes(alg)) throw kinoError("crypto_error", "algoritmo de hmac desconocido: " + String(alg).slice(0, 20));
+      const keyBuf = buf(String(key), p.keyEncoding || "utf8", "key");
+      if (!keyBuf.length) throw kinoError("crypto_error", "la clave del hmac está vacía");
+      return out(createHmac(alg, keyBuf).update(buf(String(data), p.inputEncoding || "utf8", "data")).digest(), p.outputEncoding || "hex");
     },
     encrypt: (alg, p) => cipher(false, alg, p),
     decrypt: (alg, p) => cipher(true, alg, p),
@@ -292,7 +291,7 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", stora
         storage[String(key)] = String(v);
         if (Buffer.byteLength(JSON.stringify(storage)) > contract.storage.maxTotalBytes) {
           if (previous === undefined) delete storage[String(key)]; else storage[String(key)] = previous;
-          throw new Error("almacenamiento del plugin lleno (256 KB)");
+          throw new Error(`almacenamiento del plugin lleno (${kb(contract.storage.maxTotalBytes)})`);
         }
         saveJson(storageFile, storage);
       },

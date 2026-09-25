@@ -10,12 +10,16 @@ package com.arkiv.player.data.plugin
  * itself — a plugin that needs both declares both.
  */
 object HostRules {
-    private val LABEL = Regex("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
-    private val PRIVATE_SUFFIXES = listOf(".local", ".lan", ".internal", ".localhost", ".home.arpa")
+    /** `internal`, not public API: exposed only so a test can pin `contract.json`'s `hostRules.labelPattern` to it. */
+    internal val LABEL = Regex("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
+
+    /** `internal`, not public API: exposed only so a test can pin `contract.json`'s `hostRules.privateSuffixes` to it. */
+    internal val PRIVATE_SUFFIXES = listOf(".local", ".lan", ".internal", ".localhost", ".home.arpa")
+    const val MAX_HOST_CHARS = 253
 
     fun isValidPattern(pattern: String): Boolean {
         val host = if (pattern.startsWith("*.")) pattern.removePrefix("*.") else pattern
-        if (host.isEmpty() || '*' in host || host.length > 253) return false
+        if (host.isEmpty() || '*' in host || host.length > MAX_HOST_CHARS) return false
         if (':' in host || '[' in host) return false
         if (host == "localhost" || PRIVATE_SUFFIXES.any { host.endsWith(it) }) return false
         val labels = host.split('.')

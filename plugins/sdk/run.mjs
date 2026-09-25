@@ -127,8 +127,12 @@ export async function call(plugin, fn, rest) {
   if (fn === "browse") return plugin.browse(arg, rest[1] === undefined ? null : rest[1]);
   if (fn !== "search") return plugin[fn](arg);
   const query = { q: "", type: process.env.KINO_TYPE || "any", season: 0, episode: 0, tmdbId: 0, year: 0, originalTitle: "", altTitles: [], cursor: null };
-  if (arg.trimStart().startsWith("{")) Object.assign(query, JSON.parse(arg));
-  else query.q = arg;
+  if (arg.trimStart().startsWith("{")) {
+    try { Object.assign(query, JSON.parse(arg)); }
+    catch (e) { throw new Error(`the search argument starts with { but is not valid JSON: ${e.message}`); }
+  } else {
+    query.q = arg;
+  }
   return plugin.search(query);
 }
 

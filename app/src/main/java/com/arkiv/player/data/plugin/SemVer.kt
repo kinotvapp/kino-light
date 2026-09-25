@@ -2,7 +2,8 @@ package com.arkiv.player.data.plugin
 
 /** `MAJOR.MINOR.PATCH`, no pre-release or build suffix: enough to order plugin updates. */
 object SemVer {
-    private val RE = Regex("^(0|[1-9]\\d{0,5})\\.(0|[1-9]\\d{0,5})\\.(0|[1-9]\\d{0,5})$")
+    /** `internal`, not public API: exposed only so a test can pin `contract.json`'s `versionPattern` to it. */
+    internal val RE = Regex("^(0|[1-9]\\d{0,5})\\.(0|[1-9]\\d{0,5})\\.(0|[1-9]\\d{0,5})$")
 
     fun isValid(v: String): Boolean = RE.matches(v)
 

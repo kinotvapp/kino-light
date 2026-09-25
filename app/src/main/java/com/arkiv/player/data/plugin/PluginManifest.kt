@@ -46,13 +46,16 @@ object ManifestParser {
     val CAPABILITIES = setOf("search", "home", "browse", "episodes", "resolve")
     val REQUIRED_CAPABILITIES = listOf("resolve")
     val AT_LEAST_ONE_OF_CAPABILITIES = listOf("search", "home")
+    const val MAX_PATH_CHARS = 200
 
     /** `internal`, not public API of [PluginManifest]: exposed only so tests can pin `contract.json`'s `idPattern` to it. */
     internal val ID = Regex("^[a-z0-9][a-z0-9-]{1,39}$")
 
     /** `internal`, not public API of [PluginManifest]: exposed only so tests can pin `contract.json`'s `colorPattern` to it. */
     internal val COLOR = Regex("^#[0-9A-Fa-f]{6}$")
-    private val PATH_SEGMENT = Regex("^[A-Za-z0-9._-]+$")
+
+    /** `internal`, not public API of [PluginManifest]: exposed only so a test can pin `contract.json`'s `pathSegmentPattern` to it. */
+    internal val PATH_SEGMENT = Regex("^[A-Za-z0-9._-]+$")
 
     fun parse(text: String, knownPermissions: Set<String> = PluginSettings.PERMISSIONS): ManifestResult {
         if (text.toByteArray(Charsets.UTF_8).size > MAX_BYTES) {
@@ -131,7 +134,7 @@ object ManifestParser {
 
     /** A path inside the plugin's repo folder: no absolute paths, no `..`, no backslashes. */
     fun isSafeRelativePath(p: String): Boolean =
-        p.isNotEmpty() && p.length <= 200 && !p.startsWith("/") && '\\' !in p &&
+        p.isNotEmpty() && p.length <= MAX_PATH_CHARS && !p.startsWith("/") && '\\' !in p &&
             p.split('/').all { it.isNotEmpty() && it != "." && it != ".." && PATH_SEGMENT.matches(it) }
 
     private fun text(o: JSONObject, key: String, max: Int): String =

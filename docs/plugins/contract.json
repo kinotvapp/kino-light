@@ -1,5 +1,5 @@
 {
-  "$comment": "Kino plugin contract, apiVersion 1. The single source of truth for every number and rule a plugin meets. The app checks each value against its own code (PluginContractParityTest); sdk/validate.mjs, sdk/run.mjs and the guide's tables read this file.",
+  "$comment": "Kino plugin contract, apiVersion 1. The single source of truth for every number and rule a plugin meets. The app checks each value against its own code, and a test in the app pins this file to it; sdk/validate.mjs, sdk/run.mjs and the guide's tables read this file.",
   "apiVersion": 1,
   "maxApiVersion": 1,
   "capabilities": {
@@ -19,7 +19,15 @@
     "maxHosts": 20,
     "colorPattern": "^#[0-9A-Fa-f]{6}$",
     "entryMaxBytes": 1048576,
-    "iconMaxBytes": 131072
+    "iconMaxBytes": 131072,
+    "versionPattern": "^(0|[1-9]\\d{0,5})\\.(0|[1-9]\\d{0,5})\\.(0|[1-9]\\d{0,5})$",
+    "pathSegmentPattern": "^[A-Za-z0-9._-]+$",
+    "maxPathChars": 200
+  },
+  "hostRules": {
+    "labelPattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
+    "privateSuffixes": [".local", ".lan", ".internal", ".localhost", ".home.arpa"],
+    "maxHostChars": 253
   },
   "permissions": [],
   "settings": {
@@ -60,7 +68,13 @@
     "maxRuntimeMinutes": 1000,
     "minExpiresInSeconds": 30,
     "maxExpiresInSeconds": 86400,
-    "airDatePattern": "^\\d{4}-\\d{2}-\\d{2}$"
+    "airDatePattern": "^\\d{4}-\\d{2}-\\d{2}$",
+    "maxTitleChars": 200,
+    "maxTextChars": 2000,
+    "maxSeasonNumber": 999,
+    "maxEpisodeNumber": 99999,
+    "maxSubtitles": 30,
+    "drmKeys": ["drm", "license", "licenseUrl", "drmLicenseUrl", "keySystem", "widevine"]
   },
   "search": {
     "types": ["movie", "series", "any"],
