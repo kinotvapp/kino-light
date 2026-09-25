@@ -511,7 +511,7 @@ class PluginRuntimeTest {
         val server = MockWebServer().apply { start() }
         try {
             server.enqueue(MockResponse().setBody("{\"n\":42}"))
-            val http = PluginHttp(OkHttpClient(), "test", listOf("localhost"), "9.9.9", allowInsecureLocalhost = true)
+            val http = PluginHttp(OkHttpClient(), "test", EffectiveHosts(listOf("localhost")), "9.9.9", allowInsecureLocalhost = true)
             val storage = PluginStorage(Files.createTempDirectory("ps").resolve("s.json").toFile())
             val host = DefaultPluginHost("test", http, storage, logger = {})
             val rt = open("export async function search(q) { const r = await kino.fetch(q.url); return [r.json().n] }", host)

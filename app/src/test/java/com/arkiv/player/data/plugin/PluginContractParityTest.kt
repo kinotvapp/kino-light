@@ -89,5 +89,10 @@ class PluginContractParityTest {
         assertEquals(PluginCrypto.ERROR_CODE, k.getString("errorCode"))
     }
 
+    @Test fun `cookies`() {
+        assertEquals(PluginCookies.MAX_PER_HOST, obj("cookies").getInt("maxPerHost"))
+        assertEquals(PluginCookies.MAX_TOTAL_BYTES, obj("cookies").getInt("maxTotalBytes"))
+    }
+
     // Each later task adds the contract section it enforces above this line.
 }

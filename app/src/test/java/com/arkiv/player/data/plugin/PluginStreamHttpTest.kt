@@ -38,10 +38,10 @@ class PluginStreamHttpTest {
     // MockWebServer can't serve arbitrary hostnames over https: these use the test-only
     // "localhost over http" override, exactly like PluginHttpTest. Production never sets it.
     private fun localClient(hosts: List<String> = listOf("localhost")) =
-        PluginStreamHttp.client(OkHttpClient(), hosts, allowInsecureLocalhost = true, delegateDns = recordingDns())
+        PluginStreamHttp.client(OkHttpClient(), EffectiveHosts(hosts), allowInsecureLocalhost = true, delegateDns = recordingDns())
 
     private fun client(hosts: List<String>, dns: Dns = recordingDns()) =
-        PluginStreamHttp.client(OkHttpClient(), hosts, delegateDns = dns)
+        PluginStreamHttp.client(OkHttpClient(), EffectiveHosts(hosts), delegateDns = dns)
 
     private fun get(client: OkHttpClient, url: String) =
         client.newCall(Request.Builder().url(url).header("Referer", "https://cdn.example.com/").build()).execute()

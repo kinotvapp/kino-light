@@ -22,31 +22,35 @@ import java.io.IOException
  */
 object PluginStreamHttp {
     /**
-     * [hosts] must come from the INSTALLED record (what the person approved), never from plugin
-     * output. `allowInsecureLocalhost` and `delegateDns` exist for MockWebServer tests only.
+     * [hosts] must come from the INSTALLED record and the person's own settings (what the person
+     * approved or typed), never from plugin output. `allowInsecureLocalhost` and `delegateDns`
+     * exist for MockWebServer tests only.
      */
     fun client(
         base: OkHttpClient,
-        hosts: List<String>,
+        hosts: EffectiveHosts,
         allowInsecureLocalhost: Boolean = false,
         delegateDns: Dns = Dns.SYSTEM,
     ): OkHttpClient = base.newBuilder()
         .followRedirects(false)
         .followSslRedirects(false)
-        .dns(PluginDns(allowLoopback = allowInsecureLocalhost, delegate = delegateDns))
+        .dns(PluginDns(allowLoopback = allowInsecureLocalhost, delegate = delegateDns, userHostNames = hosts.userHostNames))
         .addInterceptor(PluginStreamGate(hosts, allowInsecureLocalhost))
         .build()
 }
 
 /** Gates every request and every redirect hop of a plugin stream; see [PluginStreamHttp]. */
 class PluginStreamGate(
-    private val hosts: List<String>,
+    private val hosts: EffectiveHosts,
     private val allowInsecureLocalhost: Boolean = false,
 ) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         var request = chain.request()
+        var previous: okhttp3.HttpUrl? = null
         repeat(MAX_REDIRECTS + 1) {
-            PluginHostGate.check(request.url, hosts, allowInsecureLocalhost)
+            val from = previous
+            if (from == null) PluginHostGate.check(request.url, hosts, allowInsecureLocalhost)
+            else PluginHostGate.checkRedirect(from, request.url, hosts, allowInsecureLocalhost)
             val response = chain.proceed(request)
             val location = response.header("Location")
             if (response.code !in REDIRECTS || location == null) return response
@@ -54,6 +58,7 @@ class PluginStreamGate(
             val code = response.code
             response.close()
             if (next == null) throw IOException("redirección inválida")
+            previous = request.url
             request = request.newBuilder().url(next).apply {
                 if (code == 303 || (code in 301..302 && request.method == "POST")) get()
             }.build()

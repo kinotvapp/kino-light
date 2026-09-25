@@ -362,7 +362,7 @@ class AppGraph(context: Context) {
      * carried in `PlayerData.pluginHosts`) on every request and redirect hop. See PluginStreamHttp.
      */
     fun pluginStreamClient(approvedHosts: List<String>): okhttp3.OkHttpClient =
-        PluginStreamHttp.client(pluginBaseHttp, approvedHosts)
+        PluginStreamHttp.client(pluginBaseHttp, EffectiveHosts(approvedHosts))
 
     /** The live PluginHttp of each open runtime, so the pool can reset its per-call request budget. */
     private val pluginHttps = java.util.concurrent.ConcurrentHashMap<String, PluginHttp>()
@@ -390,7 +390,10 @@ class AppGraph(context: Context) {
             throw e
         }
         // The APPROVED hosts from installed.json, never the manifest's: they're what the person accepted.
-        val http = PluginHttp(pluginBaseHttp, id, plugin.record.hosts, BuildConfig.VERSION_NAME)
+        val hosts = EffectiveHosts(plugin.record.hosts)
+        // The jar persists in the plugin's data dir: a login survives the idle close and app restarts.
+        val cookies = PluginCookies(java.io.File(pluginStore.dataDir(id), PluginCookies.FILE_NAME), hosts)
+        val http = PluginHttp(pluginBaseHttp, id, hosts, BuildConfig.VERSION_NAME, cookies = cookies)
         pluginHttps[id] = http
         val storage = PluginStorage(java.io.File(pluginStore.dataDir(id), "storage.json"))
         val runtime = PluginRuntime.open(id, script, DefaultPluginHost(id, http, storage), PluginEnv(appVersion = BuildConfig.VERSION_NAME))

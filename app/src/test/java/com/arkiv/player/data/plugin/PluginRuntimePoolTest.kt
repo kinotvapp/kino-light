@@ -101,7 +101,7 @@ class PluginRuntimePoolTest {
      */
     @Test fun `beforeCall wired to PluginHttp beginCall resets the request budget between calls`() = runTest {
         repeat(120) { server.enqueue(MockResponse().setBody("x")) }
-        val http = PluginHttp(OkHttpClient(), "p", listOf("localhost"), "1.0", allowInsecureLocalhost = true)
+        val http = PluginHttp(OkHttpClient(), "p", EffectiveHosts(listOf("localhost")), "1.0", allowInsecureLocalhost = true)
         val url = "http://localhost:${server.port}/n"
         val pool = PluginRuntimePool(
             open = { FakeRuntime { repeat(60) { http.fetch(PluginHttp.Request(url)) }; "ok" } },
