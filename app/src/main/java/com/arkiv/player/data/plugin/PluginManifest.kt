@@ -17,6 +17,10 @@ data class PluginManifest(
     /** `#RRGGBB` uppercased, or null for the neutral default (`PluginColors.DEFAULT`). */
     val color: String?,
     val icon: String?,
+    /** From the closed list in [PluginSettings.PERMISSIONS] (empty in SDK v1); shown on the consent sheet. */
+    val permissions: List<String> = emptyList(),
+    /** What the plugin asks the person to configure (Ajustes ▸ Plugins ▸ Configurar). */
+    val settings: List<PluginSetting> = emptyList(),
 )
 
 sealed interface ManifestResult {
@@ -32,14 +36,15 @@ sealed interface ManifestResult {
 object ManifestParser {
     const val SUPPORTED_API = 1
     const val MAX_BYTES = 16 * 1024
+    const val MAX_HOSTS = 20
     val RESERVED_IDS = setOf("magis", "ditu", "live", "local", "unknown", "plugin")
-    val CAPABILITIES = setOf("search", "home", "episodes", "resolve")
+    val CAPABILITIES = setOf("search", "home", "browse", "episodes", "resolve")
 
     private val ID = Regex("^[a-z0-9][a-z0-9-]{1,39}$")
     private val COLOR = Regex("^#[0-9A-Fa-f]{6}$")
     private val PATH_SEGMENT = Regex("^[A-Za-z0-9._-]+$")
 
-    fun parse(text: String): ManifestResult {
+    fun parse(text: String, knownPermissions: Set<String> = PluginSettings.PERMISSIONS): ManifestResult {
         if (text.toByteArray(Charsets.UTF_8).size > MAX_BYTES) {
             return invalid("kino-plugin.json", "El manifiesto pesa más de 16 KB")
         }
@@ -68,7 +73,7 @@ object ManifestParser {
 
         val hostsJson = o.optJSONArray("hosts") ?: return invalid("hosts", "Falta el campo \"hosts\"")
         val hosts = (0 until hostsJson.length()).map { hostsJson.opt(it) as? String ?: "" }
-        if (hosts.isEmpty() || hosts.size > 20) return invalid("hosts", "El campo \"hosts\" debe tener de 1 a 20 dominios")
+        if (hosts.isEmpty() || hosts.size > MAX_HOSTS) return invalid("hosts", "El campo \"hosts\" debe tener de 1 a $MAX_HOSTS dominios")
         hosts.firstOrNull { !HostRules.isValidPattern(it) }?.let {
             return invalid("hosts", "El dominio \"$it\" no está permitido")
         }
@@ -87,12 +92,27 @@ object ManifestParser {
             return invalid("icon", "El campo \"icon\" debe ser una ruta relativa a un .png")
         }
 
+        if (o.has("permissions") && o.optJSONArray("permissions") == null) {
+            return invalid("permissions", "El campo \"permissions\" debe ser una lista")
+        }
+        val permissions = when (val p = PluginSettings.parsePermissions(o.optJSONArray("permissions"), knownPermissions)) {
+            is PluginSettings.Parsed.Error -> return invalid("permissions", p.message)
+            is PluginSettings.Parsed.Ok -> p.value
+        }
+        if (o.has("settings") && o.optJSONArray("settings") == null) {
+            return invalid("settings", "El campo \"settings\" debe ser una lista")
+        }
+        val settings = when (val p = PluginSettings.parseSettings(o.optJSONArray("settings"))) {
+            is PluginSettings.Parsed.Error -> return invalid("settings", p.message)
+            is PluginSettings.Parsed.Ok -> p.value
+        }
+
         return ManifestResult.Valid(
             PluginManifest(
                 id = id, name = name, version = version, apiVersion = api, entry = entry,
                 description = text(o, "description", 300), author = text(o, "author", 60),
                 homepage = text(o, "homepage", 200), hosts = hosts.distinct(), capabilities = caps,
-                color = color?.uppercase(), icon = icon,
+                color = color?.uppercase(), icon = icon, permissions = permissions, settings = settings,
             ),
         )
     }
