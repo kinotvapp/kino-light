@@ -65,7 +65,7 @@ class PluginHomeRows(
      * shouldn't trust (round 2, finding 3b's "window b"); the persisted value is what still catches
      * staleness after the process — and so the in-memory value — has restarted.
      */
-    private data class Cached(val fetchedAt: Long, val sessionRevision: Int, val configRevision: Int, val json: String)
+    private data class Cached(val fetchedAt: Long, val sessionRevision: Int, val configRevision: Int, val version: String, val json: String)
 
     companion object {
         /** A cache file bigger than this is neither written nor read (it's deleted instead). */
@@ -85,7 +85,7 @@ class PluginHomeRows(
         // configRevision is what still catches that across a process restart (fix round 3).
         emit(
             assemble(targets) { p ->
-                cached[p.id]?.takeIf { it.sessionRevision == sessionRevision(p.id) && it.configRevision == p.configRevision }
+                cached[p.id]?.takeIf { it.sessionRevision == sessionRevision(p.id) && it.configRevision == p.configRevision && it.version == p.record.version }
                     ?.let { parse(p, it.json) }.orEmpty()
             },
         )
@@ -96,8 +96,10 @@ class PluginHomeRows(
     }
 
     private suspend fun refresh(p: InstalledPlugin, cached: Cached?): List<PluginRow> {
+        // `version` too: rows cached by an older version of the plugin (e.g. without a browse `ref`)
+        // must not outlive an update for the rest of the TTL.
         if (cached != null && cached.sessionRevision == sessionRevision(p.id) && cached.configRevision == p.configRevision &&
-            clock() - cached.fetchedAt < ttlMs
+            cached.version == p.record.version && clock() - cached.fetchedAt < ttlMs
         ) {
             return parse(p, cached.json)
         }
@@ -116,7 +118,7 @@ class PluginHomeRows(
             // the call, same as `revision` above: if a save landed during the call and bumped it,
             // ANY later read (this process or after a restart) compares against the NEW persisted
             // value and correctly refuses this entry, exactly like the in-memory revision already did.
-            parse(p, json).also { rows -> if (rows.isNotEmpty()) writeCache(p.id, revision, p.configRevision, json) }
+            parse(p, json).also { rows -> if (rows.isNotEmpty()) writeCache(p.id, revision, p.configRevision, p.record.version, json) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -155,13 +157,14 @@ class PluginHomeRows(
         // optInt(..., 0) on both: a pre-round-3 cache file (no "configRevision" field at all) reads
         // as 0, which -- unless a plugin's persisted revision genuinely IS still 0 -- simply fails
         // the comparison and is treated as not fresh: safe, self-healing, no migration needed.
-        Cached(o.getLong("fetchedAt"), o.optInt("sessionRevision", 0), o.optInt("configRevision", 0), o.getString("json"))
+        // A cache file without "version" (written before it was stamped) reads as "": never fresh.
+        Cached(o.getLong("fetchedAt"), o.optInt("sessionRevision", 0), o.optInt("configRevision", 0), o.optString("version", ""), o.getString("json"))
     }.getOrNull()
 
-    private fun writeCache(pluginId: String, sessionRevision: Int, configRevision: Int, json: String) {
+    private fun writeCache(pluginId: String, sessionRevision: Int, configRevision: Int, version: String, json: String) {
         runCatching {
             val bytes = JSONObject().put("fetchedAt", clock()).put("sessionRevision", sessionRevision)
-                .put("configRevision", configRevision).put("json", json).toString().toByteArray(Charsets.UTF_8)
+                .put("configRevision", configRevision).put("version", version).put("json", json).toString().toByteArray(Charsets.UTF_8)
             if (bytes.size > MAX_CACHE_BYTES) {
                 log("[$pluginId] home answer too big to cache (${bytes.size} bytes)")
                 return@runCatching

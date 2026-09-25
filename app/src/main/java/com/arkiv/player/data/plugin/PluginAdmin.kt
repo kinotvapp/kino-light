@@ -72,12 +72,21 @@ class DefaultPluginAdmin(
         runtimes.close(id)
     }
 
-    /** Also forgets its settings, passwords included: a reinstall starts from "Falta configurar". */
+    /**
+     * Also forgets its settings, passwords included: a reinstall starts from "Falta configurar".
+     * Forgets its session the way [saveSettings] does, in the same order: without it, a call
+     * still in flight could write `cookies.json`/`home.json` back into the data dir just deleted,
+     * and a reinstall of the same id would inherit the old session. [forgetSession] runs AFTER
+     * the data dir is gone: its own delete catches a write that landed before the jar retired.
+     */
     override fun uninstall(id: String) {
         val settings = registry.find(id)?.manifest?.settings.orEmpty()
+        forgetHomeCache(id)
         registry.uninstall(id)
+        forgetSession(id)
         config.clear(id, settings)
         runtimes.close(id)
+        afterSessionClosed(id)
     }
 
     override suspend fun settingsOf(id: String): PluginSettingsForm? = withContext(io) {

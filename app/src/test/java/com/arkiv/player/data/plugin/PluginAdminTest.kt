@@ -4,9 +4,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.runBlocking
+import okhttp3.Cookie
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -98,6 +101,44 @@ class PluginAdminTest {
         installAndOpen("1.0.0")
         admin.uninstall("demo")
         assertEquals(listOf("gone"), registryAtClose)
+    }
+
+    /**
+     * Final review M1: uninstall forgets the session like a settings save does. Real jar, real
+     * files: a call still in flight when the person uninstalls must not write `cookies.json` back
+     * into the deleted data dir, where a reinstall of the same id would inherit it.
+     */
+    @Test fun `uninstall retires the live cookie jar and forgets the home cache, so a late write can't reach a reinstall`() {
+        installAndOpen("1.0.0")
+        val jars = PluginJarRegistry()
+        val dataDir = store.dataDir("demo")
+        val cookiesFile = File(dataDir, PluginCookies.FILE_NAME)
+        val homeFile = File(dataDir, "home.json")
+        val url = "https://example.com/".toHttpUrl()
+        val jar = PluginCookies(cookiesFile, EffectiveHosts(listOf("example.com")))
+        jars.put("demo", jar)
+        jar.saveFromResponse(url, listOfNotNull(Cookie.parse(url, "sid=A")))
+        jar.saveIfChanged()
+        homeFile.writeText("{}")
+        assertTrue(cookiesFile.exists())
+        val order = mutableListOf<String>()
+        val tracking = DefaultPluginAdmin(
+            registry, installer, pool, config,
+            // Wired like AppGraph's forgetPluginHomeCache / forgetPluginSession.
+            forgetHomeCache = { id -> order += "home"; File(store.dataDir(id), "home.json").delete() },
+            forgetSession = { id -> order += "session"; jars.forget(id); File(store.dataDir(id), PluginCookies.FILE_NAME).delete() },
+            afterSessionClosed = { order += "afterClose" },
+            io = Dispatchers.Unconfined,
+        )
+        tracking.uninstall("demo")
+        assertEquals(listOf("home", "session", "afterClose"), order)
+        assertEquals(listOf("gone"), registryAtClose)
+
+        // The call that was still in flight finishes now, on the jar it opened with.
+        jar.saveFromResponse(url, listOfNotNull(Cookie.parse(url, "sid=A-late")))
+        jar.saveIfChanged()
+        assertFalse("a late write must not resurrect cookies.json", cookiesFile.exists())
+        assertFalse(homeFile.exists())
     }
 
     @Test fun `saving settings closes the runtime, forgets the session and clears Falta configurar`() = runBlocking {

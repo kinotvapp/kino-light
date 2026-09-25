@@ -39,7 +39,9 @@ class PluginSetupRequiredException(val pluginId: String, message: String) : Runt
 class PluginContentSource(
     private val plugin: InstalledPlugin,
     private val caller: PluginCaller,
-    private val hosts: EffectiveHosts = EffectiveHosts(plugin.record.hosts),
+    // The plugin's effective hosts (declared ∪ typed servers): a declared-only default would
+    // silently drop the person's own server for any caller relying on it.
+    private val hosts: EffectiveHosts = plugin.hosts,
     private val log: (String) -> Unit = { android.util.Log.w("KinoPlugin", it) },
 ) : ContentSource {
     private val id = plugin.manifest.id

@@ -17,6 +17,7 @@ class PluginConfigStoreTest {
         override fun get(key: String) = map[key]
         override fun put(key: String, value: String) { map[key] = value }
         override fun remove(key: String) { map.remove(key) }
+        override fun keys(): Set<String> = map.keys.toSet()
     }
 
     private val secrets = MapSecrets()
@@ -145,6 +146,30 @@ class PluginConfigStoreTest {
         assertFalse(File(tmp.root, "jf/config.json").exists())
         assertNull(secrets.map["plugin.jf.password"])
         assertEquals("keep", secrets.map["plugin.other.password"])
+    }
+
+    /** Final review M2 (spec §1.3): a password key an earlier version declared and an update dropped is removed too. */
+    @Test fun `clear also removes secrets no current manifest declares, and only this plugin's`() {
+        store.save("jf", settings, full)
+        secrets.put("plugin.jf.oldPassword", "from 1.0.0")
+        secrets.put("plugin.jf2.password", "keep")
+        secrets.put("plugin.other.password", "keep")
+        store.clear("jf", settings)
+        assertEquals(mapOf("plugin.jf2.password" to "keep", "plugin.other.password" to "keep"), secrets.map)
+    }
+
+    @Test fun `clear still removes the declared secrets when the store can't list its keys`() {
+        val unlistable = object : SecretStore {
+            val map = LinkedHashMap<String, String>()
+            override fun get(key: String) = map[key]
+            override fun put(key: String, value: String) { map[key] = value }
+            override fun remove(key: String) { map.remove(key) }
+            override fun keys(): Set<String> = throw SecurityException("keystore")
+        }
+        val s = PluginConfigStore({ id -> File(tmp.root, id) }, unlistable)
+        assertNull(s.save("jf", settings, full))
+        s.clear("jf", settings)
+        assertNull(unlistable.map["plugin.jf.password"])
     }
 
     /**

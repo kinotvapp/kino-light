@@ -107,6 +107,14 @@ class PluginBrowseTest {
         }
     }
 
+    /** Pre-flight ruling F2: the constructor's default hosts must include the typed server, not only the declared ones. */
+    @Test fun `without explicit hosts the source still honors the typed server`() = runTest {
+        val lan = plugin(userHosts = listOf(UserHost("http", "10.0.2.2", 8096)))
+        val caller = Caller { _, _ -> """{"url":"http://10.0.2.2:8096/v.mp4"}""" }
+        val play = PluginContentSource(lan, caller, log = {}).resolve(PluginRef("demo", "m1", PluginRef.MOVIE, "R1").encode())
+        assertEquals("http://10.0.2.2:8096/v.mp4", play.url)
+    }
+
     @Test fun `SDK v1 item fields ride in the result's extra`() {
         val r = PluginContentSource.resultFrom(
             plugin(),

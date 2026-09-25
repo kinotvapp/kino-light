@@ -62,6 +62,8 @@ class EncryptedSecretStore(private val context: Context) : SecretStore {
         memory.remove(key)
     }
 
+    override fun keys(): Set<String> = prefs?.all?.keys.orEmpty() + memory.keys
+
     private companion object {
         const val FILE = "kino_plugin_secrets"
         const val TAG = "KinoPlugin"

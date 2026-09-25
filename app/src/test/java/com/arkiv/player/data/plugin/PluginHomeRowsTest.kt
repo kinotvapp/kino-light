@@ -68,6 +68,21 @@ class PluginHomeRowsTest {
         assertEquals(2, caller.calls)
     }
 
+    /** Final review M4: rows cached by 1.0.1 (no browse `ref`) must not outlive a silent update to 1.1.0. */
+    @Test fun `a plugin update invalidates its cached rows, even within the TTL`() = runTest {
+        val caller = CountingCaller { rowJson }
+        home(listOf(plugin("a")), caller).rows().toList()
+        assertEquals(1, caller.calls)
+        now += 60_000L
+        val updated = plugin("a").let { it.copy(record = it.record.copy(version = "1.1.0")) }
+        val emissions = home(listOf(updated), caller).rows().toList()
+        assertEquals("the old version's rows are never painted", emptyList<PluginHomeRow>(), emissions.first())
+        assertEquals("a fresh call replaces them", 2, caller.calls)
+        assertEquals(1, emissions.last().size)
+        home(listOf(updated), caller).rows().toList()
+        assertEquals("the new version's own cache is reused", 2, caller.calls)
+    }
+
     @Test fun `an oversized cache file is ignored and removed, never parsed`() = runTest {
         val file = File(tmp.root, "a/home.json").apply { parentFile!!.mkdirs() }
         // Fresh (fetchedAt = now) and valid, just too big: it must not be read at all.

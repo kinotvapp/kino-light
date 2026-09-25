@@ -18,6 +18,9 @@ interface SecretStore {
     fun get(key: String): String?
     fun put(key: String, value: String)
     fun remove(key: String)
+
+    /** Every key it holds, so uninstall can also remove keys no current manifest declares. */
+    fun keys(): Set<String> = emptySet()
 }
 
 /**
@@ -159,10 +162,18 @@ class PluginConfigStore(private val dataDir: (pluginId: String) -> File, private
         return null
     }
 
-    /** Uninstall: the file (usually already gone with the data dir) and every secret of [settings]. */
+    /**
+     * Uninstall: the file (usually already gone with the data dir) and every secret of the plugin —
+     * the ones [settings] declares AND any `plugin.<id>.` key an earlier version declared and a
+     * later update renamed or dropped (spec §1.3: uninstall deletes both).
+     */
     fun clear(pluginId: String, settings: List<PluginSetting>) {
         File(dataDir(pluginId), FILE_NAME).delete()
-        settings.filter { it.type == SettingType.PASSWORD }.forEach { secrets.remove(secretKey(pluginId, it.key)) }
+        val prefix = secretKey(pluginId, "")
+        val declared = settings.filter { it.type == SettingType.PASSWORD }.map { secretKey(pluginId, it.key) }
+        // Listing decrypts the whole store: if that fails, still remove the declared ones.
+        val leftovers = runCatching { secrets.keys().filter { it.startsWith(prefix) } }.getOrDefault(emptyList())
+        (declared + leftovers).toSet().forEach(secrets::remove)
     }
 
     private data class Stored(val values: JSONObject, val secrets: Set<String>, val revision: Int = 0)
