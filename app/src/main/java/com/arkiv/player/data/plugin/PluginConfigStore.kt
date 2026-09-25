@@ -112,6 +112,16 @@ class PluginConfigStore(private val dataDir: (pluginId: String) -> File, private
     }
 
     /**
+     * [reconcileSecrets] for every plugin in [plugins] (id to its settings), one at a time. A
+     * plugin whose secret store throws (the Keystore/Tink misbehave on cheap Android boxes) goes to
+     * [onFailure] and is skipped: it never stops the other plugins, nor the caller — AppGraph runs
+     * this inside the warm-up that pre-builds Xuper's own lazies off Main.
+     */
+    fun reconcileAllSecrets(plugins: List<Pair<String, List<PluginSetting>>>, onFailure: (pluginId: String, error: Throwable) -> Unit) {
+        for ((id, settings) in plugins) runCatching { reconcileSecrets(id, settings) }.onFailure { onFailure(id, it) }
+    }
+
+    /**
      * Validates [input] (every setting's value, as the Configurar screen holds them) and saves it.
      * Returns null when saved, or the Spanish reason it wasn't (nothing is written then).
      *

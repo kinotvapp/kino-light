@@ -260,7 +260,9 @@ class AppGraph(context: Context) {
             // `pluginRegistry` had ALREADY been touched earlier (its lazy only reloads once, on
             // first access) -- without it, an early access from elsewhere could win the race and
             // this reconciliation would sit unread until some LATER reload().
-            reconcilePluginSecrets()
+            // Guarded: a plugin Keystore failure must never skip Xuper's lazies below.
+            runCatching { reconcilePluginSecrets() }
+                .onFailure { android.util.Log.w("KinoPlugin", "warm-up: plugin secrets not reconciled: ${it.javaClass.simpleName}") }
             pluginRegistry.reload()
             contentSource
             magisAccount
@@ -385,7 +387,9 @@ class AppGraph(context: Context) {
      * eventually self-corrects too. See `PluginConfigStore.reconcileSecrets`'s KDoc.
      */
     private fun reconcilePluginSecrets() {
-        pluginStore.list().forEach { stored -> pluginConfigStore.reconcileSecrets(stored.manifest.id, stored.manifest.settings) }
+        pluginConfigStore.reconcileAllSecrets(pluginStore.list().map { it.manifest.id to it.manifest.settings }) { id, e ->
+            android.util.Log.w("KinoPlugin", "secrets of $id not reconciled: ${e.javaClass.simpleName}")
+        }
     }
 
     /**
@@ -575,7 +579,10 @@ class AppGraph(context: Context) {
     /** UpdateWorker's plugin step: each plugin at most once per 24 h; see PluginInstaller.checkDueUpdates. */
     suspend fun checkPluginUpdates() {
         val outcomes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            reconcilePluginSecrets() // catches a Keystore loss that happened mid-session too
+            // Catches a Keystore loss that happened mid-session too. Guarded: a failure here must
+            // never cancel every plugin's update check.
+            runCatching { reconcilePluginSecrets() }
+                .onFailure { android.util.Log.w("KinoPlugin", "update check: plugin secrets not reconciled: ${it.javaClass.simpleName}") }
             pluginInstaller.checkDueUpdates()
         }
         // Reload before closing, as in DefaultPluginAdmin: never a new script with the old hosts.

@@ -147,6 +147,33 @@ class PluginConfigStoreTest {
         assertEquals("keep", secrets.map["plugin.other.password"])
     }
 
+    /**
+     * Final review I2: AppGraph reconciles every plugin inside the warm-up that pre-builds Xuper's
+     * lazies off Main, and before every plugin's update check. A secret store that throws (Keystore
+     * or Tink on a cheap box) for one plugin must neither escape to that caller nor stop the others.
+     */
+    @Test fun `reconcileAllSecrets survives a throwing secret store and still reconciles the other plugins`() {
+        val flaky = object : SecretStore {
+            val map = LinkedHashMap<String, String>()
+            override fun get(key: String): String? = if (key.startsWith("plugin.bad.")) throw SecurityException("keystore") else map[key]
+            override fun put(key: String, value: String) { map[key] = value }
+            override fun remove(key: String) { map.remove(key) }
+        }
+        val s = PluginConfigStore({ id -> File(tmp.root, id) }, flaky)
+        assertNull(s.save("bad", settings, full))
+        assertNull(s.save("good", settings, full))
+        flaky.map.remove("plugin.good.password") // good's Keystore entry is gone: reconcile must notice
+        val failed = mutableListOf<String>()
+        // Returning normally at all (no throw) is what lets the caller's own work go on.
+        s.reconcileAllSecrets(listOf("bad" to settings, "good" to settings)) { id, e ->
+            assertTrue(e is SecurityException)
+            failed += id
+        }
+        assertEquals(listOf("bad"), failed)
+        assertEquals("the plugin after the failing one is still reconciled", listOf("password"), s.missing("good", settings).map { it.key })
+        assertEquals("the failing plugin's file is left as it was", emptyList<PluginSetting>(), s.missing("bad", settings))
+    }
+
     @Test fun `a tampered config file is read defensively`() {
         File(tmp.root, "jf").mkdirs()
         File(tmp.root, "jf/config.json").writeText("""{"values":{"server":"http://127.0.0.1","hd":"yes","quality":"4k","user":42},"secrets":["password"]}""")
