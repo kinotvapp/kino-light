@@ -44,6 +44,15 @@ class LiveStreamHealthTest {
     }
 
     @Test
+    fun `only text that starts with the EXTM3U tag is a playlist`() {
+        assertTrue(LivePlaylistParser.looksLikePlaylist("#EXTM3U\n#EXT-X-VERSION:3"))
+        assertTrue("a BOM and blank lines in front are tolerated", LivePlaylistParser.looksLikePlaylist("\uFEFF\n #EXTM3U\n"))
+        assertFalse(LivePlaylistParser.looksLikePlaylist("<html><head><title>404 Not Found</title></head></html>"))
+        assertFalse(LivePlaylistParser.looksLikePlaylist("{\"code\":500}"))
+        assertFalse(LivePlaylistParser.looksLikePlaylist(""))
+    }
+
+    @Test
     fun `garbage parses to an empty playlist instead of throwing`() {
         val p = LivePlaylistParser.parse("<html>502 Bad Gateway</html>")
         assertNull(p.mediaSequence)

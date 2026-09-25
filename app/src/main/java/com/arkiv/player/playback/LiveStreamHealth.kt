@@ -16,6 +16,9 @@ internal data class LivePlaylist(
 /** Reads the parts of an HLS media playlist that say whether a live stream is healthy. Tolerant: never throws. */
 internal object LivePlaylistParser {
 
+    /** Whether [text] is an HLS playlist at all: a CDN's error page, or an empty body, behind a 200 is not. */
+    fun looksLikePlaylist(text: String): Boolean = text.trimStart('\uFEFF', ' ', '\t', '\r', '\n').startsWith("#EXTM3U")
+
     fun parse(raw: String): LivePlaylist {
         var sequence: Long? = null
         var target: Double? = null

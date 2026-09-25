@@ -309,9 +309,11 @@ class LiveHlsProxy(
         // per-request latency there's no way to tell whether a cutoff is the CDN's, the proxy's or
         // the player's -- all three look the same.
         val kind = if (url.endsWith(".m3u8")) "playlist" else "segment"
+        var target = url
+        var followedRedirect = false
         repeat(2) { attempt ->
             val t0 = System.currentTimeMillis()
-            val c = (URL(url).openConnection() as HttpURLConnection).apply {
+            val c = (URL(target).openConnection() as HttpURLConnection).apply {
                 connectTimeout = 12_000
                 readTimeout = 20_000
                 setRequestProperty("Content-Auth", runBlocking { contentAuth(s, cdn) })
@@ -323,6 +325,21 @@ class LiveHlsProxy(
             }
             val code = c.responseCode
             val ms = System.currentTimeMillis() - t0
+            // A redirect on the same host (http to https) is followed once; HttpURLConnection won't cross protocols.
+            if (code in OriginRedirect.CODES) {
+                val location = c.getHeaderField("Location")
+                val next = if (followedRedirect) null else OriginRedirect.sameHost(target, location)
+                LiveLog.w(
+                    "$kind → $code redirect " + if (next != null) "followed to ${com.arkiv.player.dlna.DlnaXml.safeUrl(next)}"
+                    else "NOT followed (location=${com.arkiv.player.dlna.DlnaXml.safeUrl(location.orEmpty())})",
+                )
+                if (next != null) {
+                    followedRedirect = true
+                    target = next
+                    runCatching { c.disconnect() }
+                    return@repeat
+                }
+            }
             // Both 401 and 403: this CDN uses 401 and only checking 403 left the signature
             // considered good, the backup never switching, and the channel dead with a 502. See
             // [isSignatureRejection].
@@ -424,6 +441,7 @@ class LiveHlsProxy(
         // segments had-.
         val inOrder = (listOfNotNull(activeCdn) + s.cdns).distinctBy { it.cflHost }
         var c: java.net.HttpURLConnection? = null
+        var rawPlaylist: String? = null
         var chosen: ChannelCdn? = null
         var anyAnswered = false
         var lastCode = -1
@@ -440,7 +458,18 @@ class LiveHlsProxy(
                 answeredThisRound = true
                 anyAnswered = true
                 lastCode = r.responseCode
-                if (lastCode == 200) { c = r; chosen = cdn; break@loop }
+                if (lastCode == 200) {
+                    // A 200 whose body is not a playlist (a CDN's error page) goes to the next CDN and the next round
+                    // like any other refusal, instead of reaching the player as a parse error.
+                    val text = runCatching { r.inputStream.bufferedReader().readText() }.getOrNull()
+                    if (text != null && LivePlaylistParser.looksLikePlaylist(text)) {
+                        c = r; chosen = cdn; rawPlaylist = text
+                        break@loop
+                    }
+                    LiveLog.w("playlist: ${cdn.cflHost} answered 200 with something that is not a playlist " +
+                        "(${text?.length ?: -1} chars: ${text?.take(60)?.replace(Regex("\\s+"), " ")}) → treated as not served")
+                    lastCode = NOT_A_PLAYLIST
+                }
                 runCatching { r.disconnect() }
             }
             // If NOBODY answered, every CDN rejected the signature: retrying won't fix that -the
@@ -474,7 +503,7 @@ class LiveHlsProxy(
         activeCdn = chosen
         val playlistUrl = "http://${chosen.cflHost}/live/${s.playCode}.m3u8"
         val base = URL(playlistUrl)
-        val raw = c.inputStream.bufferedReader().readText()
+        val raw = rawPlaylist ?: c.inputStream.bufferedReader().readText()
         val body = raw.lineSequence()
             .joinToString("\n") { ln -> rewriteLine(ln, base, myHost, myPort, myToken) } + "\n"
         val bytes = body.toByteArray()
@@ -726,6 +755,9 @@ class LiveHlsProxy(
          * gives up.
          */
         private const val PLAYLIST_ATTEMPTS = 3
+
+        /** Stands in for an HTTP status in the log when a CDN answered 200 with a body that is not a playlist. */
+        private const val NOT_A_PLAYLIST = 599
 
         /** How often the proxy writes its one-line health summary (playlists, gaps, slow/short/cut segments). */
         private const val HEALTH_SUMMARY_MS = 30_000L
