@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import com.arkiv.player.BuildConfig
 import com.arkiv.player.data.credentials.SeedResult
+import com.arkiv.player.data.magis.SeedSwitchResult
 import com.arkiv.player.data.local.FileSizeFormat
 import com.arkiv.player.data.local.StorageUsage
 import com.arkiv.player.data.update.UpdateInfo
@@ -47,6 +48,8 @@ internal fun AppTab(onOpenDownloads: () -> Unit = {}) {
     var manualUpdate by remember { mutableStateOf<UpdateInfo?>(null) }
     var seeding by remember { mutableStateOf(false) }
     var seedMessage by remember { mutableStateOf<String?>(null) }
+    var switching by remember { mutableStateOf(false) }
+    var switchMessage by remember { mutableStateOf<String?>(null) }
     val funFactsEnabled by graph.settings.funFactsEnabled.collectAsState()
     val seedAutoRefreshEnabled by graph.settings.seedAutoRefreshEnabled.collectAsState()
     val forceTvDesign by graph.settings.forceTvDesign.collectAsState()
@@ -124,6 +127,25 @@ internal fun AppTab(onOpenDownloads: () -> Unit = {}) {
             seedMessage = when (result) {
                 is SeedResult.Ok -> "${result.count} semillas cargadas"
                 SeedResult.Failed -> "Sin conexión, reintenta"
+            }
+        }
+    }
+
+    // Manual "Cambiar semilla": for when the CURRENT seed plays badly (shared with another device
+    // right now, or otherwise stuck) -- tries others from the pool for real, one at a time, until one
+    // actually reactivates. See MagisSession.switchToAnotherSeed's KDoc for why this reactivates
+    // instead of picking blind like the automatic geo-block fallback does.
+    fun cambiarSemilla() {
+        switching = true
+        switchMessage = null
+        scope.launch {
+            val result = graph.magisSession.switchToAnotherSeed()
+            switching = false
+            switchMessage = when (result) {
+                is SeedSwitchResult.Ok -> "Semilla cambiada (intento ${result.tries})"
+                SeedSwitchResult.AccountLinked -> "Tu cuenta no usa semillas"
+                SeedSwitchResult.NoOtherSeed -> "No hay otra semilla para probar"
+                is SeedSwitchResult.AllFailed -> "Probé ${result.tries} semillas y ninguna funcionó"
             }
         }
     }
@@ -240,15 +262,32 @@ internal fun AppTab(onOpenDownloads: () -> Unit = {}) {
         style = MaterialTheme.typography.bodySmall,
         modifier = Modifier.padding(bottom = 8.dp),
     )
-    Button(onClick = ::sembrarSemillas, enabled = !seeding) {
-        if (seeding) {
-            CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
-            Text("…", modifier = Modifier.padding(start = 8.dp))
-        } else {
-            Text("Sembrar semillas")
+    Row {
+        Button(onClick = ::sembrarSemillas, enabled = !seeding) {
+            if (seeding) {
+                CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
+                Text("…", modifier = Modifier.padding(start = 8.dp))
+            } else {
+                Text("Sembrar semillas")
+            }
+        }
+        Button(onClick = ::cambiarSemilla, enabled = !switching, modifier = Modifier.padding(start = 8.dp)) {
+            if (switching) {
+                CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
+                Text("…", modifier = Modifier.padding(start = 8.dp))
+            } else {
+                Text("Cambiar semilla")
+            }
         }
     }
     seedMessage?.let {
+        Text(
+            it,
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+    }
+    switchMessage?.let {
         Text(
             it,
             style = MaterialTheme.typography.bodySmall,

@@ -36,6 +36,7 @@ import kotlinx.coroutines.launch
 import com.arkiv.player.data.EffectsMode
 import com.arkiv.player.data.SettingsStore
 import com.arkiv.player.data.credentials.SeedResult
+import com.arkiv.player.data.magis.SeedSwitchResult
 import com.arkiv.player.data.local.FileSizeFormat
 import com.arkiv.player.data.local.StorageUsage
 import com.arkiv.player.data.update.UpdateInfo
@@ -57,6 +58,8 @@ internal fun TvSettingsApp() {
     var manualUpdate by remember { mutableStateOf<UpdateInfo?>(null) }
     var seeding by remember { mutableStateOf(false) }
     var seedMessage by remember { mutableStateOf<String?>(null) }
+    var switching by remember { mutableStateOf(false) }
+    var switchMessage by remember { mutableStateOf<String?>(null) }
 
     // Storage: what Kino takes up, re-measured after every action. See AppStorage. A TV never
     // downloads, but an older version could have, and a full disk here reboots the whole box.
@@ -107,6 +110,25 @@ internal fun TvSettingsApp() {
             seedMessage = when (result) {
                 is SeedResult.Ok -> "${result.count} semillas cargadas"
                 SeedResult.Failed -> "Sin conexión, reintenta"
+            }
+        }
+    }
+
+    // Manual "Cambiar semilla": for when the CURRENT seed plays badly (shared with another device
+    // right now, or otherwise stuck) -- tries others from the pool for real, one at a time, until one
+    // actually reactivates. See MagisSession.switchToAnotherSeed's KDoc for why this reactivates
+    // instead of picking blind like the automatic geo-block fallback does.
+    fun cambiarSemilla() {
+        switching = true
+        switchMessage = null
+        scope.launch {
+            val result = graph.magisSession.switchToAnotherSeed()
+            switching = false
+            switchMessage = when (result) {
+                is SeedSwitchResult.Ok -> "Semilla cambiada (intento ${result.tries})"
+                SeedSwitchResult.AccountLinked -> "Tu cuenta no usa semillas"
+                SeedSwitchResult.NoOtherSeed -> "No hay otra semilla para probar"
+                is SeedSwitchResult.AllFailed -> "Probé ${result.tries} semillas y ninguna funcionó"
             }
         }
     }
@@ -192,6 +214,13 @@ internal fun TvSettingsApp() {
         onClick = { if (!seeding) sembrarSemillas() },
     )
     seedMessage?.let {
+        Text(it, style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary)
+    }
+    TvActionOption(
+        if (switching) "…" else "Cambiar semilla",
+        onClick = { if (!switching) cambiarSemilla() },
+    )
+    switchMessage?.let {
         Text(it, style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary)
     }
     val seedAutoRefreshEnabled by graph.settings.seedAutoRefreshEnabled.collectAsState()
