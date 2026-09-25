@@ -127,6 +127,7 @@ class PluginCryptoApiTest {
             const evilAlg = { toString() { throw new Error('evil toString'); } };
             const results = [];
             try { kino.crypto.hash(evilAlg, 'x'); results.push('hash:no-throw'); } catch (e) { results.push('hash:caught'); }
+            try { kino.crypto.hmac(evilAlg, 'key', 'x'); results.push('hmac:no-throw'); } catch (e) { results.push('hmac:caught'); }
             try { kino.crypto.encrypt('aes-128-cbc', evilKey); results.push('encrypt:no-throw'); } catch (e) { results.push('encrypt:caught'); }
             try { kino.crypto.decrypt('aes-128-cbc', evilKey); results.push('decrypt:no-throw'); } catch (e) { results.push('decrypt:caught'); }
             try { kino.crypto.pbkdf2('sha1', 'p', 's', {}, 20); results.push('pbkdf2:no-throw'); } catch (e) { results.push('pbkdf2:caught'); }
@@ -135,7 +136,7 @@ class PluginCryptoApiTest {
             """,
         )
         assertEquals(
-            """["hash:caught","encrypt:caught","decrypt:caught","pbkdf2:caught","random:caught"]""",
+            """["hash:caught","hmac:caught","encrypt:caught","decrypt:caught","pbkdf2:caught","random:caught"]""",
             out,
         )
     }
