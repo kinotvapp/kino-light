@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.material3.CircularProgressIndicator
@@ -115,6 +116,10 @@ fun TvPluginMoreScreen(
             Text(target.title, style = MaterialTheme.typography.headlineMedium, color = ArkivTextSecondary, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(16.dp))
             Box(Modifier.fillMaxWidth().weight(1f)) {
+                // Fix round 1, finding 2: this must stay reachable whether or not the grid already
+                // has items -- an error (e.g. auth_required mid-paging) is never hidden behind
+                // `hasItems`. [tvMoreFooter] is the pure, unit-tested decision (`TvPluginMoreScreenTest`).
+                val footer = tvMoreFooter(state)
                 when {
                     hasItems -> CompositionLocalProvider(LocalBringIntoViewSpec provides MinimalScrollBringIntoView) {
                         LazyVerticalGrid(
@@ -139,21 +144,36 @@ fun TvPluginMoreScreen(
                                     onClick = { open(item) },
                                 )
                             }
+                            // The grid's trailing row: an error and its action (mirrors the phone's
+                            // footer item in PluginMore.kt), a quiet spinner while paging continues,
+                            // or nothing once it's over.
+                            item(key = "more", span = { GridItemSpan(maxLineSpan) }) {
+                                Box(Modifier.fillMaxWidth().padding(vertical = 16.dp), contentAlignment = Alignment.Center) {
+                                    when (footer) {
+                                        TvMoreFooter.ERROR -> TvMoreFooterError(
+                                            message = state.error.orEmpty(),
+                                            setupPluginId = state.setupPluginId,
+                                            onRetry = vm::loadMore,
+                                            onOpenPluginSettings = onOpenPluginSettings,
+                                            focusRequester = actionFocus,
+                                        )
+                                        TvMoreFooter.LOADING -> CircularProgressIndicator(color = ArkivRed, strokeWidth = 2.dp, modifier = Modifier.size(24.dp))
+                                        TvMoreFooter.NONE -> Unit
+                                    }
+                                }
+                            }
                         }
                     }
-                    state.error != null -> Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.align(Alignment.Center)) {
-                        Text(state.error.orEmpty(), color = Color.White, style = MaterialTheme.typography.bodyLarge)
-                        Spacer(Modifier.height(12.dp))
-                        val setup = state.setupPluginId
-                        Button(
-                            onClick = { if (setup != null) onOpenPluginSettings(setup) else vm.loadMore() },
-                            colors = arkivTvButtonColors(),
-                            border = arkivTvButtonBorder(),
-                            modifier = Modifier.focusRequester(actionFocus),
-                        ) { Text(if (setup != null) "Configurar" else "Reintentar") }
-                    }
-                    state.ended -> Text("No hay nada más aquí", color = ArkivTextSecondary, modifier = Modifier.align(Alignment.Center))
-                    else -> CircularProgressIndicator(color = ArkivRed, strokeWidth = 2.dp, modifier = Modifier.size(24.dp).align(Alignment.Center))
+                    footer == TvMoreFooter.ERROR -> TvMoreFooterError(
+                        message = state.error.orEmpty(),
+                        setupPluginId = state.setupPluginId,
+                        onRetry = vm::loadMore,
+                        onOpenPluginSettings = onOpenPluginSettings,
+                        focusRequester = actionFocus,
+                        modifier = Modifier.align(Alignment.Center),
+                    )
+                    footer == TvMoreFooter.LOADING -> CircularProgressIndicator(color = ArkivRed, strokeWidth = 2.dp, modifier = Modifier.size(24.dp).align(Alignment.Center))
+                    else -> Text("No hay nada más aquí", color = ArkivTextSecondary, modifier = Modifier.align(Alignment.Center))
                 }
             }
         }
@@ -172,4 +192,42 @@ fun TvPluginMoreScreen(
             }
         }
     }
+}
+
+/** An error and its action ("Configurar" for a setup-required one, "Reintentar" otherwise), shown
+ *  either full-screen (no items yet) or as the grid's trailing row (items already on screen). */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun TvMoreFooterError(
+    message: String,
+    setupPluginId: String?,
+    onRetry: () -> Unit,
+    onOpenPluginSettings: (String) -> Unit,
+    focusRequester: FocusRequester,
+    modifier: Modifier = Modifier,
+) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = modifier) {
+        Text(message, color = Color.White, style = MaterialTheme.typography.bodyLarge)
+        Spacer(Modifier.height(12.dp))
+        Button(
+            onClick = { if (setupPluginId != null) onOpenPluginSettings(setupPluginId) else onRetry() },
+            colors = arkivTvButtonColors(),
+            border = arkivTvButtonBorder(),
+            modifier = Modifier.focusRequester(focusRequester),
+        ) { Text(if (setupPluginId != null) "Configurar" else "Reintentar") }
+    }
+}
+
+/** What the grid's trailing row shows, from the pager's state alone. */
+internal enum class TvMoreFooter { ERROR, LOADING, NONE }
+
+/**
+ * Pure so it's testable in a plain JVM (`TvPluginMoreScreenTest`) -- Compose for TV has no UI test
+ * infrastructure in this project. This is the exact decision fix round 1's finding 2 broke: an
+ * error must win regardless of whether the grid already has items.
+ */
+internal fun tvMoreFooter(state: com.arkiv.player.ui.plugin.PluginMorePager.State): TvMoreFooter = when {
+    state.error != null -> TvMoreFooter.ERROR
+    !state.ended -> TvMoreFooter.LOADING
+    else -> TvMoreFooter.NONE
 }

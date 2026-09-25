@@ -52,6 +52,11 @@ private fun sourceName(source: String, state: SourcesState): String =
 
 private fun isDown(tab: SourceTab, state: SourcesState): Boolean = tab.key in state.failed.keys
 
+/** Whether [cause] is a plugin error whose CODE is one of the typed ones (`PluginErrors.CODES`):
+ *  only those already carry their own whole Spanish sentence. */
+private fun isTypedPluginError(cause: Throwable?): Boolean =
+    (cause as? com.arkiv.player.data.plugin.PluginErrorException)?.let { com.arkiv.player.data.plugin.PluginErrors.userMessage(it.code, "") != null } == true
+
 /**
  * One line per down source matching [tab] ("Todo" shows them all). They go above the list, with
  * or without results: if Caracol goes down and Magis responds, Magis's results show along with
@@ -66,8 +71,11 @@ fun downSourceNotices(state: SourcesState, tab: SourceTab): List<String> =
         .map { (source, error) ->
             if (source == SourceTab.CARACOL.key) {
                 CaracolFailure.inSearch(state.causes[source], error)
-            } else if (state.causes[source] is com.arkiv.player.data.plugin.PluginErrorException && error.isNotBlank()) {
-                // A plugin's typed error is already a whole sentence ("Configura X en Ajustes ▸ Plugins").
+            } else if (isTypedPluginError(state.causes[source]) && error.isNotBlank()) {
+                // A plugin's TYPED error is already a whole sentence ("Configura X en Ajustes ▸
+                // Plugins"). An untyped/unknown code (spec §3.6: "Any other error keeps today's
+                // generic handling") falls through instead -- otherwise a plugin's raw text would
+                // show bare, indistinguishable from the app's own message.
                 error
             } else {
                 "${sourceName(source, state)} no respondió: $error"
