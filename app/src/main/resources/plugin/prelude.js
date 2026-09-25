@@ -126,6 +126,63 @@
              text: () => r.body, json: () => parse(r.body) };
   };
 
+  // --- kino.crypto (synchronous; errors carry code crypto_error) ---
+  const ENC = ['utf8', 'hex', 'base64'];
+  const maxCharsFor = (encoding) => (encoding === 'hex' ? L.cryptoMaxDataBytes * 2 : encoding === 'base64' ? (((L.cryptoMaxDataBytes + 2) / 3) | 0) * 4 + 4 : L.cryptoMaxDataBytes);
+  const cryptoCall = (op) => {
+    const req = {};
+    for (const k of keysOf(op)) {
+      const v = op[k];
+      if (v === undefined) continue;
+      if (typeof v === 'string' && (k === 'in' || k === 'out' || k === 'keyEnc' || k === 'ivEnc' || k === 'aadEnc') && ENC.indexOf(v) === -1) {
+        throw codedError('crypto_error', 'codificación desconocida: ' + cut(v, 20));
+      }
+      req[k] = v;
+    }
+    const fields = [['data', 'in'], ['key', 'keyEnc'], ['iv', 'ivEnc'], ['aad', 'aadEnc'], ['password', 'keyEnc'], ['salt', 'in']];
+    for (let i = 0; i < fields.length; i++) {
+      const field = fields[i][0], enc = fields[i][1];
+      if (req[field] === undefined) continue;
+      req[field] = toStr(req[field]);
+      if (req[field].length > maxCharsFor(req[enc] || 'utf8')) throw codedError('crypto_error', '"' + field + '" pasa de 5 MB');
+    }
+    // The per-field checks above give the clear message; this one is the cap that always holds.
+    const json = toStr(stringify(req));
+    if (json.length > L.cryptoMaxRequestChars) throw codedError('crypto_error', 'datos demasiado grandes (más de 5 MB)');
+    const r = parse(n.crypto(json));
+    if (hasOwn(r, 'error')) throw codedError('crypto_error', r.error);
+    return r.ok;
+  };
+  const opts = (o) => (o === undefined || o === null ? {} : o);
+  const crypto = freeze({
+    hash: freeze(function hash(alg, data, o) {
+      const p = opts(o);
+      return cryptoCall({ op: 'hash', alg: toStr(alg), data, in: p.inputEncoding, out: p.outputEncoding });
+    }),
+    hmac: freeze(function hmac(alg, key, data, o) {
+      const p = opts(o);
+      return cryptoCall({ op: 'hmac', alg: toStr(alg), key, data, keyEnc: p.keyEncoding, in: p.inputEncoding, out: p.outputEncoding });
+    }),
+    encrypt: freeze(function encrypt(alg, o) {
+      const p = opts(o);
+      return cryptoCall({ op: 'encrypt', alg: toStr(alg), key: p.key, iv: p.iv, data: p.data, aad: p.aad, padding: p.padding, keyEnc: p.keyEncoding, ivEnc: p.ivEncoding, aadEnc: p.aadEncoding, in: p.inputEncoding, out: p.outputEncoding });
+    }),
+    decrypt: freeze(function decrypt(alg, o) {
+      const p = opts(o);
+      return cryptoCall({ op: 'decrypt', alg: toStr(alg), key: p.key, iv: p.iv, data: p.data, aad: p.aad, padding: p.padding, keyEnc: p.keyEncoding, ivEnc: p.ivEncoding, aadEnc: p.aadEncoding, in: p.inputEncoding, out: p.outputEncoding });
+    }),
+    pbkdf2: freeze(function pbkdf2(hash, password, salt, iterations, keyLength, o) {
+      const p = opts(o);
+      if (!isInteger(iterations) || !isInteger(keyLength)) throw codedError('crypto_error', 'iterations y keyLength deben ser enteros');
+      return cryptoCall({ op: 'pbkdf2', hash: toStr(hash), password, salt, iterations, keyLength, keyEnc: p.keyEncoding, in: p.inputEncoding, out: p.outputEncoding });
+    }),
+    randomBytes: freeze(function randomBytes(count, outputEncoding) {
+      if (!isInteger(count)) throw codedError('crypto_error', 'randomBytes necesita un entero');
+      return cryptoCall({ op: 'random', n: count, out: outputEncoding });
+    }),
+    uuid: freeze(function uuid() { return cryptoCall({ op: 'uuid' }); }),
+  });
+
   // --- kino.sleep ---
   const sleep = async function sleep(ms) {
     await null; // see kino.fetch: checks go after the first await
@@ -166,6 +223,7 @@
     }),
     storage,
     config,
+    crypto,
     sleep: freeze(sleep),
     error: freeze(function error(code, message) { return codedError(code, message); }),
     log: freeze((...a) => log('info', a)),

@@ -76,5 +76,18 @@ class PluginContractParityTest {
         assertEquals(PluginErrors.MAX_MESSAGE_CHARS, obj("errors").getInt("maxMessageChars"))
     }
 
+    @Test fun `crypto`() {
+        val k = obj("crypto")
+        assertEquals(PluginCrypto.HASHES, k.strings("hashes"))
+        assertEquals(PluginCrypto.CIPHERS, k.strings("ciphers"))
+        assertEquals(PluginCrypto.ENCODINGS, k.strings("encodings"))
+        assertEquals(PluginCrypto.PBKDF2_HASHES, k.strings("pbkdf2Hashes"))
+        assertEquals(PluginCrypto.PBKDF2_MAX_ITERATIONS, k.getInt("pbkdf2MaxIterations"))
+        assertEquals(PluginCrypto.PBKDF2_MAX_KEY_BYTES, k.getInt("pbkdf2MaxKeyBytes"))
+        assertEquals(PluginCrypto.RANDOM_MAX_BYTES, k.getInt("randomMaxBytes"))
+        assertEquals(PluginCrypto.MAX_DATA_BYTES, k.getInt("maxDataBytes"))
+        assertEquals(PluginCrypto.ERROR_CODE, k.getString("errorCode"))
+    }
+
     // Each later task adds the contract section it enforces above this line.
 }

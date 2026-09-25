@@ -38,6 +38,8 @@ interface PluginHost {
     fun log(level: String, message: String)
     /** `kino.config`: every setting's value (defaults applied) as one JSON object; read once per runtime. */
     fun config(): String = "{}"
+    /** `kino.crypto`: see [PluginCrypto.run]. Runs on the runtime's own thread. */
+    fun crypto(opJson: String): String = PluginCrypto.run(opJson)
     /** `kino.sleep`: [ms] already checked to be 0..5000 by the prelude. */
     suspend fun sleep(ms: Long) = kotlinx.coroutines.delay(ms)
 }
@@ -224,6 +226,12 @@ class PluginRuntime private constructor(
         const val MAX_SLEEP_MS = 5_000
 
         /**
+         * The longest `kino.crypto` request JSON: the biggest input (5 MB as hex) plus room for a
+         * key, iv and aad. The prelude refuses anything longer before it crosses.
+         */
+        const val MAX_CRYPTO_REQUEST_CHARS = PluginCrypto.MAX_DATA_BYTES * 2 + 64 * 1024
+
+        /**
          * Loads [script] as an ES module. Fails with [PluginScriptException] on a syntax error or a
          * throw at module top level, and [PluginTimeoutException] if loading takes longer than
          * [PluginEnv.loadTimeoutMs] (a top-level infinite loop leaks that thread, see the class KDoc).
@@ -302,6 +310,7 @@ class PluginRuntime private constructor(
                 function("storageKeys") { _ -> host.storageKeys() }
                 function("log") { args -> host.log(args[0] as String, args[1] as String) }
                 function("config") { _ -> host.config() }
+                function("crypto") { args -> host.crypto(args[0] as String) }
                 asyncFunction("sleep") { args -> host.sleep((args[0] as Number).toLong()); null }
             }
         }
@@ -330,6 +339,8 @@ class PluginRuntime private constructor(
             .put("maxHtmlChars", PluginHtml.MAX_HTML_CHARS)
             .put("storageMaxBytes", PluginStorage.MAX_BYTES)
             .put("sleepMaxMs", MAX_SLEEP_MS)
+            .put("cryptoMaxDataBytes", PluginCrypto.MAX_DATA_BYTES)
+            .put("cryptoMaxRequestChars", MAX_CRYPTO_REQUEST_CHARS)
             .put("thrownFallback", THROWN_FALLBACK)
             .put("resultTooBig", RESULT_TOO_BIG)
             .toString()
