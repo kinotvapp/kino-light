@@ -5,6 +5,7 @@ import kotlinx.coroutines.runBlocking
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -85,17 +86,78 @@ class ArchiveOrgPluginTest {
         assertTrue(runtime.exports.containsAll(manifest.capabilities))
     }
 
+    /** The raw items `search` returns, in order: the Kotlin side de-duplicates, so it would hide a plugin that does not. */
+    private suspend fun searchRaw(q: String, type: String): List<JSONObject> {
+        val array = JSONArray(runtime.call("search", PluginContentSource.queryJson(GatewaySearchQuery(q = q, type = type)), 15_000))
+        return (0 until array.length()).map { array.getJSONObject(it) }
+    }
+
+    /** Which collection each `advancedsearch` request asked, in the order it asked them. */
+    private fun collectionsAsked(): List<String> = requested.filter { "advancedsearch" in it }
+        .map { Regex("collection:\\((\\w+)\\)").find(URLDecoder.decode(it, "UTF-8"))!!.groupValues[1] }
+
     @Test fun `search finds public-domain films as movies`() = runBlocking {
         val json = runtime.call("search", PluginContentSource.queryJson(GatewaySearchQuery(q = "metropolis", type = "movie")), 15_000)
         val items = PluginOutput.items(json, allowSeries = true)
-        assertTrue(items.any { it.id == "TheGiantOfMetropolis1961" })
-        assertTrue(items.all { it.kind == "movie" })
+        assertEquals("movie", items.single { it.id == "TheGiantOfMetropolis1961" }.kind)
+        assertEquals("movie", items.first().kind)
         assertTrue(items.all { it.poster.startsWith("https://archive.org/services/img/") })
     }
 
     @Test fun `search for a series returns classic TV as series`() = runBlocking {
         val json = runtime.call("search", PluginContentSource.queryJson(GatewaySearchQuery(q = "dragnet", type = "tv")), 15_000)
-        assertTrue(PluginOutput.items(json, allowSeries = true).any { it.id == "Dragnet1951" && it.kind == "series" })
+        val items = PluginOutput.items(json, allowSeries = true)
+        assertTrue(items.any { it.id == "Dragnet1951" && it.kind == "series" })
+        assertEquals("series", items.first().kind)
+    }
+
+    // Kino sends `type` from TMDB's movie/tv, which does not line up with archive.org's collections:
+    // the person tapped the TMDB series "Metropolis" (2015) and archive.org only has the films.
+    @Test fun `a series hint still finds the films`() = runBlocking {
+        val items = searchRaw("metropolis", "tv")
+        assertEquals("movie", items.firstOrNull { it.getString("id") == "TheGiantOfMetropolis1961" }?.getString("kind"))
+        assertTrue(items.any { it.getString("id").startsWith("metropolis-1927") })
+        assertTrue(items.all { it.getString("kind") == "movie" })
+    }
+
+    @Test fun `a movie hint still finds the classic TV`() = runBlocking {
+        val items = searchRaw("dragnet", "movie")
+        assertEquals("series", items.firstOrNull { it.getString("id") == "Dragnet1951" }?.getString("kind"))
+    }
+
+    @Test fun `the type hint only orders the two groups`() = runBlocking {
+        // "dragnet" is in both collections: the hint decides which group comes first, not which is searched.
+        fun kinds(items: List<JSONObject>) = items.map { it.getString("kind") }.distinct()
+        assertEquals(listOf("series", "movie"), kinds(searchRaw("dragnet", "tv")))
+        assertEquals(listOf("movie", "series"), kinds(searchRaw("dragnet", "movie")))
+        assertEquals(listOf("movie", "series"), kinds(searchRaw("dragnet", "any")))
+    }
+
+    @Test fun `the collection the hint names is asked first, and both are asked`() = runBlocking {
+        for ((type, expected) in listOf(
+            "tv" to listOf("classic_tv", "feature_films"),
+            "movie" to listOf("feature_films", "classic_tv"),
+            "any" to listOf("feature_films", "classic_tv"),
+        )) {
+            requested.clear()
+            searchRaw("dragnet", type)
+            assertEquals(type, expected, collectionsAsked())
+        }
+    }
+
+    @Test fun `each collection gives at most 25`() = runBlocking {
+        // "night" has hundreds of hits in both.
+        val items = searchRaw("night", "movie")
+        assertEquals(25, items.count { it.getString("kind") == "movie" })
+        assertEquals(25, items.count { it.getString("kind") == "series" })
+    }
+
+    @Test fun `an item in both collections comes once, as the kind the hint asked for`() = runBlocking {
+        // The Colgate Comedy Hour with Abbott and Costello is in feature_films and in classic_tv.
+        for ((type, kind) in listOf("tv" to "series", "movie" to "movie")) {
+            val hits = searchRaw("colgate comedy hour", type).filter { it.getString("id") == "ColgateComedyHour_AbbottCostello" }
+            assertEquals(type, listOf(kind), hits.map { it.getString("kind") })
+        }
     }
 
     @Test fun `home has its three rows`() = runBlocking {
@@ -145,8 +207,9 @@ class ArchiveOrgPluginTest {
         for ((typed, cleaned, expectedId) in cases) {
             requested.clear()
             val json = runtime.call("search", PluginContentSource.queryJson(GatewaySearchQuery(q = typed, type = "movie")), 15_000)
-            val asked = requested.single { "advancedsearch" in it }
-            assertTrue("$typed: asked $asked", URLDecoder.decode(asked, "UTF-8").contains("q=title:($cleaned) AND "))
+            val asked = requested.filter { "advancedsearch" in it }
+            assertEquals("$typed: one request per collection", 2, asked.size)
+            asked.forEach { assertTrue("$typed: asked $it", URLDecoder.decode(it, "UTF-8").contains("q=title:($cleaned) AND ")) }
             if (expectedId != null) assertTrue(typed, PluginOutput.items(json, allowSeries = true).any { it.id == expectedId })
         }
     }

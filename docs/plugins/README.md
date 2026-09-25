@@ -171,8 +171,10 @@ return plain data: strings, numbers, booleans, arrays and objects.
 
 - `search(query)` gets `{ q, type, season, episode, tmdbId, year }`:
   - `q` is the text the person typed (it can be empty; return `[]`).
-  - `type` is `"movie"` or `"series"` when Kino only wants that kind, and `"any"` otherwise. You may
-    ignore it, but skipping the queries that cannot match saves time.
+  - `type` is `"movie"` or `"series"` when Kino leans towards that kind, and `"any"` otherwise. It is
+    a hint, not a filter: Kino derives it from TMDB's movie/tv split, which rarely lines up with a
+    source's own catalogue, and a title can exist as both. Return every plausible match; use `type`
+    at most to put the kind it names first.
   - `season` and `episode` are `0` unless Kino is looking for a specific episode; `tmdbId` and `year`
     are `0` when unknown.
 - `home()` gets `null`.
@@ -539,8 +541,9 @@ capabilities. It reads about like this:
 2. `getJson` does the `await` first and throws afterwards (the rule of section 6).
 3. `search` cleans what the person typed: archive.org answers 200 with an error body when the query
    has a stray `/`, `-`, `&` or `'` or a dangling `AND`/`OR`/`NOT`, so it keeps letters, digits and
-   apostrophes inside words, drops the operator words, and skips the TV query when `type` is
-   `"movie"` (and the movie query when it is `"series"`).
+   apostrophes inside words, drops the operator words, and asks both collections (films and classic
+   TV) whatever `type` says, using it only to decide which group comes first; an item that is in both
+   is listed once.
 4. `home` builds three rows (films, classic TV, classic animation) and wraps each row in its own
    `try`/`catch`, so one failing row does not lose the others; it reports it with `kino.log`.
 5. `episodes` reads the item's file list, keeps the video originals in natural order (a small

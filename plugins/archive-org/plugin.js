@@ -66,9 +66,25 @@ export async function search(query) {
     .trim();
   if (!text) return [];
   const title = "title:(" + text + ")";
+  // Both collections are always searched: `type` is only a hint. Kino sends it from TMDB's movie/tv
+  // split, which does not line up with archive.org's (public-domain films and classic TV are mixed,
+  // and a title can be in both), so filtering by it lost real matches. It only decides which group
+  // comes first.
+  const groups = [
+    { kind: "movie", where: FILMS },
+    { kind: "series", where: TV },
+  ];
+  if (query.type === "series") groups.reverse();
   const out = [];
-  if (query.type !== "series") out.push(...(await docs(title + " AND " + FILMS, 25)).map((d) => toItem(d, "movie")));
-  if (query.type !== "movie") out.push(...(await docs(title + " AND " + TV, 25)).map((d) => toItem(d, "series")));
+  const seen = new Set();
+  for (const group of groups) {
+    for (const d of await docs(title + " AND " + group.where, 25)) {
+      // An item can be in both collections: it is listed once, as the kind of the group that came first.
+      if (seen.has(d.identifier)) continue;
+      seen.add(d.identifier);
+      out.push(toItem(d, group.kind));
+    }
+  }
   return out;
 }
 
