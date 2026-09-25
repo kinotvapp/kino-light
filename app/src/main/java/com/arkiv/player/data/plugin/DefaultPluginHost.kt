@@ -42,31 +42,42 @@ class DefaultPluginHost(
     private fun request(o: JSONObject): PluginHttp.Request {
         val h = o.optJSONObject("headers")
         val headers = h?.keys()?.asSequence()?.associateWith { h.optString(it) }.orEmpty()
+        // The prelude already restricts `redirect` to PluginHttp.REDIRECT_MODES before it crosses;
+        // re-checked here against the same real constant so an unrecognized value is refused, never
+        // silently treated as "follow" (a bypassed or future prelude bug must not default-allow).
+        val redirect = if (o.has("redirect") && !o.isNull("redirect")) o.getString("redirect") else "follow"
+        if (redirect !in PluginHttp.REDIRECT_MODES) throw PluginFetchException("invalid_request", "redirect desconocido")
         return PluginHttp.Request(
             url = o.getString("url"),
             method = o.optString("method", "GET"),
             headers = headers,
             body = o.optJSONObject("body")?.let(::body),
-            manualRedirects = o.optString("redirect") == "manual",
+            manualRedirects = redirect == "manual",
             useCookies = o.optBoolean("cookies", true),
             timeoutMs = o.optLong("timeoutMs", 0),
         )
     }
 
-    private fun body(b: JSONObject): PluginHttp.Body = when (b.optString("kind")) {
-        "text" -> PluginHttp.Body.Text(b.getString("value"))
-        "json" -> PluginHttp.Body.Json(b.getString("value"))
-        "form" -> PluginHttp.Body.Form(
-            b.getJSONArray("value").let { a -> (0 until a.length()).map { a.getJSONArray(it).let { p -> p.getString(0) to p.getString(1) } } },
-        )
-        "base64" -> PluginHttp.Body.Bytes(
-            try {
-                Base64.getDecoder().decode(b.getString("value"))
-            } catch (e: IllegalArgumentException) {
-                throw PluginFetchException("invalid_request", "body.base64 no es base64 válido")
-            },
-        )
-        else -> throw PluginFetchException("invalid_request", "tipo de body desconocido")
+    private fun body(b: JSONObject): PluginHttp.Body {
+        val kind = b.optString("kind")
+        // Same as `redirect` above: re-checked against the real PluginHttp.BODY_KINDS constant, not
+        // just the `when`'s own exhaustiveness, so the rejection is explicit and traceable to it.
+        if (kind !in PluginHttp.BODY_KINDS) throw PluginFetchException("invalid_request", "tipo de body desconocido")
+        return when (kind) {
+            "text" -> PluginHttp.Body.Text(b.getString("value"))
+            "json" -> PluginHttp.Body.Json(b.getString("value"))
+            "form" -> PluginHttp.Body.Form(
+                b.getJSONArray("value").let { a -> (0 until a.length()).map { a.getJSONArray(it).let { p -> p.getString(0) to p.getString(1) } } },
+            )
+            "base64" -> PluginHttp.Body.Bytes(
+                try {
+                    Base64.getDecoder().decode(b.getString("value"))
+                } catch (e: IllegalArgumentException) {
+                    throw PluginFetchException("invalid_request", "body.base64 no es base64 válido")
+                },
+            )
+            else -> throw PluginFetchException("invalid_request", "tipo de body desconocido")
+        }
     }
 
     private fun error(code: String, message: String): String =

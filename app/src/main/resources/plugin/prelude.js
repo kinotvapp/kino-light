@@ -31,6 +31,13 @@
   const textDecoder = new TextDecoder();
   const decodeUtf8 = Function.prototype.call.bind(TextDecoder.prototype.decode, textDecoder);
   const toBase64 = btoa, fromBase64 = atob;
+  // QuickJS intrinsics: NOT frozen by web.js, so a plugin could reassign Uint8Array or repoint its
+  // prototype's methods. Safe to capture only because this whole IIFE runs before plugin.js is even
+  // added as a module -- nothing plugin-controlled has executed yet.
+  const toUpperCase = Function.prototype.call.bind(String.prototype.toUpperCase);
+  const indexOf = Function.prototype.call.bind(Array.prototype.indexOf);
+  const subarray = Function.prototype.call.bind(Uint8Array.prototype.subarray);
+  const U8 = Uint8Array;
 
   // A function's `name` is read by quickjs-kt's native code when an error is built or a rejection
   // is tracked in that function's frame; at ~20 MB the native side fails an allocation and
@@ -122,40 +129,53 @@
   };
 
   // --- kino.fetch ---
-  // Method, redirect and body checks here are for a clear message; PluginHttp re-checks them all.
+  // Method, redirect and body checks here are for a clear message; DefaultPluginHost re-checks all
+  // three against the very same PluginHttp.METHODS/BODY_KINDS/REDIRECT_MODES constants these three
+  // lists are read from (contract.json is the single source; see PluginContractParityTest.fetch).
   // The one limit that must hold whatever a plugin did to the built-ins is the size of `req`
-  // (a primitive string from the captured JSON.stringify): that is what crosses.
+  // (a primitive string from the captured JSON.stringify): that is what crosses. Every loop here
+  // over plugin-reachable data is index-based over a captured Object.keys() array -- never
+  // for...of, which resolves through the live Array.prototype[Symbol.iterator] (the same trap
+  // cryptoCall's own comment documents).
   const METHODS = L.fetchMethods;
+  const BODY_KINDS = L.fetchBodyKinds;
+  const REDIRECT_MODES = L.fetchRedirectModes;
   const bodyOf = (b) => {
     if (b === undefined || b === null) return null;
-    if (typeof b === 'string') return { kind: 'text', value: b };
-    if (typeof b !== 'object') return { kind: 'text', value: toStr(b) };
-    if (hasOwn(b, 'json')) {
+    let out;
+    if (typeof b === 'string') out = { kind: 'text', value: b };
+    else if (typeof b !== 'object') out = { kind: 'text', value: toStr(b) };
+    else if (hasOwn(b, 'json')) {
       const text = stringify(b.json);
-      return { kind: 'json', value: text === undefined ? 'null' : text };
-    }
-    if (hasOwn(b, 'form')) {
+      out = { kind: 'json', value: text === undefined ? 'null' : text };
+    } else if (hasOwn(b, 'form')) {
       const f = b.form;
       if (f === null || typeof f !== 'object') throw codedError('invalid_request', 'body.form debe ser un objeto');
+      const keys = keysOf(f);
       const fields = [];
-      for (const k of keysOf(f)) fields.push([toStr(k), toStr(f[k])]);
-      return { kind: 'form', value: fields };
+      for (let i = 0; i < keys.length; i++) { const k = keys[i]; fields[fields.length] = [toStr(k), toStr(f[k])]; }
+      out = { kind: 'form', value: fields };
+    } else if (hasOwn(b, 'base64')) {
+      out = { kind: 'base64', value: toStr(b.base64) };
+    } else {
+      throw codedError('invalid_request', 'body debe ser un texto, { json }, { form } o { base64 }');
     }
-    if (hasOwn(b, 'base64')) return { kind: 'base64', value: toStr(b.base64) };
-    throw codedError('invalid_request', 'body debe ser un texto, { json }, { form } o { base64 }');
+    if (indexOf(BODY_KINDS, out.kind) === -1) throw codedError('invalid_request', 'tipo de body desconocido');
+    return out;
   };
   const fetch = async function fetch(url, opts) {
     // A throw before this async function's first await would abort the whole call in alpha13
     // even inside the plugin's try/catch; after one it's catchable. So: await first, then check.
     await null;
     const o = opts === undefined || opts === null ? {} : opts;
-    const method = o.method === undefined ? 'GET' : toStr(o.method).toUpperCase();
-    if (METHODS.indexOf(method) === -1) throw codedError('invalid_request', 'método no permitido: ' + cut(method, 20));
+    const method = o.method === undefined ? 'GET' : toUpperCase(toStr(o.method));
+    if (indexOf(METHODS, method) === -1) throw codedError('invalid_request', 'método no permitido: ' + cut(method, 20));
     const redirect = o.redirect === undefined ? 'follow' : toStr(o.redirect);
-    if (redirect !== 'follow' && redirect !== 'manual') throw codedError('invalid_request', 'redirect debe ser "follow" o "manual"');
+    if (indexOf(REDIRECT_MODES, redirect) === -1) throw codedError('invalid_request', 'redirect debe ser "follow" o "manual"');
     const headers = o.headers === undefined || o.headers === null ? {} : o.headers;
     const plainHeaders = {};
-    for (const k of keysOf(headers)) plainHeaders[toStr(k)] = toStr(headers[k]);
+    const headerKeys = keysOf(headers);
+    for (let i = 0; i < headerKeys.length; i++) { const k = headerKeys[i]; plainHeaders[toStr(k)] = toStr(headers[k]); }
     const body = bodyOf(o.body);
     const req = toStr(stringify({
       url: toStr(url), method, headers: plainHeaders, body,
@@ -170,9 +190,9 @@
     const b64 = typeof r.base64 === 'string' ? r.base64 : null;
     // Only one of the two usually crosses (see PluginHttp.Response); the other is derived here.
     const bodyText = () => (text !== null ? text : decodeUtf8(bytesOf(b64)));
-    const bytesOf = (s) => { const bin = fromBase64(s); const out = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i); return out; };
+    const bytesOf = (s) => { const bin = fromBase64(s); const out = new U8(bin.length); for (let i = 0; i < bin.length; i++) out[i] = charCodeAt(bin, i); return out; };
     // Pieces joined once: QuickJS copies the whole string on every `+=` (see web.js).
-    const binary = (bytes) => { const parts = []; for (let i = 0; i < bytes.length; i += 8192) parts[parts.length] = apply(fromCharCode, null, bytes.subarray(i, i + 8192)); return apply(join, parts, ['']); };
+    const binary = (bytes) => { const parts = []; for (let i = 0; i < bytes.length; i += 8192) parts[parts.length] = apply(fromCharCode, null, subarray(bytes, i, i + 8192)); return apply(join, parts, ['']); };
     return freeze({
       ok: r.ok, status: r.status, url: r.url, headers: freeze(r.headers),
       text: freeze(function text() { return bodyText(); }),

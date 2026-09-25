@@ -353,6 +353,8 @@ class PluginRuntime private constructor(
             .put("cryptoMaxDataBytes", PluginCrypto.MAX_DATA_BYTES)
             .put("cryptoMaxRequestChars", MAX_CRYPTO_REQUEST_CHARS)
             .put("fetchMethods", org.json.JSONArray(PluginHttp.METHODS))
+            .put("fetchBodyKinds", org.json.JSONArray(PluginHttp.BODY_KINDS))
+            .put("fetchRedirectModes", org.json.JSONArray(PluginHttp.REDIRECT_MODES))
             .put("thrownFallback", THROWN_FALLBACK)
             .put("resultTooBig", RESULT_TOO_BIG)
             .toString()

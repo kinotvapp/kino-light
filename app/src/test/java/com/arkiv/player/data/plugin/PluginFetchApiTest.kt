@@ -121,6 +121,56 @@ class PluginFetchApiTest {
         assertEquals(emptyList<String>(), host.fetches)
     }
 
+    @Test fun `headers and form fields still cross correctly when the plugin breaks the array iterator`() {
+        // The same hostile pattern as the 1 MB test above, but proving the OTHER half of the
+        // Global Constraint: not just "the cap still holds" but "nothing gets silently dropped"
+        // when every loop over plugin-reachable data must be index-based, never for...of.
+        val host = Host()
+        home(
+            """
+            Array.prototype[Symbol.iterator] = function* () {};
+            Object.keys = () => [];
+            await kino.fetch('https://x.example/h', { headers: { 'x-a': '1', 'x-b': '2' }, body: { form: { user: 'ana', n: 5 } } });
+            return [];
+            """,
+            host,
+        )
+        assertEquals(1, host.fetches.size)
+        val sent = JSONObject(host.fetches[0])
+        assertEquals("1", sent.getJSONObject("headers").getString("x-a"))
+        assertEquals("2", sent.getJSONObject("headers").getString("x-b"))
+        assertEquals("""[["user","ana"],["n","5"]]""", sent.getJSONObject("body").getJSONArray("value").toString())
+    }
+
+    @Test fun `hostile input is caught, not crashed, by kino fetch and kino cookies get`() {
+        val host = Host()
+        val out = home(
+            """
+            const results = [];
+            try { await kino.fetch('https://x.example/', { get method() { throw 1; } }); results.push('method:no-throw'); } catch (e) { results.push('method:caught'); }
+            const jsonBody = {}; Object.defineProperty(jsonBody, 'json', { get() { throw new Error('evil'); } });
+            try { await kino.fetch('https://x.example/', { body: jsonBody }); results.push('json:no-throw'); } catch (e) { results.push('json:caught'); }
+            const formBody = {}; Object.defineProperty(formBody, 'form', { get() { throw new Error('evil'); } });
+            try { await kino.fetch('https://x.example/', { body: formBody }); results.push('form:no-throw'); } catch (e) { results.push('form:caught'); }
+            const evilHeaderValue = { toString() { throw new Error('evil'); } };
+            try { await kino.fetch('https://x.example/', { headers: { x: evilHeaderValue } }); results.push('header:no-throw'); } catch (e) { results.push('header:caught'); }
+            const evilUrl = { toString() { throw new Error('evil'); } };
+            try { kino.cookies.get(evilUrl, 'n'); results.push('cookieUrl:no-throw'); } catch (e) { results.push('cookieUrl:caught'); }
+            const evilName = { toString() { throw new Error('evil'); } };
+            try { kino.cookies.get('https://x.example/', evilName); results.push('cookieName:no-throw'); } catch (e) { results.push('cookieName:caught'); }
+            // A wrong-type argument (neither throws nor crashes: it is coerced to a string).
+            results.push(kino.cookies.get(123, {}) === null ? 'wrongType:safe-null' : 'wrongType:unexpected');
+            return results;
+            """,
+            host,
+        )
+        assertEquals(
+            """["method:caught","json:caught","form:caught","header:caught","cookieUrl:caught","cookieName:caught","wrongType:safe-null"]""",
+            out,
+        )
+        assertEquals(emptyList<String>(), host.fetches)
+    }
+
     @Test fun `the host's error envelope becomes a coded error`() {
         val host = Host().apply {
             onFetch = { JSONObject().put("error", JSONObject().put("code", "host_not_allowed").put("message", "host no permitido: evil.example")).toString() }
@@ -206,8 +256,25 @@ class PluginFetchApiTest {
     @Test fun `fetch limits handed to the prelude come from their Kotlin owners`() {
         val l = JSONObject(PluginRuntime.limits())
         assertEquals(PluginHttp.METHODS, l.getJSONArray("fetchMethods").let { a -> (0 until a.length()).map { a.getString(it) } })
+        assertEquals(PluginHttp.BODY_KINDS, l.getJSONArray("fetchBodyKinds").let { a -> (0 until a.length()).map { a.getString(it) } })
+        assertEquals(PluginHttp.REDIRECT_MODES, l.getJSONArray("fetchRedirectModes").let { a -> (0 until a.length()).map { a.getString(it) } })
         assertEquals(PluginRuntime.MAX_URL_CHARS, l.getInt("maxUrlChars"))
         assertEquals(PluginRuntime.MAX_COOKIE_NAME_CHARS, l.getInt("maxCookieNameChars"))
         assertEquals(PluginRuntime.MAX_REQUEST_CHARS, l.getInt("maxRequestChars"))
+    }
+
+    @Test fun `DefaultPluginHost rejects a redirect or body kind outside the real constants, before any request crosses`() = runBlocking {
+        // kino.fetch itself can never construct these (the prelude only ever sends "follow"/"manual"
+        // and one of BODY_KINDS) -- this proves Kotlin's OWN defense-in-depth against a bypassed or
+        // future-buggy prelude, not just the JS-side check (see the redirect comment in
+        // DefaultPluginHost.request).
+        val hosts = EffectiveHosts(listOf("x.example"))
+        val http = PluginHttp(OkHttpClient(), "api", hosts, "9.9.9", allowInsecureLocalhost = true)
+        val host = DefaultPluginHost("api", http, PluginStorage(tmp.root.resolve("s2.json")), hosts = hosts, allowInsecureLocalhost = true, logger = {})
+        val badRedirect = JSONObject().put("url", "https://x.example/").put("redirect", "teleport").toString()
+        assertEquals("invalid_request", JSONObject(host.fetch(badRedirect)).getJSONObject("error").getString("code"))
+        val badBody = JSONObject().put("url", "https://x.example/")
+            .put("body", JSONObject().put("kind", "xml").put("value", "x")).toString()
+        assertEquals("invalid_request", JSONObject(host.fetch(badBody)).getJSONObject("error").getString("code"))
     }
 }
