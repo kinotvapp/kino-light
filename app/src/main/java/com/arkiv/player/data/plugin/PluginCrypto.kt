@@ -62,7 +62,7 @@ object PluginCrypto {
         "encrypt" -> cipher(Cipher.ENCRYPT_MODE, o)
         "decrypt" -> cipher(Cipher.DECRYPT_MODE, o)
         "pbkdf2" -> pbkdf2(o)
-        "random" -> randomBytes(o.getInt("n"), o.optString("out", "hex"))
+        "random" -> randomBytes(boundedInt(o, "n", 1, RANDOM_MAX_BYTES, "randomBytes acepta de 1 a $RANDOM_MAX_BYTES bytes"), o.optString("out", "hex"))
         "uuid" -> UUID.randomUUID().toString()
         else -> throw PluginCryptoException("operación desconocida")
     }
@@ -74,10 +74,22 @@ object PluginCrypto {
 
     fun hmac(alg: String, key: ByteArray, data: ByteArray, out: String): String {
         val name = MACS[alg] ?: throw PluginCryptoException("algoritmo de hmac desconocido: ${alg.take(20)}")
-        if (key.isEmpty()) throw PluginCryptoException("la clave del hmac está vacía")
         val mac = Mac.getInstance(name)
-        mac.init(SecretKeySpec(key, name))
+        // Node's createHmac(alg, '') accepts an empty key; SecretKeySpec refuses a zero-length one.
+        // A single zero byte is the same HMAC key an empty one becomes once padded to block size.
+        mac.init(SecretKeySpec(if (key.isEmpty()) ByteArray(1) else key, name))
         return encode(mac.doFinal(data), out)
+    }
+
+    /**
+     * Reads [field] as a JSON number without Kotlin's `Int` wraparound: `JSONObject.getInt` on a
+     * value outside `Int` range truncates silently (4294967297 became 1, passing the "in range"
+     * check with a value the plugin never sent). Read as a `Long` and range-check before narrowing.
+     */
+    private fun boundedInt(o: JSONObject, field: String, min: Int, max: Int, message: String): Int {
+        val v = o.getLong(field)
+        if (v < min || v > max) throw PluginCryptoException(message)
+        return v.toInt()
     }
 
     private fun cipher(mode: Int, o: JSONObject): String {
@@ -142,10 +154,8 @@ object PluginCrypto {
     private fun pbkdf2(o: JSONObject): String {
         val hash = o.getString("hash")
         if (hash !in PBKDF2_HASHES) throw PluginCryptoException("hash de pbkdf2 desconocido: ${hash.take(20)}")
-        val iterations = o.getInt("iterations")
-        if (iterations !in 1..PBKDF2_MAX_ITERATIONS) throw PluginCryptoException("iteraciones de pbkdf2 entre 1 y $PBKDF2_MAX_ITERATIONS")
-        val length = o.getInt("keyLength")
-        if (length !in 1..PBKDF2_MAX_KEY_BYTES) throw PluginCryptoException("longitud de clave de pbkdf2 entre 1 y $PBKDF2_MAX_KEY_BYTES bytes")
+        val iterations = boundedInt(o, "iterations", 1, PBKDF2_MAX_ITERATIONS, "iteraciones de pbkdf2 entre 1 y $PBKDF2_MAX_ITERATIONS")
+        val length = boundedInt(o, "keyLength", 1, PBKDF2_MAX_KEY_BYTES, "longitud de clave de pbkdf2 entre 1 y $PBKDF2_MAX_KEY_BYTES bytes")
         val password = bytes(o, "password", "keyEnc")
         val salt = bytes(o, "salt", "in")
         return encode(pbkdf2(MACS.getValue(hash), password, salt, iterations, length), o.optString("out", "hex"))

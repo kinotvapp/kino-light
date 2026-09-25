@@ -26,8 +26,8 @@ class PluginCryptoApiTest {
 
     @After fun closeAll() = opened.forEach { it.close() }
 
-    private fun home(body: String, host: PluginHost = Host()): String = runBlocking {
-        open("export async function home() { $body }", host).call("home", "null", 10_000)
+    private fun home(body: String, host: PluginHost = Host(), timeoutMs: Long = 10_000): String = runBlocking {
+        open("export async function home() { $body }", host).call("home", "null", timeoutMs)
     }
 
     @Test fun `every crypto function is frozen and can't be renamed`() {
@@ -88,5 +88,79 @@ class PluginCryptoApiTest {
         val l = JSONObject(PluginRuntime.limits())
         assertEquals(PluginCrypto.MAX_DATA_BYTES, l.getInt("cryptoMaxDataBytes"))
         assertEquals(PluginRuntime.MAX_CRYPTO_REQUEST_CHARS, l.getInt("cryptoMaxRequestChars"))
+    }
+
+    @Test fun `a 4 MB encrypt-decrypt round trip with default options succeeds`() {
+        // Regression for the JS-side cap using the WRONG default encoding for decrypt's "data": the
+        // Kotlin default is base64 in (encrypt gives base64 out), not utf8 -- so a plaintext this
+        // size, once base64-encoded as ciphertext, is well past the old utf8-sized char cap even
+        // though it is under the real 5 MB byte cap both ways.
+        val out = home(
+            """
+            const key = '2b7e151628aed2a6abf7158809cf4f3c', iv = '000102030405060708090a0b0c0d0e0f';
+            const plain = 'a'.repeat(4 * 1024 * 1024);
+            const enc = kino.crypto.encrypt('aes-128-cbc', { key, iv, keyEncoding: 'hex', ivEncoding: 'hex', data: plain });
+            const dec = kino.crypto.decrypt('aes-128-cbc', { key, iv, keyEncoding: 'hex', ivEncoding: 'hex', data: enc });
+            return dec === plain;
+            """,
+            timeoutMs = 30_000,
+        )
+        assertEquals("true", out)
+    }
+
+    @Test fun `a null option value is treated as absent, not as the encoding null`() {
+        val out = home(
+            """
+            return [kino.crypto.hash('md5', 'abc', { outputEncoding: null }), kino.crypto.encrypt('aes-128-cbc', {
+              key: '2b7e151628aed2a6abf7158809cf4f3c', iv: '000102030405060708090a0b0c0d0e0f',
+              keyEncoding: 'hex', ivEncoding: 'hex', data: 'hola', padding: null,
+            })];
+            """,
+        )
+        assertEquals("""["900150983cd24fb0d6963f7d28e17f72","CchaOS4YYMPsG9lTevKrUA=="]""", out)
+    }
+
+    @Test fun `hostile input is caught, not crashed, by every crypto function that takes an object or a number`() {
+        val out = home(
+            """
+            const evilKey = {}; Object.defineProperty(evilKey, 'key', { get() { throw new Error('evil getter'); } });
+            const evilAlg = { toString() { throw new Error('evil toString'); } };
+            const results = [];
+            try { kino.crypto.hash(evilAlg, 'x'); results.push('hash:no-throw'); } catch (e) { results.push('hash:caught'); }
+            try { kino.crypto.encrypt('aes-128-cbc', evilKey); results.push('encrypt:no-throw'); } catch (e) { results.push('encrypt:caught'); }
+            try { kino.crypto.decrypt('aes-128-cbc', evilKey); results.push('decrypt:no-throw'); } catch (e) { results.push('decrypt:caught'); }
+            try { kino.crypto.pbkdf2('sha1', 'p', 's', {}, 20); results.push('pbkdf2:no-throw'); } catch (e) { results.push('pbkdf2:caught'); }
+            try { kino.crypto.randomBytes('nope'); results.push('random:no-throw'); } catch (e) { results.push('random:caught'); }
+            return results;
+            """,
+        )
+        assertEquals(
+            """["hash:caught","encrypt:caught","decrypt:caught","pbkdf2:caught","random:caught"]""",
+            out,
+        )
+    }
+
+    @Test fun `crypto still copies every field correctly when the plugin breaks the array iterator`() {
+        val out = home(
+            """
+            Array.prototype[Symbol.iterator] = function* () {};
+            return kino.crypto.hash('md5', 'abc');
+            """,
+        )
+        assertEquals(""""900150983cd24fb0d6963f7d28e17f72"""", out)
+    }
+
+    @Test fun `a 5 MB hex encrypt-decrypt round trip (CTR, no padding growth) stays inside the call time and the 64 MB heap`() {
+        val out = home(
+            """
+            const key = '2b7e151628aed2a6abf7158809cf4f3c', iv = 'f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff';
+            const hex = 'ab'.repeat(5 * 1024 * 1024);
+            const enc = kino.crypto.encrypt('aes-128-ctr', { key, iv, keyEncoding: 'hex', ivEncoding: 'hex', data: hex, inputEncoding: 'hex', outputEncoding: 'hex' });
+            const dec = kino.crypto.decrypt('aes-128-ctr', { key, iv, keyEncoding: 'hex', ivEncoding: 'hex', data: enc, inputEncoding: 'hex', outputEncoding: 'hex' });
+            return dec === hex;
+            """,
+            timeoutMs = 30_000,
+        )
+        assertEquals("true", out)
     }
 }

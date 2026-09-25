@@ -1,5 +1,6 @@
 package com.arkiv.player.data.plugin
 
+import kotlin.system.measureTimeMillis
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
@@ -48,6 +49,11 @@ class PluginCryptoTest {
         assertEquals(
             "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7",
             ok("op" to "hmac", "alg" to "sha256", "key" to "0b".repeat(20), "keyEnc" to "hex", "data" to "Hi There"),
+        )
+        // node: createHmac('sha256', '').update('hola').digest('hex') -- Node accepts an empty key.
+        assertEquals(
+            "ad56d1d3cef70fdf5ae0ecd769c8912415f195a7adf7fb5e4f523fed5aca05f4",
+            ok("op" to "hmac", "alg" to "sha256", "key" to "", "data" to "hola"),
         )
     }
 
@@ -108,6 +114,18 @@ class PluginCryptoTest {
             p("sha512", "password", "salt", 1, 64),
         )
         assertEquals("da2f11155f0c7d4b5a2529531ab46743", p("sha256", "ff00fe", "0102", 10, 16, "keyEnc" to "hex", "in" to "hex"))
+        // node: pbkdf2Sync('', 'salt', 1, 20, 'sha1') -- the empty-password case.
+        assertEquals("a33dddc30478185515311f8752895d36ea4363a2", p("sha1", "", "salt", 1, 20))
+    }
+
+    @Test fun `pbkdf2's worst case (sha1, 100000 iterations, 64-byte key) finishes well inside its budget`() {
+        val elapsed = measureTimeMillis {
+            ok(
+                "op" to "pbkdf2", "hash" to "sha1", "password" to "password", "salt" to "salt",
+                "iterations" to PluginCrypto.PBKDF2_MAX_ITERATIONS, "keyLength" to PluginCrypto.PBKDF2_MAX_KEY_BYTES,
+            )
+        }
+        assertTrue("pbkdf2's worst case took ${elapsed}ms", elapsed < 8_000)
     }
 
     @Test fun `random bytes and uuids`() {
@@ -135,10 +153,18 @@ class PluginCryptoTest {
         assertTrue(error("op" to "pbkdf2", "hash" to "md5", "password" to "p", "salt" to "s", "iterations" to 1, "keyLength" to 16).contains("desconocido"))
         assertTrue(error("op" to "random", "n" to 1025).contains("1024"))
         assertTrue(error("op" to "random", "n" to 0).contains("1024"))
-        assertTrue(error("op" to "hmac", "alg" to "sha256", "key" to "", "data" to "x").contains("vacía"))
         assertTrue(error("op" to "nope").contains("desconocida"))
         assertEquals("operación criptográfica inválida", error("op" to "hash"))
         assertEquals("{\"error\":\"operación criptográfica inválida\"}", PluginCrypto.run("not json"))
+    }
+
+    @Test fun `an out-of-range iterations, keyLength or n is refused, never silently wrapped`() {
+        // 4294967297 = 2^32 + 1: Kotlin's getInt would silently truncate this to 1, passing every
+        // range check with a value the caller never sent.
+        val huge = 4_294_967_297L
+        assertTrue(error("op" to "pbkdf2", "hash" to "sha1", "password" to "p", "salt" to "s", "iterations" to huge, "keyLength" to 20).contains("100000"))
+        assertTrue(error("op" to "pbkdf2", "hash" to "sha1", "password" to "p", "salt" to "s", "iterations" to 1, "keyLength" to huge).contains("64"))
+        assertTrue(error("op" to "random", "n" to huge).contains("1024"))
     }
 
     @Test fun `inputs over 5 MB are refused after decoding`() {

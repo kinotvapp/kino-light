@@ -131,9 +131,19 @@
   const maxCharsFor = (encoding) => (encoding === 'hex' ? L.cryptoMaxDataBytes * 2 : encoding === 'base64' ? (((L.cryptoMaxDataBytes + 2) / 3) | 0) * 4 + 4 : L.cryptoMaxDataBytes);
   const cryptoCall = (op) => {
     const req = {};
-    for (const k of keysOf(op)) {
+    // Index-based, not for...of: for...of on the array keysOf(op) resolves through the LIVE
+    // Array.prototype[Symbol.iterator], not a captured built-in. A plugin that replaces it (see
+    // the hostile test) would make this loop silently visit nothing, dropping every field instead
+    // of refusing an oversized one -- the opposite of what this cap exists to do.
+    const opKeys = keysOf(op);
+    for (let i = 0; i < opKeys.length; i++) {
+      const k = opKeys[i];
       const v = op[k];
-      if (v === undefined) continue;
+      // A field the caller left out arrives as undefined; one set to null (e.g. `{ padding: null }`)
+      // must fall back to its Kotlin default the same way, on every platform -- the two org.json
+      // builds this app ships against (JVM unit tests vs. Android) disagree on what a literal JSON
+      // null becomes on the other side of optString.
+      if (v === undefined || v === null) continue;
       if (typeof v === 'string' && (k === 'in' || k === 'out' || k === 'keyEnc' || k === 'ivEnc' || k === 'aadEnc') && ENC.indexOf(v) === -1) {
         throw codedError('crypto_error', 'codificación desconocida: ' + cut(v, 20));
       }
@@ -144,7 +154,12 @@
       const field = fields[i][0], enc = fields[i][1];
       if (req[field] === undefined) continue;
       req[field] = toStr(req[field]);
-      if (req[field].length > maxCharsFor(req[enc] || 'utf8')) throw codedError('crypto_error', '"' + field + '" pasa de 5 MB');
+      // "data" is the one field whose Kotlin-side default encoding depends on the operation:
+      // encrypt defaults to utf8 in, decrypt to base64 in (it decrypts what encrypt just gave back).
+      // A base64 5 MB payload is ~7 M characters, well past the utf8-sized cap -- using the wrong
+      // default here refused a decrypt of ciphertext that came from a perfectly valid 5 MB encrypt.
+      const defaultEnc = field === 'data' && req.op === 'decrypt' ? 'base64' : 'utf8';
+      if (req[field].length > maxCharsFor(req[enc] || defaultEnc)) throw codedError('crypto_error', '"' + field + '" pasa de 5 MB');
     }
     // The per-field checks above give the clear message; this one is the cap that always holds.
     const json = toStr(stringify(req));
