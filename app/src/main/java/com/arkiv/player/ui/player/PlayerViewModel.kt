@@ -315,6 +315,21 @@ class PlayerViewModel internal constructor(
     }
 
     /**
+     * A plugin title that can't open until the person configures its plugin (a typed
+     * `auth_required`, or a required setting left empty): the screen shows [PluginSetupPrompt.message]
+     * with a "Configurar" button to that plugin's Configurar screen.
+     */
+    private val _pluginSetup = MutableStateFlow<PluginSetupPrompt?>(null)
+    val pluginSetup: StateFlow<PluginSetupPrompt?> = _pluginSetup.asStateFlow()
+
+    fun dismissPluginSetup() {
+        _pluginSetup.value = null
+    }
+
+    /** The loaded plugin stream's expiry (spec §3.5): one more `resolve` after it, see [onMagisExoError]. */
+    private var pluginExpiry: com.arkiv.player.data.plugin.PluginStreamExpiry? = null
+
+    /**
      * Whether what's in [_error] came from a player HICCUP and not from being unable to open the
      * source.
      *
@@ -767,6 +782,15 @@ class PlayerViewModel internal constructor(
 
     fun onMagisExoError(message: String) {
         val item = _magisItem.value
+        // A plugin said its URLs expire, and this one is past that: resolve once more instead of
+        // failing (spec §3.5). The reload resumes from the saved position, like any open.
+        val expiry = pluginExpiry
+        if (item?.kind == SourceKind.PLUGIN && expiry != null && expiry.shouldResolveAgain(System.currentTimeMillis())) {
+            Log.w(PLAY, "plugin stream failed after ${expiry.expiresInSeconds}s: resolving again")
+            pluginExpiry = expiry.copy(retried = true)
+            viewModelScope.launch { loadPlugin(item.episodeId, afterExpiry = true) }
+            return
+        }
         val label = if (item?.kind == SourceKind.PLUGIN) {
             plugins?.nameOf(com.arkiv.player.data.plugin.PluginIds.pluginIdOfEpisode(item.episodeId)) ?: "Plugin"
         } else {
@@ -1141,7 +1165,7 @@ class PlayerViewModel internal constructor(
      * A disabled, damaged or uninstalled plugin never reaches `resolve`: the person gets the
      * spec's message naming the plugin instead of "No hay ninguna fuente que sepa abrir esto".
      */
-    private suspend fun loadPlugin(episodeId: String) {
+    private suspend fun loadPlugin(episodeId: String, afterExpiry: Boolean = false) {
         val pluginId = com.arkiv.player.data.plugin.PluginIds.pluginIdOfEpisode(episodeId)
         val access = plugins?.accessFor(pluginId)
             ?: com.arkiv.player.data.plugin.PluginAccess.Uninstalled(pluginId ?: "desconocido")
@@ -1168,10 +1192,17 @@ class PlayerViewModel internal constructor(
         if (play == null) {
             val failure = resolved.exceptionOrNull()
             Log.w(PLAY, "loadPlugin() failed: ${failure?.message}", failure)
-            // PluginContentSource already words these for the person ("<plugin>: …", "<plugin> no respondió a tiempo").
-            _error.value = failure?.message?.takeIf { it.isNotBlank() } ?: "No se pudo abrir esto con $name"
+            when (failure) {
+                // geo_blocked: the same dialog as a portal-side region block (spec §3.6).
+                is GatewayBlockedException -> _blocked.value = failure.message
+                is com.arkiv.player.data.plugin.PluginSetupRequiredException ->
+                    _pluginSetup.value = PluginSetupPrompt(failure.pluginId, failure.message ?: "Configura $name en Ajustes ▸ Plugins")
+                // PluginContentSource already words these for the person ("<plugin>: …", "<plugin> no respondió a tiempo").
+                else -> _error.value = failure?.message?.takeIf { it.isNotBlank() } ?: "No se pudo abrir esto con $name"
+            }
             return
         }
+        pluginExpiry = com.arkiv.player.data.plugin.PluginStreamExpiry(System.currentTimeMillis(), play.expiresInSeconds, retried = afterExpiry)
         val header = repo.headerInfo(episodeId)
         _webExtras.value = WebExtras(episodeId, play.headers, pluginSubtitles(play.subtitles))
         val startPos = safeStartPosition(episodeId, SourceKind.PLUGIN)
@@ -1325,3 +1356,6 @@ class PlayerViewModel internal constructor(
         const val PLAY = "ArkivPlay"
     }
 }
+
+/** See [PlayerViewModel.pluginSetup]. */
+data class PluginSetupPrompt(val pluginId: String, val message: String)

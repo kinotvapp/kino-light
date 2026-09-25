@@ -312,6 +312,8 @@ class SearchPlayback(private val graph: AppGraph) {
         val epId = graph.repository.addPluginMovie(
             ref = r.ref, title = r.title,
             posterUrl = r.extra["poster"].orEmpty(), backdropUrl = r.extra["backdrop"].orEmpty(),
+            // The plugin's ids.tmdb: TMDB art and the library's TMDB grouping (spec §3.3).
+            tmdbId = r.extra["tmdbId"]?.toIntOrNull()?.takeIf { it > 0 },
         )
         return if (epId != null) PlaybackResult.Ready(epId)
         else PlaybackResult.Failed("No se pudo preparar la reproducción de ${r.extra["pluginName"] ?: "este plugin"}.")
@@ -336,7 +338,7 @@ class SearchPlayback(private val graph: AppGraph) {
             chosen = chapter(chosen),
             posterUrl = season.extra["poster"].orEmpty().ifBlank { series?.posterUrl.orEmpty() },
             backdropUrl = season.extra["backdrop"].orEmpty().ifBlank { series?.backdropUrl.orEmpty() },
-            tmdbId = series?.tmdbId?.takeIf { it > 0 },
+            tmdbId = series?.tmdbId?.takeIf { it > 0 } ?: season.extra["tmdbId"]?.toIntOrNull()?.takeIf { it > 0 },
             tituloCanonico = series?.takeIf { it.tmdbId > 0 }?.title,
         )
         return if (epId != null) PlaybackResult.Ready(epId)

@@ -789,10 +789,10 @@ class ArkivRepository(
      * Saves a plugin movie and returns its episodeId, or null if [ref] isn't a plugin movie ref.
      * Modeled on [addDituSource]; rows come from [PluginEntities].
      */
-    suspend fun addPluginMovie(ref: String, title: String, posterUrl: String = "", backdropUrl: String = ""): String? {
+    suspend fun addPluginMovie(ref: String, title: String, posterUrl: String = "", backdropUrl: String = "", tmdbId: Int? = null): String? {
         val itemId = PluginEntities.movieItemId(ref) ?: return null
         val existing = itemDao.getItem(itemId)
-        val (item, ep) = PluginEntities.buildMovie(ref, title, posterUrl, clock(), existing) ?: return null
+        val (item, ep) = PluginEntities.buildMovie(ref, title, posterUrl, clock(), existing, tmdbId) ?: return null
         itemDao.replaceItem(item, listOf(ep))
         saveMagisBackdrop(itemId, backdropUrl)
         return ep.id

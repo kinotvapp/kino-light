@@ -1,0 +1,16 @@
+{
+  "id": "reference-server",
+  "name": "Servidor de prueba",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "entry": "plugin.js",
+  "description": "Plugin de referencia (solo pruebas): tu propio servidor, con usuario y contraseña.",
+  "hosts": ["example.org"],
+  "capabilities": ["search", "home", "browse", "resolve"],
+  "settings": [
+    { "key": "server", "label": "Servidor", "type": "url", "required": true, "hint": "http://192.168.1.10:8096" },
+    { "key": "user", "label": "Usuario", "type": "text", "required": true },
+    { "key": "password", "label": "Contraseña", "type": "password", "required": true },
+    { "key": "hd", "label": "Solo HD", "type": "toggle", "default": false }
+  ]
+}

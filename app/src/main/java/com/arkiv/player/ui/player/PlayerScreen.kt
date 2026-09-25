@@ -327,6 +327,8 @@ fun PlayerScreen(
     onOpenEpisodes: () -> Unit,
     onNextEpisode: (String) -> Unit = {},
     isTv: Boolean = false,
+    /** A plugin title whose plugin needs configuring: opens that plugin's Configurar screen. */
+    onOpenPluginSettings: (pluginId: String) -> Unit = {},
 ) {
     val controller = rememberMediaController()
     // The service's ExoPlayer, used only to bind the local video surface (see PlaybackEngine).
@@ -338,7 +340,7 @@ fun PlayerScreen(
         }
         return
     }
-    PlayerContent(episodeId, onBack, onOpenEpisodes, onNextEpisode, controller, serviceExo, isTv)
+    PlayerContent(episodeId, onBack, onOpenEpisodes, onNextEpisode, controller, serviceExo, isTv, onOpenPluginSettings)
 }
 
 @OptIn(UnstableApi::class, androidx.compose.material3.ExperimentalMaterial3Api::class)
@@ -351,6 +353,7 @@ private fun PlayerContent(
     controller: MediaController,
     serviceExo: ExoPlayer,
     isTv: Boolean,
+    onOpenPluginSettings: (pluginId: String) -> Unit,
 ) {
     val graph = rememberGraph()
     val subtitleStyle by graph.subtitlePrefs.prefs.collectAsStateWithLifecycle()
@@ -4043,6 +4046,22 @@ private fun PlayerContent(
             text = { Text(message) },
             confirmButton = {
                 TextButton(onClick = { vm.dismissBlocked(); onBack() }) { Text("Entendido") }
+            },
+        )
+    }
+
+    // A plugin title whose plugin needs configuring (auth_required): straight to its Configurar.
+    val pluginSetup by vm.pluginSetup.collectAsStateWithLifecycle()
+    pluginSetup?.let { prompt ->
+        AlertDialog(
+            onDismissRequest = { vm.dismissPluginSetup(); onBack() },
+            title = { Text("Falta configurar") },
+            text = { Text(prompt.message) },
+            confirmButton = {
+                TextButton(onClick = { vm.dismissPluginSetup(); onOpenPluginSettings(prompt.pluginId) }) { Text("Configurar") }
+            },
+            dismissButton = {
+                TextButton(onClick = { vm.dismissPluginSetup(); onBack() }) { Text("Cerrar") }
             },
         )
     }

@@ -45,10 +45,11 @@ object PluginEntities {
         }
     }
 
-    fun buildMovie(ref: String, title: String, posterUrl: String, now: Long, existing: ItemEntity?): Pair<ItemEntity, EpisodeEntity>? {
+    /** [tmdbId]: the plugin's `ids.tmdb` (0/null = none); an existing row keeps its own if none comes. */
+    fun buildMovie(ref: String, title: String, posterUrl: String, now: Long, existing: ItemEntity?, tmdbId: Int? = null): Pair<ItemEntity, EpisodeEntity>? {
         val r = PluginRef.decode(ref)?.takeIf { it.kind == PluginRef.MOVIE } ?: return null
         val itemId = PluginIds.itemIdFor(r.pluginId, r.itemId)
-        val item = itemFor(itemId, r.pluginId, ref, title, isSeries = false, posterUrl, now, existing, existing?.episodiosVistosEnLista, null, null)
+        val item = itemFor(itemId, r.pluginId, ref, title, isSeries = false, posterUrl, now, existing, existing?.episodiosVistosEnLista, tmdbId, null)
         val ep = EpisodeEntity(
             id = movieEpisodeId(itemId), itemId = itemId, section = "",
             displayName = MetadataParser.cleanName(title), orderIndex = 0, durationSeconds = 0.0,

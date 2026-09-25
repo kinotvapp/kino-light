@@ -494,10 +494,18 @@ class AppGraph(context: Context) {
         }
     }
 
+    /**
+     * Debug builds only: `src/debug`'s PluginSideloadProbe points this at plugin folders copied
+     * into the app's files dir, so the emulator can install a plugin that isn't on GitHub yet.
+     * Nothing in `src/main` ever sets it; a release APK has no code that can.
+     */
+    @Volatile var debugPluginFetcher: PluginFetcher? = null
+
     val pluginInstaller: PluginInstaller by lazy {
+        val github = RawGithubFetcher(pluginBaseHttp)
         PluginInstaller(
             store = pluginStore,
-            fetcher = RawGithubFetcher(pluginBaseHttp),
+            fetcher = PluginFetcher { url, max -> (debugPluginFetcher ?: github).fetch(url, max) },
             probe = { script ->
                 val runtime = PluginRuntime.open("probe", script, ProbePluginHost, PluginEnv(appVersion = BuildConfig.VERSION_NAME))
                 try { runtime.exports } finally { runtime.close() }

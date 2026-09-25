@@ -61,4 +61,12 @@ class PluginEntitiesTest {
         assertEquals(1L, item.addedAt)
         assertEquals("old.jpg", item.thumbnailUrl)
     }
+
+    @Test fun `a movie keeps the plugin's TMDB id, and an existing one survives a save without it`() {
+        val ref = com.arkiv.player.data.plugin.PluginRef("demo", "m1", com.arkiv.player.data.plugin.PluginRef.MOVIE, "R1").encode()
+        val (item, _) = PluginEntities.buildMovie(ref, "Matrix", "", 1L, null, tmdbId = 603)!!
+        assertEquals(603, item.tmdbId)
+        val (again, _) = PluginEntities.buildMovie(ref, "Matrix", "", 2L, item, tmdbId = null)!!
+        assertEquals(603, again.tmdbId)
+    }
 }
