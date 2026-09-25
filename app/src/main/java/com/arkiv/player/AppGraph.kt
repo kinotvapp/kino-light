@@ -379,8 +379,18 @@ class AppGraph(context: Context) {
     /** The live PluginHttp of each open runtime, so the pool can reset its per-call request budget. */
     private val pluginHttps = java.util.concurrent.ConcurrentHashMap<String, PluginHttp>()
 
-    /** The live cookie jar of each open runtime: a settings change retires it (see forgetPluginSession). */
-    private val pluginJars = java.util.concurrent.ConcurrentHashMap<String, PluginCookies>()
+    /** The live cookie jar of each open runtime: a settings change retires it (see forgetPluginSession).
+     *  See [PluginJarRegistry]'s KDoc for why a runtime's own close() must never touch this. */
+    private val pluginJars = PluginJarRegistry()
+
+    /** Bumped by [forgetPluginSession]: lets a Home refresh discard a `home()` answer that was still
+     *  in flight when the session it belongs to was forgotten (fix round 1, finding 3), and makes
+     *  ANY settings save -- not just one that changes hosts -- re-trigger Home ([pluginsChanged]
+     *  below, finding 4). Process-lifetime only: a cold start already re-fetches Home from scratch,
+     *  so nothing here needs to survive a restart. */
+    private val pluginSessionRevisions = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
+    private fun pluginSessionRevision(id: String): Int = pluginSessionRevisions.getOrDefault(id, 0)
 
     /**
      * Every plugin call goes through here: a plugin whose required settings are empty is refused
@@ -426,12 +436,8 @@ class AppGraph(context: Context) {
         }
         // The jar persists in the plugin's data dir: a login survives the idle close and app restarts.
         val cookies = PluginCookies(java.io.File(dataDir, PluginCookies.FILE_NAME), hosts)
-        // Whatever jar this replaces (an idle reopen, or a runtime whose close was deferred behind
-        // an in-flight call -- see PluginRuntime.close KDoc) is stopped from writing, never cleared:
-        // its session hasn't changed, only a stale in-memory snapshot from that other jar is barred
-        // from landing over whatever this one reads or writes to the SAME file. Task 5's review: two
-        // PluginCookies instances on one file could otherwise clobber each other.
-        pluginJars.put(id, cookies)?.stopWriting()
+        // Whatever jar this replaces is stopped from writing (see PluginJarRegistry's KDoc).
+        pluginJars.put(id, cookies)
         val http = PluginHttp(pluginBaseHttp, id, hosts, BuildConfig.VERSION_NAME, cookies = cookies)
         pluginHttps[id] = http
         val storage = PluginStorage(java.io.File(dataDir, "storage.json"))
@@ -441,11 +447,16 @@ class AppGraph(context: Context) {
         // never keeps a stale, no-longer-approved host list around after the runtime that used it is
         // gone. remove(id, http) only clears OUR entry: if a newer runtime already replaced it, this
         // deferred close (see PluginRuntime.close KDoc) must not delete that live one instead.
+        //
+        // pluginJars is deliberately NOT touched here (fix round 1, finding 1): it used to also do
+        // `pluginJars.remove(id, cookies)`, which raced forgetPluginSession -- an async close that
+        // won that race removed the jar WITHOUT retiring it, leaving it free to write the old
+        // session's cookies back after "forget" had already deleted them. See PluginJarRegistry's
+        // KDoc: only put() (superseded) or forget() (a settings change) may ever remove an entry.
         return object : ScriptRuntime by runtime {
             override fun close() {
                 runtime.close()
                 pluginHttps.remove(id, http)
-                pluginJars.remove(id, cookies)
             }
         }
     }
@@ -468,10 +479,15 @@ class AppGraph(context: Context) {
     /**
      * After a settings change (spec §1.3): a new user or server must not inherit the old session.
      * The live jar is retired (a call still finishing can't write it back), its file and the Home
-     * cache (rows of the old account) are deleted. Runs on IO (DefaultPluginAdmin.saveSettings).
+     * cache (rows of the old account) are deleted, and the session revision is bumped so a `home()`
+     * answer still in flight for the OLD session gets discarded instead of cached (finding 3) and
+     * so Home re-fetches even when only the user/password changed, not the hosts (finding 4). Runs
+     * on IO (DefaultPluginAdmin.saveSettings) -- see that method for why this must run BEFORE the
+     * runtime is actually closed, not after.
      */
     private fun forgetPluginSession(id: String) {
-        pluginJars.remove(id)?.retire()
+        pluginSessionRevisions.merge(id, 1, Int::plus)
+        pluginJars.forget(id)
         java.io.File(pluginStore.dataDir(id), PluginCookies.FILE_NAME).delete()
         java.io.File(pluginStore.dataDir(id), "home.json").delete()
     }
@@ -482,16 +498,20 @@ class AppGraph(context: Context) {
             caller = pluginCaller,
             // In the plugin's data dir: uninstalling deletes it with the rest.
             cacheFileFor = { id -> java.io.File(pluginStore.dataDir(id), "home.json") },
+            sessionRevision = ::pluginSessionRevision,
         )
     }
 
     /**
-     * Emits when the set (or versions, or settings state) of usable plugins changes: Home re-asks
-     * for rows then — also right after a plugin is configured, or its server changes.
+     * Emits when the set (or versions, settings state or session) of usable plugins changes: Home
+     * re-asks for rows then — right after a plugin is configured or its server changes, AND after
+     * any OTHER settings save (e.g. only the user/password), via [pluginSessionRevision] (finding 4:
+     * without it, changing only the account left all three other fields unchanged and Home never
+     * re-fetched).
      */
     val pluginsChanged: kotlinx.coroutines.flow.Flow<List<Pair<String, String>>>
         get() = pluginRegistry.plugins
-            .map { list -> list.filter { it.isUsable }.map { it.id to "${it.record.version}|${it.needsSetup}|${it.userHosts}" } }
+            .map { list -> list.filter { it.isUsable }.map { it.id to it.changeKey(pluginSessionRevision(it.id)) } }
             .distinctUntilChanged()
 
     /** UpdateWorker's plugin step: each plugin at most once per 24 h; see PluginInstaller.checkDueUpdates. */

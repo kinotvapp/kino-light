@@ -34,6 +34,15 @@ class PluginHomeRows(
     private val cacheFileFor: (pluginId: String) -> File,
     private val clock: () -> Long = System::currentTimeMillis,
     private val ttlMs: Long = 6 * 60 * 60 * 1000L,
+    /**
+     * Bumped whenever a plugin's session is forgotten (a settings change — see AppGraph's
+     * `forgetPluginSession`). A `home()` call still in flight when that happens belongs to the OLD
+     * session: [refresh] compares the revision before and after the call and discards (never shows,
+     * never caches) an answer whose revision moved — otherwise the old account's rows could be
+     * written to `home.json` right after it was deleted, and served as "fresh" for up to [ttlMs]
+     * (fix round 1, finding 3). Constant by default: nothing is ever discarded.
+     */
+    private val sessionRevision: (pluginId: String) -> Int = { 0 },
     private val log: (String) -> Unit = { android.util.Log.w("KinoPlugin", it) },
 ) {
     private data class Cached(val fetchedAt: Long, val json: String)
@@ -60,8 +69,15 @@ class PluginHomeRows(
 
     private suspend fun refresh(p: InstalledPlugin, cached: Cached?): List<PluginRow> {
         if (cached != null && clock() - cached.fetchedAt < ttlMs) return parse(p, cached.json)
+        val revision = sessionRevision(p.id)
         return try {
             val json = caller.call(p.id, "home", "null", PluginContentSource.HOME_TIMEOUT_MS)
+            if (sessionRevision(p.id) != revision) {
+                // The session this answer belongs to was forgotten (a settings change) while the
+                // call was in flight: it's the OLD account's, never shown, never cached.
+                log("[${p.id}] home answer discarded: the session changed while it was in flight")
+                return emptyList()
+            }
             // Parsed BEFORE it's cached: an answer that can't be read must never be persisted and
             // re-read on every Home open. Nothing usable, nothing cached: the next Home asks again.
             parse(p, json).also { rows -> if (rows.isNotEmpty()) writeCache(p.id, json) }

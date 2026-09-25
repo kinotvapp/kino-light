@@ -4,6 +4,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -84,5 +85,17 @@ class PluginRegistryTest {
             PluginAccess.Ready("A", EffectiveHosts(listOf("approved.example.com", "*.cdn.example.com"))),
             registry.accessFor("pa"),
         )
+    }
+
+    /**
+     * Fix round 1, finding 4: `pluginsChanged` (AppGraph) keys on this. A settings save that only
+     * changes the user/password -- same version, same hosts, already not missing anything -- must
+     * still produce a DIFFERENT key so Home re-fetches, which only the session revision achieves.
+     */
+    @Test fun `a plugin's change key differs when only the session revision differs`() {
+        install("pa", "A")
+        val p = registry.find("pa")!!
+        assertNotEquals(p.changeKey(0), p.changeKey(1))
+        assertEquals(p.changeKey(3), p.changeKey(3))
     }
 }

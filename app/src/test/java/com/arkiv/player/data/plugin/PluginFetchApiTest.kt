@@ -253,6 +253,63 @@ class PluginFetchApiTest {
         }
     }
 
+    /** Connects wherever OkHttp asked, but on 127.0.0.1: the port picks the MockWebServer. Same
+     *  trick as PluginUserHostStreamTest -- a typed server can never be loopback/"localhost" (even
+     *  hand-built, PluginHostGate double-checks it), so it has to be a LAN-shaped address instead. */
+    private object LanToLoopback : javax.net.SocketFactory() {
+        private class Redirecting : java.net.Socket() {
+            override fun connect(endpoint: java.net.SocketAddress, timeout: Int) {
+                val port = (endpoint as java.net.InetSocketAddress).port
+                super.connect(java.net.InetSocketAddress(java.net.InetAddress.getLoopbackAddress(), port), timeout)
+            }
+        }
+        override fun createSocket() = Redirecting()
+        override fun createSocket(host: String?, port: Int) = throw UnsupportedOperationException()
+        override fun createSocket(host: String?, port: Int, localHost: java.net.InetAddress?, localPort: Int) = throw UnsupportedOperationException()
+        override fun createSocket(host: java.net.InetAddress?, port: Int) = throw UnsupportedOperationException()
+        override fun createSocket(address: java.net.InetAddress?, port: Int, localAddress: java.net.InetAddress?, localPort: Int) = throw UnsupportedOperationException()
+    }
+
+    /**
+     * Fix round 1's "also fold in": a typed (person-configured) server reaches a live `kino.fetch`
+     * call through the REAL QuickJS runtime end to end -- not just at the registry/PluginContentSource
+     * level (PluginBrowseTest's "a stream on the typed server resolves", PluginSetupLifecycleTest's
+     * "the registry carries typed servers into the player's access"). Proves the SAME `EffectiveHosts`
+     * shape AppGraph builds from `InstalledPlugin.hosts` (declared ∪ typed, no declared hosts here at
+     * all) actually lets a plugin's own JS reach the server the person typed into Configurar, and
+     * still refuses everything else.
+     */
+    @Test fun `end to end - a typed server reaches a live kino fetch call, an undeclared one is refused`() = runBlocking {
+        val server = MockWebServer().apply { start() }
+        try {
+            server.enqueue(MockResponse().setBody("{\"ok\":1}").addHeader("Content-Type", "application/json"))
+            // No declared hosts at all: only the typed server, exactly as a plugin whose sole `url`
+            // setting is filled in (PluginHosts.effective / PluginConfigStore.setupState) reaches AppGraph.
+            val hosts = EffectiveHosts(emptyList(), listOf(UserHost("http", "10.0.2.2", server.port)))
+            val cookies = PluginCookies(tmp.root.resolve("cookies-typed.json"), hosts)
+            val client = OkHttpClient.Builder().socketFactory(LanToLoopback).build()
+            val http = PluginHttp(client, "api", hosts, "9.9.9", cookies = cookies)
+            val host = DefaultPluginHost("api", http, PluginStorage(tmp.root.resolve("s-typed.json")), cookies = cookies, hosts = hosts, logger = {})
+            val base = "http://10.0.2.2:${server.port}"
+            val rt = open(
+                """
+                export async function home() {
+                  const r = await kino.fetch('$base/x');
+                  let refused = false;
+                  try { await kino.fetch('http://undeclared.example/'); } catch (e) { refused = e.code === 'host_not_allowed'; }
+                  return [r.json().ok, refused];
+                }
+                """,
+                host,
+            )
+            http.beginCall()
+            assertEquals("[1,true]", rt.call("home", "null", 10_000))
+            assertEquals(1, server.requestCount)
+        } finally {
+            server.shutdown()
+        }
+    }
+
     @Test fun `fetch limits handed to the prelude come from their Kotlin owners`() {
         val l = JSONObject(PluginRuntime.limits())
         assertEquals(PluginHttp.METHODS, l.getJSONArray("fetchMethods").let { a -> (0 until a.length()).map { a.getString(it) } })

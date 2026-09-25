@@ -56,13 +56,21 @@ class PluginConfigStore(private val dataDir: (pluginId: String) -> File, private
         return PluginSetupState(userHosts, missing(pluginId, settings).map { it.key })
     }
 
-    /** The required settings still without a value, from `config.json` alone (no Keystore). */
+    /**
+     * The required settings still without a value. For a password this is NOT just "was it ever
+     * saved" ([Stored.secrets], from `config.json` alone): it also asks the [SecretStore] whether
+     * it can actually produce the value RIGHT NOW. A Keystore reset or a restored backup can lose a
+     * saved password silently (see [EncryptedSecretStore]'s KDoc on `discardUndecryptable` and the
+     * in-memory fallback) while `config.json` still lists it as set; without this check the plugin
+     * would keep reading as fully configured and simply run with the password missing, instead of
+     * "Falta configurar" — the exact security-relevant regression review round 1 (finding 5) found.
+     */
     fun missing(pluginId: String, settings: List<PluginSetting>): List<PluginSetting> {
         if (settings.none { it.required }) return emptyList()
         val stored = readFile(pluginId)
         return settings.filter { s ->
             s.required && when (s.type) {
-                SettingType.PASSWORD -> s.key !in stored.secrets
+                SettingType.PASSWORD -> s.key !in stored.secrets || secrets.get(secretKey(pluginId, s.key)) == null
                 else -> (stored.values.opt(s.key) as? String).isNullOrBlank()
             }
         }

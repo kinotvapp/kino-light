@@ -2,16 +2,20 @@ package com.arkiv.player.data.plugin
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
 import java.io.FileNotFoundException
+import java.util.concurrent.Executors
 
 /**
  * The registry is reloaded BEFORE the old runtime is closed: a call landing in between would
@@ -32,6 +36,7 @@ class PluginAdminTest {
     private val secrets = mutableMapOf<String, String>()
     private val forgotten = mutableListOf<String>()
     private lateinit var config: PluginConfigStore
+    private lateinit var installer: PluginInstaller
 
     private inner class FakeRuntime : ScriptRuntime {
         override val exports = setOf("search", "resolve")
@@ -52,7 +57,7 @@ class PluginAdminTest {
         })
         registry = PluginRegistry(store) { p -> config.setupState(p.manifest.id, p.manifest.settings) }
         pool = PluginRuntimePool(open = { FakeRuntime() }, onUnresponsive = {}, scope = CoroutineScope(Dispatchers.Unconfined))
-        val installer = PluginInstaller(store, fetcher, probe = { setOf("search", "resolve") }, clock = { 1_000L })
+        installer = PluginInstaller(store, fetcher, probe = { setOf("search", "resolve") }, clock = { 1_000L })
         admin = DefaultPluginAdmin(registry, installer, pool, config, forgetSession = { forgotten += it }, io = Dispatchers.Unconfined)
     }
 
@@ -122,5 +127,57 @@ class PluginAdminTest {
         admin.saveSettings("demo", mapOf("password" to "s3cr3t"))
         admin.uninstall("demo")
         assertEquals(emptyMap<String, String>(), secrets)
+    }
+
+    /**
+     * Fix round 1, finding 2: `saveSettings` must reload the registry BEFORE it forgets the
+     * session, not after. Otherwise a runtime opened right after `forgetSession` retired the old
+     * jar (but before the registry caught up) would read the NEW config but the OLD hosts -- and
+     * `forgetSession` itself would be looking at a stale registry snapshot. Proven directly: the
+     * hosts `forgetSession` sees, captured the instant it runs, must already be the saved ones.
+     */
+    @Test fun `saveSettings reloads the registry before forgetting the session, so forget sees the new hosts`() = runBlocking {
+        publish("1.0.0", JSONArray("""[{"key":"server","label":"Servidor","type":"url","required":true}]"""))
+        admin.install(admin.preview("o/r"))
+        var hostsAtForget: EffectiveHosts? = null
+        val tracking = DefaultPluginAdmin(
+            registry, installer, pool, config,
+            forgetSession = { id -> hostsAtForget = registry.find(id)!!.hosts; forgotten += id },
+            io = Dispatchers.Unconfined,
+        )
+        assertEquals(null, tracking.saveSettings("demo", mapOf("server" to "http://192.168.1.10:8096")))
+        assertEquals(
+            EffectiveHosts(listOf("example.com"), listOf(UserHost("http", "192.168.1.10", 8096))),
+            hostsAtForget,
+        )
+    }
+
+    /**
+     * Fix round 1, finding 6: `install`'s `registry.reload()` -- which now reads config.json for
+     * EVERY plugin -- must run on [io], not on whatever dispatcher called `install` (Main, via
+     * `PluginsViewModel.busy`/`viewModelScope`). Uses real dispatchers (not `Unconfined`, which
+     * makes every coroutine "run" on the calling thread and would hide the bug) to prove reload()
+     * actually executes on the io thread.
+     */
+    @Test fun `install reloads the registry on the io dispatcher, never the caller's thread`() = runBlocking {
+        val callerThread = Thread.currentThread().name
+        val ioExecutor = Executors.newSingleThreadExecutor { r -> Thread(r, "plugin-io-test") }
+        val ioDispatcher = ioExecutor.asCoroutineDispatcher()
+        try {
+            var reloadThread: String? = null
+            val trackingRegistry = PluginRegistry(store) { p ->
+                reloadThread = Thread.currentThread().name
+                config.setupState(p.manifest.id, p.manifest.settings)
+            }
+            val trackingAdmin = DefaultPluginAdmin(trackingRegistry, installer, pool, config, io = ioDispatcher)
+            publish("1.0.0")
+            trackingAdmin.install(trackingAdmin.preview("o/r"))
+            // Coroutine debug mode suffixes the thread name ("plugin-io-test @coroutine#1"): check
+            // it's OUR executor's thread, not demand an exact match against that suffix.
+            assertTrue("reload ran on $reloadThread, not the io executor", reloadThread!!.startsWith("plugin-io-test"))
+            assertNotEquals(callerThread, reloadThread)
+        } finally {
+            ioExecutor.shutdown()
+        }
     }
 }

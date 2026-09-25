@@ -15,8 +15,11 @@ import java.util.concurrent.ConcurrentHashMap
  * A file the Keystore can no longer decrypt (a restored backup on another device, a reset
  * Keystore) is deleted and recreated through the same `EncryptedPrefs.openOrRepair` rule the Magis
  * store uses — only this file, never the shared master key. If even a fresh file can't be opened,
- * the passwords live in memory for this process: the plugin shows "Falta configurar" after a
- * restart instead of the password ever touching plain storage. Nothing here logs a value.
+ * the passwords live in [memory] for this process only: after a restart (a fresh, empty [memory])
+ * a password saved that way is simply gone. Either way the plugin correctly shows "Falta
+ * configurar" instead of running with the password silently absent — `PluginConfigStore.missing()`
+ * asks THIS store for the value, not just whether `config.json` once listed it as set (fix round 1,
+ * finding 5: it used to trust that list alone). Nothing here logs a value.
  */
 class EncryptedSecretStore(private val context: Context) : SecretStore {
     private val memory = ConcurrentHashMap<String, String>()

@@ -91,4 +91,40 @@ class PluginHomeRowsTest {
         home(listOf(plugin("a")), caller).rows().toList()
         assertEquals(2, caller.calls)
     }
+
+    /**
+     * Fix round 1, finding 3: a settings change bumps the session revision (AppGraph's
+     * `forgetPluginSession`). A `home()` call that was already in flight for the OLD session must
+     * not have its answer shown or cached once it lands — otherwise the old account's rows could be
+     * written to `home.json` right after a settings change deleted it, and served as "fresh" cache
+     * to the NEW account for up to six hours.
+     */
+    @Test fun `a home answer is discarded, not shown or cached, when the session changed mid-flight`() = runTest {
+        var revision = 0
+        val caller = object : PluginCaller {
+            override suspend fun call(pluginId: String, function: String, argJson: String, timeoutMs: Long): String {
+                // Simulates a settings change landing while this very call is still running.
+                revision++
+                return rowJson
+            }
+        }
+        val rows = PluginHomeRows(
+            { listOf(plugin("a")) }, caller,
+            cacheFileFor = { File(tmp.root, "$it/home.json") },
+            clock = { now }, sessionRevision = { revision }, log = {},
+        ).rows().toList().last()
+        assertEquals(emptyList<PluginHomeRow>(), rows)
+        assertFalse("the old session's rows must never reach the cache file", File(tmp.root, "a/home.json").exists())
+    }
+
+    @Test fun `an unchanged session revision caches and shows the answer normally`() = runTest {
+        val caller = CountingCaller { rowJson }
+        val rows = PluginHomeRows(
+            { listOf(plugin("a")) }, caller,
+            cacheFileFor = { File(tmp.root, "$it/home.json") },
+            clock = { now }, sessionRevision = { 7 }, log = {},
+        ).rows().toList().last()
+        assertEquals(listOf("top"), rows.map { it.id })
+        assertTrue(File(tmp.root, "a/home.json").exists())
+    }
 }

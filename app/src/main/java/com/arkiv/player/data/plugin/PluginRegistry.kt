@@ -38,6 +38,16 @@ data class InstalledPlugin(
 
     /** Takes part in search, Home and playback. A pending update doesn't stop the current version. */
     val isUsable: Boolean get() = record.enabled && !record.damaged && !record.unresponsive
+
+    /**
+     * The key AppGraph's `pluginsChanged` uses with `distinctUntilChanged`: two states with the
+     * same version, [needsSetup], [userHosts] AND [revision] are the same as far as Home is
+     * concerned. [revision] is AppGraph's per-plugin settings-save counter (bumped by
+     * `forgetPluginSession`) — without it, a settings save that only changes the user/password
+     * (same version, same hosts, already not missing anything) would produce the SAME key as
+     * before the save, and Home would never re-fetch (fix round 1, finding 4).
+     */
+    fun changeKey(revision: Int): String = "${record.version}|$needsSetup|$userHosts|$revision"
 }
 
 /** Whether a saved plugin title can play now, and the plugin's name for the message if not. */

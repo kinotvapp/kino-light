@@ -64,6 +64,26 @@ class PluginConfigStoreTest {
         assertFalse(File(tmp.root, "jf/config.json").exists())
     }
 
+    /**
+     * Fix round 1, finding 5: `missing()` must not trust `config.json`'s "secrets" name-list alone.
+     * A Keystore reset, a restored backup (`EncryptedSecretStore`'s `discardUndecryptable`) or the
+     * in-memory fallback after a restart can lose a saved password silently -- `config.json` still
+     * lists it as set, but the secret store itself can no longer produce a value for it. Without
+     * this check the plugin would keep reading as fully configured ("Activo") and simply run with
+     * the password absent, instead of showing "Falta configurar" as `EncryptedSecretStore`'s own
+     * KDoc claims.
+     */
+    @Test fun `a password the secret store can no longer produce reads back as missing, not configured`() {
+        assertNull(store.save("jf", settings, full))
+        assertEquals(emptyList<PluginSetting>(), store.missing("jf", settings))
+        // config.json still lists "password" as set; the secret store itself lost it.
+        secrets.map.remove("plugin.jf.password")
+        assertEquals(listOf("password"), store.missing("jf", settings).map { it.key })
+        assertEquals(listOf("password"), store.setupState("jf", settings).missing)
+        // read() was already correct here: the plugin simply gets nothing for it.
+        assertNull(store.read("jf", settings).values["password"])
+    }
+
     @Test fun `clearing an optional password removes it from the secret store`() {
         val optional = listOf(PluginSetting("token", "Token", SettingType.PASSWORD))
         assertNull(store.save("api", optional, mapOf("token" to "t1")))
