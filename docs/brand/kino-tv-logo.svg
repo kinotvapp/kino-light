@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="92 64 912 318" width="912" height="318">
+  <g fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round" stroke-width="42">
+    <!-- k -->
+    <path d="M147 133 V324"/>
+    <path d="M267 170 L199 250 L270 324 M152 250 H199"/>
+    <!-- i -->
+    <path d="M343 185 V324"/>
+    <!-- n -->
+    <path d="M422 324 V185"/>
+    <path d="M422 255 C422 210 452 182 490 182 C524 182 544 206 544 242 V324"/>
+    <path d="M544 250 V324"/>
+    <!-- o -->
+    <circle cx="687" cy="252" r="80" stroke-width="35"/>
+  </g>
+  <!-- i dot -->
+  <circle cx="343" cy="123" r="25" fill="#fff"/>
+  <!-- red dot -->
+  <circle cx="687" cy="252.5" r="30.5" fill="#e53224"/>
+  <!-- TV -->
+  <g fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round" stroke-width="26">
+    <path d="M791 97 H862 M826 97 V182"/>
+    <path d="M896 97 L933 182 L971 97"/>
+  </g>
+</svg>

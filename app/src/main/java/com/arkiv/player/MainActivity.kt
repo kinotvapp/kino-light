@@ -41,6 +41,9 @@ import kotlinx.coroutines.withTimeoutOrNull
  * intro grew to 880, so the root composed on top of its heaviest stretch. Tied to the real
  * duration, composition always lands AFTER the animation finished drawing, and the exit fade
  * covers it.
+ *
+ * Phone only: on TV the splash is the static logo (see `ArkivSplash`), there's no animation to give
+ * room to, so the root starts composing right away.
  */
 private val INTRO_HEAD_START_MS = com.arkiv.player.ui.INTRO_DURATION_MS.toLong()
 
@@ -111,7 +114,7 @@ class MainActivity : AppCompatActivity() {
                 var loadContent by remember { mutableStateOf(false) }
                 var contentSettled by remember { mutableStateOf(false) }
                 LaunchedEffect(Unit) {
-                    delay(INTRO_HEAD_START_MS)
+                    if (!isTv) delay(INTRO_HEAD_START_MS)
                     // Also wait for the heavy credential/Magis chain to finish warming up OFF the
                     // main thread before composing the root. Otherwise, on a slow phone / TV box the
                     // composition reads a still-building `by lazy` (the native 3DES key resolution,

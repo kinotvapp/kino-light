@@ -1,5 +1,6 @@
 package com.arkiv.player.ui.tv.library
 
+import com.arkiv.player.ui.KinoWordmark
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -145,13 +146,7 @@ fun TvLibraryScreen(
                 .padding(vertical = SAFE_V),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            Text(
-                "KINO",
-                style = MaterialTheme.typography.titleLarge,
-                color = ArkivRed,
-                fontWeight = FontWeight.Black,
-                modifier = Modifier.padding(start = SAFE_H, bottom = 28.dp),
-            )
+            KinoWordmark(height = 28.dp, modifier = Modifier.padding(start = SAFE_H, bottom = 28.dp))
             // No new downloads on TV, so "Descargas" only appears when there are leftovers to manage
             // (see `hasDownloads`). `LibrarySection` is shared with the phone, so filter at the call
             // site rather than removing the enum value.

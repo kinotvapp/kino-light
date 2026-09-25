@@ -1,5 +1,6 @@
 package com.arkiv.player.ui.tv
 
+import com.arkiv.player.ui.KinoWordmark
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.CubicBezierEasing
@@ -603,13 +604,7 @@ fun TvHomeScreen(
                     horizontalArrangement = Arrangement.spacedBy(16.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        "KINO",
-                        style = MaterialTheme.typography.headlineMedium,
-                        color = ArkivRed,
-                        fontWeight = FontWeight.Black,
-                        modifier = Modifier.padding(end = 16.dp),
-                    )
+                    KinoWordmark(height = 34.dp, modifier = Modifier.padding(end = 16.dp))
                     TvNavButton(icon = Icons.Default.Search, label = "Buscar", onClick = onOpenSearch)
                     TvNavButton(icon = Icons.Default.Refresh, label = "Recargar", onClick = { graph.reloadHomeCatalog() })
                     TvNavButton(

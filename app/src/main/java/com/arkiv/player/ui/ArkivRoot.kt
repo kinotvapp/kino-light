@@ -179,11 +179,8 @@ fun ArkivRoot(
         drawerContent = {
             ModalDrawerSheet(drawerContainerColor = ArkivBlack) {
                 Spacer(Modifier.height(24.dp))
-                Text(
-                    "KINO",
-                    color = ArkivRed,
-                    fontWeight = FontWeight.Black,
-                    style = MaterialTheme.typography.headlineMedium,
+                KinoWordmark(
+                    height = 30.dp,
                     modifier = Modifier.padding(horizontal = 28.dp, vertical = 8.dp),
                 )
                 Spacer(Modifier.height(8.dp))
@@ -239,7 +236,7 @@ fun ArkivRoot(
                         }
                     },
                     title = {
-                        Text("KINO", color = ArkivRed, fontWeight = FontWeight.Black)
+                        KinoWordmark(height = 24.dp)
                     },
                     actions = {
                         if (currentRoute == "home") {
