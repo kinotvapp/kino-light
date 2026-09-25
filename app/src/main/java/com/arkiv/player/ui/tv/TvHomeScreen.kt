@@ -268,6 +268,8 @@ fun TvHomeScreen(
     onOpenMagis: (com.arkiv.player.data.gateway.CatalogItem) -> Unit,
     /** "Ver todo" of a Magis row. */
     onBrowseMagisRow: (rowId: String, title: String) -> Unit,
+    /** "Ver más" of a plugin row that carries a `ref` (the plugin declares `browse`). */
+    onBrowsePluginRow: (com.arkiv.player.ui.plugin.PluginMoreTarget) -> Unit = {},
 ) {
     val graph = rememberGraph()
     val vm: HomeViewModel = viewModel(
@@ -966,6 +968,19 @@ fun TvHomeScreen(
                                             },
                                             onClick = { openPluginItem(item) },
                                         )
+                                    }
+                                    val moreRef = row.ref
+                                    if (moreRef != null) {
+                                        item(key = "${row.pluginId}-${row.id}-ver-mas") {
+                                            TvSeeMoreRowCard(
+                                                cardHeight = cardHeight,
+                                                onFocus = {
+                                                    navSound()
+                                                    featured = Featured(row.title, "Ver más de ${row.title}", null)
+                                                },
+                                                onClick = { onBrowsePluginRow(com.arkiv.player.ui.plugin.PluginMoreTarget.Browse(row.pluginId, row.title, moreRef)) },
+                                            )
+                                        }
                                     }
                                 }
                             }

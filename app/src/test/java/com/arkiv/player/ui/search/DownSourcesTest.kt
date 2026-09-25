@@ -84,4 +84,10 @@ class DownSourcesTest {
         assertNull(emptyTabText(tab, false, state))
         assertEquals("No respondió", emptySectionText(tab, state))
     }
+
+    @Test fun `a plugin's typed error is its own sentence, not "no respondió"`() {
+        val state = SourcesState().withLabel("plugin:jf", "Jellyfin")
+            .withFailure("plugin:jf", "Configura Jellyfin en Ajustes ▸ Plugins", com.arkiv.player.data.plugin.PluginErrorException("auth_required", ""))
+        assertEquals(listOf("Configura Jellyfin en Ajustes ▸ Plugins"), downSourceNotices(state, SourceTab.ALL))
+    }
 }

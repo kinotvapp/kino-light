@@ -289,6 +289,7 @@ fun ArkivRoot(
                         navController.navigate("magis_row/$rowId?title=${android.net.Uri.encode(title)}")
                     },
                     contentPadding = padding,
+                    onBrowsePluginRow = { navController.navigate(com.arkiv.player.ui.plugin.PluginMoreTarget.route(it)) },
                 )
             }
             composable("live") {
@@ -371,6 +372,7 @@ fun ArkivRoot(
                         shortcutTmdbId = entry.arguments?.getString("tmdbId")?.toIntOrNull(),
                         shortcutAnilistId = entry.arguments?.getString("anilistId")?.toLongOrNull(),
                         shortcutQuery = entry.arguments?.getString("query"),
+                        onBrowsePlugin = { navController.navigate(com.arkiv.player.ui.plugin.PluginMoreTarget.route(it)) },
                     )
                 }
             }
@@ -443,6 +445,30 @@ fun ArkivRoot(
                         }
                     },
                 )
+            }
+            composable(
+                com.arkiv.player.ui.plugin.PluginMoreTarget.PATTERN,
+                arguments = listOf(
+                    navArgument("pluginId") { type = NavType.StringType },
+                    navArgument("title") { type = NavType.StringType; defaultValue = "" },
+                    navArgument("ref") { nullable = true; type = NavType.StringType; defaultValue = null },
+                    navArgument("query") { nullable = true; type = NavType.StringType; defaultValue = null },
+                    navArgument("cursor") { nullable = true; type = NavType.StringType; defaultValue = null },
+                ),
+            ) { entry ->
+                val a = entry.arguments
+                val target = com.arkiv.player.ui.plugin.PluginMoreTarget.fromRoute(
+                    a?.getString("pluginId").orEmpty(), a?.getString("title").orEmpty(),
+                    a?.getString("ref"), a?.getString("query"), a?.getString("cursor"),
+                )
+                if (target != null) {
+                    com.arkiv.player.ui.plugin.PluginMoreScreen(
+                        target = target,
+                        onPlayEpisode = { playEpisode(it) },
+                        onOpenPluginSettings = { id -> navController.navigate("plugin_config/${Uri.encode(id)}") },
+                        onBack = { navController.popBackStack() },
+                    )
+                }
             }
             composable("plugin_config/{pluginId}") { entry ->
                 com.arkiv.player.ui.plugin.PluginConfigRoute(

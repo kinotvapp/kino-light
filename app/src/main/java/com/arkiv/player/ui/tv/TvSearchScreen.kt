@@ -116,6 +116,8 @@ fun TvSearchScreen(
     shortcutKind: String? = null,
     shortcutTmdbId: Int? = null,
     shortcutAnilistId: Long? = null,
+    /** "Ver más resultados" of a plugin whose search page carried a cursor. */
+    onBrowsePlugin: ((com.arkiv.player.ui.plugin.PluginMoreTarget) -> Unit)? = null,
 ) {
     val graph = rememberGraph()
     val fixedRows = remember { buildRowSpecs(emptyList(), emptyList(), emptyList()) }
@@ -139,6 +141,7 @@ fun TvSearchScreen(
     val sources by vm.sources.collectAsStateWithLifecycle()
     val searchingSources by vm.searchingSources.collectAsStateWithLifecycle()
     val sourcesState by vm.sourcesState.collectAsStateWithLifecycle()
+    val pluginMore by vm.pluginMore.collectAsStateWithLifecycle()
     val refineSeason by vm.refineSeason.collectAsStateWithLifecycle()
     val refineEpisode by vm.refineEpisode.collectAsStateWithLifecycle()
 
@@ -550,6 +553,8 @@ fun TvSearchScreen(
                         preparing = preparing,
                         playError = playError,
                         onSelect = { source -> playResult(source) },
+                        pluginMore = pluginMore,
+                        onBrowsePlugin = onBrowsePlugin,
                     )
                 }
             }
@@ -1047,6 +1052,8 @@ private fun TvResultsContent(
     preparing: Boolean,
     playError: String?,
     onSelect: (PlaySource) -> Unit,
+    pluginMore: Map<String, com.arkiv.player.ui.plugin.PluginMoreTarget> = emptyMap(),
+    onBrowsePlugin: ((com.arkiv.player.ui.plugin.PluginMoreTarget) -> Unit)? = null,
 ) {
     // distinctBy(sourceKey) is belt-and-braces: the pipeline above should already arrive with no
     // duplicates, but this avoids a Compose crash from repeated keys if something slips through.
@@ -1230,6 +1237,15 @@ private fun TvResultsContent(
                     firstCard = if (source == rows.first().first) firstFocus else null,
                     onPlay = { onSelect(it) },
                 )
+                // A plugin row whose first page came with a cursor: the rest opens in "Ver más".
+                val more = pluginMore[source.key]
+                if (more != null && onBrowsePlugin != null) {
+                    item(key = "plugin-more-${source.key}") {
+                        Box(Modifier.padding(horizontal = 48.dp, vertical = 4.dp)) {
+                            TvActionOption(label = "Ver más resultados de ${source.label}") { onBrowsePlugin(more) }
+                        }
+                    }
+                }
             }
         }
 

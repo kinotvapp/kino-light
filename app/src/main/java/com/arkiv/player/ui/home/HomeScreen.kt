@@ -125,6 +125,8 @@ fun HomeScreen(
     /** "Ver todo" of a Magis row: the grid with every title of that row. */
     onBrowseMagisRow: (rowId: String, title: String) -> Unit,
     contentPadding: PaddingValues,
+    /** "Ver más" of a plugin row that carries a `ref` (the plugin declares `browse`). */
+    onBrowsePluginRow: (com.arkiv.player.ui.plugin.PluginMoreTarget) -> Unit = {},
 ) {
     val graph = rememberGraph()
     val sizes = homeSizes()
@@ -469,7 +471,10 @@ fun HomeScreen(
         // 6. Plugin rows, after Magis's: each titled by the plugin's row with the plugin as a chip.
         pluginRows.forEach { row ->
             item(key = "plugin-${row.pluginId}-${row.id}") {
-                PluginRow(row = row, sizes = sizes, onOpen = openPlugin)
+                PluginRow(
+                    row = row, sizes = sizes, onOpen = openPlugin,
+                    onSeeMore = row.ref?.let { ref -> { onBrowsePluginRow(com.arkiv.player.ui.plugin.PluginMoreTarget.Browse(row.pluginId, row.title, ref)) } },
+                )
             }
         }
     }
@@ -734,12 +739,13 @@ private fun MagisRow(
     }
 }
 
-/** A plugin's Home row: its title, the plugin's name as a chip, and its cards (no "Ver todo" in v1). */
+/** A plugin's Home row: its title, the plugin's name as a chip, its cards and, with [onSeeMore], a last "Ver más" card. */
 @Composable
 private fun PluginRow(
     row: com.arkiv.player.data.plugin.PluginHomeRow,
     sizes: HomeSizes,
     onOpen: (com.arkiv.player.data.gateway.GatewayResult) -> Unit,
+    onSeeMore: (() -> Unit)? = null,
 ) {
     Column(Modifier.padding(top = 16.dp)) {
         Row(
@@ -762,6 +768,9 @@ private fun PluginRow(
                     onClick = { onOpen(item) },
                     onLongClick = { onOpen(item) },
                 )
+            }
+            if (onSeeMore != null) {
+                item(key = "${row.pluginId}-${row.id}-ver-mas") { SeeMorePosterCard(width = sizes.posterWidth, onClick = onSeeMore) }
             }
         }
     }

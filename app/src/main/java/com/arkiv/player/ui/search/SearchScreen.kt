@@ -112,6 +112,8 @@ fun SearchScreen(
     shortcutAnilistId: Long? = null,
     /** A plain title to search on entry (Kinobot's suggestion chips): runs the query phase. */
     shortcutQuery: String? = null,
+    /** "Ver más resultados" of a plugin whose search page carried a cursor. */
+    onBrowsePlugin: ((com.arkiv.player.ui.plugin.PluginMoreTarget) -> Unit)? = null,
 ) {
     val graph = rememberGraph()
     // Fixed rows always available (no API): anime, cartelera, tendencias, series, etc.
@@ -134,6 +136,7 @@ fun SearchScreen(
     val sources by vm.sources.collectAsStateWithLifecycle()
     val searchingSources by vm.searchingSources.collectAsStateWithLifecycle()
     val sourcesState by vm.sourcesState.collectAsStateWithLifecycle()
+    val pluginMore by vm.pluginMore.collectAsStateWithLifecycle()
     val refineSeason by vm.refineSeason.collectAsStateWithLifecycle()
     val refineEpisode by vm.refineEpisode.collectAsStateWithLifecycle()
     val detail by vm.detail.collectAsStateWithLifecycle()
@@ -325,6 +328,8 @@ fun SearchScreen(
                     enabled = !preparing,
                     onPlay = { playResult(it) },
                     onLongPlay = { longPressResult(it) },
+                    pluginMore = pluginMore,
+                    onBrowsePlugin = onBrowsePlugin,
                 )
                 else -> QueryContent(
                     titleResults = titleResults,
@@ -793,6 +798,8 @@ private fun ResultsContent(
     enabled: Boolean,
     onPlay: (PlaySource) -> Unit,
     onLongPlay: (PlaySource) -> Unit,
+    pluginMore: Map<String, com.arkiv.player.ui.plugin.PluginMoreTarget> = emptyMap(),
+    onBrowsePlugin: ((com.arkiv.player.ui.plugin.PluginMoreTarget) -> Unit)? = null,
 ) {
     // Both start open by default: a section that starts collapsed looks empty even if it brings results.
     var expandedSections by remember { mutableStateOf(setOf("MAGIS", "CARACOL")) }
@@ -880,6 +887,15 @@ private fun ResultsContent(
                 items(shown, key = { sourceKey(it) }) { s ->
                     Box(Modifier.padding(horizontal = HPAD)) {
                         SourceRow(s, enabled = enabled, onLongClick = { onLongPlay(s) }) { onPlay(s) }
+                    }
+                }
+            }
+            // A plugin tab whose first page came with a cursor: the rest opens in "Ver más".
+            val more = pluginMore[tab.key]
+            if (more != null && onBrowsePlugin != null) {
+                item(key = "plugin-more-${tab.key}") {
+                    androidx.compose.material3.TextButton(onClick = { onBrowsePlugin(more) }, modifier = Modifier.padding(horizontal = HPAD)) {
+                        Text("Ver más resultados de ${tab.label}", color = ArkivRed)
                     }
                 }
             }

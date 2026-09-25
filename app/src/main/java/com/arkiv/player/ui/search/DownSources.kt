@@ -66,6 +66,9 @@ fun downSourceNotices(state: SourcesState, tab: SourceTab): List<String> =
         .map { (source, error) ->
             if (source == SourceTab.CARACOL.key) {
                 CaracolFailure.inSearch(state.causes[source], error)
+            } else if (state.causes[source] is com.arkiv.player.data.plugin.PluginErrorException && error.isNotBlank()) {
+                // A plugin's typed error is already a whole sentence ("Configura X en Ajustes ▸ Plugins").
+                error
             } else {
                 "${sourceName(source, state)} no respondió: $error"
             }
