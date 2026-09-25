@@ -150,14 +150,15 @@ class PluginRuntimeTest {
         assertEquals("[\"a no\",\"b no\"]", rt.call("home", "null", 5_000))
     }
 
-    @Test fun `guide - globals a Node author might reach for do not exist`() = runBlocking {
+    @Test fun `guide - globals a Node author might reach for do not exist, the web ones Kino adds do`() = runBlocking {
         val names = listOf(
-            "fetch", "require", "process", "Buffer", "TextEncoder", "TextDecoder", "btoa", "atob", "structuredClone",
-            "queueMicrotask", "Intl", "URL", "URLSearchParams", "AbortController", "performance", "crypto",
+            "fetch", "require", "process", "Buffer", "structuredClone",
+            "queueMicrotask", "Intl", "AbortController", "performance", "crypto",
             "setTimeout", "setInterval", "setImmediate", "WeakRef",
         )
-        val rt = open("export async function home() { return [${names.joinToString(", ") { "typeof $it" }}, typeof console, typeof encodeURIComponent] }")
-        val expected = names.map { "undefined" } + listOf("object", "function")
+        val added = listOf("TextEncoder", "TextDecoder", "btoa", "atob", "URL", "URLSearchParams")
+        val rt = open("export async function home() { return [${(names + added).joinToString(", ") { "typeof $it" }}, typeof console, typeof encodeURIComponent] }")
+        val expected = names.map { "undefined" } + added.map { "function" } + listOf("object", "function")
         assertEquals(expected, JSONArray(rt.call("home", "null", 5_000)).let { a -> (0 until a.length()).map { a.getString(it) } })
     }
 
