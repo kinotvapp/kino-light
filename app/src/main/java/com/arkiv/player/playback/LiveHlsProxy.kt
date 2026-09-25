@@ -78,6 +78,10 @@ class LiveHlsProxy(
      */
     @Volatile private var lastSegments: List<String> = emptyList()
 
+    /** Reads what passes through for signs of a stream that plays badly without erroring (see [LiveStreamHealth]). One per channel session. */
+    @Volatile private var health = LiveStreamHealth()
+    @Volatile private var lastHealthSummaryAt = 0L
+
     /** "4/6" if the segment is in the last playlist served, "?/N" if it no longer is. For the log. */
     private fun positionInPlaylist(name: String): String {
         val list = lastSegments
@@ -157,9 +161,11 @@ class LiveHlsProxy(
         // black when switching channels, and without this line the log would only start once the
         // player requests the playlist.
         val previous = session?.channel
-        android.util.Log.w(
-            "LiveHlsProxy",
-            "channel → ${newSession.channel}" + (if (previous != null && previous != newSession.channel) " (came from $previous)" else "") +
+        // The channel we're leaving gets its proxy-side summary before the health state is reset for the new one.
+        if (previous != null) LiveLog.i(health.summary())
+        health = LiveStreamHealth()
+        lastHealthSummaryAt = System.currentTimeMillis()
+        LiveLog.w("channel → ${newSession.channel}" + (if (previous != null && previous != newSession.channel) " (came from $previous)" else "") +
                 " cdn=${newSession.cflHost}" + (if (newSession.cdns.size > 1) " (+${newSession.cdns.size - 1} backup)" else ""),
         )
         session = newSession
@@ -189,13 +195,13 @@ class LiveHlsProxy(
         // right as a segment was halfway through downloading (see stop())- is swallowed and
         // logged instead of left to escape. On Android an uncaught exception on ANY thread kills
         // the WHOLE process, not just this connection.
+        var rendererRequest = false // set once we know this connection is a TV's, for the DLNA log below
         runCatching {
             // Host through which THIS client reached the proxy: the already-accepted socket's own
             // local address, not the request's `Host` header. Preferred over parsing `Host`
             // because `socket.localAddress` is a fact of the TCP connection -which interface
             // received the packet-, not something the client declares: no need to validate or
             // sanitize it before putting it into a response URL, and it doesn't depend on the
-        var rendererRequest = false // set once we know this connection is a TV's, for the DLNA log below
             // local player, Chromecast or the DLNA client sending a well-formed Host header (some
             // HLS players don't send one). It's the same thing manually resolving headers would
             // get, without the header-injection risk or the extra parsing.
@@ -207,12 +213,6 @@ class LiveHlsProxy(
             val line = reader.readLine() ?: return@runCatching
             val path = line.split(" ").getOrNull(1) ?: return@runCatching
             val output = s.getOutputStream()
-            // Access control: since start() started listening on the whole LAN (see its KDoc), ANY
-            // route -playlist or segment- must carry this session's token before anything gets
-            // resolved. Clean, generic rejection (403, no body): whoever is scanning the port
-            // shouldn't get a single hint about what routes exist or why it failed.
-            if (!isTokenValid(path)) {
-                output.write("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n".toByteArray())
             // For the DLNA debugging log only: who is asking, and how. The headers are read just to log them
             // (nothing below needs them) and bounded, so a client that never finishes can't pin the thread.
             var range: String? = null
@@ -229,11 +229,11 @@ class LiveHlsProxy(
             val fromRenderer = com.arkiv.player.dlna.DlnaLog.lanHit("live-proxy", s.inetAddress?.hostAddress, line, range, userAgent)
             rendererRequest = fromRenderer
             val startedAt = android.os.SystemClock.elapsedRealtime()
-                return@runCatching
-            }
-            when {
-                path.startsWith("/live.m3u8") -> servePlaylist(output, myHost)
-                path.startsWith("/seg?") -> serveSegment(path, output)
+            // Access control: since start() started listening on the whole LAN (see its KDoc), ANY
+            // route -playlist or segment- must carry this session's token before anything gets
+            // resolved. Clean, generic rejection (403, no body): whoever is scanning the port
+            // shouldn't get a single hint about what routes exist or why it failed.
+            if (!isTokenValid(path)) {
                 if (fromRenderer) {
                     // The likeliest way a TV ends up here with no token: it followed a relative URL from the
                     // playlist and dropped the query string. Silent for the person, fatal for the cast.
@@ -242,6 +242,12 @@ class LiveHlsProxy(
                             "(the TV probably dropped the query string from a playlist URL)",
                     )
                 }
+                output.write("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n".toByteArray())
+                return@runCatching
+            }
+            when {
+                path.startsWith("/live.m3u8") -> servePlaylist(output, myHost)
+                path.startsWith("/seg?") -> serveSegment(path, output)
                 else -> {
                     if (fromRenderer) com.arkiv.player.dlna.DlnaLog.w("live-proxy: 404 for unknown route ${com.arkiv.player.dlna.DlnaXml.safeUrl(path)}")
                     output.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n".toByteArray())
@@ -321,9 +327,7 @@ class LiveHlsProxy(
             // considered good, the backup never switching, and the channel dead with a 502. See
             // [isSignatureRejection].
             if (!isSignatureRejection(code)) {
-                android.util.Log.w(
-                    "LiveHlsProxy",
-                    "$kind → $code in ${ms}ms" + (if (attempt > 0) " (2nd attempt)" else "") +
+                LiveLog.w("$kind → $code in ${ms}ms" + (if (attempt > 0) " (2nd attempt)" else "") +
                         // The WHY of the rejection, which used to get thrown away. A bare "→ 409"
                         // doesn't tell apart "the signal doesn't exist" from "this session is no
                         // longer valid", and without that there's nothing to do but guess: on
@@ -343,15 +347,13 @@ class LiveHlsProxy(
             // 401/403 = the signature didn't work. Logged separately because it's the EXPENSIVE
             // failure: two attempts and then the session is given up for dead, meaning the channel
             // cuts out.
-            android.util.Log.w("LiveHlsProxy", "$kind → $code SIGNATURE REJECTED in ${ms}ms (attempt ${attempt + 1}/2)")
+            LiveLog.w("$kind → $code SIGNATURE REJECTED in ${ms}ms (attempt ${attempt + 1}/2)")
             // The report is what lets FirmaConRespaldo detect that the algorithm stopped working
             // and switch to the gateway. Without this, the backup never kicks in.
             if (!notified) { signatures.rejected(); notified = true }
             c.disconnect()
         }
-        android.util.Log.w(
-            "LiveHlsProxy",
-            "$kind: two rejections in a row on ${cdn.cflHost} (channel=${s.channel})",
+        LiveLog.w("$kind: two rejections in a row on ${cdn.cflHost} (channel=${s.channel})",
         )
         return null
     }
@@ -384,7 +386,7 @@ class LiveHlsProxy(
         // The 502 is the ONLY thing the player sees no matter what happens in here, so the reason
         // has to stay on the proxy's side or it's lost. It's the same problem ArchiveCacheProxy
         // solved by recording the last HTTP code per origin.
-        if (reason.isNotEmpty()) android.util.Log.w("LiveHlsProxy", "502 to the player: $reason")
+        if (reason.isNotEmpty()) LiveLog.w("502 to the player: $reason")
         output.write("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n".toByteArray())
     }
 
@@ -431,7 +433,7 @@ class LiveHlsProxy(
                 val r = requestFromOrigin("http://${cdn.cflHost}/live/${s.playCode}.m3u8", s, cdn)
                 if (r == null) {
                     if (cdn !== inOrder.last()) {
-                        android.util.Log.w("LiveHlsProxy", "playlist: ${cdn.cflHost} rejected → trying the next CDN")
+                        LiveLog.w("playlist: ${cdn.cflHost} rejected → trying the next CDN")
                     }
                     continue
                 }
@@ -448,9 +450,7 @@ class LiveHlsProxy(
             // dead session.
             if (!answeredThisRound) break@loop
             if (round < PLAYLIST_ATTEMPTS - 1) {
-                android.util.Log.w(
-                    "LiveHlsProxy",
-                    "playlist for ${s.channel} not served (last $lastCode) → " +
+                LiveLog.w("playlist for ${s.channel} not served (last $lastCode) → " +
                         "retry ${round + 2}/$PLAYLIST_ATTEMPTS in ${SEGMENT_WAIT_MS}ms",
                 )
                 Thread.sleep(SEGMENT_WAIT_MS)
@@ -462,16 +462,14 @@ class LiveHlsProxy(
             // now- and asking the gateway for the session again over that would treat a pothole
             // like an expired credential.
             if (!anyAnswered) {
-                android.util.Log.w(
-                    "LiveHlsProxy",
-                    "playlist: all ${inOrder.size} CDNs rejected → giving up the session for dead (channel=${s.channel})",
+                LiveLog.w("playlist: all ${inOrder.size} CDNs rejected → giving up the session for dead (channel=${s.channel})",
                 )
                 onSessionDead(s.channel)
             }
             return error502(output, "no CDN served the playlist for ${s.channel} (last code $lastCode)")
         }
         if (activeCdn?.cflHost != chosen.cflHost) {
-            android.util.Log.w("LiveHlsProxy", "active CDN → ${chosen.cflHost} (channel=${s.channel})")
+            LiveLog.w("active CDN → ${chosen.cflHost} (channel=${s.channel})")
         }
         activeCdn = chosen
         val playlistUrl = "http://${chosen.cflHost}/live/${s.playCode}.m3u8"
@@ -489,11 +487,16 @@ class LiveHlsProxy(
         val segmentCount = names.size
         val sequence = raw.lineSequence()
             .firstOrNull { it.startsWith("#EXT-X-MEDIA-SEQUENCE") }?.substringAfter(':') ?: "?"
-        android.util.Log.w(
-            "LiveHlsProxy",
-            "playlist served channel=${s.channel} segments=$segmentCount seq=$sequence " +
-                "${bytes.size}B in ${System.currentTimeMillis() - t0}ms",
-        )
+        val servedMs = System.currentTimeMillis() - t0
+        LiveLog.i("playlist served segments=$segmentCount seq=$sequence ${bytes.size}B in ${servedMs}ms cdn=${chosen.cflHost}")
+        // What makes a live channel look "interfered with" while nothing errors out: the live edge skipping ahead,
+        // a playlist that stops advancing or arrives late, a cushion too thin. See [LiveStreamHealth].
+        val h = health
+        h.onPlaylist(LivePlaylistParser.parse(raw), System.currentTimeMillis()).forEach { logNote(it) }
+        if (System.currentTimeMillis() - lastHealthSummaryAt > HEALTH_SUMMARY_MS) {
+            lastHealthSummaryAt = System.currentTimeMillis()
+            LiveLog.i(h.summary())
+        }
         output.write(
             ("HTTP/1.1 200 OK\r\nContent-Type: application/vnd.apple.mpegurl\r\n" +
                 "Content-Length: ${bytes.size}\r\n\r\n").toByteArray()
@@ -523,17 +526,57 @@ class LiveHlsProxy(
         val name = u.substringAfterLast('/')
         val c = getSegment(u, s)
             ?: return error502(output, "no CDN served the segment $name (position ${positionInPlaylist(name)})")
+        val gotFirstByteAt = System.currentTimeMillis()
         // The header is written ONLY HERE, with a 200 in hand. Once written it can't be turned
         // into an error: that's why this can't happen before knowing there's a body.
         output.write("HTTP/1.1 200 OK\r\nContent-Type: video/mp2t\r\n\r\n".toByteArray())
         // Bytes are counted while copying, not from Content-Length: the CDN can cut off partway
         // and that looks like a short segment, which is exactly what leaves the player starved.
-        val copied = runCatching { c.inputStream.copyTo(output, 64 * 1024) }.getOrDefault(-1L)
-        android.util.Log.w(
-            "LiveHlsProxy",
-            "segment served ${copied / 1024}KB in ${System.currentTimeMillis() - t0}ms" +
-                (if (copied < 0) " (CUT OFF)" else "") + " $name",
-        )
+        val copy = copySegment(c.inputStream, output)
+        // Split in two on purpose: the wait for the first byte (the CDN, and the retries while the segment is
+        // being published) and the copy (the link) are different problems. Compared with the segment's own
+        // duration, from the playlist, they say whether the buffer can keep up or can only shrink.
+        health.onSegment(
+            name = name.substringBefore('?'),
+            sizeBytes = copy.bytes,
+            ttfbMs = gotFirstByteAt - t0,
+            copyMs = System.currentTimeMillis() - gotFirstByteAt,
+            wasCutOff = copy.failure == CopyFailure.CDN_CUT,
+            playerGone = copy.failure == CopyFailure.PLAYER_GONE,
+        ).forEach { logNote(it) }
+    }
+
+    private enum class CopyFailure { CDN_CUT, PLAYER_GONE }
+
+    private class SegmentCopy(val bytes: Long, val failure: CopyFailure?)
+
+    /**
+     * Copies a segment and says WHO broke it when it doesn't finish: a failed read is the CDN cutting the segment
+     * (a real glitch for the viewer); a failed write is the player closing its end because it stopped or zapped
+     * (nothing wrong with the stream). Counting both as "cut off" made every channel change look like a CDN fault.
+     */
+    private fun copySegment(input: java.io.InputStream, output: java.io.OutputStream): SegmentCopy {
+        val buffer = ByteArray(64 * 1024)
+        var total = 0L
+        while (true) {
+            val n = try {
+                input.read(buffer)
+            } catch (_: java.io.IOException) {
+                return SegmentCopy(total, CopyFailure.CDN_CUT)
+            }
+            if (n < 0) return SegmentCopy(total, null)
+            try {
+                output.write(buffer, 0, n)
+            } catch (_: java.io.IOException) {
+                return SegmentCopy(total, CopyFailure.PLAYER_GONE)
+            }
+            total += n
+        }
+    }
+
+    /** Writes a [LiveStreamHealth] note to the live log at its own level. */
+    private fun logNote(note: LiveStreamHealth.Note) {
+        if (note.level == LiveStreamHealth.Level.WARN) LiveLog.w(note.text) else LiveLog.i(note.text)
     }
 
     /**
@@ -558,9 +601,7 @@ class LiveHlsProxy(
             val c = requestOk(url, s)
             if (c != null) return c
             if (attempt < SEGMENT_ATTEMPTS - 1) {
-                android.util.Log.w(
-                    "LiveHlsProxy",
-                    "segment $name (position ${positionInPlaylist(name)} in the playlist) isn't " +
+                LiveLog.w("segment $name (position ${positionInPlaylist(name)} in the playlist) isn't " +
                         "there yet → retry ${attempt + 2}/$SEGMENT_ATTEMPTS in ${SEGMENT_WAIT_MS}ms",
                 )
                 Thread.sleep(SEGMENT_WAIT_MS)
@@ -579,7 +620,7 @@ class LiveHlsProxy(
             val alternate = runCatching {
                 url.replaceFirst("://${URL(url).authority}", "://${cdn.cflHost}")
             }.getOrNull() ?: continue
-            android.util.Log.w("LiveHlsProxy", "segment $name → trying CDN ${cdn.cflHost}")
+            LiveLog.w("segment $name → trying CDN ${cdn.cflHost}")
             val c = requestOk(alternate, s, cdn)
             if (c != null) return c
         }
@@ -685,5 +726,8 @@ class LiveHlsProxy(
          * gives up.
          */
         private const val PLAYLIST_ATTEMPTS = 3
+
+        /** How often the proxy writes its one-line health summary (playlists, gaps, slow/short/cut segments). */
+        private const val HEALTH_SUMMARY_MS = 30_000L
     }
 }

@@ -12,6 +12,7 @@ import com.arkiv.player.data.gateway.LiveChannel
 import com.arkiv.player.playback.ArchiveCacheProxy
 import com.arkiv.player.playback.AdultContent
 import com.arkiv.player.playback.DituLive
+import com.arkiv.player.playback.LiveLog
 import com.arkiv.player.playback.MagisEphemeral
 import com.arkiv.player.playback.PlayerSource
 import com.arkiv.player.playback.SourceKind
@@ -495,6 +496,13 @@ class PlayerViewModel internal constructor(
     private fun openCurrentChannel() {
         val channel = zapping?.current ?: return
         _liveChannel.value = channel
+        // Another channel is a new zap: a new id in the live log and a clock that runs until the first frame.
+        // The SAME channel again is a reopen after a cut and stays inside the story it belongs to.
+        if (channel.code != LiveLog.channel) {
+            LiveLog.newSession(channel.code, channel.name)
+        } else {
+            LiveLog.reopen(liveReopens)
+        }
         viewModelScope.launch {
             _error.value = null
             _needsMagisAccount.value = false
@@ -511,8 +519,10 @@ class PlayerViewModel internal constructor(
             _playlist.value = null
             _magisItem.value = null
             ditu.clear()
+            val openStartedAt = System.currentTimeMillis()
             val url = runCatching { liveController.open(channel.code) }.getOrElse {
                 Log.w(PLAY, "openCurrentChannel() failed for ${channel.code}: ${it.message}")
+                LiveLog.e("open FAILED after ${System.currentTimeMillis() - openStartedAt}ms: ${it.javaClass.simpleName}: ${it.message}")
                 if (zapping?.current?.code == channel.code) {
                     if (it is GatewayBlockedException) {
                         _blocked.value = it.message
@@ -528,7 +538,11 @@ class PlayerViewModel internal constructor(
             // zapped to ANOTHER channel, this late response must not override what's on screen --
             // same pattern (and same reason) as LiveViewModel.cargar()'s categoriaActiva, see its
             // KDoc.
-            if (zapping?.current?.code != channel.code) return@launch
+            LiveLog.i("open: session resolved in ${System.currentTimeMillis() - openStartedAt}ms")
+            if (zapping?.current?.code != channel.code) {
+                LiveLog.w("open: the person already zapped to another channel, this late answer is dropped")
+                return@launch
+            }
             val item = PlayerData(
                 episodeId = "${PlayerSource.LIVE_PREFIX}${channel.code}",
                 itemId = "${PlayerSource.LIVE_PREFIX}${channel.code}",
@@ -620,6 +634,7 @@ class PlayerViewModel internal constructor(
         }
         if (liveReopens >= MAX_LIVE_REOPENS) {
             Log.w(PLAY, "live: ${channel.code} didn't come back after $MAX_LIVE_REOPENS reopens → warning")
+            LiveLog.e("GAVE UP: the channel didn't come back after $MAX_LIVE_REOPENS reopens, the person sees the error")
             _error.value = "Se cortó la señal de ${channel.name} y no volvió. " +
                 "Puede ser un problema del canal: prueba de nuevo o mira otro."
             return
@@ -632,6 +647,7 @@ class PlayerViewModel internal constructor(
             "live: ${channel.code} cut out → reopening in ${wait}ms " +
                 "(attempt $liveReopens/$MAX_LIVE_REOPENS)",
         )
+        LiveLog.w("CUT: the stream ran out, reopening in ${wait}ms (attempt $liveReopens/$MAX_LIVE_REOPENS)")
         reopenJob?.cancel()
         reopenJob = viewModelScope.launch {
             delay(wait)
@@ -658,6 +674,7 @@ class PlayerViewModel internal constructor(
             "live: recovered after ${gap}ms with no picture and $liveReopens reopen(s) " +
                 "(played ${positionMs}ms) → replenishing the budget",
         )
+        LiveLog.i("RECOVERED after ${gap}ms without picture and $liveReopens reopen(s)")
         liveReopens = 0
         cutSince = 0L
     }
@@ -787,6 +804,7 @@ class PlayerViewModel internal constructor(
      */
     fun onLiveExoError(message: String) {
         Log.w(PLAY, "live (exo) error for ${zapping?.current?.code}: $message")
+        LiveLog.e("player error: $message")
         reopenLiveAfterCut()
     }
 
