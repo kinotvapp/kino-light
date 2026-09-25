@@ -67,6 +67,7 @@ class PluginContractParityTest {
         SettingType.entries.forEach { t ->
             val o = types.getJSONObject(t.wire)
             assertEquals(t.wire, t.canBeRequired, o.getBoolean("canBeRequired"))
+            assertEquals(t.wire, t.canHaveDefault, o.getBoolean("canHaveDefault"))
             if (t.maxChars > 0) assertEquals(t.wire, t.maxChars, o.getInt("maxChars")) else assertEquals(t.wire, false, o.has("maxChars"))
         }
     }

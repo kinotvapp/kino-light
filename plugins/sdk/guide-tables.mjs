@@ -32,10 +32,11 @@ export const TABLES = {
     ["Error messages", `your \`kino.error\` message is shown as a detail, cut at ${c.errors.maxMessageChars} characters`],
     ["`hosts`", `${c.manifest.minHosts} to ${c.manifest.maxHosts} entries`],
   ]),
-  settings: () => table(["type", "value", "can be `required`", "longest value"], Object.entries(c.settings.types).map(([t, v]) => [
+  settings: () => table(["type", "value", "can be `required`", "can have a `default`", "longest value"], Object.entries(c.settings.types).map(([t, v]) => [
     `\`${t}\``,
     t === "toggle" ? "`true` / `false`" : t === "select" ? "one of the `options` values" : "text",
     v.canBeRequired ? "yes" : "no (always has a value)",
+    v.canHaveDefault ? "yes" : "no (use `hint` for an example)",
     v.maxChars ? `${n(v.maxChars)} characters` : "—",
   ])),
   crypto: () => table(["Function", "Algorithms"], [

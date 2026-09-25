@@ -4,10 +4,14 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** The five kinds of field a plugin can ask the person for; [wire] is the manifest's `type`. */
-enum class SettingType(val wire: String, val maxChars: Int, val canBeRequired: Boolean) {
+/**
+ * The five kinds of field a plugin can ask the person for; [wire] is the manifest's `type`.
+ * [canHaveDefault] is false for `url`: a typed server becomes an allowed host, and only the person
+ * may pick one (spec §1.4) — a manifest default would be the plugin typing it. `hint` shows an example.
+ */
+enum class SettingType(val wire: String, val maxChars: Int, val canBeRequired: Boolean, val canHaveDefault: Boolean = true) {
     TEXT("text", 500, true),
-    URL("url", 2048, true),
+    URL("url", 2048, true, canHaveDefault = false),
     PASSWORD("password", 500, true),
     TOGGLE("toggle", 0, false),
     SELECT("select", 0, false),
@@ -21,8 +25,9 @@ enum class SettingType(val wire: String, val maxChars: Int, val canBeRequired: B
 data class SettingOption(val value: String, val label: String)
 
 /**
- * One entry of the manifest's `settings`. [default] is a `String` (text, url, password, select),
- * a `Boolean` (toggle) or null. A toggle or select always has a value, so it can't be [required].
+ * One entry of the manifest's `settings`. [default] is a `String` (text, password, select),
+ * a `Boolean` (toggle) or null (always null for url). A toggle or select always has a value, so it
+ * can't be [required].
  */
 data class PluginSetting(
     val key: String,
@@ -127,6 +132,9 @@ object PluginSettings {
                     else -> null
                 },
             )
+        }
+        if (!type.canHaveDefault) {
+            return Parsed.Error("El ajuste \"$key\" de tipo ${type.wire} no puede tener valor por defecto: usa \"hint\"")
         }
         val fits = when (type) {
             SettingType.TOGGLE -> raw is Boolean

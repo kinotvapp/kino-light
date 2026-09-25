@@ -209,7 +209,7 @@ declare namespace kino {
   }
 
   namespace config {
-    /** A setting's value (string, or boolean for a toggle); undefined when unset with no default. Read-only. */
+    /** A setting's value (string, or boolean for a toggle); undefined when unset with no default (a `url` setting never has one). Read-only. */
     function get(key: string): string | boolean | undefined;
     function all(): Record<string, string | boolean>;
   }

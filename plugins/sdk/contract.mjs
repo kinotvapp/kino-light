@@ -126,9 +126,11 @@ function validateSettings(list) {
       }
     }
     if (o.default !== undefined && o.default !== null) {
+      // A typed server becomes an allowed host; only the person may type one (a `hint` shows an example).
+      if (type.canHaveDefault === false) return `El ajuste "${key}" de tipo ${o.type} no puede tener valor por defecto: usa "hint"`;
       const fits = o.type === "toggle" ? typeof o.default === "boolean"
         : o.type === "select" ? o.options.some((x) => x.value === o.default)
-          : typeof o.default === "string" && o.default.length <= type.maxChars && (o.type !== "url" || o.default === "" || isUserServer(o.default));
+          : typeof o.default === "string" && o.default.length <= type.maxChars;
       if (!fits) return `El valor por defecto del ajuste "${key}" no sirve para su tipo`;
     }
   }

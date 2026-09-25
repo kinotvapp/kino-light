@@ -98,6 +98,18 @@ class PluginSettingsTest {
         }
     }
 
+    @Test fun `a url setting can't ship a default, only the person types a server`() {
+        listOf("\"http://192.168.1.1\"", "\"https://example.com\"", "\"\"").forEach { value ->
+            val setting = """{"key":"server","label":"Servidor","type":"url","default":$value}"""
+            val r = invalid(manifest { put("settings", settings(setting)) })
+            assertEquals(setting, "settings", r.field)
+            assertEquals(setting, "El ajuste \"server\" de tipo url no puede tener valor por defecto: usa \"hint\"", r.message)
+        }
+        val m = valid(manifest { put("settings", settings("""{"key":"server","label":"Servidor","type":"url","hint":"http://192.168.1.10:8096"}""", """{"key":"server2","label":"Otro","type":"url","default":null}""")) })
+        assertNull(m.settings[0].default)
+        assertNull(m.settings[1].default)
+    }
+
     @Test fun `twenty options pass, twenty-one don't`() {
         fun opts(n: Int) = (1..n).joinToString(",") { """{"value":"v$it","label":"L$it"}""" }
         valid(manifest { put("settings", settings("""{"key":"k","label":"x","type":"select","options":[${opts(20)}]}""")) })

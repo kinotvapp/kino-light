@@ -39,11 +39,11 @@
     "optionValueMaxChars": 40,
     "optionLabelMaxChars": 40,
     "types": {
-      "text": { "maxChars": 500, "canBeRequired": true },
-      "url": { "maxChars": 2048, "canBeRequired": true },
-      "password": { "maxChars": 500, "canBeRequired": true },
-      "toggle": { "canBeRequired": false },
-      "select": { "canBeRequired": false }
+      "text": { "maxChars": 500, "canBeRequired": true, "canHaveDefault": true },
+      "url": { "maxChars": 2048, "canBeRequired": true, "canHaveDefault": false },
+      "password": { "maxChars": 500, "canBeRequired": true, "canHaveDefault": true },
+      "toggle": { "canBeRequired": false, "canHaveDefault": true },
+      "select": { "canBeRequired": false, "canHaveDefault": true }
     }
   },
   "output": {

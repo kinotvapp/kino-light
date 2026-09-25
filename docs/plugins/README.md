@@ -179,19 +179,22 @@ screen (Ajustes ▸ Plugins), and your code reads its value with `kino.config.ge
 ```
 
 <!-- contract:settings:start -->
-| type | value | can be `required` | longest value |
-| --- | --- | --- | --- |
-| `text` | text | yes | 500 characters |
-| `url` | text | yes | 2,048 characters |
-| `password` | text | yes | 500 characters |
-| `toggle` | `true` / `false` | no (always has a value) | — |
-| `select` | one of the `options` values | no (always has a value) | — |
+| type | value | can be `required` | can have a `default` | longest value |
+| --- | --- | --- | --- | --- |
+| `text` | text | yes | yes | 500 characters |
+| `url` | text | yes | no (use `hint` for an example) | 2,048 characters |
+| `password` | text | yes | yes | 500 characters |
+| `toggle` | `true` / `false` | no (always has a value) | yes | — |
+| `select` | one of the `options` values | no (always has a value) | yes | — |
 <!-- contract:settings:end -->
 
 - `key` matches `^[a-z][a-zA-Z0-9_]{0,31}$` and is unique; `label` is 1 to 40 characters; `hint`
   (the example under the field) at most 80.
 - `select` needs `options` (1 to 20, each a `value` and a `label` of at most 40 characters); its
   `default` must be one of the values. A `toggle` default is `true` or `false`.
+- **A `url` setting has no `default`**: a server the person types becomes a host your plugin may
+  reach, so only the person can choose it. A manifest with a `default` on a `url` setting is
+  refused; put an example address in `hint` instead.
 - **A `required` setting with no value** stops every call to your plugin before it runs: the plugin
   shows "Falta configurar", its Home rows are not asked for, and anything the person opens from it
   says "Configura <name> en Ajustes ▸ Plugins" with a button to that screen.

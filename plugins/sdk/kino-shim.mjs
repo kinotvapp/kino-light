@@ -49,7 +49,8 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", stora
 
   const values = {};
   for (const s of manifest.settings || []) {
-    const v = config[s.key] !== undefined ? config[s.key] : s.default !== undefined ? s.default : s.type === "toggle" ? false : s.type === "select" ? s.options[0].value : undefined;
+    // A url setting never takes a manifest default (the app refuses one): only a typed server counts.
+    const v = config[s.key] !== undefined ? config[s.key] : s.default !== undefined && contract.settings.types[s.type]?.canHaveDefault !== false ? s.default : s.type === "toggle" ? false : s.type === "select" ? s.options[0].value : undefined;
     if (v !== undefined && v !== "") values[s.key] = s.type === "toggle" ? v === true || v === "true" : String(v);
   }
   const servers = (manifest.settings || []).filter((s) => s.type === "url" && typeof values[s.key] === "string" && isUserServer(values[s.key])).map((s) => new URL(values[s.key].trim()));

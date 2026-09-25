@@ -35,7 +35,9 @@ test("manifest rules and Spanish messages match the app", () => {
     [{ settings: [{ key: "Server", label: "x", type: "text" }] }, "settings", "El ajuste #1 tiene una clave inválida"],
     [{ settings: [{ key: "k", label: "x", type: "toggle", required: true }] }, "settings", 'El ajuste "k" no puede ser obligatorio'],
     [{ settings: [{ key: "k", label: "x", type: "select" }] }, "settings", 'El ajuste "k" necesita opciones'],
-    [{ settings: [{ key: "k", label: "x", type: "url", default: "http://127.0.0.1/" }] }, "settings", 'El valor por defecto del ajuste "k" no sirve para su tipo'],
+    [{ settings: [{ key: "k", label: "x", type: "url", default: "http://127.0.0.1/" }] }, "settings", 'El ajuste "k" de tipo url no puede tener valor por defecto: usa "hint"'],
+    [{ settings: [{ key: "k", label: "x", type: "url", default: "http://192.168.1.1" }] }, "settings", 'El ajuste "k" de tipo url no puede tener valor por defecto: usa "hint"'],
+    [{ settings: [{ key: "k", label: "x", type: "url", default: "" }] }, "settings", 'El ajuste "k" de tipo url no puede tener valor por defecto: usa "hint"'],
     [{ capabilities: ["search"] }, "capabilities", 'El plugin debe declarar "resolve"'],
     [{ hosts: ["192.168.1.1"] }, "hosts", 'El dominio "192.168.1.1" no está permitido'],
     [{ id: "magis" }, "id", 'El id "magis" está reservado por Kino'],
@@ -129,6 +131,15 @@ test("config, storage keys, typed errors and sleep", async () => {
   assert.equal(e.message.length, 200);
   assert.equal(kino.error("NOPE", "m").code, "unknown");
   await assert.rejects(kino.sleep(6000), (err) => err.code === "invalid_request");
+});
+
+// Same as the app: a url setting's manifest default is never a server the plugin may reach, even
+// when a manifest skips validation and hands one to the shim directly.
+test("a url setting's manifest default is ignored: only a typed server counts", async () => {
+  const m = JSON.parse(manifest({ settings: [{ key: "server", label: "Servidor", type: "url", default: "http://192.168.1.1" }] }));
+  const { kino } = createKino(m, { fetchImpl: () => { throw new Error("must not reach the network"); } });
+  assert.equal(kino.config.get("server"), undefined);
+  await assert.rejects(kino.fetch("http://192.168.1.1/"), (err) => err.code === "host_not_allowed");
 });
 
 function server(handler) {
