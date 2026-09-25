@@ -41,6 +41,12 @@ import java.net.URLEncoder
 class LiveHlsProxy(
     private val signatures: SegmentSignature,
     private val onSessionDead: (channel: String) -> Unit = {},
+    /**
+     * Every CDN answered the playlist with `409 Conflict`: the license of this session looks in use twice (a shared
+     * seed session on two devices). Gets the channel and the license that was refused; the callback decides what to
+     * do, and the next open of the channel resolves again. See [com.arkiv.player.data.magis.LiveSeedRotation].
+     */
+    private val onPlaylistConflict: (channel: String, license: String) -> Unit = { _, _ -> },
 ) {
 
     @Volatile private var server: ServerSocket? = null
@@ -502,11 +508,15 @@ class LiveHlsProxy(
                 LiveLog.w("playlist: all ${inOrder.size} CDNs rejected → giving up the session for dead (channel=${s.channel})",
                 )
                 onSessionDead(s.channel)
+            } else if (lastCode == HTTP_CONFLICT) {
+                LiveLog.w("playlist: 409 Conflict from the CDN(s) for ${s.channel}: this session's license looks in use elsewhere")
+                runCatching { onPlaylistConflict(s.channel, s.license) }
             }
             return error502(output, "no CDN served the playlist for ${s.channel} (last code $lastCode)")
         }
         if (activeCdn?.cflHost != chosen.cflHost) {
             LiveLog.w("active CDN → ${chosen.cflHost} (channel=${s.channel})")
+            logAddresses(chosen.cflHost)
         }
         activeCdn = chosen
         val playlistUrl = "http://${chosen.cflHost}/live/${s.playCode}.m3u8"
@@ -516,7 +526,6 @@ class LiveHlsProxy(
             .joinToString("\n") { ln -> rewriteLine(ln, base, myHost, myPort, myToken) } + "\n"
         val bytes = body.toByteArray()
         // How many segments the playlist announces IS the live data point: it defines how much
-            logAddresses(chosen.cflHost)
         // cushion there is before the player reaches the edge. Below 2-3, any CDN hiccup cuts it.
         // `MEDIA-SEQUENCE` says whether the window is advancing or we're re-reading the same one.
         val names = raw.lineSequence().filter { it.isNotBlank() && !it.startsWith("#") }
@@ -612,15 +621,6 @@ class LiveHlsProxy(
         }
     }
 
-    /** Writes a [LiveStreamHealth] note to the live log at its own level. */
-    private fun logNote(note: LiveStreamHealth.Note) {
-        if (note.level == LiveStreamHealth.Level.WARN) LiveLog.w(note.text) else LiveLog.i(note.text)
-    }
-
-    /**
-     * The requested segment, already with a 200, or `null` if it's truly nowhere to be found.
-     *
-     * Two tiers, in this order:
     /**
      * Logs every address the CDN's host resolves to, off the request thread. A host with several addresses where one
      * does not answer looks, from the player, like a random 12 s wait on the first request; this is the evidence.
@@ -636,6 +636,15 @@ class LiveHlsProxy(
         }.apply { isDaemon = true }.start()
     }
 
+    /** Writes a [LiveStreamHealth] note to the live log at its own level. */
+    private fun logNote(note: LiveStreamHealth.Note) {
+        if (note.level == LiveStreamHealth.Level.WARN) LiveLog.w(note.text) else LiveLog.i(note.text)
+    }
+
+    /**
+     * The requested segment, already with a 200, or `null` if it's truly nowhere to be found.
+     *
+     * Two tiers, in this order:
      *  1. **retries against the active CDN**, the normal case: at the live edge the player asks
      *     for the segment BEFORE the CDN publishes it. On 2026-08-14 VLC requested three ~5s video
      *     segments 1.3s apart -it was running toward the edge- and the third gave 404 simply
@@ -779,14 +788,6 @@ class LiveHlsProxy(
          * gives up.
          */
         private const val PLAYLIST_ATTEMPTS = 3
-
-        /** Stands in for an HTTP status in the log when a CDN answered 200 with a body that is not a playlist. */
-        private const val NOT_A_PLAYLIST = 599
-
-        /** How often the proxy writes its one-line health summary (playlists, gaps, slow/short/cut segments). */
-        private const val HEALTH_SUMMARY_MS = 30_000L
-    }
-}
         private const val HTTP_CONFLICT = 409
 
         /**
@@ -796,3 +797,11 @@ class LiveHlsProxy(
          * retry 0.8 s later connecting in 176 ms) before the retries and the other CDNs got their turn.
          */
         private const val CONNECT_TIMEOUT_MS = 4_000
+
+        /** Stands in for an HTTP status in the log when a CDN answered 200 with a body that is not a playlist. */
+        private const val NOT_A_PLAYLIST = 599
+
+        /** How often the proxy writes its one-line health summary (playlists, gaps, slow/short/cut segments). */
+        private const val HEALTH_SUMMARY_MS = 30_000L
+    }
+}

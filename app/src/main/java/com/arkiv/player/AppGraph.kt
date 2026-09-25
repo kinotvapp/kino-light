@@ -372,14 +372,59 @@ class AppGraph(context: Context) {
             // channel's cached session so the next abrir()/precalentar() resolves against the
             // gateway again instead of reusing the one we already know is dead for up to 300s more.
             onSessionDead = { channel -> liveController.invalidate(channel) },
+            onPlaylistConflict = { channel, license -> onLiveConflict(channel, license) },
         )
+    }
+
+    /** Which seed each live channel resolves with after a conflict. In memory only: see [LiveSeedRotation]. */
+    private val liveSeedRotation = com.arkiv.player.data.magis.LiveSeedRotation()
+
+    /**
+     * The CDN said `409 Conflict` to a channel's playlist: this session's license looks in use elsewhere.
+     *
+     * Only a shared seed can be in use twice by other devices, so only a device whose stored session IS a seed rotates:
+     * never a linked account (its session is the person's own) and never an anonymous device that minted its own.
+     * The stored session is not touched (films and series keep it); the channel just resolves with another seed from the
+     * pool the next time it opens, which the reopen after the error does.
+     */
+    private fun onLiveConflict(channel: String, license: String) {
+        val kind = magisSession.sessionKind()
+        if (kind != "seed") {
+            com.arkiv.player.playback.LiveLog.i("409 on $channel: session kind is '$kind', only a shared seed rotates")
+            return
+        }
+        val current = liveSeedRotation.activeSeed(channel)?.sn ?: magisSession.currentSn()
+        val moved = liveSeedRotation.onRefused(channel, current, magisSession.seedPool(), refusedKey = license)
+        liveController.invalidate(channel)
+        com.arkiv.player.playback.LiveLog.w(
+            if (moved) "seed rotation: 409 on $channel → the next open uses another seed (${liveSeedRotation.activeSeed(channel)?.sn?.take(6)}…)"
+            else "seed rotation: 409 on $channel and no seed left to try → back to the device's own session",
+        )
+    }
+
+    /** Resolves a live channel with the seed it was rotated to, if any; a seed that cannot even resolve is skipped. */
+    private suspend fun resolveLive(code: String): com.arkiv.player.data.gateway.LiveSession {
+        var seed = liveSeedRotation.activeSeed(code) ?: return magisLive.resolveOrThrow(code)
+        repeat(com.arkiv.player.data.magis.LiveSeedRotation.MAX_ROTATIONS + 1) {
+            try {
+                return magisLive.resolveOrThrow(code, seed)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                com.arkiv.player.playback.LiveLog.w("seed rotation: seed ${seed.sn.take(6)}… could not resolve $code (${e.message}) → next")
+                val moved = liveSeedRotation.onRefused(code, seed.sn, magisSession.seedPool(), refusedKey = "resolve:${seed.sn}")
+                seed = liveSeedRotation.activeSeed(code) ?: return magisLive.resolveOrThrow(code)
+                if (!moved) return magisLive.resolveOrThrow(code)
+            }
+        }
+        return magisLive.resolveOrThrow(code)
     }
 
     /** Opens live channels: resolves against the portal and hands the player the URL from
      *  [liveHlsProxy]. */
     val liveController: com.arkiv.player.ui.live.LiveController by lazy {
         com.arkiv.player.ui.live.LiveController(
-            resolver = { code -> magisLive.resolveOrThrow(code) },
+            resolver = { code -> resolveLive(code) },
             urlFor = { session -> liveHlsProxy.urlFor(session) },
         )
     }
