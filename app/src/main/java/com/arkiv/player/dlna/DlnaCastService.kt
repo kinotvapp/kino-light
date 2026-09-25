@@ -29,6 +29,9 @@ import com.arkiv.player.AppGraph
  * Also holds a WiFi lock (so the radio doesn't drop into power-save and stall the stream) and a partial wake
  * lock (so the CPU keeps serving with the screen off). All released when the cast ends. The notification has
  * a "Detener" action, since the person may not have the app open to stop it.
+ *
+ * Chromecast needs the same: the receiver pulls the remuxed MP4 from a server in this app, so the service is also
+ * started for a Cast session (`chromecast = true`), and its "Detener" ends that session.
  */
 class DlnaCastService : Service() {
 
@@ -41,12 +44,13 @@ class DlnaCastService : Service() {
         if (intent?.action == ACTION_STOP) {
             DlnaLog.i("cast service: Stop pressed in the notification")
             // Off the main thread (the controller does network); the service goes away with the cast.
-            AppGraph.from(this).dlna.stopActive()
+            val graph = AppGraph.from(this)
+            if (intent.getBooleanExtra(EXTRA_CHROMECAST, false)) graph.castSession?.stopIntentionally() else graph.dlna.stopActive()
             stopSelf()
             return START_NOT_STICKY
         }
         val tvName = intent?.getStringExtra(EXTRA_TV_NAME).orEmpty().ifBlank { "la TV" }
-        goForeground(tvName)
+        goForeground(tvName, intent?.getBooleanExtra(EXTRA_CHROMECAST, false) == true)
         acquireLocks()
         DlnaLog.i("cast service: foreground for '$tvName', proxy + WiFi kept alive")
         // Not sticky: if the system ever kills it, the cast is gone with the process and restarting an empty
@@ -54,7 +58,7 @@ class DlnaCastService : Service() {
         return START_NOT_STICKY
     }
 
-    private fun goForeground(tvName: String) {
+    private fun goForeground(tvName: String, chromecast: Boolean) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             getSystemService(NotificationManager::class.java).createNotificationChannel(
                 NotificationChannel(CHANNEL_ID, "Enviando a la TV", NotificationManager.IMPORTANCE_LOW),
@@ -62,7 +66,7 @@ class DlnaCastService : Service() {
         }
         val stop = PendingIntent.getService(
             this, 0,
-            Intent(this, DlnaCastService::class.java).setAction(ACTION_STOP),
+            Intent(this, DlnaCastService::class.java).setAction(ACTION_STOP).putExtra(EXTRA_CHROMECAST, chromecast),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val open = packageManager.getLaunchIntentForPackage(packageName)?.let {
@@ -113,14 +117,17 @@ class DlnaCastService : Service() {
         private const val NOTIFICATION_ID = 4242
         private const val ACTION_STOP = "com.arkiv.player.dlna.STOP"
         private const val EXTRA_TV_NAME = "tv_name"
+        private const val EXTRA_CHROMECAST = "chromecast"
         private const val WAKE_LOCK_MAX_MS = 9L * 60 * 60 * 1000
 
         /** Starts it. Called with the app in front (the person just chose a TV), which is what lets Android allow it. */
-        fun start(context: Context, tvName: String) {
+        fun start(context: Context, tvName: String, chromecast: Boolean = false) {
             runCatching {
                 ContextCompat.startForegroundService(
                     context,
-                    Intent(context, DlnaCastService::class.java).putExtra(EXTRA_TV_NAME, tvName),
+                    Intent(context, DlnaCastService::class.java)
+                        .putExtra(EXTRA_TV_NAME, tvName)
+                        .putExtra(EXTRA_CHROMECAST, chromecast),
                 )
             }.onFailure { DlnaLog.w("cast service could not start: ${it.javaClass.simpleName}: ${it.message}") }
         }

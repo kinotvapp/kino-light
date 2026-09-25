@@ -30,6 +30,15 @@ class CastSessionManager(
     private val castContext: CastContext,
     private val repository: ArkivRepository,
     private val scope: CoroutineScope,
+    /**
+     * Turns a foreground service on or off around a cast session (the name is the receiver's).
+     *
+     * With Chromecast the PHONE serves the video too (the remuxed MP4 comes from a server inside this app), and
+     * Android cuts the app's network and freezes it soon after the person leaves Kino: measured on a Galaxy S24+,
+     * the remux died with "Muxer error" 17.6 s and 17.9 s after the app went to the background, both times, and
+     * the receiver stopped once the file stopped growing. A foreground service is exempt.
+     */
+    private val keepAlive: (on: Boolean, receiver: String) -> Unit = { _, _ -> },
 ) {
     // Fails fast and with an explicit cause if something builds this off the main thread, instead
     // of an obscure crash inside the Cast SDK (CastPlayer/CastContext require it, see class doc).
@@ -131,6 +140,7 @@ class CastSessionManager(
                     castContext.sessionManager.currentCastSession?.castDevice?.friendlyName
                 }.getOrNull()
                 android.util.Log.i(TAG, "session available · receiver=${device ?: "?"} · pending=${pending?.episodeId}")
+                keepAlive(true, device ?: "el Chromecast")
                 pending?.let { scope.launch { load(it) } }
                     ?: android.util.Log.w(TAG, "session available but nothing pending: nothing will be loaded")
             }
@@ -138,6 +148,7 @@ class CastSessionManager(
             override fun onCastSessionUnavailable() {
                 android.util.Log.i(TAG, "session gone")
                 _casting.value = false
+                keepAlive(false, "")
             }
         })
         // The one case the listener does NOT cover: starting the app with a session already alive
@@ -180,6 +191,7 @@ class CastSessionManager(
         // The state turns off here instead of waiting for the listener: if onCastSessionUnavailable
         // somehow didn't arrive, the phone's bar would be left hanging, showing a dead cast.
         _casting.value = false
+        keepAlive(false, "")
         scope.launch {
             withContext(Dispatchers.Main) {
                 // player.stop() is NOT called here: endCurrentSession(true) -- below -- already

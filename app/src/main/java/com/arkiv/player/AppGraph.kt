@@ -868,8 +868,13 @@ class AppGraph(context: Context) {
             val ctx = _castContext ?: return null
             if (credentialsStore.read() == null) return null
             return synchronized(castSessionLock) {
-                _castSession ?: com.arkiv.player.cast.CastSessionManager(ctx, repository, applicationScope)
-                    .also { _castSession = it }
+                _castSession ?: com.arkiv.player.cast.CastSessionManager(
+                    ctx, repository, applicationScope,
+                    keepAlive = { on, receiver ->
+                        if (on) com.arkiv.player.dlna.DlnaCastService.start(appContext, receiver, chromecast = true)
+                        else com.arkiv.player.dlna.DlnaCastService.stop(appContext)
+                    },
+                ).also { _castSession = it }
             }
         }
 
