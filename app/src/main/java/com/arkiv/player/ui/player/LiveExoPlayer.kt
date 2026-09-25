@@ -35,6 +35,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import com.arkiv.player.playback.fallbackRenderers
 import kotlinx.coroutines.delay
 
 private const val TAG = "LiveExo"
@@ -100,7 +101,7 @@ internal fun LiveExoPlayer(
             .setUri(Uri.parse(mediaUrl))
             .build()
 
-        ExoPlayer.Builder(context)
+        ExoPlayer.Builder(context, fallbackRenderers(context))
             .setMediaSourceFactory(DefaultMediaSourceFactory(httpFactory))
             .build()
             .also { player ->

@@ -43,6 +43,7 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.SubtitleView
+import com.arkiv.player.playback.fallbackRenderers
 import com.arkiv.player.ui.rememberGraph
 import kotlinx.coroutines.delay
 
@@ -134,7 +135,7 @@ internal fun MagisExoPlayer(
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
 
-        ExoPlayer.Builder(context)
+        ExoPlayer.Builder(context, fallbackRenderers(context))
             .setMediaSourceFactory(DefaultMediaSourceFactory(httpFactory))
             .setLoadControl(loadControl)
             .build()

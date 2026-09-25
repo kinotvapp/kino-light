@@ -32,6 +32,7 @@ import androidx.media3.exoplayer.drm.DefaultDrmSessionManager
 import androidx.media3.exoplayer.drm.FrameworkMediaDrm
 import androidx.media3.exoplayer.drm.HttpMediaDrmCallback
 import androidx.media3.ui.PlayerView
+import com.arkiv.player.playback.fallbackRenderers
 import kotlinx.coroutines.delay
 
 private const val TAG = "DituExo"
@@ -183,7 +184,7 @@ internal fun DituExoPlayer(
             .setSessionKeepaliveMs(C.TIME_UNSET)
             .build(license)
 
-        ExoPlayer.Builder(context)
+        ExoPlayer.Builder(context, fallbackRenderers(context))
             .setMediaSourceFactory(
                 DashMediaSource.Factory(dataSourceFactory).setDrmSessionManagerProvider { drmManager },
             )
