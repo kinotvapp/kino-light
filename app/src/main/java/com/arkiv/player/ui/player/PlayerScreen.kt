@@ -3452,26 +3452,36 @@ private fun PlayerContent(
                                         if (!isTv) Modifier else Modifier
                                             .focusRequester(focusPoints.bar)
                                             .onFocusChanged { seek.focusChanged(it.isFocused) }
-                                            // UP stays on the bar: it's the top of the overlay and
-                                            // the buttons are BELOW, so sending `up` there used to
-                                            // be a backwards jump (barely visible before, since
-                                            // focus never reached here; now it's the first focused
-                                            // control). UP stays on the bar when there's nothing
-                                            // above, but if the skip button is on screen there is:
-                                            // it sits right above the bar (see its padding), so
-                                            // that's the way back for anyone who left the button
-                                            // and changed their mind.
-                                            .focusProperties {
-                                                down = focusPoints.playPause
-                                                up = if (skipButton != null) focusPoints.skip else focusPoints.bar
-                                                left = focusPoints.bar
-                                                right = focusPoints.bar
-                                            }
-                                            .onKeyEvent { e ->
-                                                if (e.type != KeyEventType.KeyDown) return@onKeyEvent false
+                                            // ALL of the bar's D-pad handling is a PREVIEW, not onKeyEvent:
+                                            // since material3 1.4 (pulled in by media3-cast 1.11's
+                                            // compose-bom) Slider has its own key handler that eats the
+                                            // four arrows -- each one moves the value 1% of the duration
+                                            // and its KeyUp fires onValueChangeFinished, i.e. a seekTo.
+                                            // That handler sits closer to the focus target than any
+                                            // onKeyEvent we pass in, so UP/DOWN seeked instead of leaving
+                                            // the bar, and LEFT/RIGHT jumped 1% instead of seekStepMs.
+                                            // The preview runs before it; the arrows' KeyUp is consumed
+                                            // too, or Slider would still fire its seekTo on release.
+                                            .onPreviewKeyEvent { e ->
+                                                val arrow = e.key == Key.DirectionUp || e.key == Key.DirectionDown ||
+                                                    e.key == Key.DirectionLeft || e.key == Key.DirectionRight
+                                                if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent arrow
                                                 when (e.key) {
                                                     Key.DirectionRight -> { seekBy(seekStepMs); true }
                                                     Key.DirectionLeft -> { seekBy(-seekStepMs); true }
+                                                    Key.DirectionDown -> {
+                                                        runCatching { focusPoints.playPause.requestFocus() }
+                                                        true
+                                                    }
+                                                    // UP stays on the bar: it's the top of the overlay and
+                                                    // the buttons are BELOW. But if the skip button is on
+                                                    // screen it sits right above the bar (see its padding),
+                                                    // so that's the way back for anyone who left the button
+                                                    // and changed their mind.
+                                                    Key.DirectionUp -> {
+                                                        if (skipButton != null) runCatching { focusPoints.skip.requestFocus() }
+                                                        true
+                                                    }
                                                     // OK on the bar toggles play/pause. With focus
                                                     // here, center used to do nothing, and pausing
                                                     // is the most frequent action: it forced going
