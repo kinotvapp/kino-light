@@ -1,8 +1,10 @@
 package com.arkiv.player.playback
 
 import android.content.Context
+import android.util.Log
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 
 /**
  * ExoPlayer's renderers with decoder fallback ON: when the first decoder for a stream fails to
@@ -20,3 +22,16 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 @androidx.annotation.OptIn(UnstableApi::class)
 internal fun fallbackRenderers(context: Context): DefaultRenderersFactory =
     DefaultRenderersFactory(context).setEnableDecoderFallback(true)
+
+/**
+ * [fallbackRenderers] plus the live-TV decoder order of [LiveDecoderPolicy]. [preferSoftware] is for a channel whose
+ * hardware decoder already failed to paint (see [LiveDecoderMemory]).
+ */
+@androidx.annotation.OptIn(UnstableApi::class)
+internal fun liveRenderers(context: Context, preferSoftware: Boolean = false): DefaultRenderersFactory =
+    fallbackRenderers(context).setMediaCodecSelector { mimeType, requiresSecure, requiresTunneling ->
+        val system = MediaCodecSelector.DEFAULT.getDecoderInfos(mimeType, requiresSecure, requiresTunneling)
+        LiveDecoderPolicy.order(mimeType, system, { it.name }, { it.hardwareAccelerated }, preferSoftware).also { ordered ->
+            if (ordered != system) Log.w("ArkivLive", "software-first decoders for $mimeType: ${ordered.joinToString { it.name }}")
+        }
+    }

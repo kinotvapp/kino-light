@@ -2815,6 +2815,7 @@ private fun PlayerContent(
                 // See `key`'s KDoc in LiveExoPlayer: `mediaUrl` does NOT change between channels
                 // (the proxy's URL is fixed), so without this zapping wouldn't recreate the player.
                 key = lItem.episodeId to liveGeneration,
+                channelCode = lItem.episodeId,
                 mirror = mirror,
                 onPlayerReady = { player ->
                     livePlayer = player
@@ -4041,9 +4042,9 @@ private fun PlayerContent(
             if (ok) {
                 dlnaState.markActive(device)
             } else {
-                android.widget.Toast.makeText(
                 // The specific reason when we have one (the TV's UPnP error, an unsupported local file, no WiFi
                 // address...): "check your WiFi" was what it said for EVERY failure, whatever the cause.
+                android.widget.Toast.makeText(
                     context,
                     dlna.lastError ?: "No se pudo castear (revisa el WiFi)",
                     android.widget.Toast.LENGTH_LONG,

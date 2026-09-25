@@ -18,6 +18,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -27,6 +28,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -34,11 +36,39 @@ import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.hls.playlist.HlsPlaylistTracker
+import androidx.media3.exoplayer.source.BehindLiveWindowException
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
-import com.arkiv.player.playback.fallbackRenderers
+import com.arkiv.player.crash.Crash
+import com.arkiv.player.crash.LiveDecoderSwitched
+import com.arkiv.player.playback.DecoderWatchdog
+import com.arkiv.player.playback.InPlaceRecoveryBudget
+import com.arkiv.player.playback.LiveDecoderMemory
+import com.arkiv.player.playback.LiveErrorKind
+import com.arkiv.player.playback.LiveLog
+import com.arkiv.player.playback.LiveQualityMonitor
+import com.arkiv.player.playback.liveRenderers
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.delay
 
 private const val TAG = "LiveExo"
+
+/** What kind of live error this is, from the error code and the exceptions behind it. */
+@androidx.annotation.OptIn(UnstableApi::class)
+private fun errorKind(error: PlaybackException): LiveErrorKind {
+    if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) return LiveErrorKind.BEHIND_LIVE_WINDOW
+    var cause: Throwable? = error.cause
+    var depth = 0
+    while (cause != null && depth++ < 8) {
+        when (cause) {
+            is BehindLiveWindowException -> return LiveErrorKind.BEHIND_LIVE_WINDOW
+            is HlsPlaylistTracker.PlaylistResetException -> return LiveErrorKind.PLAYLIST_RESET
+            is HlsPlaylistTracker.PlaylistStuckException -> return LiveErrorKind.PLAYLIST_STUCK
+        }
+        cause = cause.cause
+    }
+    return LiveErrorKind.OTHER
+}
 
 /**
  * Plays the Magis live channel using ExoPlayer (Task 1, light-magis pruning -- the VLC gate).
@@ -81,6 +111,8 @@ internal fun LiveExoPlayer(
      * old VLC player, forced by that same key.
      */
     key: Any,
+    /** The channel being played, for [LiveDecoderMemory]: a channel that failed in hardware once opens in software. */
+    channelCode: String,
     mirror: PlayerMirror,
     onPlayerReady: (Player?) -> Unit = {},
     onTextureViewReady: (TextureView?) -> Unit = {},
@@ -90,8 +122,13 @@ internal fun LiveExoPlayer(
 ) {
     val context = LocalContext.current
 
-    val exoPlayer = remember(key) {
-        Log.i(TAG, "Creating ExoPlayer · url=${mediaUrl.take(80)} key=$key")
+    // True once this channel's hardware decoder failed to paint (here or on an earlier visit): the player is then
+    // recreated with a software decoder in front. Changing it changes the `remember` key below, which is what
+    // swaps the player.
+    var software by remember(channelCode) { mutableStateOf(LiveDecoderMemory.prefersSoftware(context, channelCode)) }
+
+    val exoPlayer = remember(key, software) {
+        Log.i(TAG, "Creating ExoPlayer · url=${mediaUrl.take(80)} key=$key software=$software")
         val httpFactory = DefaultHttpDataSource.Factory()
             .setUserAgent("okhttp/4.12.0")
             .setConnectTimeoutMs(15_000)
@@ -101,7 +138,7 @@ internal fun LiveExoPlayer(
             .setUri(Uri.parse(mediaUrl))
             .build()
 
-        ExoPlayer.Builder(context, fallbackRenderers(context))
+        ExoPlayer.Builder(context, liveRenderers(context, preferSoftware = software))
             .setMediaSourceFactory(DefaultMediaSourceFactory(httpFactory))
             .build()
             .also { player ->
@@ -111,6 +148,14 @@ internal fun LiveExoPlayer(
                 Log.i(TAG, "ExoPlayer prepared")
             }
     }
+
+    // What the viewer perceives as interference (freezes, dropped frames, audio glitches, decoder), written to the
+    // `ArkivLive` log and, when a session turns out bad, sent to GlitchTip once. See LiveQualityMonitor.
+    val quality = remember(exoPlayer) { LiveQualityMonitor(exoPlayer) }
+    val paintedFirstFrame = remember(exoPlayer) { AtomicBoolean(false) }
+    // Per channel, not per player: a feed that keeps falling behind must run out of tries even though every try
+    // is a new player.
+    val inPlaceBudget = remember(channelCode) { InPlaceRecoveryBudget() }
 
     var videoAspectRatio by remember(exoPlayer) { mutableFloatStateOf(0f) }
     // Read inside the layout listener below, which is built once (`remember`) and outlives every
@@ -180,13 +225,27 @@ internal fun LiveExoPlayer(
             }
 
             override fun onRenderedFirstFrame() {
+                paintedFirstFrame.set(true)
                 Log.i(TAG, "onRenderedFirstFrame · pos=${exoPlayer.currentPosition}ms")
+                // The number a person waits through when zapping: from choosing the channel to the first picture.
+                LiveLog.i("first frame: ${LiveLog.sinceZapMs()}ms after the channel was chosen")
                 onFirstFrame(true)
             }
 
             override fun onPlayerError(error: PlaybackException) {
                 val msg = error.message ?: "Error de reproducción (${error.errorCode})"
                 Log.e(TAG, "onPlayerError errorCode=${error.errorCode} msg=$msg", error)
+                // Fell behind the window, or the playlist reset / froze: a fresh look at the playlist at the live
+                // edge fixes it, no need to re-resolve the whole channel. Only a few tries a minute; then the
+                // full reopen (and its warning) takes over.
+                val kind = errorKind(error)
+                if (kind.recoverableInPlace && inPlaceBudget.tryConsume(SystemClock.elapsedRealtime())) {
+                    LiveLog.w("in-place recovery: $kind ($msg) -> seek to the live edge and prepare again")
+                    exoPlayer.seekToDefaultPosition()
+                    exoPlayer.prepare()
+                    exoPlayer.playWhenReady = true
+                    return
+                }
                 if (!errorReported) {
                     errorReported = true
                     com.arkiv.player.crash.Crash.report(error, "live-playback-${PlaybackException.getErrorCodeName(error.errorCode)}")
@@ -195,9 +254,13 @@ internal fun LiveExoPlayer(
             }
         }
         exoPlayer.addListener(listener)
+        exoPlayer.addAnalyticsListener(quality)
 
         onDispose {
             Log.i(TAG, "onDispose · pos=${exoPlayer.currentPosition}ms isPlaying=${exoPlayer.isPlaying}")
+            // The session summary (and the report, if it was a bad one) while the player is still alive to ask.
+            quality.finish()
+            exoPlayer.removeAnalyticsListener(quality)
             exoPlayer.removeListener(listener)
             exoPlayer.clearVideoTextureView(textureView)
             exoPlayer.release()
@@ -221,9 +284,41 @@ internal fun LiveExoPlayer(
         var lastFrames = -1L
         var frozenSinceMs = 0L
         var lastRescueMs = 0L
+        var lastQualityLogMs = SystemClock.elapsedRealtime()
+        var videoSeenAtMs = 0L
+
+        // Hardware decoder that takes the stream and never paints (or freezes): swap it for a software one, once.
+        // It reopens the channel through the `software` state, so the next visit starts in software too.
+        fun rescueInSoftware(reason: String, waitedMs: Long) {
+            if (software) return
+            val format = exoPlayer.currentTracks.groups.firstOrNull { it.type == C.TRACK_TYPE_VIDEO }
+                ?.takeIf { it.length > 0 }?.getTrackFormat(0)
+            LiveLog.w("decoder RESCUE: $reason after ${waitedMs}ms on ${quality.videoDecoder.ifEmpty { "?" }} -> reopening with a software decoder")
+            LiveDecoderMemory.remember(context, channelCode)
+            Crash.report(
+                LiveDecoderSwitched("live decoder switched to software"),
+                "live-decoder-switch",
+                extras = mapOf(
+                    "reason" to reason,
+                    "waited_ms" to waitedMs.toString(),
+                    "channel" to channelCode,
+                    "video_decoder" to quality.videoDecoder,
+                    "video_codec" to (format?.sampleMimeType ?: ""),
+                    "video_size" to (format?.let { "${it.width}x${it.height}" } ?: ""),
+                    "model" to android.os.Build.MODEL,
+                    "sdk" to android.os.Build.VERSION.SDK_INT.toString(),
+                ),
+            )
+            software = true
+        }
 
         while (true) {
             delay(500)
+            // The 10 s health line: buffer level, distance from the live edge, freezes, dropped frames.
+            if (SystemClock.elapsedRealtime() - lastQualityLogMs >= 10_000L) {
+                lastQualityLogMs = SystemClock.elapsedRealtime()
+                quality.logSummary()
+            }
             val pos = exoPlayer.currentPosition
             val dur = exoPlayer.duration
             val playing = exoPlayer.isPlaying
@@ -233,6 +328,24 @@ internal fun LiveExoPlayer(
             val clockAdvanced = lastPos >= 0 && pos > lastPos
             val noFrames = lastFrames >= 0 && frames == lastFrames
             val now = SystemClock.elapsedRealtime()
+
+            // Sound but no picture: the video track is known and ten seconds later not one frame has been painted.
+            val hasVideo = exoPlayer.currentTracks.groups.any { it.type == C.TRACK_TYPE_VIDEO }
+            if (hasVideo && videoSeenAtMs == 0L) videoSeenAtMs = now
+            val waitedForPicture = if (videoSeenAtMs == 0L) -1L else now - videoSeenAtMs
+            if (DecoderWatchdog.shouldReloadInSoftware(
+                    waitingMs = waitedForPicture,
+                    renderedFirstFrame = paintedFirstFrame.get(),
+                    videoTracks = if (hasVideo) 1 else 0,
+                    wantsToPlay = exoPlayer.playWhenReady,
+                    hasSurface = true,
+                    hasError = exoPlayer.playerError != null,
+                    alreadySoftware = software,
+                )
+            ) {
+                rescueInSoftware("no picture", waitedForPicture)
+                continue
+            }
 
             if (playing && state == Player.STATE_READY && clockAdvanced && noFrames && frames >= 0) {
                 if (frozenSinceMs == 0L) {
@@ -244,6 +357,10 @@ internal fun LiveExoPlayer(
                     lastRescueMs = now
                     frozenSinceMs = 0L
                     Log.w(TAG, "VIDEO FROZEN ${frozenMs}ms · prepare() at $pos")
+                    if (!software) {
+                        rescueInSoftware("frozen picture", frozenMs)
+                        continue
+                    }
                     exoPlayer.prepare()
                     exoPlayer.playWhenReady = true
                 }
