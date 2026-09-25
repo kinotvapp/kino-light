@@ -21,18 +21,24 @@ class PluginContractParityTest {
         assertEquals(ManifestParser.SUPPORTED_API, c.getInt("apiVersion"))
         assertEquals(ManifestParser.SUPPORTED_API, c.getInt("maxApiVersion"))
         assertEquals(ManifestParser.CAPABILITIES, obj("capabilities").strings("names").toSet())
-        assertEquals(listOf("resolve"), obj("capabilities").strings("required"))
-        assertEquals(listOf("search", "home"), obj("capabilities").strings("atLeastOneOf"))
+        assertEquals(ManifestParser.REQUIRED_CAPABILITIES, obj("capabilities").strings("required"))
+        assertEquals(ManifestParser.AT_LEAST_ONE_OF_CAPABILITIES, obj("capabilities").strings("atLeastOneOf"))
     }
 
     @Test fun `manifest rules`() {
         val m = obj("manifest")
         assertEquals(ManifestParser.MAX_BYTES, m.getInt("maxBytes"))
         assertEquals(ManifestParser.RESERVED_IDS, m.strings("reservedIds").toSet())
-        assertEquals("^[a-z0-9][a-z0-9-]{1,39}$", m.getString("idPattern"))
+        assertEquals(ManifestParser.ID.pattern, m.getString("idPattern"))
+        assertEquals(ManifestParser.MAX_NAME_CHARS, m.getInt("nameMaxChars"))
+        assertEquals(ManifestParser.MAX_DESCRIPTION_CHARS, m.getInt("descriptionMaxChars"))
+        assertEquals(ManifestParser.MAX_AUTHOR_CHARS, m.getInt("authorMaxChars"))
+        assertEquals(ManifestParser.MAX_HOMEPAGE_CHARS, m.getInt("homepageMaxChars"))
+        assertEquals(ManifestParser.MIN_HOSTS, m.getInt("minHosts"))
+        assertEquals(ManifestParser.MAX_HOSTS, m.getInt("maxHosts"))
+        assertEquals(ManifestParser.COLOR.pattern, m.getString("colorPattern"))
         assertEquals(PluginInstaller.MAX_SCRIPT_BYTES, m.getInt("entryMaxBytes"))
         assertEquals(PluginInstaller.MAX_ICON_BYTES, m.getInt("iconMaxBytes"))
-        assertEquals(ManifestParser.MAX_HOSTS, m.getInt("maxHosts"))
     }
 
     @Test fun `permissions and settings`() {
