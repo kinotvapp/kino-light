@@ -17,6 +17,8 @@ data class PluginHomeRow(
     val id: String,
     val title: String,
     val items: List<GatewayResult>,
+    /** The plugin's own ref for "Ver más" (it declares `browse`), or null: no "Ver más" card. */
+    val ref: String? = null,
 )
 
 /**
@@ -71,14 +73,19 @@ class PluginHomeRows(
     }
 
     private fun parse(p: InstalledPlugin, json: String): List<PluginRow> =
-        PluginOutput.rows(json, allowSeries = "episodes" in p.manifest.capabilities) { log("[${p.id}] $it") }
+        PluginOutput.rows(
+            json,
+            allowSeries = "episodes" in p.manifest.capabilities,
+            allowBrowse = "browse" in p.manifest.capabilities,
+            hosts = EffectiveHosts(p.record.hosts),
+        ) { log("[${p.id}] $it") }
 
     private fun assemble(targets: List<InstalledPlugin>, rowsOf: (InstalledPlugin) -> List<PluginRow>): List<PluginHomeRow> =
         targets.flatMap { p ->
             rowsOf(p).map { r ->
                 PluginHomeRow(
                     pluginId = p.id, pluginName = p.manifest.name, color = PluginColors.parse(p.manifest.color),
-                    id = r.id, title = r.title, items = r.items.map { PluginContentSource.resultFrom(p, it) },
+                    id = r.id, title = r.title, items = r.items.map { PluginContentSource.resultFrom(p, it) }, ref = r.ref,
                 )
             }
         }

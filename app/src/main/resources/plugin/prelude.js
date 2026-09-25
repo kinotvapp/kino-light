@@ -383,7 +383,9 @@
       try {
         const fn = globalThis.__kinoExports[name];
         if (typeof fn !== 'function') throw new E('el plugin no exporta ' + name);
-        out = stringify(await fn(parse(argJson)));
+        const arg = parse(argJson);
+        // browse(ref, cursor) is the one two-argument function: Kotlin sends { ref, cursor }.
+        out = stringify(await (name === 'browse' ? fn(arg.ref, arg.cursor) : fn(arg)));
       } catch (e) {
         const text = errorText(e);
         // A thrown value with no message leaves nothing to go on: log at least its type.

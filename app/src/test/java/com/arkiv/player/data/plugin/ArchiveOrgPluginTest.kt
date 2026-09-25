@@ -98,7 +98,7 @@ class ArchiveOrgPluginTest {
 
     @Test fun `search finds public-domain films as movies`() = runBlocking {
         val json = runtime.call("search", PluginContentSource.queryJson(GatewaySearchQuery(q = "metropolis", type = "movie")), 15_000)
-        val items = PluginOutput.items(json, allowSeries = true)
+        val items = PluginOutput.page(json, PluginOutput.MAX_SEARCH_ITEMS, allowSeries = true, allowNext = false).items
         assertEquals("movie", items.single { it.id == "TheGiantOfMetropolis1961" }.kind)
         assertEquals("movie", items.first().kind)
         assertTrue(items.all { it.poster.startsWith("https://archive.org/services/img/") })
@@ -106,7 +106,7 @@ class ArchiveOrgPluginTest {
 
     @Test fun `search for a series returns classic TV as series`() = runBlocking {
         val json = runtime.call("search", PluginContentSource.queryJson(GatewaySearchQuery(q = "dragnet", type = "tv")), 15_000)
-        val items = PluginOutput.items(json, allowSeries = true)
+        val items = PluginOutput.page(json, PluginOutput.MAX_SEARCH_ITEMS, allowSeries = true, allowNext = false).items
         assertTrue(items.any { it.id == "Dragnet1951" && it.kind == "series" })
         assertEquals("series", items.first().kind)
     }
@@ -161,7 +161,7 @@ class ArchiveOrgPluginTest {
     }
 
     @Test fun `home has its three rows`() = runBlocking {
-        val rows = PluginOutput.rows(runtime.call("home", "null", 20_000), allowSeries = true)
+        val rows = PluginOutput.rows(runtime.call("home", "null", 20_000), allowSeries = true, allowBrowse = false)
         assertEquals(listOf("films", "tv", "cartoons"), rows.map { it.id })
         assertTrue(rows.all { it.items.isNotEmpty() })
     }
@@ -175,7 +175,7 @@ class ArchiveOrgPluginTest {
     }
 
     @Test fun `a movie resolves to its h264 mp4 on a declared host`() = runBlocking {
-        val s = PluginOutput.stream(runtime.call("resolve", JSONObject.quote("TheGiantOfMetropolis1961"), 20_000), manifest.hosts)
+        val s = PluginOutput.stream(runtime.call("resolve", JSONObject.quote("TheGiantOfMetropolis1961"), 20_000), EffectiveHosts(manifest.hosts))
         assertEquals("https://archive.org/download/TheGiantOfMetropolis1961/GiantOfMetropolisversionUs.mp4", s.url)
         assertEquals("video/mp4", s.mime)
         assertTrue(s.durationMs > 5_000_000)
@@ -183,7 +183,7 @@ class ArchiveOrgPluginTest {
 
     @Test fun `an episode resolves with its subtitles`() = runBlocking {
         val first = PluginOutput.episodes(runtime.call("episodes", JSONObject.quote("Dragnet1951"), 20_000)).episodes.first()
-        val s = PluginOutput.stream(runtime.call("resolve", JSONObject.quote(first.ref), 20_000), manifest.hosts)
+        val s = PluginOutput.stream(runtime.call("resolve", JSONObject.quote(first.ref), 20_000), EffectiveHosts(manifest.hosts))
         assertTrue(s.url, s.url.startsWith("https://archive.org/download/Dragnet1951/Dragnet/Season%201/"))
         assertEquals(listOf("en"), s.subtitles.map { it.lang })
     }
@@ -194,7 +194,7 @@ class ArchiveOrgPluginTest {
         // advancedsearch answers 200 {"error": ...} to a stray "/" or "-", and to a dangling or/and/not.
         for ((q, expected) in listOf("Romeo AND Juliet" to "romeo-and-juliet-1933", "the -general/" to "TheGeneral")) {
             val json = runtime.call("search", PluginContentSource.queryJson(GatewaySearchQuery(q = q, type = "movie")), 15_000)
-            assertTrue(q, PluginOutput.items(json, allowSeries = true).any { it.id == expected })
+            assertTrue(q, PluginOutput.page(json, PluginOutput.MAX_SEARCH_ITEMS, allowSeries = true, allowNext = false).items.any { it.id == expected })
         }
     }
 
@@ -210,19 +210,19 @@ class ArchiveOrgPluginTest {
             val asked = requested.filter { "advancedsearch" in it }
             assertEquals("$typed: one request per collection", 2, asked.size)
             asked.forEach { assertTrue("$typed: asked $it", URLDecoder.decode(it, "UTF-8").contains("q=title:($cleaned) AND ")) }
-            if (expectedId != null) assertTrue(typed, PluginOutput.items(json, allowSeries = true).any { it.id == expectedId })
+            if (expectedId != null) assertTrue(typed, PluginOutput.page(json, PluginOutput.MAX_SEARCH_ITEMS, allowSeries = true, allowNext = false).items.any { it.id == expectedId })
         }
     }
 
     @Test fun `an item whose first original cannot be played still resolves`() = runBlocking {
         // Sintel: the first original by name is an .avi documentary with no mp4 made from it.
-        val s = PluginOutput.stream(runtime.call("resolve", JSONObject.quote("Sintel"), 20_000), manifest.hosts)
+        val s = PluginOutput.stream(runtime.call("resolve", JSONObject.quote("Sintel"), 20_000), EffectiveHosts(manifest.hosts))
         assertEquals("https://archive.org/download/Sintel/sintel-2048-stereo.mp4", s.url)
     }
 
     @Test fun `originals with an unusual extension resolve through their derived mp4`() = runBlocking {
         // A Bosko collection: the originals are .divx, only the derivatives (ogv, 512kb mp4) can play.
-        val s = PluginOutput.stream(runtime.call("resolve", JSONObject.quote("A_Bosko_Cartoon_Collection_1930-1932"), 20_000), manifest.hosts)
+        val s = PluginOutput.stream(runtime.call("resolve", JSONObject.quote("A_Bosko_Cartoon_Collection_1930-1932"), 20_000), EffectiveHosts(manifest.hosts))
         assertEquals("https://archive.org/download/A_Bosko_Cartoon_Collection_1930-1932/01_Congo_Jazz_1930_512kb.mp4", s.url)
     }
 

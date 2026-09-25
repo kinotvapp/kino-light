@@ -41,4 +41,12 @@ interface ContentSource {
     suspend fun episodesWithSeries(ref: String): Pair<List<GatewayEpisode>, GatewaySeries?>
 
     suspend fun episodes(ref: String): List<GatewayEpisode> = episodesWithSeries(ref).first
+
+    /**
+     * One page of a source's "Ver más" listing: [ref] is what a Home row or a page named, [cursor]
+     * null for the first page. Only plugins that declare `browse` implement it; Magis and Caracol
+     * keep this default and are never asked.
+     */
+    suspend fun browse(ref: String, cursor: String?): GatewayPage =
+        throw GatewayException("Esta fuente no tiene más para mostrar")
 }

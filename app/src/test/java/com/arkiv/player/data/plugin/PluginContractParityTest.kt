@@ -108,5 +108,52 @@ class PluginContractParityTest {
         assertEquals(PluginHttp.ERROR_CODES, f.strings("errorCodes"))
     }
 
+    @Test fun `output limits and the search query`() {
+        val o = obj("output")
+        assertEquals(PluginOutput.ID.pattern, o.getString("itemIdPattern"))
+        assertEquals(PluginOutput.MAX_SEARCH_ITEMS, o.getInt("maxSearchItems"))
+        assertEquals(PluginOutput.MAX_ROWS, o.getInt("maxHomeRows"))
+        assertEquals(PluginOutput.MAX_ROW_ITEMS, o.getInt("maxRowItems"))
+        assertEquals(PluginOutput.MAX_BROWSE_ITEMS, o.getInt("maxBrowseItems"))
+        assertEquals(PluginOutput.MAX_EPISODES, o.getInt("maxEpisodes"))
+        assertEquals(PluginOutput.MAX_REF_CHARS, o.getInt("maxRefChars"))
+        assertEquals(PluginOutput.MAX_CURSOR_CHARS, o.getInt("maxCursorChars"))
+        assertEquals(PluginRuntime.MAX_RESULT_CHARS, o.getInt("maxResultChars"))
+        assertEquals(PluginOutput.MAX_IMAGE_URL_CHARS, o.getInt("maxImageUrlChars"))
+        assertEquals(PluginOutput.MAX_GENRES, o.getInt("maxGenres"))
+        assertEquals(PluginOutput.MAX_GENRE_CHARS, o.getInt("maxGenreChars"))
+        assertEquals(PluginOutput.MAX_BADGES, o.getInt("maxBadges"))
+        assertEquals(PluginOutput.MAX_BADGE_CHARS, o.getInt("maxBadgeChars"))
+        assertEquals(PluginOutput.IMDB.pattern, o.getString("imdbPattern"))
+        assertEquals(PluginOutput.AIR_DATE.pattern, o.getString("airDatePattern"))
+        assertEquals(0, o.getInt("minRating"))
+        assertEquals(10, o.getInt("maxRating"))
+        assertEquals(1, o.getInt("minRuntimeMinutes"))
+        assertEquals(PluginOutput.MAX_RUNTIME_MINUTES, o.getInt("maxRuntimeMinutes"))
+        assertEquals(PluginOutput.MIN_EXPIRES_IN_SECONDS, o.getInt("minExpiresInSeconds"))
+        assertEquals(PluginOutput.MAX_EXPIRES_IN_SECONDS, o.getInt("maxExpiresInSeconds"))
+        val s = obj("search")
+        assertEquals(PluginContentSource.MAX_ALT_TITLES, s.getInt("maxAltTitles"))
+        assertEquals(PluginContentSource.MAX_ALT_TITLE_CHARS, s.getInt("maxAltTitleChars"))
+        assertEquals(listOf("movie", "series", "any"), s.strings("types"))
+    }
+
+    @Test fun `timeouts`() {
+        val t = obj("timeoutsMs")
+        assertEquals(PluginEnv(appVersion = "x").loadTimeoutMs, t.getLong("load"))
+        assertEquals(PluginContentSource.SEARCH_TIMEOUT_MS, t.getLong("search"))
+        assertEquals(PluginContentSource.HOME_TIMEOUT_MS, t.getLong("home"))
+        assertEquals(PluginContentSource.BROWSE_TIMEOUT_MS, t.getLong("browse"))
+        assertEquals(PluginContentSource.EPISODES_TIMEOUT_MS, t.getLong("episodes"))
+        assertEquals(PluginContentSource.RESOLVE_TIMEOUT_MS, t.getLong("resolve"))
+    }
+
+    @Test fun `every section of the contract is checked here`() {
+        assertEquals(
+            setOf("\$comment", "apiVersion", "maxApiVersion", "capabilities", "manifest", "permissions", "settings", "output", "search", "timeoutsMs", "runtime", "fetch", "cookies", "storage", "crypto", "sleep", "errors"),
+            c.keySet(),
+        )
+    }
+
     // Each later task adds the contract section it enforces above this line.
 }

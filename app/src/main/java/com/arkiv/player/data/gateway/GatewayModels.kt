@@ -29,6 +29,10 @@ data class GatewaySearchQuery(
     val tmdbId: Int = 0,
     /** Release year from TMDB when known (0 = unknown). Only plugins read it (`PluginContentSource.queryJson`). */
     val year: Int = 0,
+    /** TMDB's original title when it differs from [q] ("" = none). Only plugins read it. */
+    val originalTitle: String = "",
+    /** Other titles the app knows for the work (≤ 5, each ≤ 200 chars). Only plugins read them. */
+    val altTitles: List<String> = emptyList(),
 )
 
 /** A search result, built by the source (today `MagisSource`) against what the portal returns. */
@@ -91,7 +95,15 @@ data class GatewayPlayable(
     val drmLicenseUrl: String = "",
     /** Extra headers for the DRM license request (e.g. Cookie: playback_token=…). */
     val drmLicenseHeaders: Map<String, String> = emptyMap(),
+    /**
+     * Plugins only (0 = not said): after this many seconds the URL may stop working, so a
+     * playback failure past it resolves once more (`PluginStreamExpiry`). Magis and Caracol leave it 0.
+     */
+    val expiresInSeconds: Int = 0,
 )
+
+/** One page of [ContentSource.browse] (or a plugin search continued with its cursor); [next] null = the end. */
+data class GatewayPage(val items: List<GatewayResult>, val next: String?)
 
 data class GatewaySubtitle(val lang: String, val url: String, val format: String = "")
 
@@ -152,7 +164,11 @@ sealed interface SearchEvent {
     /** [label] is the human name when the source knows it (plugins: their manifest name); "" otherwise. */
     data class SourceStart(val source: String, val label: String = "") : SearchEvent
     data class ResultEvent(val source: String, val item: GatewayResult) : SearchEvent
-    data class SourceDone(val source: String, val count: Int, val ms: Long) : SearchEvent
+    /**
+     * [more] is set only by a plugin whose search page carried a `next` cursor: the screen offers
+     * "Ver más" for that source (see `PluginContentSource.search`). Magis and Caracol never set it.
+     */
+    data class SourceDone(val source: String, val count: Int, val ms: Long, val more: String? = null) : SearchEvent
     /**
      * [cause] is the exception, when the source has it on hand: `CaracolFailure` needs it to tell
      * the person what happened. `DituSource` sends it; `MagisSource` and `CompositeSource` don't.
