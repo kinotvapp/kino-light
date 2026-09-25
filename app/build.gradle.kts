@@ -141,7 +141,7 @@ android {
         checkReleaseBuilds = !kinoFastDev
     }
     namespace = "com.arkiv.player"
-    compileSdk = 35
+    compileSdk = 36
     // r28+: the linker defaults to 16 KB-aligned LOAD segments, which newer Android devices
     // require. r26 didn't, and left our own native module (libcredentials.so) unaligned.
     // When the hardened-release obfuscation is active (the plugin is present), the whole module
@@ -662,32 +662,32 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
 
     // Media3 / ExoPlayer
-    implementation("androidx.media3:media3-exoplayer:1.5.1")
-    implementation("androidx.media3:media3-exoplayer-dash:1.5.1")
+    implementation("androidx.media3:media3-exoplayer:1.11.1")
+    implementation("androidx.media3:media3-exoplayer-dash:1.11.1")
     // HLS: needed by LiveExoPlayer (Magis' live channel, via LiveHlsProxy) -- was missing and
     // caused a runtime ClassNotFoundException (DefaultMediaSourceFactory looks up
     // HlsMediaSource$Factory by reflection, the compiler can't detect it).
-    implementation("androidx.media3:media3-exoplayer-hls:1.5.1")
-    implementation("androidx.media3:media3-ui:1.5.1")
-    implementation("androidx.media3:media3-datasource:1.5.1")
-    implementation("androidx.media3:media3-session:1.5.1")
+    implementation("androidx.media3:media3-exoplayer-hls:1.11.1")
+    implementation("androidx.media3:media3-ui:1.11.1")
+    implementation("androidx.media3:media3-datasource:1.11.1")
+    implementation("androidx.media3:media3-session:1.11.1")
     // Transmux MPEG-TS -> MP4 for cast. Transformer copies the compressed samples when the format
     // already fits (no re-encode, so no quality loss and little CPU), which is what turns a
     // container the Cast receiver refuses into one it indexes properly. Chosen over ffmpeg-kit,
     // which was retired in January 2025 and would have re-added a large native blob right after
     // libVLC was removed from this branch.
-    implementation("androidx.media3:media3-transformer:1.5.1")
-    implementation("androidx.media3:media3-muxer:1.5.1")
+    implementation("androidx.media3:media3-transformer:1.11.1")
+    implementation("androidx.media3:media3-muxer:1.11.1")
 
     // Chromecast
-    implementation("androidx.media3:media3-cast:1.5.1")
+    implementation("androidx.media3:media3-cast:1.11.1")
     implementation("com.google.android.gms:play-services-cast-framework:21.5.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
 
     // Room
-    implementation("androidx.room:room-runtime:2.6.1")
-    implementation("androidx.room:room-ktx:2.6.1")
-    ksp("androidx.room:room-compiler:2.6.1")
+    implementation("androidx.room:room-runtime:2.7.2")
+    implementation("androidx.room:room-ktx:2.7.2")
+    ksp("androidx.room:room-compiler:2.7.2")
 
     // Networking (JSON parsed with bundled org.json)
     implementation("com.squareup.okhttp3:okhttp:4.12.0")

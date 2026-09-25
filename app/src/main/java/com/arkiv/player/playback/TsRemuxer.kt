@@ -7,7 +7,8 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
-import androidx.media3.transformer.InAppMuxer
+import androidx.media3.transformer.InAppFragmentedMp4Muxer
+import androidx.media3.transformer.InAppMp4Muxer
 import androidx.media3.transformer.Transformer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -153,15 +154,12 @@ class TsRemuxer(
                     // not catchable, so the only defence is not to use that muxer. The in-app one
                     // is pure Java, and it is also what can write fragmented MP4.
                     .setMuxerFactory(
-                        InAppMuxer.Factory.Builder()
-                            // FRAGMENTED, so the file can be served WHILE it is written. A plain
-                            // MP4 keeps its index at the end, which is why casting one meant
-                            // waiting minutes for the whole title before a single frame reached
-                            // the TV. A fragmented one is a chain of self-contained pieces: the
-                            // receiver can start on the first while the rest is still arriving.
-                            .setOutputFragmentedMp4(true)
-                            .setFragmentDurationMs(FRAGMENT_MS)
-                            .build(),
+                        // FRAGMENTED, so the file can be served WHILE it is written. A plain
+                        // MP4 keeps its index at the end, which is why casting one meant
+                        // waiting minutes for the whole title before a single frame reached
+                        // the TV. A fragmented one is a chain of self-contained pieces: the
+                        // receiver can start on the first while the rest is still arriving.
+                        InAppFragmentedMp4Muxer.Factory(FRAGMENT_MS),
                     )
                     .addListener(object : Transformer.Listener {
                         override fun onCompleted(composition: Composition, result: ExportResult) {
@@ -189,7 +187,7 @@ class TsRemuxer(
                             runCatching { partial.delete() }
                             // The code matters more than the message: it tells "this device cannot"
                             // from "this file cannot", and only the second is worth giving up on.
-                            Log.w(TAG, "remux failed (code=${exception.errorCode}): ${exception.message}")
+                            Log.w(TAG, "remux failed (code=${exception.errorCode}): ${exception.message}", exception)
                             if (cont.isActive) cont.resume(RemuxResult.Failed("error ${exception.errorCode}"))
                         }
                     })
@@ -324,7 +322,7 @@ class TsRemuxer(
             suspendCancellableCoroutine { cont ->
                 val transformer = Transformer.Builder(context)
                     // Plain mp4, not fragmented: a chunk is finished before it is ever served.
-                    .setMuxerFactory(InAppMuxer.Factory.Builder().build())
+                    .setMuxerFactory(InAppMp4Muxer.Factory())
                     .addListener(object : Transformer.Listener {
                         override fun onCompleted(composition: Composition, result: ExportResult) {
                             val ok = runCatching { partial.renameTo(destination) }.getOrDefault(false)
@@ -345,7 +343,7 @@ class TsRemuxer(
                             exception: ExportException,
                         ) {
                             runCatching { partial.delete() }
-                            Log.w(TAG, "chunk $index failed (code=${exception.errorCode}): ${exception.message}")
+                            Log.w(TAG, "chunk $index failed (code=${exception.errorCode}): ${exception.message}", exception)
                             if (cont.isActive) cont.resume(RemuxResult.Failed("error ${exception.errorCode}"))
                         }
                     })
