@@ -166,6 +166,35 @@ internal fun LiveExoPlayer(
     // is a new player.
     val inPlaceBudget = remember(channelCode) { InPlaceRecoveryBudget() }
 
+    // Hoisted out of the watchdog LaunchedEffect below so `onPlayerError` can call it too (a decoder that
+    // REJECTS the format outright throws before the watchdog's frozen-picture check would ever fire).
+    // Hardware decoder that takes the stream and never paints (or freezes, or refuses the format): swap it
+    // for a software one, once. It reopens the channel through the `software` state, so the next visit
+    // starts in software too.
+    fun rescueInSoftware(reason: String, waitedMs: Long) {
+        if (software) return
+        val format = exoPlayer.currentTracks.groups.firstOrNull { it.type == C.TRACK_TYPE_VIDEO }
+            ?.takeIf { it.length > 0 }?.getTrackFormat(0)
+        LiveLog.w("decoder RESCUE: $reason after ${waitedMs}ms on ${quality.videoDecoder.ifEmpty { "?" }} -> reopening with a software decoder")
+        LiveDecoderMemory.remember(context, channelCode)
+        Crash.report(
+            LiveDecoderSwitched("live decoder switched to software"),
+            "live-decoder-switch",
+            extras = mapOf(
+                "reason" to reason,
+                "waited_ms" to waitedMs.toString(),
+                "channel" to channelCode,
+                "session_kind" to LiveLog.sessionKind,
+                "video_decoder" to quality.videoDecoder,
+                "video_codec" to (format?.sampleMimeType ?: ""),
+                "video_size" to (format?.let { "${it.width}x${it.height}" } ?: ""),
+                "model" to android.os.Build.MODEL,
+                "sdk" to android.os.Build.VERSION.SDK_INT.toString(),
+            ),
+        )
+        software = true
+    }
+
     var videoAspectRatio by remember(exoPlayer) { mutableFloatStateOf(0f) }
     // Read inside the layout listener below, which is built once (`remember`) and outlives every
     // recomposition: a plain `zoom` capture would freeze at whatever it was on that first build.
@@ -244,6 +273,16 @@ internal fun LiveExoPlayer(
             override fun onPlayerError(error: PlaybackException) {
                 val msg = error.message ?: "Error de reproducción (${error.errorCode})"
                 Log.e(TAG, "onPlayerError errorCode=${error.errorCode} msg=$msg", error)
+                // The hardware decoder rejected the stream's format outright (seen on MediaTek/Hisilicon/other
+                // chips against certain live channels since the Media3 1.11 upgrade): a playlist refresh or a
+                // plain reopen just hits the same wall again. Same rescue as the frozen-picture watchdog below,
+                // triggered here instead because the decoder throws before that watchdog would ever see it.
+                if (error.errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED &&
+                    msg.contains("NO_EXCEEDS_CAPABILITIES")
+                ) {
+                    rescueInSoftware("decoder rejected the format", 0L)
+                    return
+                }
                 // Fell behind the window, or the playlist reset / froze: a fresh look at the playlist at the live
                 // edge fixes it, no need to re-resolve the whole channel. Only a few tries a minute; then the
                 // full reopen (and its warning) takes over.
@@ -316,32 +355,6 @@ internal fun LiveExoPlayer(
         var lastRescueMs = 0L
         var lastQualityLogMs = SystemClock.elapsedRealtime()
         var videoSeenAtMs = 0L
-
-        // Hardware decoder that takes the stream and never paints (or freezes): swap it for a software one, once.
-        // It reopens the channel through the `software` state, so the next visit starts in software too.
-        fun rescueInSoftware(reason: String, waitedMs: Long) {
-            if (software) return
-            val format = exoPlayer.currentTracks.groups.firstOrNull { it.type == C.TRACK_TYPE_VIDEO }
-                ?.takeIf { it.length > 0 }?.getTrackFormat(0)
-            LiveLog.w("decoder RESCUE: $reason after ${waitedMs}ms on ${quality.videoDecoder.ifEmpty { "?" }} -> reopening with a software decoder")
-            LiveDecoderMemory.remember(context, channelCode)
-            Crash.report(
-                LiveDecoderSwitched("live decoder switched to software"),
-                "live-decoder-switch",
-                extras = mapOf(
-                    "reason" to reason,
-                    "waited_ms" to waitedMs.toString(),
-                    "channel" to channelCode,
-                    "session_kind" to LiveLog.sessionKind,
-                    "video_decoder" to quality.videoDecoder,
-                    "video_codec" to (format?.sampleMimeType ?: ""),
-                    "video_size" to (format?.let { "${it.width}x${it.height}" } ?: ""),
-                    "model" to android.os.Build.MODEL,
-                    "sdk" to android.os.Build.VERSION.SDK_INT.toString(),
-                ),
-            )
-            software = true
-        }
 
         while (true) {
             delay(500)
