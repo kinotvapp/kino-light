@@ -89,3 +89,24 @@ class LivePlaybackQuality(message: String) : Exception(message)
  * own instead of by user reports of "sound but no image".
  */
 class LiveDecoderSwitched(message: String) : Exception(message)
+
+/**
+ * A live channel's playlist error (fell behind the live window, the playlist reset or froze) was fixed by seeking
+ * to the live edge and preparing again, without the full reopen (re-resolving the session) that used to be the only
+ * way out. Reported once per actual recovery, not per retry -- a stuck playlist keeps hitting the same error for
+ * as long as it stays stuck, and only the recovery that fires counts. Tells us how often this class of error still
+ * happens and whether it keeps getting fixed in place instead of reaching the person as a cut signal. See
+ * `InPlaceRecoveryBudget` and `errorKind` in `LiveExoPlayer`.
+ */
+class LiveInPlaceRecovery(message: String) : Exception(message)
+
+/**
+ * A live channel's session was a shared seed (see `LiveSeedRotation`) and the CDN answered `409 Conflict` to its
+ * playlist, or the portal refused the seed on resolve: the channel moved to another seed from the backup pool, or,
+ * once the small rotation budget ran out, gave up and went back to the device's own session. Reported once per
+ * actual state change (`outcome` extra: `rotated` / `rotated_after_resolve_failure` / `exhausted`), not per retry --
+ * the player asks for the same stuck playlist repeatedly, and duplicate refusals of the seed already in use don't
+ * report again. The point is measuring whether rotating seeds actually clears the conflicts that used to reach the
+ * person as "se cortó la señal", not counting every retry.
+ */
+class LiveSeedRotated(message: String) : Exception(message)

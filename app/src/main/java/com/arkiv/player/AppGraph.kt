@@ -393,12 +393,23 @@ class AppGraph(context: Context) {
             com.arkiv.player.playback.LiveLog.i("409 on $channel: session kind is '$kind', only a shared seed rotates")
             return
         }
-        val current = liveSeedRotation.activeSeed(channel)?.sn ?: magisSession.currentSn()
+        val before = liveSeedRotation.activeSeed(channel)?.sn
+        val current = before ?: magisSession.currentSn()
         val moved = liveSeedRotation.onRefused(channel, current, magisSession.seedPool(), refusedKey = license)
         liveController.invalidate(channel)
+        val after = liveSeedRotation.activeSeed(channel)?.sn
         com.arkiv.player.playback.LiveLog.w(
-            if (moved) "seed rotation: 409 on $channel → the next open uses another seed (${liveSeedRotation.activeSeed(channel)?.sn?.take(6)}…)"
+            if (moved) "seed rotation: 409 on $channel → the next open uses another seed (${after?.take(6)}…)"
             else "seed rotation: 409 on $channel and no seed left to try → back to the device's own session",
+        )
+        // Telemetry only on a genuine state change: the player retries a stuck playlist for a while and every one
+        // of those retries reaches this same 409 (deduped by license inside LiveSeedRotation), which would report
+        // the SAME rotation again and again if this didn't check it actually moved.
+        if (after == before) return
+        com.arkiv.player.crash.Crash.report(
+            com.arkiv.player.crash.LiveSeedRotated("live seed rotated after a conflict"),
+            "live-seed-rotation",
+            extras = mapOf("channel" to channel, "outcome" to if (moved) "rotated" else "exhausted"),
         )
     }
 
@@ -412,8 +423,17 @@ class AppGraph(context: Context) {
                 throw e
             } catch (e: Exception) {
                 com.arkiv.player.playback.LiveLog.w("seed rotation: seed ${seed.sn.take(6)}… could not resolve $code (${e.message}) → next")
+                val before = seed.sn
                 val moved = liveSeedRotation.onRefused(code, seed.sn, magisSession.seedPool(), refusedKey = "resolve:${seed.sn}")
-                seed = liveSeedRotation.activeSeed(code) ?: return magisLive.resolveOrThrow(code)
+                val next = liveSeedRotation.activeSeed(code)
+                if (next?.sn != before) {
+                    com.arkiv.player.crash.Crash.report(
+                        com.arkiv.player.crash.LiveSeedRotated("live seed rotated after a conflict"),
+                        "live-seed-rotation",
+                        extras = mapOf("channel" to code, "outcome" to if (moved) "rotated_after_resolve_failure" else "exhausted"),
+                    )
+                }
+                seed = next ?: return magisLive.resolveOrThrow(code)
                 if (!moved) return magisLive.resolveOrThrow(code)
             }
         }

@@ -250,6 +250,17 @@ internal fun LiveExoPlayer(
                 val kind = errorKind(error)
                 if (kind.recoverableInPlace && inPlaceBudget.tryConsume(SystemClock.elapsedRealtime())) {
                     LiveLog.w("in-place recovery: $kind ($msg) -> seek to the live edge and prepare again")
+                    // Once per recovery, not per retry: a stuck playlist keeps hitting the same error while it's
+                    // stuck, and the budget above already bounds how many of these a single channel can fire.
+                    com.arkiv.player.crash.Crash.report(
+                        com.arkiv.player.crash.LiveInPlaceRecovery("live in-place recovery"),
+                        "live-in-place-recovery",
+                        extras = mapOf(
+                            "channel" to channelCode,
+                            "session_kind" to LiveLog.sessionKind,
+                            "error_kind" to kind.name,
+                        ),
+                    )
                     exoPlayer.seekToDefaultPosition()
                     exoPlayer.prepare()
                     exoPlayer.playWhenReady = true
