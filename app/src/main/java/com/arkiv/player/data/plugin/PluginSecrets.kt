@@ -17,9 +17,13 @@ import java.util.concurrent.ConcurrentHashMap
  * store uses — only this file, never the shared master key. If even a fresh file can't be opened,
  * the passwords live in [memory] for this process only: after a restart (a fresh, empty [memory])
  * a password saved that way is simply gone. Either way the plugin correctly shows "Falta
- * configurar" instead of running with the password silently absent — `PluginConfigStore.missing()`
- * asks THIS store for the value, not just whether `config.json` once listed it as set (fix round 1,
- * finding 5: it used to trust that list alone). Nothing here logs a value.
+ * configurar" instead of running with the password silently absent — but NOT because
+ * `PluginConfigStore.missing()`/`setupState()` ask this store directly: they never do (fix round 2
+ * reverted that — reachable from Main via `graph.pluginsChanged`/`graph.pluginRegistry`). It's
+ * `PluginConfigStore.reconcileSecrets`, called off Main during `AppGraph.warmUpCredentials` and
+ * each periodic update check, that asks THIS store and rewrites `config.json`'s own "secrets" list
+ * to match reality — `missing()` then reads that corrected list, never the Keystore itself. Nothing
+ * here logs a value.
  */
 class EncryptedSecretStore(private val context: Context) : SecretStore {
     private val memory = ConcurrentHashMap<String, String>()

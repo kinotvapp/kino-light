@@ -153,6 +153,40 @@ class PluginAdminTest {
     }
 
     /**
+     * Fix round 3, "new breakage 1": finding 4's fix (round 2) made a settings save trigger a Home
+     * re-fetch through `registry.reload()`'s emission (`pluginsChanged`) -- but `reload()` used to
+     * run BEFORE the step that deletes `home.json`/bumps the session revision. A re-fetch that
+     * `reload()` itself triggers could therefore read the PRE-forget `home.json` on EVERY save, not
+     * just ones that change hosts. Proven directly, the same pattern as the finding-2 test above:
+     * `forgetHomeCache` must have ALREADY run by the moment `reload()`'s own per-plugin `setup`
+     * lambda executes -- the earliest point any real collector of `registry.plugins` could ever
+     * observe its effects, so this is a reliable, non-flaky stand-in for "before ANY observer sees
+     * the reload."
+     */
+    @Test fun `saveSettings forgets the home cache before reload, so a reload-triggered refresh can't see stale state`() = runBlocking {
+        publish("1.0.0", passwordSetting)
+        admin.install(admin.preview("o/r"))
+        var homeCacheForgotten = false
+        var homeCacheForgottenWhenReloadRan = false
+        val trackingRegistry = PluginRegistry(store) { p ->
+            homeCacheForgottenWhenReloadRan = homeCacheForgotten
+            config.setupState(p.manifest.id, p.manifest.settings)
+        }
+        trackingRegistry.reload() // initial load of "demo", from the same on-disk store as `admin`
+        val tracking = DefaultPluginAdmin(
+            trackingRegistry, installer, pool, config,
+            forgetHomeCache = { homeCacheForgotten = true },
+            io = Dispatchers.Unconfined,
+        )
+        assertEquals(null, tracking.saveSettings("demo", mapOf("password" to "s3cr3t")))
+        assertTrue(
+            "the home cache must already be forgotten by the time reload() runs, so a reload-" +
+                "triggered Home re-fetch can never observe the pre-forget state",
+            homeCacheForgottenWhenReloadRan,
+        )
+    }
+
+    /**
      * Fix round 2, finding 3b's wiring: `afterSessionClosed` is a SEPARATE callback from
      * `forgetSession`, called once, after it -- source order in `saveSettings` places it after
      * `runtimes.close()` too (read that method's own comment for why: this test can't reliably

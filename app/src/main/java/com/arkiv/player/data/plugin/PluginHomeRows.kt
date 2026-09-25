@@ -40,24 +40,32 @@ class PluginHomeRows(
      * still in flight when that happens belongs to the OLD session: [refresh] compares the revision
      * before and after the call and discards (never shows, never caches) an answer whose revision
      * moved. That in-flight check alone isn't sufficient (fix round 2, finding 3) — see [Cached]'s
-     * KDoc for why the value is also stamped into the cache file itself. Constant by default:
-     * nothing is ever discarded.
+     * KDoc for why the value is also stamped into the cache file itself.
+     *
+     * IN-MEMORY, process-lifetime only — and that's exactly why [Cached] ALSO stamps
+     * [InstalledPlugin.configRevision] (persisted): this counter resets to its default on every
+     * process restart, so a stale write whose stamp happens to equal whatever a FRESH process
+     * defaults to (e.g. 0) would otherwise read back as fresh after a restart, even though nothing
+     * about the in-memory value ever really "matched" — there was no matching session, just two
+     * unrelated zeroes (fix round 3, finding 3a: `home.json` is a FILE, it survives what this
+     * counter does not). Constant by default: nothing is ever discarded.
      */
     private val sessionRevision: (pluginId: String) -> Int = { 0 },
     private val log: (String) -> Unit = { android.util.Log.w("KinoPlugin", it) },
 ) {
     /**
-     * [revision] is stamped at write time and re-checked at EVERY read (both the instant-paint
-     * pass and [refresh]'s own TTL check) against the CURRENT [sessionRevision] — not just checked
-     * once around the `home()` call. This is what actually closes finding 3 (fix round 2): the
-     * in-flight check in [refresh] alone only catches a stale write if the session revision has
-     * ALREADY moved by the time the call returns; a write that lands in the narrow gap between two
-     * bumps (see AppGraph's `forgetPluginSession` / `afterSessionClosed`) could still pass that
-     * check and reach the file. Stamping the revision makes staleness self-detected on the very
-     * next read, however the write happened to slip through — the old account's rows can be
-     * written once, at most, and are never trusted again afterward, let alone for up to [ttlMs].
+     * [sessionRevision] (the constructor param) is the in-memory, per-process signal — stamped and
+     * re-checked at EVERY read exactly as before (fix round 2). [configRevision] is
+     * [InstalledPlugin.configRevision] — PERSISTED in `config.json`, survives a restart — stamped
+     * and re-checked the SAME way, against the value on the `InstalledPlugin` `refresh`/the instant
+     * paint were handed for THIS pass (fix round 3, finding 3a). Both are compared on every read
+     * (both the instant-paint pass and [refresh]'s own TTL check); a mismatch in EITHER means the
+     * entry is not this session's and is never shown or trusted, only ever a fresh call is. Neither
+     * one alone is enough: the in-memory value protects a live process against a runtime instance it
+     * shouldn't trust (round 2, finding 3b's "window b"); the persisted value is what still catches
+     * staleness after the process — and so the in-memory value — has restarted.
      */
-    private data class Cached(val fetchedAt: Long, val revision: Int, val json: String)
+    private data class Cached(val fetchedAt: Long, val sessionRevision: Int, val configRevision: Int, val json: String)
 
     companion object {
         /** A cache file bigger than this is neither written nor read (it's deleted instead). */
@@ -72,9 +80,15 @@ class PluginHomeRows(
             return@flow
         }
         val cached = targets.associate { it.id to readCache(it.id) }
-        // The instant-paint pass shows even a stale-by-TTL cache, but never one stamped with a
-        // revision that no longer matches: that isn't "old", it's a DIFFERENT session's data.
-        emit(assemble(targets) { p -> cached[p.id]?.takeIf { it.revision == sessionRevision(p.id) }?.let { parse(p, it.json) }.orEmpty() })
+        // The instant-paint pass shows even a stale-by-TTL cache, but never one stamped with EITHER
+        // revision no longer matching: that isn't "old", it's a DIFFERENT session's data -- and
+        // configRevision is what still catches that across a process restart (fix round 3).
+        emit(
+            assemble(targets) { p ->
+                cached[p.id]?.takeIf { it.sessionRevision == sessionRevision(p.id) && it.configRevision == p.configRevision }
+                    ?.let { parse(p, it.json) }.orEmpty()
+            },
+        )
         val fresh = coroutineScope {
             targets.map { p -> async { p.id to refresh(p, cached[p.id]) } }.awaitAll().toMap()
         }
@@ -82,7 +96,11 @@ class PluginHomeRows(
     }
 
     private suspend fun refresh(p: InstalledPlugin, cached: Cached?): List<PluginRow> {
-        if (cached != null && cached.revision == sessionRevision(p.id) && clock() - cached.fetchedAt < ttlMs) return parse(p, cached.json)
+        if (cached != null && cached.sessionRevision == sessionRevision(p.id) && cached.configRevision == p.configRevision &&
+            clock() - cached.fetchedAt < ttlMs
+        ) {
+            return parse(p, cached.json)
+        }
         val revision = sessionRevision(p.id)
         return try {
             val json = caller.call(p.id, "home", "null", PluginContentSource.HOME_TIMEOUT_MS)
@@ -94,7 +112,11 @@ class PluginHomeRows(
             }
             // Parsed BEFORE it's cached: an answer that can't be read must never be persisted and
             // re-read on every Home open. Nothing usable, nothing cached: the next Home asks again.
-            parse(p, json).also { rows -> if (rows.isNotEmpty()) writeCache(p.id, revision, json) }
+            // Stamped with p.configRevision -- the snapshot this WHOLE pass was handed, taken before
+            // the call, same as `revision` above: if a save landed during the call and bumped it,
+            // ANY later read (this process or after a restart) compares against the NEW persisted
+            // value and correctly refuses this entry, exactly like the in-memory revision already did.
+            parse(p, json).also { rows -> if (rows.isNotEmpty()) writeCache(p.id, revision, p.configRevision, json) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -130,12 +152,16 @@ class PluginHomeRows(
             return@runCatching null
         }
         val o = JSONObject(file.readText())
-        Cached(o.getLong("fetchedAt"), o.optInt("revision", 0), o.getString("json"))
+        // optInt(..., 0) on both: a pre-round-3 cache file (no "configRevision" field at all) reads
+        // as 0, which -- unless a plugin's persisted revision genuinely IS still 0 -- simply fails
+        // the comparison and is treated as not fresh: safe, self-healing, no migration needed.
+        Cached(o.getLong("fetchedAt"), o.optInt("sessionRevision", 0), o.optInt("configRevision", 0), o.getString("json"))
     }.getOrNull()
 
-    private fun writeCache(pluginId: String, revision: Int, json: String) {
+    private fun writeCache(pluginId: String, sessionRevision: Int, configRevision: Int, json: String) {
         runCatching {
-            val bytes = JSONObject().put("fetchedAt", clock()).put("revision", revision).put("json", json).toString().toByteArray(Charsets.UTF_8)
+            val bytes = JSONObject().put("fetchedAt", clock()).put("sessionRevision", sessionRevision)
+                .put("configRevision", configRevision).put("json", json).toString().toByteArray(Charsets.UTF_8)
             if (bytes.size > MAX_CACHE_BYTES) {
                 log("[$pluginId] home answer too big to cache (${bytes.size} bytes)")
                 return@runCatching

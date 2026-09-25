@@ -254,11 +254,15 @@ class AppGraph(context: Context) {
             repository
             liveCatalog
             magisHomeCatalog
-            // Before `contentSource`/`pluginRegistry` (both force pluginRegistry's first reload()):
-            // see reconcilePluginSecrets's KDoc for why this order matters.
+            // Before `contentSource` (which forces pluginRegistry's first reload()): see
+            // reconcilePluginSecrets's KDoc for why this order matters. The explicit reload() right
+            // after (fix round 3, "also fold in") picks up the just-reconciled config.json even if
+            // `pluginRegistry` had ALREADY been touched earlier (its lazy only reloads once, on
+            // first access) -- without it, an early access from elsewhere could win the race and
+            // this reconciliation would sit unread until some LATER reload().
             reconcilePluginSecrets()
+            pluginRegistry.reload()
             contentSource
-            pluginRegistry
             magisAccount
             built = true
         } catch (_: Throwable) {
@@ -400,7 +404,7 @@ class AppGraph(context: Context) {
     private val pluginJars = PluginJarRegistry()
 
     /**
-     * Bumped by [forgetPluginSession] AND once more, separately, right after a settings change's
+     * Bumped by [forgetPluginHomeCache] AND once more, separately, right after a settings change's
      * runtime close actually removes the pool's slot (`afterSessionClosed`, wired into
      * [pluginAdmin]) — lets [pluginHomeRows] discard a `home()` answer that belongs to a session
      * already forgotten, even one that started before the forget and returns after both bumps (fix
@@ -408,10 +412,13 @@ class AppGraph(context: Context) {
      * slip through — see [PluginAdmin.saveSettings]'s own comment for the exact race).
      *
      * This is DELIBERATELY separate from [InstalledPlugin.configRevision] (persisted, drives
-     * [pluginsChanged] below): that one exists so the registry's `StateFlow` itself visibly
-     * changes on a save (finding 4); this one exists to identify which RUNTIME INSTANCE a live
-     * call actually ran against, which is inherently a live/in-memory question, not a disk one —
-     * process-lifetime only, nothing here needs to (or should) survive a restart.
+     * [pluginsChanged] below AND, since fix round 3, also stamped into the Home cache file
+     * alongside this value — see [PluginHomeRows]'s KDoc): that one exists so the registry's
+     * `StateFlow` visibly changes on a save (finding 4) and so staleness is still caught after a
+     * restart (finding 3a) — a value that resets every process start, like this one, can never do
+     * either. This one exists to identify which RUNTIME INSTANCE a live call actually ran against,
+     * which is inherently a live/in-memory question, not a disk one — process-lifetime only,
+     * nothing here needs to (or should) survive a restart.
      */
     private val pluginSessionRevisions = java.util.concurrent.ConcurrentHashMap<String, Int>()
 
@@ -501,25 +508,37 @@ class AppGraph(context: Context) {
     val pluginAdmin: PluginAdmin by lazy {
         DefaultPluginAdmin(
             pluginRegistry, pluginInstaller, pluginRuntimes, pluginConfigStore,
+            forgetHomeCache = ::forgetPluginHomeCache,
             forgetSession = ::forgetPluginSession,
             afterSessionClosed = ::bumpPluginSessionRevision,
         )
     }
 
     /**
-     * After a settings change (spec §1.3): a new user or server must not inherit the old session.
-     * The live jar is retired (a call still finishing can't write it back), its file and the Home
-     * cache (rows of the old account) are deleted, and the session revision is bumped (the FIRST of
-     * two bumps -- see [pluginSessionRevisions]'s KDoc and [DefaultPluginAdmin.saveSettings]) so a
-     * `home()` answer still in flight for the OLD session gets discarded instead of cached (finding
-     * 3). Runs on IO (DefaultPluginAdmin.saveSettings) -- see that method for why this must run
-     * BEFORE the runtime is actually closed, not after.
+     * After a settings change (spec §1.3), the Home-cache half: the session revision is bumped
+     * (the FIRST of two -- see [pluginSessionRevisions]'s KDoc and
+     * [DefaultPluginAdmin.saveSettings]) and `home.json` (rows of the old account) is deleted.
+     * Split from [forgetPluginSession] and called FIRST, before `registry.reload()` (fix round 3,
+     * "new breakage 1") -- see [DefaultPluginAdmin.saveSettings]'s own comment for exactly why:
+     * unlike jar retirement, nothing about the Home cache needs the registry to have reloaded
+     * first, and a re-fetch reload() itself can trigger (finding 4) must never be able to observe
+     * the pre-forget state.
+     */
+    private fun forgetPluginHomeCache(id: String) {
+        bumpPluginSessionRevision(id)
+        java.io.File(pluginStore.dataDir(id), "home.json").delete()
+    }
+
+    /**
+     * After a settings change (spec §1.3), the session/jar half: a new user or server must not
+     * inherit the old session, so the live cookie jar is retired (a call still finishing can't
+     * write it back) and its file deleted. Runs on IO (DefaultPluginAdmin.saveSettings) -- see
+     * that method for why this must run AFTER `registry.reload()` but BEFORE the runtime is
+     * actually closed.
      */
     private fun forgetPluginSession(id: String) {
-        bumpPluginSessionRevision(id)
         pluginJars.forget(id)
         java.io.File(pluginStore.dataDir(id), PluginCookies.FILE_NAME).delete()
-        java.io.File(pluginStore.dataDir(id), "home.json").delete()
     }
 
     val pluginHomeRows: PluginHomeRows by lazy {

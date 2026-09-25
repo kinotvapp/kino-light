@@ -203,9 +203,9 @@ class PluginHomeRowsTest {
      * read — independent of the in-flight check above, and independent of the TTL (this cache is
      * timestamped "now", which the plain TTL check alone would treat as fresh).
      */
-    @Test fun `a cache file stamped with an old revision is never trusted as fresh, even within the TTL`() = runTest {
+    @Test fun `a cache file stamped with an old session revision is never trusted as fresh, even within the TTL`() = runTest {
         val cacheFile = File(tmp.root, "a/home.json").apply { parentFile!!.mkdirs() }
-        cacheFile.writeText(JSONObject().put("fetchedAt", now).put("revision", 0).put("json", rowJson).toString())
+        cacheFile.writeText(JSONObject().put("fetchedAt", now).put("sessionRevision", 0).put("configRevision", 0).put("json", rowJson).toString())
         val revision = 2 // the session has moved on twice since that cache was written
         val caller = CountingCaller { rowJson }
         val emissions = PluginHomeRows(
@@ -215,5 +215,54 @@ class PluginHomeRowsTest {
         // DIFFERENT session's data.
         assertEquals(emptyList<PluginHomeRow>(), emissions.first())
         assertEquals(1, caller.calls)
+    }
+
+    /**
+     * Fix round 3, finding 3a (still open after round 2): the in-memory `sessionRevision` counter
+     * lives only for the process's life and restarts at its default (0) — but `home.json` is a
+     * FILE that survives a restart. A stale write stamped with `sessionRevision=0` (e.g. one that
+     * landed before this plugin's session was EVER forgotten in that process — 0 is not just "a
+     * settings change ago", it's also the untouched default) would, after the app is closed and
+     * reopened within the 6h TTL, be compared against a FRESH process's counter — also 0 — and
+     * wrongly read as fresh, even though a real settings save happened in between (and correctly
+     * bumped the PERSISTED `configRevision`, which does NOT reset). Constructs a fresh
+     * `PluginHomeRows` sharing the SAME on-disk `home.json` a first "process" wrote, with the
+     * in-memory counter reset to its default exactly as a real restart would leave it, and asserts
+     * the persisted `configRevision` alone is what makes the second "process" refuse the stale
+     * entry.
+     */
+    @Test fun `a stale write does not survive a process restart, even when the in-memory revision coincidentally matches`() = runTest {
+        val cacheFile = File(tmp.root, "a/home.json")
+
+        // "Process 1": nothing has EVER been forgotten yet for this plugin (the true, untouched
+        // in-memory default, 0) -- an entirely ordinary, non-stale write at the time it happens.
+        val p1 = plugin("a").copy(configRevision = 0)
+        val firstCaller = CountingCaller { rowJson }
+        PluginHomeRows({ listOf(p1) }, firstCaller, cacheFileFor = { cacheFile }, clock = { now }, sessionRevision = { 0 }, log = {})
+            .rows().toList()
+        assertTrue(cacheFile.exists())
+        assertEquals(1, firstCaller.calls)
+
+        // A settings save now happens (the process keeps running): config.save() bumps the
+        // PERSISTED revision to 1 immediately. Simulates the app being killed (Android can, under
+        // memory pressure, mid-coroutine) before forgetPluginHomeCache's delete/in-memory bump —
+        // this specific file is what's left on disk when the process actually restarts:
+        // config.json already says 1, home.json is untouched, still stamped 0.
+
+        // "The app is closed and reopened": a FRESH PluginHomeRows, in-memory sessionRevision back
+        // at its DEFAULT (0) -- coincidentally EQUAL to the stale stamp, exactly like round 3's
+        // finding describes. Only the plugin's PERSISTED configRevision, read fresh from disk as a
+        // real PluginRegistry.reload() would after the restart, reflects that a save happened: 1.
+        val p2 = plugin("a").copy(configRevision = 1)
+        val secondCaller = CountingCaller { rowJson }
+        val emissions = PluginHomeRows({ listOf(p2) }, secondCaller, cacheFileFor = { cacheFile }, clock = { now }, sessionRevision = { 0 }, log = {})
+            .rows().toList()
+
+        assertEquals(
+            "the in-memory revision alone (0 == 0) would wrongly call this fresh; configRevision (0 vs 1) must catch it",
+            emptyList<PluginHomeRow>(),
+            emissions.first(),
+        )
+        assertEquals("a fresh call must have been made instead of trusting the stale cache", 1, secondCaller.calls)
     }
 }

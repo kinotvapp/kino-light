@@ -25,16 +25,20 @@ interface PluginAdmin {
 }
 
 /**
- * [forgetSession] runs after a settings change: AppGraph retires the plugin's cookie jar and
- * deletes its cookies and Home cache. [afterSessionClosed] runs once more, right after the OLD
- * runtime's pool slot is actually gone (fix round 2, finding 3b) — see [saveSettings]'s own
- * comment for why one bump isn't enough. Config and Keystore work runs on [io], never on Main.
+ * [forgetHomeCache] and [forgetSession] both run on a settings change, but at DIFFERENT points —
+ * see [saveSettings]'s own comment for exactly why (fix round 3, "new breakage 1"):
+ * [forgetHomeCache] (bumps the Home-refresh session revision, deletes `home.json`) runs FIRST,
+ * before [PluginRegistry.reload]; [forgetSession] (retires the cookie jar, deletes `cookies.json`)
+ * keeps running where fix round 1 put it, after `reload()` and before `runtimes.close`.
+ * [afterSessionClosed] runs once more, right after the OLD runtime's pool slot is actually gone
+ * (fix round 2, finding 3b). Config and Keystore work runs on [io], never on Main.
  */
 class DefaultPluginAdmin(
     private val registry: PluginRegistry,
     private val installer: PluginInstaller,
     private val runtimes: PluginRuntimePool,
     private val config: PluginConfigStore,
+    private val forgetHomeCache: (pluginId: String) -> Unit = {},
     private val forgetSession: (pluginId: String) -> Unit = {},
     private val afterSessionClosed: (pluginId: String) -> Unit = {},
     private val io: CoroutineDispatcher = Dispatchers.IO,
@@ -84,27 +88,41 @@ class DefaultPluginAdmin(
     override suspend fun saveSettings(id: String, values: Map<String, Any?>): String? = withContext(io) {
         val p = registry.find(id) ?: return@withContext "El plugin ya no está instalado"
         config.save(id, p.manifest.settings, values)?.let { return@withContext it }
-        // A new user or server must not inherit the old session (spec §1.3). Order is load-bearing
-        // (fix round 1, finding 2) -- reload, THEN forget, THEN close, mirroring install()'s own
-        // "reload before close" rule above, extended one step further:
-        //  1. registry.reload() FIRST: runtimes.close() below discards the pool's slot, so the
+        // A new user or server must not inherit the old session (spec §1.3). Every step's ORDER is
+        // load-bearing, and the two "forget" steps are split and placed on OPPOSITE sides of
+        // reload() for two UNRELATED reasons -- folding them back into one call reopens either
+        // finding 2 (round 1) or "new breakage 1" (round 3):
+        //  1. forgetHomeCache() FIRST, before reload(): reload() is what makes `registry.plugins`
+        //     (a StateFlow) actually emit when only the account changed (fix round 2, finding 4 --
+        //     configRevision is part of InstalledPlugin's own equality). That emission is what
+        //     drives `pluginsChanged`, which is what makes Home re-fetch. If the Home-cache revision
+        //     bump and the home.json delete happened AFTER reload(), a re-fetch that reload()
+        //     itself triggered could run and read the PRE-forget home.json/revision before this
+        //     line ever got to clean it up -- a real window on EVERY save, not just a host change
+        //     (fix round 3, "new breakage 1"). Putting it first means the state reload() causes
+        //     anyone to observe is ALREADY post-forget, by construction: the observation literally
+        //     cannot happen before the statement that precedes it in the same coroutine.
+        //  2. registry.reload() SECOND: runtimes.close() below discards the pool's slot, so the
         //     very next call for this plugin can open a brand-new runtime. That runtime reads its
         //     hosts from the registry -- if reload() hadn't run yet, it would open with the OLD
         //     (pre-save) hosts and keep them until the next idle close, same bug install() already
         //     guards against.
-        //  2. forgetSession() SECOND, while the OLD runtime (if any) is still the only one open:
-        //     retires the OLD jar. Reordered this way, nothing has opened a NEW jar yet, so there
-        //     is nothing for forgetSession to wrongly retire instead of the old one.
-        //  3. runtimes.close() LAST: only once the registry is current and the old session is fully
-        //     forgotten does the pool's slot come down, so any runtime opened after this point is
-        //     unambiguously the new session's, with a fresh jar nothing above could have touched.
-        //  4. afterSessionClosed() bumps the Home-refresh session revision a SECOND time (fix round
-        //     2, finding 3b): a call that read the revision forgetSession() already bumped, but
+        //  3. forgetSession() THIRD, while the OLD runtime (if any) is still the only one open:
+        //     retires the OLD jar. This one genuinely needs reload() to have already happened
+        //     first (finding 2, round 1) -- unlike forgetHomeCache, which has nothing to do with
+        //     jars/hosts and so isn't bound by that same constraint.
+        //  4. runtimes.close() FOURTH: only once the registry is current and the old session is
+        //     fully forgotten does the pool's slot come down, so any runtime opened after this
+        //     point is unambiguously the new session's, with a fresh jar nothing above could have
+        //     touched.
+        //  5. afterSessionClosed() bumps the Home-refresh session revision a SECOND time (fix round
+        //     2, finding 3b): a call that read the revision forgetHomeCache() already bumped, but
         //     reached the runtime pool BEFORE runtimes.close() above actually removed the slot,
         //     still runs against the OLD runtime -- and since the revision hadn't moved again
         //     during that call, its own in-flight check alone wouldn't catch it. This second bump,
         //     guaranteed to land after the slot is gone, makes sure nothing that could have started
         //     against the pre-close runtime can ever pass a POST-close revision check again.
+        forgetHomeCache(id)
         registry.reload()
         forgetSession(id)
         runtimes.close(id)
