@@ -195,6 +195,7 @@ class LiveHlsProxy(
             // because `socket.localAddress` is a fact of the TCP connection -which interface
             // received the packet-, not something the client declares: no need to validate or
             // sanitize it before putting it into a response URL, and it doesn't depend on the
+        var rendererRequest = false // set once we know this connection is a TV's, for the DLNA log below
             // local player, Chromecast or the DLNA client sending a well-formed Host header (some
             // HLS players don't send one). It's the same thing manually resolving headers would
             // get, without the header-injection risk or the extra parsing.
@@ -212,15 +213,51 @@ class LiveHlsProxy(
             // shouldn't get a single hint about what routes exist or why it failed.
             if (!isTokenValid(path)) {
                 output.write("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n".toByteArray())
+            // For the DLNA debugging log only: who is asking, and how. The headers are read just to log them
+            // (nothing below needs them) and bounded, so a client that never finishes can't pin the thread.
+            var range: String? = null
+            var userAgent: String? = null
+            var headerLines = 0
+            while (headerLines++ < 40) {
+                val h = reader.readLine() ?: break
+                if (h.isEmpty()) break
+                if (h.startsWith("Range:", ignoreCase = true)) range = h.substringAfter(':').trim()
+                if (h.startsWith("User-Agent:", ignoreCase = true)) userAgent = h.substringAfter(':').trim()
+            }
+            // A renderer (not this phone's own player, which comes over loopback) asked for something: count
+            // it and log who asked for what. Whether the TV ever gets here is the first thing to know.
+            val fromRenderer = com.arkiv.player.dlna.DlnaLog.lanHit("live-proxy", s.inetAddress?.hostAddress, line, range, userAgent)
+            rendererRequest = fromRenderer
+            val startedAt = android.os.SystemClock.elapsedRealtime()
                 return@runCatching
             }
             when {
                 path.startsWith("/live.m3u8") -> servePlaylist(output, myHost)
                 path.startsWith("/seg?") -> serveSegment(path, output)
-                else -> output.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n".toByteArray())
+                if (fromRenderer) {
+                    // The likeliest way a TV ends up here with no token: it followed a relative URL from the
+                    // playlist and dropped the query string. Silent for the person, fatal for the cast.
+                    com.arkiv.player.dlna.DlnaLog.w(
+                        "live-proxy: 403 for ${com.arkiv.player.dlna.DlnaXml.safeUrl(path)}: missing/invalid session token " +
+                            "(the TV probably dropped the query string from a playlist URL)",
+                    )
+                }
+                else -> {
+                    if (fromRenderer) com.arkiv.player.dlna.DlnaLog.w("live-proxy: 404 for unknown route ${com.arkiv.player.dlna.DlnaXml.safeUrl(path)}")
+                    output.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n".toByteArray())
+                }
+            }
+            if (fromRenderer) {
+                com.arkiv.player.dlna.DlnaLog.i(
+                    "live-proxy: served ${com.arkiv.player.dlna.DlnaXml.safeUrl(path)} in ${android.os.SystemClock.elapsedRealtime() - startedAt}ms",
+                )
             }
         }.onFailure { e ->
-            runCatching { android.util.Log.w("LiveHlsProxy", "handle() failed: ${e.message}") }
+            runCatching { LiveLog.w("handle() failed: ${e.message}") }
+            // Also under the DLNA tag: a segment cut off mid-transfer is often the TV hanging up on a stream it can't take.
+            if (rendererRequest) {
+                runCatching { com.arkiv.player.dlna.DlnaLog.w("live-proxy: TV request failed: ${e.javaClass.simpleName}: ${e.message}") }
+            }
         }
     }
 

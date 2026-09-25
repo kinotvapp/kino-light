@@ -54,6 +54,16 @@
         </service>
 
         <!--
+            Keeps the phone's DLNA proxy (and WiFi) alive while a TV plays from it, so leaving the app doesn't
+            cut the cast. Started only by DlnaController; not exported. The type must be declared here since
+            API 34, same as the other foreground services in this manifest.
+        -->
+        <service
+            android:name=".dlna.DlnaCastService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
+        <!--
             WorkManager's foreground service ships from the library WITHOUT
             `foregroundServiceType`, and since API 34 Android requires the type that
             `setForeground()` asks for to be declared on the <service> element. Without this, the

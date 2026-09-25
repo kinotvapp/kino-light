@@ -35,6 +35,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.mediarouter.app.MediaRouteButton
 import com.arkiv.player.dlna.DlnaController
 import com.arkiv.player.dlna.DlnaDevice
+import com.arkiv.player.dlna.DlnaLog
+import com.arkiv.player.dlna.DlnaXml
 import com.arkiv.player.playback.LiveHlsProxy
 import com.arkiv.player.playback.SourceKind
 import com.arkiv.player.ui.theme.ArkivRed
@@ -168,20 +170,46 @@ internal suspend fun sendToRenderer(
     lanIp: () -> String?,
     liveHlsProxy: LiveHlsProxy,
 ): Boolean = when (ep?.kind) {
-    null -> false
+    null -> {
+        DlnaLog.w("sendToRenderer: nothing is playing (no item)")
+        false
+    }
 
     SourceKind.LIVE -> {
-        val lan = lanIp()?.let { liveHlsProxy.lanUrl(it) }
+        val ip = lanIp()
+        val lan = ip?.let { liveHlsProxy.lanUrl(it) }
+        DlnaLog.i("sendToRenderer: kind=LIVE title='${ep.title.take(40)}' lanIp=${ip ?: "NONE"} liveProxyUrl=${DlnaXml.safeUrl(lan)}")
         if (lan != null) {
             withContext(Dispatchers.IO) {
                 dlna.playRawUrl(device, lan, ep.title, "application/vnd.apple.mpegurl")
             }
         } else {
+            // The proxy has no LAN URL to hand out (no WiFi/LAN address, or the live proxy isn't listening).
+            withContext(Dispatchers.IO) {
+                dlna.failedBeforeSending(
+                    device, kind = "live-hls", stage = "no_lan_url",
+                    userMessage = "No se pudo obtener la dirección de red del teléfono para enviar el canal",
+                    detail = "lanIp=${ip ?: "none"} proxyUrl=none",
+                )
+            }
             false
         }
     }
 
-    else -> withContext(Dispatchers.IO) { dlna.setUrlAndPlay(device, ep.castUrl ?: ep.mediaUrl, ep.title) }
+    else -> {
+        // Which URL the TV's proxy will pull from, and why it matters: `castUrl` (a CDN URL that may need
+        // headers the proxy doesn't send) wins over `mediaUrl` (our own loopback proxy, which adds them).
+        // Magis: `castUrl` is the raw CDN url, which answers 401 without the `Content-Auth`/`Content-License`
+        // headers (see PlayerViewModel's note on it). The DLNA proxy doesn't send them either, so it must
+        // pull from `mediaUrl`, OUR local proxy, which adds them. Everything else keeps `castUrl` first
+        // (a downloaded file's `castUrl` is the local file server, reachable and header-free).
+        val source = if (ep.kind == SourceKind.MAGIS) ep.mediaUrl else (ep.castUrl ?: ep.mediaUrl)
+        DlnaLog.i(
+            "sendToRenderer: kind=${ep.kind} title='${ep.title.take(40)}' chose=${if (source == ep.mediaUrl) "mediaUrl" else "castUrl"} " +
+                "source=${DlnaXml.safeUrl(source)} (castUrl=${DlnaXml.safeUrl(ep.castUrl)})",
+        )
+        withContext(Dispatchers.IO) { dlna.setUrlAndPlay(device, source, ep.title) }
+    }
 }
 
 /** "Playing on <TV>" bar with pause/stop, visible while a renderer is active. */

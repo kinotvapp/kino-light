@@ -4028,7 +4028,13 @@ private fun PlayerContent(
         // Live via ExoPlayer (Task 1, light-magis pruning) is no longer in `playlist`: it falls to
         // `liveItem`, which carries the same `kind = SourceKind.LIVE` that `sendToRenderer` needs
         // to resolve the proxy's LAN URL (it doesn't use `ep.mediaUrl`/`castUrl` for live).
-        val ep = playlistRef.value?.items?.getOrNull(currentIndex) ?: liveItem
+        // Magis titles (the bulk of the catalog: movies AND series) live in `magisItem`, NOT in the playlist,
+        // exactly as the Chromecast path above knows. This line used to look only at the playlist and live,
+        // so for a Magis title `ep` was null and DLNA never even started ("nothing is playing"), found from
+        // the DLNA log on a real TV.
+        val ep = magisItem?.takeIf { it.kind == SourceKind.MAGIS }
+            ?: playlistRef.value?.items?.getOrNull(currentIndex)
+            ?: liveItem
         controller.pause()
         scope.launch {
             val ok = sendToRenderer(dlna, device, ep, { graph.lanIp() }, graph.liveHlsProxy)
@@ -4036,9 +4042,11 @@ private fun PlayerContent(
                 dlnaState.markActive(device)
             } else {
                 android.widget.Toast.makeText(
+                // The specific reason when we have one (the TV's UPnP error, an unsupported local file, no WiFi
+                // address...): "check your WiFi" was what it said for EVERY failure, whatever the cause.
                     context,
-                    "No se pudo castear (revisa el WiFi)",
-                    android.widget.Toast.LENGTH_SHORT,
+                    dlna.lastError ?: "No se pudo castear (revisa el WiFi)",
+                    android.widget.Toast.LENGTH_LONG,
                 ).show()
             }
         }

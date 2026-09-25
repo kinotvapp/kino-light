@@ -68,3 +68,24 @@ class EffectsReduced(message: String) : Exception(message)
  *  real "slow device" thresholds from field data. The message is constant; the figures are Sentry extras
  *  (see `Crash.report`), so one GlitchTip issue collects every device. See `StartupProfiler`. */
 class StartupProfile(message: String) : Exception(message)
+
+/** A DLNA cast to a TV failed or died. The message carries only the stage (`dlna cast failed: set_uri`,
+ *  `renderer_never_fetched`, `stopped_early`…), so GlitchTip keeps one issue per stage; the details
+ *  (renderer manufacturer/model, kind of cast, MIME, HTTP and UPnP error codes, whether the TV ever
+ *  requested the media, what it can play) travel as Sentry extras, and the cast's log lines ride along as
+ *  breadcrumbs. Reported once per cast. See `DlnaController`. */
+class DlnaFailure(message: String) : Exception(message)
+
+/** A live channel played badly enough to notice: it froze waiting for data, dropped frames, glitched the audio
+ *  or failed to load segments. The message is constant; why (`reason`), the channel, the device and the counts
+ *  (stalls and their length, dropped frames, audio underruns, load errors, segment load times, decoder and
+ *  whether it is software) travel as Sentry extras, and the channel's `ArkivLive` log lines ride along as
+ *  breadcrumbs. Reported once per viewing session. See `LiveQualityMonitor`. */
+class LivePlaybackQuality(message: String) : Exception(message)
+
+/**
+ * A live channel showed no picture (or a frozen one) on its hardware video decoder and was reopened with a software
+ * one. The extras name the decoder and the device, so the chips that can't take the live streams show up on their
+ * own instead of by user reports of "sound but no image".
+ */
+class LiveDecoderSwitched(message: String) : Exception(message)
