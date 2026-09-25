@@ -8,8 +8,18 @@ import java.io.File
 enum class PluginStatus { ACTIVE, DISABLED, UNRESPONSIVE, UPDATE_PENDING, DAMAGED, NEEDS_SETUP }
 
 /**
- * [userHosts] and [missingSettings] come from the plugin's `config.json` (never the Keystore), read
- * when the registry reloads: every screen and call reads them from here, with no IO of its own.
+ * [userHosts], [missingSettings] and [configRevision] come from the plugin's `config.json` (never
+ * the Keystore — see `PluginConfigStore.missing`'s KDoc), read when the registry reloads: every
+ * screen and call reads them from here, with no IO of its own.
+ *
+ * [configRevision] exists ONLY so this data class's own structural equality changes on every
+ * settings save (fix round 2, finding 4): `PluginRegistry.reload()` sets a brand-new
+ * `List<InstalledPlugin>` on a `MutableStateFlow`, and `StateFlow` silently drops an assignment
+ * that's `.equals()` the current one — a save that only changes the user/password left [record],
+ * [userHosts] and [missingSettings] ALL bit-for-bit equal, so nothing downstream (`pluginsChanged`,
+ * Home) ever saw it change. The in-memory, non-persisted counter fix round 1 tried instead
+ * (`AppGraph.pluginSessionRevision`) can't fix this: a value that lives OUTSIDE the compared data
+ * class can never make the comparison itself come out different.
  */
 data class InstalledPlugin(
     val manifest: PluginManifest,
@@ -17,6 +27,7 @@ data class InstalledPlugin(
     val iconFile: File?,
     val userHosts: List<UserHost> = emptyList(),
     val missingSettings: List<String> = emptyList(),
+    val configRevision: Int = 0,
 ) {
     val id: String get() = manifest.id
 
@@ -40,14 +51,12 @@ data class InstalledPlugin(
     val isUsable: Boolean get() = record.enabled && !record.damaged && !record.unresponsive
 
     /**
-     * The key AppGraph's `pluginsChanged` uses with `distinctUntilChanged`: two states with the
-     * same version, [needsSetup], [userHosts] AND [revision] are the same as far as Home is
-     * concerned. [revision] is AppGraph's per-plugin settings-save counter (bumped by
-     * `forgetPluginSession`) — without it, a settings save that only changes the user/password
-     * (same version, same hosts, already not missing anything) would produce the SAME key as
-     * before the save, and Home would never re-fetch (fix round 1, finding 4).
+     * The key AppGraph's `pluginsChanged` uses with `distinctUntilChanged`, mapped from whatever
+     * `registry.plugins` actually emits. [configRevision] is what makes this differ on ANY settings
+     * save, not just one that changes hosts (fix round 2, finding 4) — see this class's own KDoc
+     * for why that has to be a field of `InstalledPlugin` itself, not a side-channel value.
      */
-    fun changeKey(revision: Int): String = "${record.version}|$needsSetup|$userHosts|$revision"
+    fun changeKey(): String = "${record.version}|$needsSetup|$userHosts|$configRevision"
 }
 
 /** Whether a saved plugin title can play now, and the plugin's name for the message if not. */
@@ -77,8 +86,10 @@ interface PluginPlayback {
  * The installed plugins as a [StateFlow], rebuilt from disk on every change: search, Home and
  * Settings all react to it without a restart.
  */
-/** What a plugin's `config.json` says about it: its typed servers and the required settings still empty. */
-data class PluginSetupState(val userHosts: List<UserHost> = emptyList(), val missing: List<String> = emptyList())
+/** What a plugin's `config.json` says about it: its typed servers, the required settings still
+ *  empty, and the save-revision (bumped by `PluginConfigStore.save`; see `InstalledPlugin`'s KDoc
+ *  on [InstalledPlugin.configRevision] for why this field exists). */
+data class PluginSetupState(val userHosts: List<UserHost> = emptyList(), val missing: List<String> = emptyList(), val revision: Int = 0)
 
 class PluginRegistry(
     private val store: PluginStore,
@@ -92,7 +103,7 @@ class PluginRegistry(
         _plugins.value = store.list()
             .map { stored ->
                 val state = runCatching { setup(stored) }.getOrDefault(PluginSetupState())
-                InstalledPlugin(stored.manifest, stored.record, stored.iconFile, state.userHosts, state.missing)
+                InstalledPlugin(stored.manifest, stored.record, stored.iconFile, state.userHosts, state.missing, state.revision)
             }
             .sortedBy { it.manifest.name.lowercase() }
     }

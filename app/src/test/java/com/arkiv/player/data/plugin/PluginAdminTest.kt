@@ -153,6 +153,34 @@ class PluginAdminTest {
     }
 
     /**
+     * Fix round 2, finding 3b's wiring: `afterSessionClosed` is a SEPARATE callback from
+     * `forgetSession`, called once, after it -- source order in `saveSettings` places it after
+     * `runtimes.close()` too (read that method's own comment for why: this test can't reliably
+     * observe `runtimes.close`'s asynchronous internal effect via `Dispatchers.Unconfined`'s
+     * nested-dispatch queueing, so it isn't asserted here). It exists specifically to bump the
+     * Home-refresh session revision a second time once the pool's slot is guaranteed gone -- see
+     * `PluginHomeRowsTest`'s "window b" test, which proves that END-TO-END property directly.
+     */
+    @Test fun `saveSettings calls afterSessionClosed exactly once, after forgetSession`() = runBlocking {
+        publish("1.0.0", passwordSetting)
+        admin.install(admin.preview("o/r"))
+        pool.call("demo", "search", "{}", 1_000)
+        registryAtClose.clear()
+        val order = mutableListOf<String>()
+        val tracking = DefaultPluginAdmin(
+            registry, installer, pool, config,
+            forgetSession = { order += "forget" },
+            afterSessionClosed = { order += "afterClose" },
+            io = Dispatchers.Unconfined,
+        )
+        assertEquals(null, tracking.saveSettings("demo", mapOf("password" to "s3cr3t")))
+        assertEquals(listOf("forget", "afterClose"), order)
+        // runtimes.close() itself already ran by the time saveSettings returns (the fake runtime's
+        // own close() side effect, same evidence the OTHER tests in this file already rely on).
+        assertEquals(listOf("1.0.0"), registryAtClose)
+    }
+
+    /**
      * Fix round 1, finding 6: `install`'s `registry.reload()` -- which now reads config.json for
      * EVERY plugin -- must run on [io], not on whatever dispatcher called `install` (Main, via
      * `PluginsViewModel.busy`/`viewModelScope`). Uses real dispatchers (not `Unconfined`, which

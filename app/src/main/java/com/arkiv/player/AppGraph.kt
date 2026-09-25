@@ -254,6 +254,9 @@ class AppGraph(context: Context) {
             repository
             liveCatalog
             magisHomeCatalog
+            // Before `contentSource`/`pluginRegistry` (both force pluginRegistry's first reload()):
+            // see reconcilePluginSecrets's KDoc for why this order matters.
+            reconcilePluginSecrets()
             contentSource
             pluginRegistry
             magisAccount
@@ -369,6 +372,19 @@ class AppGraph(context: Context) {
     }
 
     /**
+     * The ONLY place `reload()`'s Keystore correctness (finding 5) actually touches the Keystore
+     * (fix round 2, new breakage 1): `warmUpCredentials()` calls this on IO, BEFORE `contentSource`
+     * or `pluginRegistry` are touched (both force `pluginRegistry`'s first `reload()`), so that
+     * first reload -- and every one after it, from ANY thread, `reload()` itself never does
+     * Keystore IO -- already sees `config.json`'s "secrets" lists telling the truth. Also run once
+     * per [checkPluginUpdates] cycle, so a Keystore loss mid-session (not just across a restart)
+     * eventually self-corrects too. See `PluginConfigStore.reconcileSecrets`'s KDoc.
+     */
+    private fun reconcilePluginSecrets() {
+        pluginStore.list().forEach { stored -> pluginConfigStore.reconcileSecrets(stored.manifest.id, stored.manifest.settings) }
+    }
+
+    /**
      * The player's client for one plugin stream, gated to [hosts] (the approved ones plus the
      * servers typed in its settings, carried in `PlayerData.pluginHosts`) on every request and
      * redirect hop. See PluginStreamHttp.
@@ -383,14 +399,24 @@ class AppGraph(context: Context) {
      *  See [PluginJarRegistry]'s KDoc for why a runtime's own close() must never touch this. */
     private val pluginJars = PluginJarRegistry()
 
-    /** Bumped by [forgetPluginSession]: lets a Home refresh discard a `home()` answer that was still
-     *  in flight when the session it belongs to was forgotten (fix round 1, finding 3), and makes
-     *  ANY settings save -- not just one that changes hosts -- re-trigger Home ([pluginsChanged]
-     *  below, finding 4). Process-lifetime only: a cold start already re-fetches Home from scratch,
-     *  so nothing here needs to survive a restart. */
+    /**
+     * Bumped by [forgetPluginSession] AND once more, separately, right after a settings change's
+     * runtime close actually removes the pool's slot (`afterSessionClosed`, wired into
+     * [pluginAdmin]) — lets [pluginHomeRows] discard a `home()` answer that belongs to a session
+     * already forgotten, even one that started before the forget and returns after both bumps (fix
+     * round 1 finding 3, hardened in round 2: a single bump left a narrow gap a call could still
+     * slip through — see [PluginAdmin.saveSettings]'s own comment for the exact race).
+     *
+     * This is DELIBERATELY separate from [InstalledPlugin.configRevision] (persisted, drives
+     * [pluginsChanged] below): that one exists so the registry's `StateFlow` itself visibly
+     * changes on a save (finding 4); this one exists to identify which RUNTIME INSTANCE a live
+     * call actually ran against, which is inherently a live/in-memory question, not a disk one —
+     * process-lifetime only, nothing here needs to (or should) survive a restart.
+     */
     private val pluginSessionRevisions = java.util.concurrent.ConcurrentHashMap<String, Int>()
 
     private fun pluginSessionRevision(id: String): Int = pluginSessionRevisions.getOrDefault(id, 0)
+    private fun bumpPluginSessionRevision(id: String) { pluginSessionRevisions.merge(id, 1, Int::plus) }
 
     /**
      * Every plugin call goes through here: a plugin whose required settings are empty is refused
@@ -473,20 +499,24 @@ class AppGraph(context: Context) {
     }
 
     val pluginAdmin: PluginAdmin by lazy {
-        DefaultPluginAdmin(pluginRegistry, pluginInstaller, pluginRuntimes, pluginConfigStore, forgetSession = ::forgetPluginSession)
+        DefaultPluginAdmin(
+            pluginRegistry, pluginInstaller, pluginRuntimes, pluginConfigStore,
+            forgetSession = ::forgetPluginSession,
+            afterSessionClosed = ::bumpPluginSessionRevision,
+        )
     }
 
     /**
      * After a settings change (spec §1.3): a new user or server must not inherit the old session.
      * The live jar is retired (a call still finishing can't write it back), its file and the Home
-     * cache (rows of the old account) are deleted, and the session revision is bumped so a `home()`
-     * answer still in flight for the OLD session gets discarded instead of cached (finding 3) and
-     * so Home re-fetches even when only the user/password changed, not the hosts (finding 4). Runs
-     * on IO (DefaultPluginAdmin.saveSettings) -- see that method for why this must run BEFORE the
-     * runtime is actually closed, not after.
+     * cache (rows of the old account) are deleted, and the session revision is bumped (the FIRST of
+     * two bumps -- see [pluginSessionRevisions]'s KDoc and [DefaultPluginAdmin.saveSettings]) so a
+     * `home()` answer still in flight for the OLD session gets discarded instead of cached (finding
+     * 3). Runs on IO (DefaultPluginAdmin.saveSettings) -- see that method for why this must run
+     * BEFORE the runtime is actually closed, not after.
      */
     private fun forgetPluginSession(id: String) {
-        pluginSessionRevisions.merge(id, 1, Int::plus)
+        bumpPluginSessionRevision(id)
         pluginJars.forget(id)
         java.io.File(pluginStore.dataDir(id), PluginCookies.FILE_NAME).delete()
         java.io.File(pluginStore.dataDir(id), "home.json").delete()
@@ -503,20 +533,24 @@ class AppGraph(context: Context) {
     }
 
     /**
-     * Emits when the set (or versions, settings state or session) of usable plugins changes: Home
-     * re-asks for rows then — right after a plugin is configured or its server changes, AND after
-     * any OTHER settings save (e.g. only the user/password), via [pluginSessionRevision] (finding 4:
-     * without it, changing only the account left all three other fields unchanged and Home never
-     * re-fetched).
+     * Emits when the set (or versions, settings state or config revision) of usable plugins
+     * changes: Home re-asks for rows then — right after a plugin is configured or its server
+     * changes, AND after any OTHER settings save (e.g. only the user/password), via
+     * `InstalledPlugin.configRevision` inside `changeKey()` (finding 4: a save that only changed
+     * the account used to leave every other field bit-for-bit equal, so `registry.plugins` itself
+     * never emitted and this never re-asked — see `InstalledPlugin`'s own KDoc for the root cause).
      */
     val pluginsChanged: kotlinx.coroutines.flow.Flow<List<Pair<String, String>>>
         get() = pluginRegistry.plugins
-            .map { list -> list.filter { it.isUsable }.map { it.id to it.changeKey(pluginSessionRevision(it.id)) } }
+            .map { list -> list.filter { it.isUsable }.map { it.id to it.changeKey() } }
             .distinctUntilChanged()
 
     /** UpdateWorker's plugin step: each plugin at most once per 24 h; see PluginInstaller.checkDueUpdates. */
     suspend fun checkPluginUpdates() {
-        val outcomes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { pluginInstaller.checkDueUpdates() }
+        val outcomes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            reconcilePluginSecrets() // catches a Keystore loss that happened mid-session too
+            pluginInstaller.checkDueUpdates()
+        }
         // Reload before closing, as in DefaultPluginAdmin: never a new script with the old hosts.
         pluginRegistry.reload()
         outcomes.filter { it.second is UpdateOutcome.Applied }.forEach { pluginRuntimes.close(it.first) }

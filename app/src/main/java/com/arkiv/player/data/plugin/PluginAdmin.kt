@@ -26,7 +26,9 @@ interface PluginAdmin {
 
 /**
  * [forgetSession] runs after a settings change: AppGraph retires the plugin's cookie jar and
- * deletes its cookies and Home cache. Config and Keystore work runs on [io], never on Main.
+ * deletes its cookies and Home cache. [afterSessionClosed] runs once more, right after the OLD
+ * runtime's pool slot is actually gone (fix round 2, finding 3b) — see [saveSettings]'s own
+ * comment for why one bump isn't enough. Config and Keystore work runs on [io], never on Main.
  */
 class DefaultPluginAdmin(
     private val registry: PluginRegistry,
@@ -34,6 +36,7 @@ class DefaultPluginAdmin(
     private val runtimes: PluginRuntimePool,
     private val config: PluginConfigStore,
     private val forgetSession: (pluginId: String) -> Unit = {},
+    private val afterSessionClosed: (pluginId: String) -> Unit = {},
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : PluginAdmin {
     override val plugins: StateFlow<List<InstalledPlugin>> get() = registry.plugins
@@ -95,9 +98,17 @@ class DefaultPluginAdmin(
         //  3. runtimes.close() LAST: only once the registry is current and the old session is fully
         //     forgotten does the pool's slot come down, so any runtime opened after this point is
         //     unambiguously the new session's, with a fresh jar nothing above could have touched.
+        //  4. afterSessionClosed() bumps the Home-refresh session revision a SECOND time (fix round
+        //     2, finding 3b): a call that read the revision forgetSession() already bumped, but
+        //     reached the runtime pool BEFORE runtimes.close() above actually removed the slot,
+        //     still runs against the OLD runtime -- and since the revision hadn't moved again
+        //     during that call, its own in-flight check alone wouldn't catch it. This second bump,
+        //     guaranteed to land after the slot is gone, makes sure nothing that could have started
+        //     against the pre-close runtime can ever pass a POST-close revision check again.
         registry.reload()
         forgetSession(id)
         runtimes.close(id)
+        afterSessionClosed(id)
         null
     }
 }

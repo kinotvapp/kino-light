@@ -50,6 +50,20 @@ class PluginConfigStoreTest {
         assertEquals(listOf(UserHost("http", "192.168.1.10", 8096)), store.setupState("jf", settings).userHosts)
     }
 
+    /** Fix round 2, finding 4's building block: [PluginSetupState.revision] must move on EVERY
+     *  successful save, since it's what makes `InstalledPlugin` (and so the registry's `StateFlow`)
+     *  visibly change even when a save touches only the password. */
+    @Test fun `save bumps the revision on every successful save`() {
+        assertNull(store.save("jf", settings, full))
+        val r1 = store.setupState("jf", settings).revision
+        assertNull(store.save("jf", settings, full + ("password" to "different")))
+        val r2 = store.setupState("jf", settings).revision
+        assertTrue("revision must move: was $r1, now $r2", r2 > r1)
+        // A refused save must not bump it.
+        store.save("jf", settings, full + ("password" to "  "))
+        assertEquals(r2, store.setupState("jf", settings).revision)
+    }
+
     @Test fun `a required value left blank refuses the whole save`() {
         assertEquals("Completa \"Contraseña\"", store.save("jf", settings, full + ("password" to "  ")))
         assertFalse(File(tmp.root, "jf/config.json").exists())
@@ -65,23 +79,54 @@ class PluginConfigStoreTest {
     }
 
     /**
-     * Fix round 1, finding 5: `missing()` must not trust `config.json`'s "secrets" name-list alone.
-     * A Keystore reset, a restored backup (`EncryptedSecretStore`'s `discardUndecryptable`) or the
-     * in-memory fallback after a restart can lose a saved password silently -- `config.json` still
-     * lists it as set, but the secret store itself can no longer produce a value for it. Without
-     * this check the plugin would keep reading as fully configured ("Activo") and simply run with
-     * the password absent, instead of showing "Falta configurar" as `EncryptedSecretStore`'s own
-     * KDoc claims.
+     * Fix round 2, new breakage 1: round 1's finding-5 fix made `missing()` ask the [SecretStore]
+     * directly, which meant `PluginRegistry.reload()` -- reachable from Main via
+     * `graph.pluginsChanged`/`graph.pluginRegistry`, read directly from `viewModelFactory`
+     * initializers during composition (HomeScreen/LibraryScreen/TvHomeScreen/PlayerScreen) -- could
+     * end up opening the Keystore on the UI thread. Proven here with a trap store that fails the
+     * test the instant `.get()` is called from `missing()`/`setupState()`: it must never happen,
+     * no matter what the file says.
      */
-    @Test fun `a password the secret store can no longer produce reads back as missing, not configured`() {
+    @Test fun `missing and setupState never touch the secret store, regardless of what config json lists`() {
+        val trap = object : SecretStore {
+            override fun get(key: String): String? = throw AssertionError("missing()/setupState() must never read the secret store: $key")
+            override fun put(key: String, value: String) = throw AssertionError("unexpected write: $key")
+            override fun remove(key: String) = throw AssertionError("unexpected remove: $key")
+        }
+        val trapped = PluginConfigStore({ id -> File(tmp.root, id) }, trap)
+        File(tmp.root, "jf").mkdirs()
+        File(tmp.root, "jf/config.json").writeText(
+            """{"values":{"server":"http://192.168.1.10:8096","user":"ana"},"secrets":["password"],"revision":1}""",
+        )
+        // Reaching this line without the trap firing IS the assertion; these just confirm the
+        // (Keystore-free) answer is still correct.
+        assertEquals(emptyList<PluginSetting>(), trapped.missing("jf", settings))
+        assertTrue(trapped.setupState("jf", settings).missing.isEmpty())
+    }
+
+    /**
+     * Fix round 2, finding 5 (the real fix, moved out of the reload()-reachable path above): a
+     * password `config.json` lists as set but the [SecretStore] can no longer actually produce (a
+     * Keystore reset, a restored backup -- `EncryptedSecretStore`'s KDoc) is caught here, off the
+     * hot path, by rewriting `config.json`'s own "secrets" list to drop it.
+     */
+    @Test fun `reconcileSecrets drops a password the secret store can no longer produce`() {
         assertNull(store.save("jf", settings, full))
         assertEquals(emptyList<PluginSetting>(), store.missing("jf", settings))
-        // config.json still lists "password" as set; the secret store itself lost it.
         secrets.map.remove("plugin.jf.password")
+        // Not caught by the cheap check alone (proven above) -- reconciliation is what fixes it.
+        assertEquals(emptyList<PluginSetting>(), store.missing("jf", settings))
+        store.reconcileSecrets("jf", settings)
         assertEquals(listOf("password"), store.missing("jf", settings).map { it.key })
         assertEquals(listOf("password"), store.setupState("jf", settings).missing)
-        // read() was already correct here: the plugin simply gets nothing for it.
-        assertNull(store.read("jf", settings).values["password"])
+        assertFalse(File(tmp.root, "jf/config.json").readText().contains("\"password\""))
+    }
+
+    @Test fun `reconcileSecrets is a no-op, no write, when nothing has actually changed`() {
+        assertNull(store.save("jf", settings, full))
+        val before = File(tmp.root, "jf/config.json").readText()
+        store.reconcileSecrets("jf", settings)
+        assertEquals(before, File(tmp.root, "jf/config.json").readText())
     }
 
     @Test fun `clearing an optional password removes it from the secret store`() {

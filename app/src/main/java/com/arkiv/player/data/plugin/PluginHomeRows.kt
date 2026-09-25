@@ -36,16 +36,28 @@ class PluginHomeRows(
     private val ttlMs: Long = 6 * 60 * 60 * 1000L,
     /**
      * Bumped whenever a plugin's session is forgotten (a settings change — see AppGraph's
-     * `forgetPluginSession`). A `home()` call still in flight when that happens belongs to the OLD
-     * session: [refresh] compares the revision before and after the call and discards (never shows,
-     * never caches) an answer whose revision moved — otherwise the old account's rows could be
-     * written to `home.json` right after it was deleted, and served as "fresh" for up to [ttlMs]
-     * (fix round 1, finding 3). Constant by default: nothing is ever discarded.
+     * `forgetPluginSession`/`afterSessionClosed`, bumped TWICE per settings save). A `home()` call
+     * still in flight when that happens belongs to the OLD session: [refresh] compares the revision
+     * before and after the call and discards (never shows, never caches) an answer whose revision
+     * moved. That in-flight check alone isn't sufficient (fix round 2, finding 3) — see [Cached]'s
+     * KDoc for why the value is also stamped into the cache file itself. Constant by default:
+     * nothing is ever discarded.
      */
     private val sessionRevision: (pluginId: String) -> Int = { 0 },
     private val log: (String) -> Unit = { android.util.Log.w("KinoPlugin", it) },
 ) {
-    private data class Cached(val fetchedAt: Long, val json: String)
+    /**
+     * [revision] is stamped at write time and re-checked at EVERY read (both the instant-paint
+     * pass and [refresh]'s own TTL check) against the CURRENT [sessionRevision] — not just checked
+     * once around the `home()` call. This is what actually closes finding 3 (fix round 2): the
+     * in-flight check in [refresh] alone only catches a stale write if the session revision has
+     * ALREADY moved by the time the call returns; a write that lands in the narrow gap between two
+     * bumps (see AppGraph's `forgetPluginSession` / `afterSessionClosed`) could still pass that
+     * check and reach the file. Stamping the revision makes staleness self-detected on the very
+     * next read, however the write happened to slip through — the old account's rows can be
+     * written once, at most, and are never trusted again afterward, let alone for up to [ttlMs].
+     */
+    private data class Cached(val fetchedAt: Long, val revision: Int, val json: String)
 
     companion object {
         /** A cache file bigger than this is neither written nor read (it's deleted instead). */
@@ -60,7 +72,9 @@ class PluginHomeRows(
             return@flow
         }
         val cached = targets.associate { it.id to readCache(it.id) }
-        emit(assemble(targets) { p -> cached[p.id]?.let { parse(p, it.json) }.orEmpty() })
+        // The instant-paint pass shows even a stale-by-TTL cache, but never one stamped with a
+        // revision that no longer matches: that isn't "old", it's a DIFFERENT session's data.
+        emit(assemble(targets) { p -> cached[p.id]?.takeIf { it.revision == sessionRevision(p.id) }?.let { parse(p, it.json) }.orEmpty() })
         val fresh = coroutineScope {
             targets.map { p -> async { p.id to refresh(p, cached[p.id]) } }.awaitAll().toMap()
         }
@@ -68,7 +82,7 @@ class PluginHomeRows(
     }
 
     private suspend fun refresh(p: InstalledPlugin, cached: Cached?): List<PluginRow> {
-        if (cached != null && clock() - cached.fetchedAt < ttlMs) return parse(p, cached.json)
+        if (cached != null && cached.revision == sessionRevision(p.id) && clock() - cached.fetchedAt < ttlMs) return parse(p, cached.json)
         val revision = sessionRevision(p.id)
         return try {
             val json = caller.call(p.id, "home", "null", PluginContentSource.HOME_TIMEOUT_MS)
@@ -80,7 +94,7 @@ class PluginHomeRows(
             }
             // Parsed BEFORE it's cached: an answer that can't be read must never be persisted and
             // re-read on every Home open. Nothing usable, nothing cached: the next Home asks again.
-            parse(p, json).also { rows -> if (rows.isNotEmpty()) writeCache(p.id, json) }
+            parse(p, json).also { rows -> if (rows.isNotEmpty()) writeCache(p.id, revision, json) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -116,12 +130,12 @@ class PluginHomeRows(
             return@runCatching null
         }
         val o = JSONObject(file.readText())
-        Cached(o.getLong("fetchedAt"), o.getString("json"))
+        Cached(o.getLong("fetchedAt"), o.optInt("revision", 0), o.getString("json"))
     }.getOrNull()
 
-    private fun writeCache(pluginId: String, json: String) {
+    private fun writeCache(pluginId: String, revision: Int, json: String) {
         runCatching {
-            val bytes = JSONObject().put("fetchedAt", clock()).put("json", json).toString().toByteArray(Charsets.UTF_8)
+            val bytes = JSONObject().put("fetchedAt", clock()).put("revision", revision).put("json", json).toString().toByteArray(Charsets.UTF_8)
             if (bytes.size > MAX_CACHE_BYTES) {
                 log("[$pluginId] home answer too big to cache (${bytes.size} bytes)")
                 return@runCatching

@@ -1,7 +1,10 @@
 package com.arkiv.player.data.plugin
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -126,5 +129,91 @@ class PluginHomeRowsTest {
         ).rows().toList().last()
         assertEquals(listOf("top"), rows.map { it.id })
         assertTrue(File(tmp.root, "a/home.json").exists())
+    }
+
+    /**
+     * Fix round 2, finding 3 (still open after round 1): the SAME leak, exercised end to end with a
+     * call that genuinely STRADDLES a settings change — started before the forget sequence begins
+     * and returning only once it has fully finished (both revision bumps AND the home.json delete,
+     * mirroring AppGraph's `forgetPluginSession` + `DefaultPluginAdmin.saveSettings`'s
+     * `afterSessionClosed`) — not just a check that call order or a key string changed. This is
+     * exactly what a Home refresh in flight during a real settings save can hit.
+     */
+    @Test fun `a home call that straddles a full forget never leaves the old account's rows in home json`() = runTest {
+        var revision = 0
+        val cacheFile = File(tmp.root, "a/home.json")
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val caller = object : PluginCaller {
+            override suspend fun call(pluginId: String, function: String, argJson: String, timeoutMs: Long): String {
+                started.complete(Unit)
+                release.await()
+                return rowJson
+            }
+        }
+        val homeRows = PluginHomeRows(
+            { listOf(plugin("a")) }, caller, cacheFileFor = { cacheFile }, clock = { now }, sessionRevision = { revision }, log = {},
+        )
+        val collected = mutableListOf<List<PluginHomeRow>>()
+        val job = launch { homeRows.rows().collect { collected += it } }
+        started.await()
+
+        // The FULL forget sequence, entirely WHILE the call above is still suspended:
+        revision++            // forgetPluginSession's own bump
+        cacheFile.delete()    // forgetPluginSession's delete (nothing there yet the first time -- fine)
+        revision++            // afterSessionClosed's second bump, guaranteed after runtimes.close()
+
+        release.complete(Unit) // only now does the call return -- entirely AFTER the forget completed
+        job.join()
+
+        assertFalse("A's rows must never land in home.json once a forget has fully completed", cacheFile.exists())
+    }
+
+    /**
+     * Fix round 2, finding 3b, isolated precisely: a call whose OWN revision capture already sees
+     * the FIRST forget bump (it started after `forgetPluginSession` ran) but returns before the
+     * SECOND bump (`afterSessionClosed`, after `runtimes.close()`) has a revision that never moves
+     * DURING the call — so the in-flight check in [refresh] alone (round 1's whole mechanism) sees
+     * no change and would wrongly cache it as current. This is exactly the "still executes on the
+     * OLD runtime R1" scenario the round 2 review traced. Proves the cache-stamp backstop (finding
+     * 3a) is what actually catches it, on the very next read, once the second bump has happened.
+     */
+    @Test fun `a call whose revision never moves during it (window b) is still not trusted on the next read`() = runTest {
+        var revision = 1 // the first forget bump already happened before this call is even made
+        val cacheFile = File(tmp.root, "a/home.json")
+        val firstCall = CountingCaller { rowJson }
+        PluginHomeRows({ listOf(plugin("a")) }, firstCall, cacheFileFor = { cacheFile }, clock = { now }, sessionRevision = { revision }, log = {})
+            .rows().toList()
+        // Round 1's in-flight check alone would NOT have caught this: captured revision (1) never
+        // changed during the call, so it wrote home.json stamped with revision=1.
+        assertTrue(cacheFile.exists())
+
+        revision = 2 // the second bump (afterSessionClosed), after runtimes.close() completed
+
+        val secondCall = CountingCaller { rowJson }
+        val emissions = PluginHomeRows({ listOf(plugin("a")) }, secondCall, cacheFileFor = { cacheFile }, clock = { now }, sessionRevision = { revision }, log = {})
+            .rows().toList()
+        assertEquals("the stamped-stale cache must not be shown even as the instant paint", emptyList<PluginHomeRow>(), emissions.first())
+        assertEquals("a fresh call must have been made instead of trusting the stale cache", 1, secondCall.calls)
+    }
+
+    /**
+     * Fix round 2, finding 3a's actual backstop: even if a stale write somehow lands (any timing),
+     * the file's OWN stamped revision must make it self-detected as not-fresh on the very next
+     * read — independent of the in-flight check above, and independent of the TTL (this cache is
+     * timestamped "now", which the plain TTL check alone would treat as fresh).
+     */
+    @Test fun `a cache file stamped with an old revision is never trusted as fresh, even within the TTL`() = runTest {
+        val cacheFile = File(tmp.root, "a/home.json").apply { parentFile!!.mkdirs() }
+        cacheFile.writeText(JSONObject().put("fetchedAt", now).put("revision", 0).put("json", rowJson).toString())
+        val revision = 2 // the session has moved on twice since that cache was written
+        val caller = CountingCaller { rowJson }
+        val emissions = PluginHomeRows(
+            { listOf(plugin("a")) }, caller, cacheFileFor = { cacheFile }, clock = { now }, sessionRevision = { revision }, log = {},
+        ).rows().toList()
+        // Not even the instant-paint pass may show it: a revision mismatch isn't "old", it's a
+        // DIFFERENT session's data.
+        assertEquals(emptyList<PluginHomeRow>(), emissions.first())
+        assertEquals(1, caller.calls)
     }
 }
