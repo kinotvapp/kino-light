@@ -80,12 +80,15 @@ internal fun TvSettingsPlugins() {
         if (plugins.isEmpty()) Text("Todavía no tienes plugins.", color = ArkivTextSecondary)
         plugins.forEach { p ->
             Text("${p.manifest.name} · ${p.record.version} — ${pluginStatusText(p.status)}", style = MaterialTheme.typography.bodyLarge, color = Color.White)
-            Text("Se conecta con: ${p.record.hosts.joinToString(", ")}", style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary)
+            Text("Se conectará a: ${p.hosts.labels.joinToString(", ")}", style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary)
             if (rowMessageId == p.id) {
                 state.message?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = Color.White) }
             }
             if (p.status != PluginStatus.DAMAGED) {
                 TvActionOption(label = "${p.manifest.name}: ${if (p.isUsable) "activado" else "desactivado"}") { vm.setEnabled(p.id, !p.isUsable) }
+            }
+            if (p.manifest.settings.isNotEmpty()) {
+                TvActionOption(label = "Configurar ${p.manifest.name}") { vm.openSettings(p.id) }
             }
             TvActionOption(label = if (p.status == PluginStatus.UPDATE_PENDING) "Revisar actualización de ${p.manifest.name}" else "Buscar actualización de ${p.manifest.name}") { vm.checkUpdate(p.id) }
             TvActionOption(label = "Desinstalar ${p.manifest.name}") { vm.askUninstall(p) }
@@ -94,4 +97,5 @@ internal fun TvSettingsPlugins() {
 
     state.consent?.let { PluginConsentDialog(it, onInstall = vm::confirmInstall, onCancel = vm::cancelConsent) }
     state.confirmUninstall?.let { PluginUninstallDialog(it, onConfirm = vm::confirmUninstall, onCancel = vm::cancelUninstall) }
+    state.configuring?.let { com.arkiv.player.ui.plugin.PluginConfigDialog(it, isTv = true, vm = vm) }
 }

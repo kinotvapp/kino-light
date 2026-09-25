@@ -436,6 +436,19 @@ fun ArkivRoot(
                         }
                     },
                     onNextEpisode = { goToPlayer(it) },
+                    // The player leaves: after configuring, Back returns to where the title was.
+                    onOpenPluginSettings = { id ->
+                        navController.navigate("plugin_config/${Uri.encode(id)}") {
+                            popUpTo("player/{episodeId}") { inclusive = true }
+                        }
+                    },
+                )
+            }
+            composable("plugin_config/{pluginId}") { entry ->
+                com.arkiv.player.ui.plugin.PluginConfigRoute(
+                    pluginId = Uri.decode(entry.arguments?.getString("pluginId").orEmpty()),
+                    isTv = false,
+                    onDone = { navController.popBackStack() },
                 )
             }
             composable(

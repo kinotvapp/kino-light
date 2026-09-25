@@ -79,6 +79,7 @@ fun PluginsTab() {
 
     state.consent?.let { PluginConsentDialog(it, onInstall = vm::confirmInstall, onCancel = vm::cancelConsent) }
     state.confirmUninstall?.let { PluginUninstallDialog(it, onConfirm = vm::confirmUninstall, onCancel = vm::cancelUninstall) }
+    state.configuring?.let { PluginConfigDialog(it, isTv = false, vm = vm) }
 }
 
 @Composable
@@ -102,9 +103,12 @@ private fun PluginRow(p: InstalledPlugin, busy: Boolean, message: String?, vm: P
                 onCheckedChange = { on -> vm.setEnabled(p.id, on) },
             )
         }
-        Text("Se conecta con: ${p.record.hosts.joinToString(", ")}", style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary)
+        Text("Se conectará a: ${p.hosts.labels.joinToString(", ")}", style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary)
         message?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Color.White) }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (p.manifest.settings.isNotEmpty()) {
+                TextButton(onClick = { vm.openSettings(p.id) }, enabled = !busy) { Text("Configurar") }
+            }
             TextButton(onClick = { vm.checkUpdate(p.id) }, enabled = !busy) {
                 Text(if (p.status == PluginStatus.UPDATE_PENDING) "Revisar actualización" else "Buscar actualización")
             }

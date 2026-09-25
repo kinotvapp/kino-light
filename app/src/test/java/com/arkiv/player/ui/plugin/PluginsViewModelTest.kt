@@ -7,7 +7,9 @@ import com.arkiv.player.data.plugin.InstalledRecord
 import com.arkiv.player.data.plugin.PluginAddress
 import com.arkiv.player.data.plugin.PluginAdmin
 import com.arkiv.player.data.plugin.PluginManifest
+import com.arkiv.player.data.plugin.PluginSetting
 import com.arkiv.player.data.plugin.PluginSettingsForm
+import com.arkiv.player.data.plugin.SettingType
 import com.arkiv.player.data.plugin.PluginTimeoutException
 import com.arkiv.player.data.plugin.UpdateOutcome
 import kotlinx.coroutines.CompletableDeferred
@@ -210,5 +212,68 @@ class PluginsViewModelTest {
         assertEquals("demo", rowMessagePluginId(state, listOf(installedPlugin)))
         assertNull(rowMessagePluginId(state, emptyList()))
         assertNull(rowMessagePluginId(state.copy(messagePluginId = null), listOf(installedPlugin)))
+    }
+
+    private val configurable = installedPlugin.copy(
+        manifest = manifest.copy(settings = listOf(
+            PluginSetting("server", "Servidor", SettingType.URL, required = true),
+            PluginSetting("password", "Contraseña", SettingType.PASSWORD, required = true),
+            PluginSetting("hd", "Solo HD", SettingType.TOGGLE, default = false),
+        )),
+    )
+
+    @Test fun `Configurar opens with the stored values, defaults filling the rest`() {
+        val admin = FakeAdmin().apply { form = PluginSettingsForm(configurable, mapOf("server" to "http://10.0.0.2")) }
+        val vm = vm(admin)
+        vm.openSettings("demo")
+        val draft = vm.state.value.configuring!!
+        assertEquals(mapOf("server" to "http://10.0.0.2", "password" to "", "hd" to false), draft.values)
+        assertEquals("Demo", draft.pluginName)
+    }
+
+    @Test fun `a missing required value or a loopback server is refused before anything is saved`() {
+        val admin = FakeAdmin().apply { form = PluginSettingsForm(configurable, emptyMap()) }
+        val vm = vm(admin)
+        vm.openSettings("demo")
+        vm.onSettingChange("server", "http://10.0.0.2")
+        vm.saveSettings()
+        assertEquals("Completa \"Contraseña\"", vm.state.value.configuring!!.error)
+        vm.onSettingChange("password", "x")
+        vm.onSettingChange("server", "http://127.0.0.1:8096")
+        vm.saveSettings()
+        assertTrue(vm.state.value.configuring!!.error!!.contains("no es una dirección válida"))
+        assertEquals(emptyList<Map<String, Any?>>(), admin.saved)
+    }
+
+    @Test fun `saving closes Configurar and says so on the plugin's row`() {
+        val admin = FakeAdmin().apply { form = PluginSettingsForm(configurable, emptyMap()) }
+        val vm = vm(admin)
+        vm.openSettings("demo")
+        vm.onSettingChange("server", "http://10.0.0.2:8096")
+        vm.onSettingChange("password", "s3cr3t")
+        vm.saveSettings()
+        assertNull(vm.state.value.configuring)
+        assertTrue(vm.state.value.settingsClosed)
+        assertEquals("Demo quedó configurado", vm.state.value.message)
+        assertEquals("demo", vm.state.value.messagePluginId)
+        assertEquals(listOf(mapOf<String, Any?>("server" to "http://10.0.0.2:8096", "password" to "s3cr3t", "hd" to false)), admin.saved)
+    }
+
+    @Test fun `a save the store refuses keeps Configurar open with its reason`() {
+        val admin = FakeAdmin().apply { form = PluginSettingsForm(configurable, emptyMap()); saveResult = "El plugin ya no está instalado" }
+        val vm = vm(admin)
+        vm.openSettings("demo")
+        vm.onSettingChange("server", "http://10.0.0.2")
+        vm.onSettingChange("password", "x")
+        vm.saveSettings()
+        assertEquals("El plugin ya no está instalado", vm.state.value.configuring!!.error)
+        assertFalse(vm.state.value.configuring!!.saving)
+    }
+
+    @Test fun `Configurar of a plugin that is gone closes at once`() {
+        val vm = vm(FakeAdmin())
+        vm.openSettings("demo")
+        assertNull(vm.state.value.configuring)
+        assertTrue(vm.state.value.settingsClosed)
     }
 }

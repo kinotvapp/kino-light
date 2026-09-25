@@ -10,7 +10,10 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -68,6 +71,16 @@ fun PluginConsentDialog(preview: InstallPreview, onInstall: () -> Unit, onCancel
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(host, style = MaterialTheme.typography.bodyMedium, color = Color.White)
                         if (preview.isUpdate && host in preview.newHosts) MetaChip("nuevo", ArkivRed, strong = true)
+                    }
+                }
+                // Permissions (each with the warning icon), passwords and typed servers: spec §1.2-1.3.
+                com.arkiv.player.data.plugin.PluginConsent.extraLines(preview).forEach { line ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (line.warning) {
+                            Icon(Icons.Filled.Warning, contentDescription = "Advertencia", tint = ArkivRed)
+                        }
+                        Text(line.text, style = MaterialTheme.typography.bodyMedium, color = Color.White)
+                        if (line.isNew) MetaChip("nuevo", ArkivRed, strong = true)
                     }
                 }
                 Text(

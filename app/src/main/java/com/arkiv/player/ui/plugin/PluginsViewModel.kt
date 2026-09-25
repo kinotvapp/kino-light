@@ -31,6 +31,10 @@ data class PluginsUiState(
     val consent: InstallPreview? = null,
     /** Non-null = asking "¿Desinstalar …?". */
     val confirmUninstall: InstalledPlugin? = null,
+    /** Non-null = the Configurar screen is open with these values. */
+    val configuring: PluginConfigDraft? = null,
+    /** The Configurar screen was saved or cancelled (its own route pops on this). */
+    val settingsClosed: Boolean = false,
 )
 
 /**
@@ -110,6 +114,51 @@ class PluginsViewModel(
     }
 
     fun cancelUninstall() = _state.update { it.copy(confirmUninstall = null) }
+
+    /** Opens Configurar with the stored values (read on IO by the admin: passwords come from the Keystore). */
+    fun openSettings(id: String) {
+        viewModelScope.launch {
+            val form = try {
+                admin.settingsOf(id)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                null
+            }
+            _state.update {
+                if (form == null) it.copy(message = "El plugin ya no está instalado", messagePluginId = null, settingsClosed = true)
+                else it.copy(configuring = PluginConfigDraft.of(id, form.plugin.manifest.name, form.plugin.manifest.settings, form.values), settingsClosed = false)
+            }
+        }
+    }
+
+    fun onSettingChange(key: String, value: Any?) = _state.update { s -> s.copy(configuring = s.configuring?.with(key, value)) }
+
+    fun closeSettings() = _state.update { it.copy(configuring = null, settingsClosed = true) }
+
+    /**
+     * Checks the values first (the same rule the store applies), then saves on IO. Saving closes
+     * the plugin's runtime and forgets its cookies (a new user must not inherit a session).
+     */
+    fun saveSettings() {
+        val draft = _state.value.configuring ?: return
+        if (draft.saving) return
+        draft.problem()?.let { problem -> _state.update { it.copy(configuring = draft.copy(error = problem)) }; return }
+        _state.update { it.copy(configuring = draft.copy(saving = true, error = null)) }
+        viewModelScope.launch {
+            val refused = try {
+                admin.saveSettings(draft.pluginId, draft.values)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                pluginErrorText(e)
+            }
+            _state.update {
+                if (refused != null) it.copy(configuring = it.configuring?.copy(saving = false, error = refused))
+                else it.copy(configuring = null, settingsClosed = true, message = "${draft.pluginName} quedó configurado", messagePluginId = draft.pluginId)
+            }
+        }
+    }
 
     fun confirmUninstall() {
         val plugin = _state.value.confirmUninstall ?: return
