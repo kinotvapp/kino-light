@@ -139,6 +139,7 @@ fun EffectsAutoTune(reduced: Boolean) {
                 extras = mapOf(
                     "model" to Build.MODEL,
                     "ram_mb" to DeviceEffects.totalRamMb(context).toString(),
+                    "refresh_hz" to "%.0f".format(DeviceEffects.refreshRateHz(context)),
                     "budget_ms" to "%.1f".format(budgetMs),
                     "dropped_pct" to (EffectsPolicy.droppedShare(frames, budgetMs) * 100).toInt().toString(),
                     "frames" to frames.size.toString(),
@@ -167,13 +168,13 @@ internal object DeviceEffects {
     fun systemAnimationsOff(context: Context): Boolean =
         Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
 
-    /** One frame's time budget on this display (16.7 ms at 60 Hz). */
+    /** The display's refresh rate in Hz (0 when unknown). */
     @Suppress("DEPRECATION")
-    fun frameBudgetMs(context: Context): Float {
-        val wm = context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
-        val hz = wm?.defaultDisplay?.refreshRate?.takeIf { it > 1f } ?: 60f
-        return 1000f / hz
-    }
+    fun refreshRateHz(context: Context): Float =
+        (context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager)?.defaultDisplay?.refreshRate ?: 0f
+
+    /** One frame's time budget on this display: 16.7 ms, or longer on a slower panel, never shorter (see [EffectsPolicy.frameBudgetMs]). */
+    fun frameBudgetMs(context: Context): Float = EffectsPolicy.frameBudgetMs(refreshRateHz(context))
 }
 
 internal object FrameJankMonitor {

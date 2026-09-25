@@ -86,6 +86,29 @@ class EffectsPolicyTest {
     }
 
     @Test
+    fun `the budget is never tighter than 60 fps, so a 120 Hz panel is not judged against 8 ms`() {
+        assertEquals(1000f / 60f, EffectsPolicy.frameBudgetMs(60f), 0.001f)
+        assertEquals(1000f / 60f, EffectsPolicy.frameBudgetMs(90f), 0.001f)
+        assertEquals(1000f / 60f, EffectsPolicy.frameBudgetMs(120f), 0.001f) // the moto g85 5G case
+    }
+
+    @Test
+    fun `a slower panel keeps its own longer budget and an unknown rate counts as 60 Hz`() {
+        assertEquals(1000f / 30f, EffectsPolicy.frameBudgetMs(30f), 0.001f)
+        assertEquals(1000f / 60f, EffectsPolicy.frameBudgetMs(0f), 0.001f)
+        assertEquals(1000f / 60f, EffectsPolicy.frameBudgetMs(-1f), 0.001f)
+    }
+
+    @Test
+    fun `frames that are fine at 60 fps are not dropped just because the panel is 120 Hz`() {
+        // 20 ms frames are fine for a 60 fps app (dropped only past 2 x 16.7 = 33 ms), but against a raw
+        // 120 Hz budget (8.3 ms) every one of them counted as dropped (20 > 2 x 8.3 = 16.7).
+        val twentyMs = List(180) { 20f }
+        assertEquals(true, EffectsPolicy.isSlow(twentyMs, budgetMs = 1000f / 120f))          // the old, wrong budget
+        assertEquals(false, EffectsPolicy.isSlow(twentyMs, EffectsPolicy.frameBudgetMs(120f))) // the clamped one
+    }
+
+    @Test
     fun `half the frames dropped is severe, enough to turn the effects off on one launch`() {
         assertTrue(EffectsPolicy.isSevere(frames(fast = 90, slow = 90), budget)) // exactly 50%
         assertTrue(EffectsPolicy.isSevere(frames(fast = 0, slow = 180), budget))

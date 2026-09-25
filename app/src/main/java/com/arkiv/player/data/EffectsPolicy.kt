@@ -88,6 +88,19 @@ object EffectsPolicy {
         return dropped.toFloat() / frameDurationsMs.size >= SLOW_SHARE
     }
 
+    /**
+     * The frame budget to judge against on a display refreshing at [refreshHz]: never tighter than 60 fps.
+     * A 90/120 Hz panel has a shorter vsync, but the app is not slow for taking 12 ms on it: most apps
+     * draw at 60 fps there, and [DROPPED_FRAME_FACTOR] is defined against a 60 Hz frame. Judging against
+     * 8.3 ms turned the "dropped" line into 16.7 ms, and the first device the effects were ever turned
+     * off on in the field was a 120 Hz phone with 7.4 GB of RAM and the fastest benchmark of the sample.
+     * A slower panel (30 Hz) keeps its own, longer budget. Unknown (<= 1) is taken as 60 Hz.
+     */
+    fun frameBudgetMs(refreshHz: Float): Float {
+        val hz = if (refreshHz > 1f) refreshHz else 60f
+        return maxOf(1000f / hz, 1000f / 60f)
+    }
+
     /** Is the sample bad enough ([SEVERE_SHARE]) to skip the second-launch confirmation? */
     fun isSevere(frameDurationsMs: List<Float>, budgetMs: Float): Boolean =
         frameDurationsMs.isNotEmpty() && budgetMs > 0f && droppedShare(frameDurationsMs, budgetMs) >= SEVERE_SHARE

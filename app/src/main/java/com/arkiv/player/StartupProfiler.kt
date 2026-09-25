@@ -72,7 +72,7 @@ internal object StartupProfiler {
                 "sdk" to Build.VERSION.SDK_INT.toString(),
                 "ram_mb" to DeviceEffects.totalRamMb(context).toString(),
                 "cores" to Runtime.getRuntime().availableProcessors().toString(),
-                "budget_ms" to "%.1f".format(DeviceEffects.frameBudgetMs(context)),
+                "refresh_hz" to "%.0f".format(DeviceEffects.refreshRateHz(context)),
                 "ttff_ms" to (if (cold) sinceProcessStartMs.toString() else "warm"),
                 "bench_ms" to "%.0f".format(benchMs),
                 "tv" to isTv.toString(),
