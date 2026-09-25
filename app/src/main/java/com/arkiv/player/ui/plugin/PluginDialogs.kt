@@ -121,10 +121,11 @@ fun PluginUninstallDialog(plugin: InstalledPlugin, onConfirm: () -> Unit, onCanc
 /**
  * Puts the initial focus on [requester] (the safe choice). The dialog window isn't composed on the
  * first frame, and `requestFocus()` throws "FocusRequester is not initialized" until it is -- hence
- * the retry loop, as in `UpdateDialog`.
+ * the retry loop, as in `UpdateDialog`. Internal: `PluginConfigScreen.kt` reuses it for Configurar's
+ * own TV focus (same package, different file -- `private` would hide it there).
  */
 @Composable
-private fun FocusWhenReady(requester: FocusRequester) {
+internal fun FocusWhenReady(requester: FocusRequester) {
     LaunchedEffect(requester) {
         delay(200)
         repeat(20) {
@@ -137,9 +138,10 @@ private fun FocusWhenReady(requester: FocusRequester) {
 /**
  * A white outline on the focused button while a D-pad/keyboard drives the UI. Material3's own
  * focus state is a faint overlay that is hard to see from the couch on the dark surface; on a
- * touch screen the initial focus on "Cancelar" stays invisible.
+ * touch screen the initial focus on "Cancelar" stays invisible. Internal: `PluginConfigScreen.kt`
+ * reuses it for Configurar's own TV focus ring (same package, different file).
  */
-private fun Modifier.focusRing(): Modifier = composed {
+internal fun Modifier.focusRing(): Modifier = composed {
     var focused by remember { mutableStateOf(false) }
     val keyboard = LocalInputModeManager.current.inputMode == InputMode.Keyboard
     this

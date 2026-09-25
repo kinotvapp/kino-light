@@ -21,9 +21,12 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -51,7 +54,11 @@ import com.arkiv.player.ui.theme.ArkivTextSecondary
  * Ajustes ▸ Plugins ▸ <plugin> ▸ Configurar, phone and TV: one field per setting of the manifest.
  * The URL field uses the URI keyboard, the password is masked with a show/hide toggle (and hidden
  * from the accessibility tree while masked, see [PasswordField]). On TV, D-pad Down always leaves
- * a text field, since a closed keyboard would otherwise trap the focus in it.
+ * a text field, since a closed keyboard would otherwise trap the focus in it. Configurar is the
+ * ONLY way to set up a plugin on TV (no touch to fall back on), so the first field -- or Cancelar,
+ * if the plugin has none -- must start focused: the same [FocusWhenReady] retry and [focusRing]
+ * `PluginDialogs.kt`'s own dialogs already use (reused here, not reimplemented), since this
+ * composable isn't on screen the first frame either.
  */
 @Composable
 fun PluginConfigContent(
@@ -70,6 +77,8 @@ fun PluginConfigContent(
             false
         }
     }
+    val initialFocus = remember { FocusRequester() }
+    if (isTv) FocusWhenReady(initialFocus)
     val width = if (isTv) Modifier.fillMaxWidth(0.6f) else Modifier.fillMaxWidth()
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = if (isTv) 48.dp else 20.dp, vertical = 24.dp),
@@ -77,31 +86,37 @@ fun PluginConfigContent(
     ) {
         Text("Configurar ${draft.pluginName}", style = MaterialTheme.typography.titleLarge, color = Color.White)
         Text("Lo que escribas aquí solo lo usa este plugin.", style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary)
-        draft.settings.forEach { s -> SettingField(s, draft, width.then(leaveOnDown), onChange) }
+        draft.settings.forEachIndexed { i, s ->
+            val firstFocus = if (isTv && i == 0) initialFocus else null
+            SettingField(s, draft, width.then(leaveOnDown), onChange, firstFocus)
+        }
         draft.error?.let { Text(it, color = ArkivRed, style = MaterialTheme.typography.bodyMedium) }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            TextButton(onClick = onCancel, enabled = !draft.saving) { Text("Cancelar") }
-            Button(onClick = onSave, enabled = !draft.saving) { Text(if (draft.saving) "Guardando…" else "Guardar") }
+            val cancelModifier = Modifier.focusRing().let { if (isTv && draft.settings.isEmpty()) it.focusRequester(initialFocus) else it }
+            TextButton(onClick = onCancel, enabled = !draft.saving, modifier = cancelModifier) { Text("Cancelar") }
+            Button(onClick = onSave, enabled = !draft.saving, modifier = Modifier.focusRing()) { Text(if (draft.saving) "Guardando…" else "Guardar") }
         }
     }
 }
 
+/** [firstFocus] is non-null only for TV's first setting (see [PluginConfigContent]); for [SettingType.SELECT] it lands on the first option, not the group. */
 @Composable
-private fun SettingField(s: PluginSetting, draft: PluginConfigDraft, modifier: Modifier, onChange: (String, Any?) -> Unit) {
+private fun SettingField(s: PluginSetting, draft: PluginConfigDraft, modifier: Modifier, onChange: (String, Any?) -> Unit, firstFocus: FocusRequester? = null) {
     val label = s.label + if (s.required) " *" else ""
+    val fieldModifier = firstFocus?.let { modifier.focusRequester(it) } ?: modifier
     when (s.type) {
         SettingType.TEXT -> OutlinedTextField(
             value = draft.text(s.key), onValueChange = { onChange(s.key, it) }, label = { Text(label) },
-            placeholder = s.hint.takeIf { it.isNotEmpty() }?.let { { Text(it) } }, singleLine = true, modifier = modifier,
+            placeholder = s.hint.takeIf { it.isNotEmpty() }?.let { { Text(it) } }, singleLine = true, modifier = fieldModifier,
         )
         SettingType.URL -> OutlinedTextField(
             value = draft.text(s.key), onValueChange = { onChange(s.key, it) }, label = { Text(label) },
             placeholder = s.hint.takeIf { it.isNotEmpty() }?.let { { Text(it) } }, singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), modifier = modifier,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), modifier = fieldModifier,
         )
-        SettingType.PASSWORD -> PasswordField(draft.text(s.key), { onChange(s.key, it) }, label, modifier)
+        SettingType.PASSWORD -> PasswordField(draft.text(s.key), { onChange(s.key, it) }, label, fieldModifier)
         SettingType.TOGGLE -> Row(
-            modifier.selectable(selected = draft.toggle(s.key), onClick = { onChange(s.key, !draft.toggle(s.key)) }).padding(vertical = 4.dp),
+            fieldModifier.focusRing().selectable(selected = draft.toggle(s.key), onClick = { onChange(s.key, !draft.toggle(s.key)) }).padding(vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -110,9 +125,10 @@ private fun SettingField(s: PluginSetting, draft: PluginConfigDraft, modifier: M
         }
         SettingType.SELECT -> Column(modifier) {
             Text(s.label, color = Color.White)
-            s.options.forEach { o ->
+            s.options.forEachIndexed { i, o ->
+                val optionModifier = Modifier.fillMaxWidth().focusRing().let { if (firstFocus != null && i == 0) it.focusRequester(firstFocus) else it }
                 Row(
-                    Modifier.fillMaxWidth().selectable(selected = draft.text(s.key) == o.value, onClick = { onChange(s.key, o.value) }).padding(vertical = 4.dp),
+                    optionModifier.selectable(selected = draft.text(s.key) == o.value, onClick = { onChange(s.key, o.value) }).padding(vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     RadioButton(selected = draft.text(s.key) == o.value, onClick = null)
