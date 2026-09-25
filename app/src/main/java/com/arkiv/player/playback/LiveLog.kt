@@ -36,6 +36,10 @@ internal object LiveLog {
     @Volatile
     private var startedAtMs = 0L
 
+    /** `account`, `seed` or `own`, set when a channel opens (off the main thread) so every live report can carry it. */
+    @Volatile
+    var sessionKind: String = "?"
+
     /** A new zap: starts the clock that "time to first frame" is measured against. */
     fun newSession(channelCode: String, channelName: String = ""): String {
         val id = "L${counter.incrementAndGet()}"

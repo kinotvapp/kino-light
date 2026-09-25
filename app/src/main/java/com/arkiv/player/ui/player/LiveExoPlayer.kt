@@ -49,7 +49,10 @@ import com.arkiv.player.playback.LiveLog
 import com.arkiv.player.playback.LiveQualityMonitor
 import com.arkiv.player.playback.liveRenderers
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import com.arkiv.player.AppGraph
 
 private const val TAG = "LiveExo"
 
@@ -126,6 +129,12 @@ internal fun LiveExoPlayer(
     // recreated with a software decoder in front. Changing it changes the `remember` key below, which is what
     // swaps the player.
     var software by remember(channelCode) { mutableStateOf(LiveDecoderMemory.prefersSoftware(context, channelCode)) }
+
+    // Which kind of Magis session this is (account / own / shared seed), read off the main thread: it goes on every
+    // live report, to tell whether the conflicts (409, "logged in elsewhere") sit on the shared seeds.
+    LaunchedEffect(channelCode) {
+        LiveLog.sessionKind = withContext(Dispatchers.IO) { AppGraph.from(context).magisSessionKind() }
+    }
 
     val exoPlayer = remember(key, software) {
         Log.i(TAG, "Creating ExoPlayer · url=${mediaUrl.take(80)} key=$key software=$software")
@@ -248,7 +257,17 @@ internal fun LiveExoPlayer(
                 }
                 if (!errorReported) {
                     errorReported = true
-                    com.arkiv.player.crash.Crash.report(error, "live-playback-${PlaybackException.getErrorCodeName(error.errorCode)}")
+                    com.arkiv.player.crash.Crash.report(
+                        error,
+                        "live-playback-${PlaybackException.getErrorCodeName(error.errorCode)}",
+                        extras = mapOf(
+                            "channel" to channelCode,
+                            "session_kind" to LiveLog.sessionKind,
+                            "error_kind" to errorKind(error).name,
+                            "video_decoder" to quality.videoDecoder,
+                            "software_forced" to software.toString(),
+                        ),
+                    )
                 }
                 onError(msg)
             }
@@ -302,6 +321,7 @@ internal fun LiveExoPlayer(
                     "reason" to reason,
                     "waited_ms" to waitedMs.toString(),
                     "channel" to channelCode,
+                    "session_kind" to LiveLog.sessionKind,
                     "video_decoder" to quality.videoDecoder,
                     "video_codec" to (format?.sampleMimeType ?: ""),
                     "video_size" to (format?.let { "${it.width}x${it.height}" } ?: ""),

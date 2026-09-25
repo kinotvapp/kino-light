@@ -314,7 +314,7 @@ class LiveHlsProxy(
         repeat(2) { attempt ->
             val t0 = System.currentTimeMillis()
             val c = (URL(target).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 12_000
+                connectTimeout = CONNECT_TIMEOUT_MS
                 readTimeout = 20_000
                 setRequestProperty("Content-Auth", runBlocking { contentAuth(s, cdn) })
                 setRequestProperty("Content-License", s.license)
@@ -323,7 +323,15 @@ class LiveHlsProxy(
                 setRequestProperty("App-Version", APP_VERSION)
                 setRequestProperty("X-Buffer", "0")
             }
-            val code = c.responseCode
+            // A connection that never answers used to be silent: nothing was logged until a CDN replied. Naming the
+            // exception and how long it took is what tells a dead address from a slow CDN.
+            val code = try {
+                c.responseCode
+            } catch (e: java.io.IOException) {
+                LiveLog.w("$kind → FAILED ${e.javaClass.simpleName}: ${e.message} after ${System.currentTimeMillis() - t0}ms " +
+                    "(host=${runCatching { URL(target).host }.getOrDefault("?")})")
+                throw e
+            }
             val ms = System.currentTimeMillis() - t0
             // A redirect on the same host (http to https) is followed once; HttpURLConnection won't cross protocols.
             if (code in OriginRedirect.CODES) {
@@ -508,6 +516,7 @@ class LiveHlsProxy(
             .joinToString("\n") { ln -> rewriteLine(ln, base, myHost, myPort, myToken) } + "\n"
         val bytes = body.toByteArray()
         // How many segments the playlist announces IS the live data point: it defines how much
+            logAddresses(chosen.cflHost)
         // cushion there is before the player reaches the edge. Below 2-3, any CDN hiccup cuts it.
         // `MEDIA-SEQUENCE` says whether the window is advancing or we're re-reading the same one.
         val names = raw.lineSequence().filter { it.isNotBlank() && !it.startsWith("#") }
@@ -612,6 +621,21 @@ class LiveHlsProxy(
      * The requested segment, already with a 200, or `null` if it's truly nowhere to be found.
      *
      * Two tiers, in this order:
+    /**
+     * Logs every address the CDN's host resolves to, off the request thread. A host with several addresses where one
+     * does not answer looks, from the player, like a random 12 s wait on the first request; this is the evidence.
+     */
+    private fun logAddresses(hostWithPort: String) {
+        Thread {
+            runCatching {
+                val host = hostWithPort.substringBefore(':')
+                val t0 = System.currentTimeMillis()
+                val all = java.net.InetAddress.getAllByName(host).joinToString { it.hostAddress ?: "?" }
+                LiveLog.i("dns $host → [$all] in ${System.currentTimeMillis() - t0}ms")
+            }.onFailure { LiveLog.w("dns $hostWithPort failed: ${it.javaClass.simpleName}: ${it.message}") }
+        }.apply { isDaemon = true }.start()
+    }
+
      *  1. **retries against the active CDN**, the normal case: at the live edge the player asks
      *     for the segment BEFORE the CDN publishes it. On 2026-08-14 VLC requested three ~5s video
      *     segments 1.3s apart -it was running toward the edge- and the third gave 404 simply
@@ -763,3 +787,12 @@ class LiveHlsProxy(
         private const val HEALTH_SUMMARY_MS = 30_000L
     }
 }
+        private const val HTTP_CONFLICT = 409
+
+        /**
+         * How long to wait for a CDN to accept a connection. A CDN accepts in tens of milliseconds, so waiting 12 s
+         * only ever waited on an address that was not going to answer: each channel opened cold could spend 12 s
+         * on it (the log showed 13.0 s to the first byte of the first segment, twice on two channels, and the
+         * retry 0.8 s later connecting in 176 ms) before the retries and the other CDNs got their turn.
+         */
+        private const val CONNECT_TIMEOUT_MS = 4_000

@@ -203,6 +203,9 @@ class AppGraph(context: Context) {
         )
     }
 
+    /** `account`, `seed` or `own`: see [MagisSession.sessionKind]. Telemetry only. */
+    fun magisSessionKind(): String = runCatching { magisSession.sessionKind() }.getOrDefault("unknown")
+
     /** True when the published seed pool is exhausted for a device that needs seeds (every fresh
      *  seed came back dead too). The home shows a "wait for new seeds" note. */
     val seedsExhausted: kotlinx.coroutines.flow.StateFlow<Boolean> get() = magisSession.seedsExhausted

@@ -221,6 +221,7 @@ internal class LiveQualityMonitor(private val player: ExoPlayer) : AnalyticsList
             extras = mapOf(
                 "reason" to reason,
                 "channel" to LiveLog.channel,
+                "session_kind" to LiveLog.sessionKind,
                 "model" to Build.MODEL,
                 "sdk" to Build.VERSION.SDK_INT.toString(),
                 "watched_s" to (stats.watchedMs() / 1000).toString(),
