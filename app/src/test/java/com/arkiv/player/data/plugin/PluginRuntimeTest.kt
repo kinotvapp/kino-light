@@ -22,7 +22,7 @@ class PluginRuntimeTest {
         val storage = mutableMapOf<String, String>()
         var onFetch: suspend (String) -> String = { req ->
             JSONObject().put("ok", true).put("status", 200).put("url", JSONObject(req).getString("url"))
-                .put("headers", JSONObject()).put("body", "{\"hello\":\"world\"}").toString()
+                .put("headers", JSONObject()).put("text", "{\"hello\":\"world\"}").toString()
         }
         var onSelect: (String, String) -> String = { html, css -> PluginHtml.selectJson(html, css) }
         override suspend fun fetch(requestJson: String) = onFetch(requestJson)

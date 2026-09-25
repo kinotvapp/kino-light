@@ -94,5 +94,19 @@ class PluginContractParityTest {
         assertEquals(PluginCookies.MAX_TOTAL_BYTES, obj("cookies").getInt("maxTotalBytes"))
     }
 
+    @Test fun `fetch`() {
+        val f = obj("fetch")
+        assertEquals(PluginHttp.METHODS, f.strings("methods"))
+        assertEquals(PluginHttp.BODY_KINDS, f.strings("bodyKinds"))
+        assertEquals(PluginHttp.REDIRECT_MODES, f.strings("redirectModes"))
+        assertEquals(PluginHttp.DEFAULT_TIMEOUT_MS, f.getLong("defaultTimeoutMs"))
+        assertEquals(PluginHttp.MAX_TIMEOUT_MS, f.getLong("maxTimeoutMs"))
+        assertEquals(PluginHttp.MAX_BODY_BYTES, f.getInt("maxBodyBytes"))
+        assertEquals(PluginRuntime.MAX_REQUEST_CHARS, f.getInt("maxRequestChars"))
+        assertEquals(PluginHttp.MAX_REQUESTS_PER_CALL, f.getInt("maxRequestsPerCall"))
+        assertEquals(PluginHttp.MAX_REDIRECTS, f.getInt("maxRedirects"))
+        assertEquals(PluginHttp.ERROR_CODES, f.strings("errorCodes"))
+    }
+
     // Each later task adds the contract section it enforces above this line.
 }

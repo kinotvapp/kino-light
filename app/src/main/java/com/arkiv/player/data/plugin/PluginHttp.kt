@@ -4,15 +4,20 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.CookieJar
 import okhttp3.Dns
+import okhttp3.FormBody
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.MediaType
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
+import java.io.InterruptedIOException
 import java.net.Inet6Address
 import java.net.InetAddress
 import java.net.UnknownHostException
+import java.util.Base64
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -129,7 +134,10 @@ class PluginDns(
  *
  * Redirects are followed HERE, not by OkHttp: OkHttp opens the connection to a redirect target
  * before any network interceptor sees it, so an undeclared host would already have been
- * contacted. Checking each `Location` first keeps the refusal on the device.
+ * contacted. Checking each `Location` first keeps the refusal on the device. `redirect: "manual"`
+ * returns the 3xx itself.
+ *
+ * Runs on [Dispatchers.IO]; the cookie jar is written there too.
  */
 class PluginHttp(
     base: OkHttpClient,
@@ -139,11 +147,21 @@ class PluginHttp(
     private val cookies: PluginCookies? = null,
     private val allowInsecureLocalhost: Boolean = false,
 ) {
+    /** A request body as the prelude sends it; see [PluginHttp.Request.body]. */
+    sealed interface Body {
+        data class Text(val text: String) : Body
+        data class Json(val json: String) : Body
+        data class Form(val fields: List<Pair<String, String>>) : Body
+        data class Bytes(val bytes: ByteArray) : Body
+    }
+
     data class Request(
         val url: String,
         val method: String = "GET",
         val headers: Map<String, String> = emptyMap(),
-        val body: String? = null,
+        val body: Body? = null,
+        val manualRedirects: Boolean = false,
+        val useCookies: Boolean = true,
         val timeoutMs: Long = 0,
     )
 
@@ -151,9 +169,12 @@ class PluginHttp(
         val ok: Boolean,
         val status: Int,
         val url: String,
-        /** Header names lowercased; repeated headers joined with ", ". */
+        /** Header names lowercased; repeated headers joined with ", "; never `set-cookie`. */
         val headers: Map<String, String>,
-        val body: String,
+        /** Decoded with the response charset; null for a binary body (see [bytesBase64]). */
+        val text: String?,
+        /** The raw bytes as base64: for a binary body, or a text body whose charset isn't UTF-8. */
+        val bytesBase64: String?,
     )
 
     private val userAgent = "Kino/$appVersion (plugin $pluginId)"
@@ -171,71 +192,127 @@ class PluginHttp(
     suspend fun fetch(req: Request): Response = withContext(Dispatchers.IO) {
         try {
             doFetch(req)
+        } catch (e: PluginFetchException) {
+            throw e
+        } catch (e: PrivateAddressException) {
+            throw HostNotAllowedException(e.hostname)
+        } catch (e: InterruptedIOException) {
+            throw PluginFetchException("timeout", "la solicitud tardó demasiado")
+        } catch (e: IOException) {
+            throw PluginFetchException("network", "error de red: ${(e.message ?: e.javaClass.simpleName).take(200)}")
         } finally {
             cookies?.saveIfChanged()
         }
     }
 
     private fun doFetch(req: Request): Response {
-        var url = req.url.toHttpUrlOrNull() ?: throw IOException("URL inválida: ${req.url.take(200)}")
-        var method = req.method.uppercase().takeIf { it in METHODS } ?: throw IOException("método no permitido: ${req.method}")
+        var url = req.url.toHttpUrlOrNull() ?: throw invalid("URL inválida: ${req.url.take(200)}")
+        var method = req.method.uppercase().takeIf { it in METHODS } ?: throw invalid("método no permitido: ${req.method.take(20)}")
         var body = req.body
         val timeout = if (req.timeoutMs > 0) req.timeoutMs.coerceAtMost(MAX_TIMEOUT_MS) else DEFAULT_TIMEOUT_MS
-        val callClient = client.newBuilder().callTimeout(timeout, TimeUnit.MILLISECONDS).build()
+        val callClient = client.newBuilder()
+            .callTimeout(timeout, TimeUnit.MILLISECONDS)
+            .apply { if (!req.useCookies) cookieJar(CookieJar.NO_COOKIES) }
+            .build()
         var previous: HttpUrl? = null
         repeat(MAX_REDIRECTS + 1) {
             val from = previous
             if (from == null) PluginHostGate.check(url, hosts, allowInsecureLocalhost)
             else PluginHostGate.checkRedirect(from, url, hosts, allowInsecureLocalhost)
             if (requests.incrementAndGet() > MAX_REQUESTS_PER_CALL) {
-                throw IOException("demasiadas solicitudes en una sola llamada (máximo $MAX_REQUESTS_PER_CALL)")
+                throw invalid("demasiadas solicitudes en una sola llamada (máximo $MAX_REQUESTS_PER_CALL)")
             }
             callClient.newCall(buildRequest(url, method, body, req.headers)).execute().use { resp ->
                 val location = resp.header("Location")
-                if (resp.code in REDIRECTS && location != null) {
+                if (resp.code in REDIRECTS && location != null && !req.manualRedirects) {
                     previous = url
-                    url = url.resolve(location) ?: throw IOException("redirección inválida")
+                    url = url.resolve(location) ?: throw PluginFetchException("network", "redirección inválida")
                     if (resp.code == 303 || (resp.code in 301..302 && method == "POST")) {
                         method = "GET"
                         body = null
                     }
                 } else {
-                    val headers = resp.headers.names().associate { name ->
-                        name.lowercase() to resp.headers.values(name).joinToString(", ")
-                    }
-                    return Response(resp.isSuccessful, resp.code, url.toString(), headers, readCapped(resp))
+                    return response(resp, url)
                 }
             }
         }
-        throw IOException("demasiadas redirecciones")
+        throw PluginFetchException("network", "demasiadas redirecciones")
     }
 
-    private fun buildRequest(url: HttpUrl, method: String, body: String?, headers: Map<String, String>): okhttp3.Request {
+    private fun response(resp: okhttp3.Response, url: HttpUrl): Response {
+        val headers = resp.headers.names()
+            .filter { it.lowercase() !in HIDDEN_RESPONSE_HEADERS }
+            .associate { name -> name.lowercase() to resp.headers.values(name).joinToString(", ") }
+        val bytes = readCapped(resp)
+        val type = resp.body?.contentType()
+        val charset = type?.charset()
+        return if (isText(type)) {
+            val text = String(bytes, charset ?: Charsets.UTF_8)
+            val utf8 = charset == null || charset == Charsets.UTF_8
+            Response(resp.isSuccessful, resp.code, url.toString(), headers, text, if (utf8) null else b64(bytes))
+        } else {
+            Response(resp.isSuccessful, resp.code, url.toString(), headers, null, b64(bytes))
+        }
+    }
+
+    private fun buildRequest(url: HttpUrl, method: String, body: Body?, headers: Map<String, String>): okhttp3.Request {
         val b = okhttp3.Request.Builder().url(url)
         headers.forEach { (k, v) -> if (k.lowercase() !in FORBIDDEN_HEADERS) runCatching { b.header(k, v) } }
         if (headers.keys.none { it.equals("User-Agent", ignoreCase = true) }) b.header("User-Agent", userAgent)
-        val type = headers.entries.firstOrNull { it.key.equals("Content-Type", ignoreCase = true) }?.value?.toMediaTypeOrNull()
-        val requestBody = if (method in BODY_METHODS) (body ?: "").toRequestBody(type) else null
+        val declared = headers.entries.firstOrNull { it.key.equals("Content-Type", ignoreCase = true) }?.value?.toMediaTypeOrNull()
+        val requestBody = if (method in BODY_METHODS) requestBody(body, declared) else null
         return b.method(method, requestBody).build()
     }
 
-    private fun readCapped(resp: okhttp3.Response): String {
-        val responseBody = resp.body ?: return ""
-        val source = responseBody.source()
-        if (source.request(MAX_BODY_BYTES + 1L)) throw IOException("respuesta demasiado grande (más de 5 MB)")
-        val charset = responseBody.contentType()?.charset(Charsets.UTF_8) ?: Charsets.UTF_8
-        return source.buffer.readString(charset)
+    private fun requestBody(body: Body?, declared: MediaType?): RequestBody = when (body) {
+        null -> "".toRequestBody(declared)
+        is Body.Text -> body.text.toRequestBody(declared)
+        is Body.Json -> body.json.toRequestBody(declared ?: JSON)
+        is Body.Bytes -> body.bytes.toRequestBody(declared)
+        // Always application/x-www-form-urlencoded, UTF-8: that is what `{ form }` means.
+        is Body.Form -> FormBody.Builder(Charsets.UTF_8).apply { body.fields.forEach { (k, v) -> add(k, v) } }.build()
     }
+
+    private fun readCapped(resp: okhttp3.Response): ByteArray {
+        val responseBody = resp.body ?: return ByteArray(0)
+        val source = responseBody.source()
+        if (source.request(MAX_BODY_BYTES + 1L)) throw PluginFetchException("too_large", "respuesta demasiado grande (más de 5 MB)")
+        return source.buffer.readByteArray()
+    }
+
+    private fun invalid(message: String) = PluginFetchException("invalid_request", message)
 
     companion object {
         const val DEFAULT_TIMEOUT_MS = 15_000L
         const val MAX_TIMEOUT_MS = 30_000L
         const val MAX_BODY_BYTES = 5 * 1024 * 1024
         const val MAX_REQUESTS_PER_CALL = 60
-        private const val MAX_REDIRECTS = 10
-        private val METHODS = setOf("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD")
+        const val MAX_REDIRECTS = 10
+        val METHODS = listOf("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE")
+        val ERROR_CODES = listOf("host_not_allowed", "timeout", "network", "too_large", "invalid_request")
+        /** `contract.json` `fetch.bodyKinds`; the prelude sends one of these in every request's `body.kind`. */
+        val BODY_KINDS = listOf("text", "json", "form", "base64")
+        /** `contract.json` `fetch.redirectModes`; the prelude sends one of these as `redirect`. */
+        val REDIRECT_MODES = listOf("follow", "manual")
         private val BODY_METHODS = setOf("POST", "PUT", "PATCH")
         private val REDIRECTS = setOf(301, 302, 303, 307, 308)
         private val FORBIDDEN_HEADERS = setOf("host", "content-length", "transfer-encoding", "connection", "cookie2")
+
+        /** The jar handles these; `kino.cookies.get` reads it. */
+        private val HIDDEN_RESPONSE_HEADERS = setOf("set-cookie", "set-cookie2")
+        private val JSON = "application/json; charset=utf-8".toMediaTypeOrNull()
+
+        private fun b64(bytes: ByteArray): String = Base64.getEncoder().encodeToString(bytes)
+
+        /**
+         * Text a person would read: no content type (the pre-v2 behavior), `text/…`, JSON, XML,
+         * JavaScript, form data, or anything that names a charset. Everything else is bytes.
+         */
+        fun isText(type: MediaType?): Boolean {
+            if (type == null || type.charset() != null) return true
+            val sub = type.subtype.lowercase()
+            return type.type.equals("text", true) || sub == "json" || sub.endsWith("+json") || sub == "xml" ||
+                sub.endsWith("+xml") || sub == "javascript" || sub == "x-javascript" || sub == "x-www-form-urlencoded"
+        }
     }
 }

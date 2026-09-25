@@ -396,7 +396,7 @@ class AppGraph(context: Context) {
         val http = PluginHttp(pluginBaseHttp, id, hosts, BuildConfig.VERSION_NAME, cookies = cookies)
         pluginHttps[id] = http
         val storage = PluginStorage(java.io.File(pluginStore.dataDir(id), "storage.json"))
-        val runtime = PluginRuntime.open(id, script, DefaultPluginHost(id, http, storage), PluginEnv(appVersion = BuildConfig.VERSION_NAME))
+        val runtime = PluginRuntime.open(id, script, DefaultPluginHost(id, http, storage, cookies, hosts), PluginEnv(appVersion = BuildConfig.VERSION_NAME))
         // F5: drop this plugin's PluginHttp the moment its runtime is closed -- idle timeout, or an
         // explicit pool.close() from DefaultPluginAdmin's disable/update/uninstall -- so pluginHttps
         // never keeps a stale, no-longer-approved host list around after the runtime that used it is

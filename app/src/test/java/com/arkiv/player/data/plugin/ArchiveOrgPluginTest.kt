@@ -52,7 +52,7 @@ class ArchiveOrgPluginTest {
                 record(url, file)
             }
             return JSONObject().put("ok", true).put("status", 200).put("url", url)
-                .put("headers", JSONObject()).put("body", file.readText()).toString()
+                .put("headers", JSONObject()).put("text", file.readText()).toString()
         }
 
         private fun record(url: String, file: File) {

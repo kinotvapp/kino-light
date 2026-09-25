@@ -18,12 +18,19 @@
   const S = String, E = Error, TE = TypeError, stringify = JSON.stringify, parse = JSON.parse;
   const slice = Function.prototype.call.bind(String.prototype.slice);
   const charCodeAt = Function.prototype.call.bind(String.prototype.charCodeAt);
+  const fromCharCode = String.fromCharCode;
+  const join = Array.prototype.join;
   const define = Object.defineProperty, freeze = Object.freeze, keysOf = Object.keys;
   const defineAll = Object.defineProperties, reflectDefine = Reflect.defineProperty;
   const ownKeys = Reflect.ownKeys, apply = Reflect.apply, ownDescriptor = Object.getOwnPropertyDescriptor;
   const isInteger = Number.isInteger;
   const OP = Object.prototype, defineGetter = OP.__defineGetter__, defineSetter = OP.__defineSetter__;
   const hasOwn = Function.prototype.call.bind(OP.hasOwnProperty);
+  // Frozen, non-configurable globals from web.js: safe to hold on to.
+  const encodeUtf8 = Function.prototype.call.bind(TextEncoder.prototype.encode, new TextEncoder());
+  const textDecoder = new TextDecoder();
+  const decodeUtf8 = Function.prototype.call.bind(TextDecoder.prototype.decode, textDecoder);
+  const toBase64 = btoa, fromBase64 = atob;
 
   // A function's `name` is read by quickjs-kt's native code when an error is built or a rejection
   // is tracked in that function's frame; at ~20 MB the native side fails an allocation and
@@ -107,23 +114,71 @@
     define(err, 'code', { value: c, writable: false, configurable: false, enumerable: true });
     return err;
   };
+  // What a failed native call carries: its code, or 'network' for a binding that just threw.
+  const nativeFailure = (e, fallbackCode) => {
+    let m = '';
+    try { const own = e !== null && typeof e === 'object' ? e.message : e; m = typeof own === 'string' ? own : ''; } catch (_) { m = ''; }
+    return codedError(fallbackCode, cut(m, L.maxErrorMessageChars));
+  };
 
   // --- kino.fetch ---
-  const fetch = async function fetch(url, opts) {
-    const o = opts || {};
-    const req = toStr(stringify({
-      url: toStr(url), method: o.method || 'GET', headers: o.headers || {},
-      body: o.body == null ? null : toStr(o.body), timeoutMs: o.timeoutMs || 0,
-    }));
-    if (req.length > L.maxRequestChars) {
-      // A throw before this async function's first await would abort the whole call in alpha13
-      // even inside the plugin's try/catch; after one it's catchable.
-      await null;
-      throw new E('solicitud demasiado grande (más de 1 MB)');
+  // Method, redirect and body checks here are for a clear message; PluginHttp re-checks them all.
+  // The one limit that must hold whatever a plugin did to the built-ins is the size of `req`
+  // (a primitive string from the captured JSON.stringify): that is what crosses.
+  const METHODS = L.fetchMethods;
+  const bodyOf = (b) => {
+    if (b === undefined || b === null) return null;
+    if (typeof b === 'string') return { kind: 'text', value: b };
+    if (typeof b !== 'object') return { kind: 'text', value: toStr(b) };
+    if (hasOwn(b, 'json')) {
+      const text = stringify(b.json);
+      return { kind: 'json', value: text === undefined ? 'null' : text };
     }
-    const r = parse(await n.fetch(req));
-    return { ok: r.ok, status: r.status, url: r.url, headers: r.headers,
-             text: () => r.body, json: () => parse(r.body) };
+    if (hasOwn(b, 'form')) {
+      const f = b.form;
+      if (f === null || typeof f !== 'object') throw codedError('invalid_request', 'body.form debe ser un objeto');
+      const fields = [];
+      for (const k of keysOf(f)) fields.push([toStr(k), toStr(f[k])]);
+      return { kind: 'form', value: fields };
+    }
+    if (hasOwn(b, 'base64')) return { kind: 'base64', value: toStr(b.base64) };
+    throw codedError('invalid_request', 'body debe ser un texto, { json }, { form } o { base64 }');
+  };
+  const fetch = async function fetch(url, opts) {
+    // A throw before this async function's first await would abort the whole call in alpha13
+    // even inside the plugin's try/catch; after one it's catchable. So: await first, then check.
+    await null;
+    const o = opts === undefined || opts === null ? {} : opts;
+    const method = o.method === undefined ? 'GET' : toStr(o.method).toUpperCase();
+    if (METHODS.indexOf(method) === -1) throw codedError('invalid_request', 'método no permitido: ' + cut(method, 20));
+    const redirect = o.redirect === undefined ? 'follow' : toStr(o.redirect);
+    if (redirect !== 'follow' && redirect !== 'manual') throw codedError('invalid_request', 'redirect debe ser "follow" o "manual"');
+    const headers = o.headers === undefined || o.headers === null ? {} : o.headers;
+    const plainHeaders = {};
+    for (const k of keysOf(headers)) plainHeaders[toStr(k)] = toStr(headers[k]);
+    const body = bodyOf(o.body);
+    const req = toStr(stringify({
+      url: toStr(url), method, headers: plainHeaders, body,
+      redirect, cookies: o.cookies !== false, timeoutMs: isInteger(o.timeoutMs) ? o.timeoutMs : 0,
+    }));
+    if (req.length > L.maxRequestChars) throw codedError('too_large', 'solicitud demasiado grande (más de 1 MB)');
+    let raw;
+    try { raw = await n.fetch(req); } catch (e) { throw nativeFailure(e, 'network'); }
+    const r = parse(raw);
+    if (r.error) throw codedError(r.error.code, r.error.message);
+    const text = typeof r.text === 'string' ? r.text : null;
+    const b64 = typeof r.base64 === 'string' ? r.base64 : null;
+    // Only one of the two usually crosses (see PluginHttp.Response); the other is derived here.
+    const bodyText = () => (text !== null ? text : decodeUtf8(bytesOf(b64)));
+    const bytesOf = (s) => { const bin = fromBase64(s); const out = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i); return out; };
+    // Pieces joined once: QuickJS copies the whole string on every `+=` (see web.js).
+    const binary = (bytes) => { const parts = []; for (let i = 0; i < bytes.length; i += 8192) parts[parts.length] = apply(fromCharCode, null, bytes.subarray(i, i + 8192)); return apply(join, parts, ['']); };
+    return freeze({
+      ok: r.ok, status: r.status, url: r.url, headers: freeze(r.headers),
+      text: freeze(function text() { return bodyText(); }),
+      json: freeze(function json() { return parse(bodyText()); }),
+      base64: freeze(function base64() { return b64 !== null ? b64 : toBase64(binary(encodeUtf8(text))); }),
+    });
   };
 
   // --- kino.crypto (synchronous; errors carry code crypto_error) ---
@@ -224,6 +279,16 @@
     all: freeze(function all() { const out = {}; for (const k of keysOf(configValues)) out[k] = configValues[k]; return out; }),
   });
 
+  // --- kino.cookies ---
+  const cookies = freeze({
+    get: freeze(function get(url, name) {
+      const u = cut(toStr(url), L.maxUrlChars), nm = cut(toStr(name), L.maxCookieNameChars);
+      const v = n.cookieGet(u, nm);
+      return v == null ? null : v;
+    }),
+    clear: freeze(function clear() { n.cookiesClear(); }),
+  });
+
   const kino = {
     apiVersion: env.apiVersion,
     appVersion: env.appVersion,
@@ -238,6 +303,7 @@
     }),
     storage,
     config,
+    cookies,
     crypto,
     sleep: freeze(sleep),
     error: freeze(function error(code, message) { return codedError(code, message); }),

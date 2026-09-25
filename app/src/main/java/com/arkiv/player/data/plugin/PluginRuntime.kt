@@ -38,6 +38,9 @@ interface PluginHost {
     fun log(level: String, message: String)
     /** `kino.config`: every setting's value (defaults applied) as one JSON object; read once per runtime. */
     fun config(): String = "{}"
+    /** `kino.cookies.get(url, name)`; null when [url] isn't a host the plugin may reach. */
+    fun cookieGet(url: String, name: String): String? = null
+    fun cookiesClear() = Unit
     /** `kino.crypto`: see [PluginCrypto.run]. Runs on the runtime's own thread. */
     fun crypto(opJson: String): String = PluginCrypto.run(opJson)
     /** `kino.sleep`: [ms] already checked to be 0..5000 by the prelude. */
@@ -222,6 +225,10 @@ class PluginRuntime private constructor(
         /** The longest CSS selector `kino.html.select` accepts. */
         const val MAX_SELECTOR_CHARS = 10_000
 
+        /** `kino.cookies.get`'s URL and cookie name are cut to these before crossing. */
+        const val MAX_URL_CHARS = 8_192
+        const val MAX_COOKIE_NAME_CHARS = 256
+
         /** `kino.sleep(ms)`: 0..this per call. */
         const val MAX_SLEEP_MS = 5_000
 
@@ -310,6 +317,8 @@ class PluginRuntime private constructor(
                 function("storageKeys") { _ -> host.storageKeys() }
                 function("log") { args -> host.log(args[0] as String, args[1] as String) }
                 function("config") { _ -> host.config() }
+                function("cookieGet") { args -> host.cookieGet(args[0] as String, args[1] as String) }
+                function("cookiesClear") { _ -> host.cookiesClear() }
                 function("crypto") { args -> host.crypto(args[0] as String) }
                 asyncFunction("sleep") { args -> host.sleep((args[0] as Number).toLong()); null }
             }
@@ -337,10 +346,13 @@ class PluginRuntime private constructor(
             .put("maxRequestChars", MAX_REQUEST_CHARS)
             .put("maxSelectorChars", MAX_SELECTOR_CHARS)
             .put("maxHtmlChars", PluginHtml.MAX_HTML_CHARS)
+            .put("maxUrlChars", MAX_URL_CHARS)
+            .put("maxCookieNameChars", MAX_COOKIE_NAME_CHARS)
             .put("storageMaxBytes", PluginStorage.MAX_BYTES)
             .put("sleepMaxMs", MAX_SLEEP_MS)
             .put("cryptoMaxDataBytes", PluginCrypto.MAX_DATA_BYTES)
             .put("cryptoMaxRequestChars", MAX_CRYPTO_REQUEST_CHARS)
+            .put("fetchMethods", org.json.JSONArray(PluginHttp.METHODS))
             .put("thrownFallback", THROWN_FALLBACK)
             .put("resultTooBig", RESULT_TOO_BIG)
             .toString()
