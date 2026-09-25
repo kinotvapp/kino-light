@@ -8,7 +8,29 @@
 (() => {
   'use strict';
   const G = globalThis;
-  const freezeClass = (C) => { Object.freeze(C.prototype); return Object.freeze(C); };
+  // Object.freeze(C) / Object.freeze(C.prototype) only lock each container OBJECT: the function
+  // VALUES stored as its properties (methods, accessors, static methods) are separate objects
+  // Object.freeze never reaches. Left alone that reopens the rename-to-a-huge-name crash the
+  // prelude's own define guards close for every other function (quickjs-kt reads a function's
+  // `name` natively; measured). Freeze every own function/accessor found by Reflect.ownKeys
+  // (string AND symbol keys, enumerable or not, so URLSearchParams's Symbol.iterator and static
+  // methods like URL.canParse are covered too) on both C and C.prototype, then freeze the two
+  // container objects themselves.
+  const freezeOwnFunctions = (obj) => {
+    for (const key of Reflect.ownKeys(obj)) {
+      const d = Object.getOwnPropertyDescriptor(obj, key);
+      if (!d) continue;
+      if (typeof d.value === 'function') Object.freeze(d.value);
+      if (typeof d.get === 'function') Object.freeze(d.get);
+      if (typeof d.set === 'function') Object.freeze(d.set);
+    }
+  };
+  const freezeClass = (C) => {
+    freezeOwnFunctions(C.prototype);
+    freezeOwnFunctions(C);
+    Object.freeze(C.prototype);
+    return Object.freeze(C);
+  };
   const define = (name, value) =>
     Object.defineProperty(G, name, { value, writable: false, configurable: false, enumerable: false });
 

@@ -55,12 +55,18 @@ class PluginWebGlobalsTest {
 
     @Test fun `web globals are frozen and can't be replaced`() {
         assertEquals(
-            "[true,true,true,true,true,\"object\",\"function\"]",
+            "[true,true,true,true,true,true,true,true,true,true,\"object\",\"function\"]",
             home(
                 """
                 let replaced = 'no'; try { URL = 1 } catch (e) { replaced = 'refused' }
-                return [Object.isFrozen(URL), Object.isFrozen(URL.prototype), Object.isFrozen(URLSearchParams.prototype),
-                  Object.isFrozen(atob), Object.isFrozen(TextDecoder), typeof new URL('https://a.example/').searchParams, typeof URL];
+                return [
+                  Object.isFrozen(URL), Object.isFrozen(URL.prototype),
+                  Object.isFrozen(URLSearchParams), Object.isFrozen(URLSearchParams.prototype),
+                  Object.isFrozen(atob), Object.isFrozen(btoa),
+                  Object.isFrozen(TextEncoder), Object.isFrozen(TextEncoder.prototype),
+                  Object.isFrozen(TextDecoder), Object.isFrozen(TextDecoder.prototype),
+                  typeof new URL('https://a.example/').searchParams, typeof URL,
+                ];
                 """,
             ),
         )
@@ -70,14 +76,25 @@ class PluginWebGlobalsTest {
         val out = home(
             """
             const r = [];
-            for (const f of [() => new URL({ toString() { throw new Error('t') } }), () => atob({ toString() { return '*' } }),
-                             () => new TextDecoder().decode(5), () => btoa('Ā'), () => new URL('http://[::1')]) {
+            for (const f of [
+              () => new URL({ toString() { throw new Error('t') } }),
+              () => atob({ toString() { return '*' } }),
+              () => new TextDecoder().decode(5),
+              () => btoa('Ā'),
+              () => new URL('http://[::1'),
+              () => new URLSearchParams([['a', 'b', 'c']]),
+              () => new TextEncoder().encode('x'.repeat(5000000)),
+              () => Object.defineProperty(URL.prototype.toString, 'name', { value: 'n'.repeat(20000000) }),
+            ]) {
               try { f(); r.push('ok') } catch (e) { r.push(e.name) }
             }
             return r;
             """,
         )
-        assertEquals("""["Error","InvalidCharacterError","TypeError","InvalidCharacterError","TypeError"]""", out)
+        assertEquals(
+            """["Error","InvalidCharacterError","TypeError","InvalidCharacterError","TypeError","TypeError","ok","TypeError"]""",
+            out,
+        )
     }
 
     @Test fun `a 1 MB base64 round trip stays inside the call time`() {

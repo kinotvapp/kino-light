@@ -377,10 +377,11 @@ class PluginRuntimeTest {
 
     @Test fun `the prelude's own functions cannot be renamed`() = runBlocking {
         val rt = open(
-            "export async function home() { const fns = [Object.getOwnPropertyDescriptor(globalThis, '__kinoCall').value, kino.fetch, kino.log, kino.html.select, kino.storage.get, kino.storage.set, kino.storage.remove, console.log, console.error, Promise.reject];\n" +
+            "export async function home() { const fns = [Object.getOwnPropertyDescriptor(globalThis, '__kinoCall').value, kino.fetch, kino.log, kino.html.select, kino.storage.get, kino.storage.set, kino.storage.remove, console.log, console.error, Promise.reject,\n" +
+                "  URL.prototype.toString, Object.getOwnPropertyDescriptor(URL.prototype, 'href').get, URLSearchParams.prototype.append, TextDecoder.prototype.decode, TextEncoder.prototype.encode, URL.canParse];\n" +
                 "return fns.map(f => { try { Object.defineProperty(f, 'name', { value: 'x' }); return 'renamed' } catch (e) { return Object.isFrozen(f) } }) }",
         )
-        assertEquals("[" + List(10) { "true" }.joinToString(",") + "]", rt.call("home", "null", 5_000))
+        assertEquals("[" + List(16) { "true" }.joinToString(",") + "]", rt.call("home", "null", 5_000))
     }
 
     @Test fun `a huge function name is refused by every define API, and small ones still work`() = runBlocking {
