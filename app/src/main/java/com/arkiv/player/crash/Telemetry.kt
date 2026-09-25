@@ -41,7 +41,8 @@ class OtaDownloadFailed(message: String) : Exception(message)
 class ActivationFailed(message: String) : Exception(message)
 
 /** Startup warm-up of the heavy credential/Magis chain took long enough to risk an ANR on a weak
- *  device. Early signal of the slow-device startup problem, with the measured duration. */
+ *  device. Early signal of the slow-device startup problem. The message is constant; the measured
+ *  duration and the model travel as Sentry extras (see `Crash.report`) so one issue collects them all. */
 class SlowStartup(message: String) : Exception(message)
 
 /** On-disk cache pressure: the Chromecast remux cache (or another cache) was large enough to be a

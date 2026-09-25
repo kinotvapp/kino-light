@@ -263,7 +263,13 @@ class AppGraph(context: Context) {
             // (the splash waits for it -- see MainActivity). Report the duration so we can see it.
             val ms = android.os.SystemClock.elapsedRealtime() - t0
             if (built && ms >= SLOW_WARMUP_MS) {
-                com.arkiv.player.crash.Crash.report(com.arkiv.player.crash.SlowStartup("credential/Magis warm-up ${ms}ms"), "slow-startup")
+                // Constant message, the duration as an extra: with the number in the message every
+                // distinct value was its own GlitchTip issue (80 of the board's latest 100 were these).
+                com.arkiv.player.crash.Crash.report(
+                    com.arkiv.player.crash.SlowStartup("credential/Magis warm-up slow"),
+                    "slow-startup",
+                    extras = mapOf("duration_ms" to ms.toString(), "model" to android.os.Build.MODEL),
+                )
             }
         }
     }
