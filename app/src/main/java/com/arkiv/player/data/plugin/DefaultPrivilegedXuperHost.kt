@@ -12,8 +12,8 @@ import org.json.JSONObject
  * The production [PrivilegedXuperHost]. [DefaultPluginHost] is `final` (this codebase has no other
  * open production class), so every ordinary `kino.*` member -- fetch/storage/cookies/config/crypto,
  * all unchanged from any other installed plugin -- is delegated to one, by interface delegation
- * rather than inheritance. Only the 5 `xuper*` members are this class's own; the ones still
- * throwing are stubs until Tasks 9-10 replace each with the real, protected Magis call.
+ * rather than inheritance. Only the 5 `xuper*` members are this class's own; the one still
+ * throwing is a stub until Task 10 replaces it with the real, protected Magis call.
  */
 class DefaultPrivilegedXuperHost internal constructor(
     id: String,
@@ -35,6 +35,7 @@ class DefaultPrivilegedXuperHost internal constructor(
     override suspend fun xuperSearch(argsJson: String): String = envelope {
         magis.value.search(searchQueryOf(JSONObject(argsJson)))
     }
+
     /**
      * Answer: the envelope around [MagisPluginBridge.home]'s rows. Unlike [envelope]
      * (search/episodes/resolve), [MagisPluginBridge.home] never answers a portal error of its own
