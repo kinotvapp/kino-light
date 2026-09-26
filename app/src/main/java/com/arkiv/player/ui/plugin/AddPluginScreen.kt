@@ -1,5 +1,6 @@
 package com.arkiv.player.ui.plugin
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -57,9 +58,17 @@ import com.arkiv.player.ui.theme.ArkivTextSecondary
 /**
  * How the "Agregar plugin" window is reached. [SETTINGS] is the button in Ajustes ▸ Plugins: back
  * closes it. [ONBOARDING] is the mandatory first-launch picker (not wired yet): it has no way out,
- * so it draws no back arrow.
+ * so it draws no back arrow and swallows system Back.
  */
 enum class AddPluginMode { ONBOARDING, SETTINGS }
+
+/** Whether the person can leave the window: the back arrow is drawn and system Back closes it. */
+internal val AddPluginMode.canClose: Boolean get() = this == AddPluginMode.SETTINGS
+
+/** What system Back does in [mode]: closes the window when it has a way out, nothing otherwise. Both windows use it. */
+internal fun handleAddPluginBack(mode: AddPluginMode, onClose: () -> Unit) {
+    if (mode.canClose) onClose()
+}
 
 /**
  * The "Agregar plugin" window on the phone: search the recommended plugins and install one, add one
@@ -69,6 +78,8 @@ enum class AddPluginMode { ONBOARDING, SETTINGS }
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddPluginScreen(mode: AddPluginMode, onClose: () -> Unit) {
+    BackHandler { handleAddPluginBack(mode, onClose) }
+
     val graph = rememberGraph()
     // Own key: this window can be hosted next to the Plugins tab's view model on the same owner.
     val vm: PluginsViewModel = viewModel(
@@ -86,7 +97,7 @@ fun AddPluginScreen(mode: AddPluginMode, onClose: () -> Unit) {
             TopAppBar(
                 title = { Text("Agregar plugin", maxLines = 1) },
                 navigationIcon = {
-                    if (mode == AddPluginMode.SETTINGS) {
+                    if (mode.canClose) {
                         IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver") }
                     }
                 },

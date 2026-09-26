@@ -56,6 +56,7 @@ import com.arkiv.player.ui.plugin.PluginUninstallDialog
 import com.arkiv.player.ui.plugin.PluginsViewModel
 import com.arkiv.player.ui.plugin.catalogActionOf
 import com.arkiv.player.ui.plugin.catalogRefreshLine
+import com.arkiv.player.ui.plugin.handleAddPluginBack
 import com.arkiv.player.ui.plugin.legacyFirst
 import com.arkiv.player.ui.plugin.pluginStatusText
 import com.arkiv.player.ui.plugin.rowMessagePluginId
@@ -76,7 +77,7 @@ private const val INITIAL_FOCUS_GRACE_MS = 1_500L
  */
 @Composable
 fun TvAddPluginScreen(mode: AddPluginMode, onClose: () -> Unit) {
-    BackHandler { if (mode == AddPluginMode.SETTINGS) onClose() }
+    BackHandler { handleAddPluginBack(mode, onClose) }
 
     val graph = rememberGraph()
     // Own key: this window can be hosted next to the Plugins tab's view model on the same owner.
