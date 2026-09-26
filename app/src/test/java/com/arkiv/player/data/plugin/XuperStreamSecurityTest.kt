@@ -121,6 +121,17 @@ class XuperStreamSecurityTest {
         assertEquals(null, vault.headersFor("http://a/1"))
     }
 
+    @Test fun `a reply with more subtitles than the vault holds still resolves its own stream`() = runTest {
+        val vault = XuperStreams()
+        val many = (1..XuperStreams.DEFAULT_CAP * 2).map { "http://subs.magis.example/public/subs/$it.srt" }
+        vault.remember(cdn, secret, many)
+        assertEquals(secret, vault.headersFor(cdn))
+        // And through the real reader: the stream passes with its headers, subtitles up to the contract's cap.
+        val play = source(xuper, answer(cdn, subtitles = many), vault).resolve(ref)
+        assertEquals(secret, play.headers)
+        assertEquals(many.take(PluginOutput.MAX_SUBTITLES), play.subtitles.map { it.url })
+    }
+
     @Test fun `a subtitle URL never overwrites a stream's headers`() {
         val vault = XuperStreams()
         vault.remember(cdn, secret, emptyList())

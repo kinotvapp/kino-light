@@ -26,9 +26,12 @@ class XuperStreams(private val cap: Int = DEFAULT_CAP) {
     /** Records a resolved stream: [url] with the [headers] it plays with, and its subtitles' URLs (no headers). */
     @Synchronized
     fun remember(url: String, headers: Map<String, String>, subtitleUrls: List<String>) {
+        // Only as many subtitles as PluginOutput.stream ever reads, and only if absent: a subtitle
+        // must never overwrite a stream entry's headers.
+        for (s in subtitleUrls.take(PluginOutput.MAX_SUBTITLES)) if (s.isNotEmpty() && s !in entries) entries[s] = emptyMap()
+        // The stream last: the most recent entry, so its own subtitles can never evict it before
+        // the plugin's answer is read.
         if (url.isNotEmpty()) entries[url] = headers.toMap()
-        // Only if absent: a subtitle must never overwrite a stream entry's headers.
-        for (s in subtitleUrls) if (s.isNotEmpty() && s !in entries) entries[s] = emptyMap()
     }
 
     /** The headers for exactly [url] (empty for a subtitle), or null when the bridge never resolved it. */
