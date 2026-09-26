@@ -13,7 +13,7 @@ import org.json.JSONObject
  * open production class), so every ordinary `kino.*` member -- fetch/storage/cookies/config/crypto,
  * all unchanged from any other installed plugin -- is delegated to one, by interface delegation
  * rather than inheritance. Only the 5 `xuper*` members are this class's own; the ones still
- * throwing are stubs until Tasks 6-10 replace each with the real, protected Magis call.
+ * throwing are stubs until Tasks 9-10 replace each with the real, protected Magis call.
  */
 class DefaultPrivilegedXuperHost internal constructor(
     id: String,
@@ -37,7 +37,12 @@ class DefaultPrivilegedXuperHost internal constructor(
     }
     override suspend fun xuperHome(): String = throw NotImplementedError("Task 9")
     override suspend fun xuperBrowse(ref: String, cursor: String?): String = throw NotImplementedError("Task 10")
-    override suspend fun xuperEpisodes(ref: String): String = throw NotImplementedError("Task 7")
+
+    /**
+     * Argument: a series item's own `ref`, as `kino.xuper.search` returned it. Answer: the envelope
+     * around [MagisPluginBridge.episodes]'s `{episodes, series}`.
+     */
+    override suspend fun xuperEpisodes(ref: String): String = envelope { magis.value.episodes(ref) }
 
     /**
      * Argument: the item's own `ref`, as `kino.xuper.search` returned it. Answer: the envelope
