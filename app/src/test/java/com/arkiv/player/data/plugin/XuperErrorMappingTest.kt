@@ -11,9 +11,13 @@ import org.junit.Test
  * - `portal100024` = "can't be watched in this area" (a geographic/licensing block) -> `geo_blocked`,
  *   not `not_found`.
  * - `portal100004` = "this channel has been taken down" (the content itself is gone) -> `not_found`,
- *   not `auth_required`. Session-dead/reauth cases never reach this mapping at all: they're already
- *   handled upstream in `MagisSession.withValidSession`, so no branch below ever produces
- *   `auth_required`.
+ *   not `auth_required`.
+ *
+ * `aaa100027`/`aaa100028` (`MagisSession.kt`'s private `SESSION_DEAD`, "session token expired / not
+ * logged in") DO map to `auth_required` here (round 2): `MagisSession.withValidSession` retries and
+ * reauthenticates on any `PortalError` first, but when that reauthentication itself exhausts every
+ * retry, it returns the original, still-session-dead-coded error unchanged -- so this mapping can
+ * receive it, and a genuinely dead session is an auth problem, not a "server is down" one.
  */
 class XuperErrorMappingTest {
     @Test fun `portal100024 (geographic-licensing block) maps to geo_blocked`() {
@@ -24,6 +28,16 @@ class XuperErrorMappingTest {
     @Test fun `portal100004 (channel taken down) maps to not_found`() {
         val e = MagisResult.PortalError(code = "portal100004", msg = "canal dado de baja")
         assertEquals(PluginErrors.NOT_FOUND to e.msg, e.toPluginError())
+    }
+
+    @Test fun `aaa100027 (session token expired) maps to auth_required`() {
+        val e = MagisResult.PortalError(code = "aaa100027", msg = "sesión expirada")
+        assertEquals(PluginErrors.AUTH_REQUIRED to e.msg, e.toPluginError())
+    }
+
+    @Test fun `aaa100028 (not logged in) maps to auth_required`() {
+        val e = MagisResult.PortalError(code = "aaa100028", msg = "未登录")
+        assertEquals(PluginErrors.AUTH_REQUIRED to e.msg, e.toPluginError())
     }
 
     @Test fun `a message containing the content-gone marker maps to not_found regardless of code`() {

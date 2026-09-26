@@ -23,15 +23,18 @@ import com.arkiv.player.data.magis.MagisResult
  * collapses into generic phrases in the original app and which Kino has no resellers to route to --
  * falls back to [PluginErrors.UNAVAILABLE].
  *
- * This mapping has no explicit branch for the session-dead codes (`aaa100027`/`aaa100028`, see
- * `MagisSession.kt`'s `SESSION_DEAD`). `MagisSession.withValidSession` reauthenticates and retries on
- * any `PortalError` before returning one, but if that reauthentication itself fails -- a linked
- * account's relogin rejected, or every seed-rescue round exhausted for an anonymous session -- it
- * falls through to `return result` with the ORIGINAL, still-`SESSION_DEAD`-coded `PortalError` intact
- * (not swallowed or replaced). So one of those codes CAN reach here; when it does, it has no explicit
- * branch below and falls into the generic [PluginErrors.UNAVAILABLE] case rather than
- * [PluginErrors.AUTH_REQUIRED] -- a safe fallback, not a deliberate claim that this can never happen.
- * Nothing here produces [PluginErrors.RATE_LIMITED] either: Magis has no portal code for it.
+ * `MagisSession.withValidSession` reauthenticates and retries on any `PortalError` before returning
+ * one, but if that reauthentication itself fails -- a linked account's relogin rejected, or every
+ * seed-rescue round exhausted for an anonymous session -- it falls through to `return result` with the
+ * ORIGINAL, still-session-dead-coded `PortalError` intact (not swallowed or replaced). So
+ * `aaa100027`/`aaa100028` (`MagisSession.kt`'s private `SESSION_DEAD` set, "session token expired /
+ * portal no longer recognizes it" -- inaccessible from this file, hence the literal string checks
+ * below rather than a shared constant, same reasoning as `portal100024`/`portal100004` above, whose
+ * `GEO_BLOCKED` constant is equally private to `MagisSession`) CAN reach this mapping, and map to
+ * [PluginErrors.AUTH_REQUIRED]: a session that's genuinely dead after every retry is an auth problem,
+ * not a "the server is down, wait" one -- [PluginErrors.UNAVAILABLE]'s message ("Xuper no está
+ * disponible ahora") would send the wrong diagnosis. Nothing here produces [PluginErrors.RATE_LIMITED]:
+ * Magis has no portal code for it.
  */
 private const val CONTENT_GONE_MARKER = "不存在"
 
@@ -40,6 +43,7 @@ internal fun MagisResult.PortalError.toPluginError(): Pair<String, String> {
     return when {
         code == "portal100004" -> PluginErrors.NOT_FOUND to message
         code == "portal100024" -> PluginErrors.GEO_BLOCKED to message
+        code == "aaa100027" || code == "aaa100028" -> PluginErrors.AUTH_REQUIRED to message
         msg?.contains(CONTENT_GONE_MARKER) == true -> PluginErrors.NOT_FOUND to message
         else -> PluginErrors.UNAVAILABLE to message
     }
