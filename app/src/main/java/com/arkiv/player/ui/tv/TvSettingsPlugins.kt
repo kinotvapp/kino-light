@@ -26,6 +26,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import com.arkiv.player.data.plugin.InstalledPlugin
 import com.arkiv.player.data.plugin.PluginStatus
 import com.arkiv.player.ui.plugin.PluginConsentDialog
 import com.arkiv.player.ui.plugin.PluginUninstallDialog
@@ -79,23 +80,34 @@ internal fun TvSettingsPlugins() {
         Text("Instalados", style = MaterialTheme.typography.titleMedium, color = Color.White)
         if (plugins.isEmpty()) Text("Todavía no tienes plugins.", color = ArkivTextSecondary)
         plugins.forEach { p ->
-            Text("${p.manifest.name} · ${p.record.version} — ${pluginStatusText(p.status)}", style = MaterialTheme.typography.bodyLarge, color = Color.White)
-            Text("Se conectará a: ${p.hosts.labels.joinToString(", ")}", style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary)
-            if (rowMessageId == p.id) {
-                state.message?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = Color.White) }
-            }
-            if (p.status != PluginStatus.DAMAGED) {
-                TvActionOption(label = "${p.manifest.name}: ${if (p.isUsable) "activado" else "desactivado"}") { vm.setEnabled(p.id, !p.isUsable) }
-            }
-            if (p.manifest.settings.isNotEmpty()) {
-                TvActionOption(label = "Configurar ${p.manifest.name}") { vm.openSettings(p.id) }
-            }
-            TvActionOption(label = if (p.status == PluginStatus.UPDATE_PENDING) "Revisar actualización de ${p.manifest.name}" else "Buscar actualización de ${p.manifest.name}") { vm.checkUpdate(p.id) }
-            TvActionOption(label = "Desinstalar ${p.manifest.name}") { vm.askUninstall(p) }
+            TvInstalledPluginRows(p, message = state.message.takeIf { rowMessageId == p.id }, vm = vm)
         }
     }
 
     state.consent?.let { PluginConsentDialog(it, onInstall = vm::confirmInstall, onCancel = vm::cancelConsent) }
     state.confirmUninstall?.let { PluginUninstallDialog(it, onConfirm = vm::confirmUninstall, onCancel = vm::cancelUninstall) }
     state.configuring?.let { com.arkiv.player.ui.plugin.PluginConfigDialog(it, isTv = true, vm = vm) }
+}
+
+/**
+ * One installed plugin's rows: name and status, the sites it talks to, [message] (the line for THIS
+ * plugin, see [rowMessagePluginId]) and its actions. It emits several children, so the caller gives
+ * them one column: Ajustes ▸ Plugins spaces them in its own, the "Agregar plugin" window wraps each
+ * plugin in one.
+ */
+@Composable
+internal fun TvInstalledPluginRows(p: InstalledPlugin, message: String?, vm: PluginsViewModel) {
+    Text("${p.manifest.name} · ${p.record.version} — ${pluginStatusText(p.status)}", style = MaterialTheme.typography.bodyLarge, color = Color.White)
+    Text("Se conectará a: ${p.hosts.labels.joinToString(", ")}", style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary)
+    if (message != null) {
+        Text(message, style = MaterialTheme.typography.bodyMedium, color = Color.White)
+    }
+    if (p.status != PluginStatus.DAMAGED) {
+        TvActionOption(label = "${p.manifest.name}: ${if (p.isUsable) "activado" else "desactivado"}") { vm.setEnabled(p.id, !p.isUsable) }
+    }
+    if (p.manifest.settings.isNotEmpty()) {
+        TvActionOption(label = "Configurar ${p.manifest.name}") { vm.openSettings(p.id) }
+    }
+    TvActionOption(label = if (p.status == PluginStatus.UPDATE_PENDING) "Revisar actualización de ${p.manifest.name}" else "Buscar actualización de ${p.manifest.name}") { vm.checkUpdate(p.id) }
+    TvActionOption(label = "Desinstalar ${p.manifest.name}") { vm.askUninstall(p) }
 }
