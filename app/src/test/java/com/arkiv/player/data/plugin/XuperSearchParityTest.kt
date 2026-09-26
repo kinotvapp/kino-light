@@ -6,6 +6,7 @@ import com.arkiv.player.data.gateway.GatewaySearchQuery
 import com.arkiv.player.data.gateway.SearchEvent
 import com.arkiv.player.data.magis.FakePortalClient
 import com.arkiv.player.data.magis.MagisCatalog
+import com.arkiv.player.data.magis.MagisPluginBridge
 import com.arkiv.player.data.magis.MagisRef
 import com.arkiv.player.data.magis.MagisResolve
 import com.arkiv.player.data.magis.MagisResult
@@ -160,7 +161,7 @@ class XuperSearchParityTest {
         PluginConfig.EMPTY,
         null,
         EffectiveHosts(emptyList()),
-        lazyOf(XuperNatives(MagisCatalog(fake, testSession(fake)), tmdb(), vodStore = null)),
+        lazyOf(MagisPluginBridge(MagisCatalog(fake, testSession(fake)), tmdb(), vodStore = null)),
     )
 
     /** Key order differs between Android's and the JVM's org.json, so beans compare key-sorted. */

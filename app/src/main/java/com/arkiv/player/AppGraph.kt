@@ -321,12 +321,13 @@ class AppGraph(context: Context) {
     }
 
     /**
-     * The same Magis objects [magisSource] is built with, for the privileged `kino.xuper.*` host
-     * functions (see `DefaultPrivilegedXuperHost`). A plain [Lazy], not a `by lazy` property: it is
-     * handed to every plugin runtime's host selection, and only the privileged host ever reads it.
+     * The Magis side of the privileged `kino.xuper.*` host functions (see `DefaultPrivilegedXuperHost`),
+     * over the same objects [magisSource] is built with. One per process, so its caches outlive a
+     * plugin runtime's idle close. A plain [Lazy], not a `by lazy` property: it is handed to every
+     * plugin runtime's host selection, and only the privileged host ever reads it.
      */
-    private val xuperNatives: Lazy<com.arkiv.player.data.plugin.XuperNatives> = lazy {
-        com.arkiv.player.data.plugin.XuperNatives(
+    private val magisPluginBridge: Lazy<com.arkiv.player.data.magis.MagisPluginBridge> = lazy {
+        com.arkiv.player.data.magis.MagisPluginBridge(
             catalog = magisCatalog,
             tmdb = tmdbApi,
             vodStore = com.arkiv.player.data.magis.VodSearchStore(database.vodSearchCacheDao()),
@@ -502,7 +503,7 @@ class AppGraph(context: Context) {
         val storage = PluginStorage(java.io.File(dataDir, "storage.json"))
         // Only the one recognized Xuper source gets the extra kino.xuper.* host functions -- see
         // pluginHostFor's KDoc and XuperPrivilege.grants for the gate itself.
-        val host = pluginHostFor(plugin, http, storage, config, cookies, hosts, xuperNatives)
+        val host = pluginHostFor(plugin, http, storage, config, cookies, hosts, magisPluginBridge)
         val runtime = PluginRuntime.open(id, script, host, PluginEnv(appVersion = BuildConfig.VERSION_NAME))
         // F5: drop this plugin's PluginHttp the moment its runtime is closed -- idle timeout, or an
         // explicit pool.close() from DefaultPluginAdmin's disable/update/uninstall -- so pluginHttps
