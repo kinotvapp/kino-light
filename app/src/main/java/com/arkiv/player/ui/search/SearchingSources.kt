@@ -7,8 +7,10 @@ package com.arkiv.player.ui.search
  * ENTIRE search finished. Since `CompositeSource` emits a single `Done` when all sources have
  * finished, "Buscando en Magis…" kept spinning until Caracol answered, even if Magis had already
  * brought back everything. Now each source turns its own off as soon as it sends its `SourceDone`
- * or its `SourceError` ([sourceFinished]), and "Todo" spins while Xuper, Caracol, or any plugin
- * that announced itself ([sourceStarted]) hasn't finished.
+ * or its `SourceError` ([sourceFinished]), and "Todo" spins while Caracol, or any plugin that
+ * announced itself ([sourceStarted]) -- Xuper included, which searches as a plugin -- hasn't
+ * finished. Plugins announce themselves before touching the network (`PluginContentSource.search`
+ * emits `SourceStart` first), so none of them can be missed by a Caracol that fails fast.
  *
  * The end of the entire search ([allFinished]) turns everything off regardless: a source that
  * never got to send either one can't leave its tab spinning forever.
@@ -21,7 +23,7 @@ data class SearchingSources(
     val finished: Set<String> = emptySet(),
     /** Whether the entire search already finished. Defaults to `true`: with no search in progress, nothing spins. */
     val done: Boolean = true,
-    /** Plugin sources that announced themselves (`SourceStart`); Xuper and Caracol are always expected. */
+    /** Sources that announced themselves (`SourceStart`); Caracol is always expected. */
     val started: Set<String> = emptySet(),
 ) {
     fun sourceStarted(source: String) = copy(started = started + source)
@@ -40,7 +42,12 @@ data class SearchingSources(
     val any: Boolean get() = isSearching(SourceTab.ALL)
 
     companion object {
-        private val ALWAYS_EXPECTED = setOf(SourceTab.MAGIS.key, SourceTab.CARACOL.key)
+        /**
+         * Caracol only. The native Magis source (`"magis"`) used to be here too; it was deleted in
+         * Task 13c and nothing emits under that name any more, so waiting on it only kept "Todo"
+         * spinning until the whole search's end signal.
+         */
+        private val ALWAYS_EXPECTED = setOf(SourceTab.CARACOL.key)
 
         /** A search that's starting: everything searching. */
         fun starting() = SearchingSources(done = false)

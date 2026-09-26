@@ -7,9 +7,9 @@ import com.arkiv.player.ui.catalog.PlaySource
 /**
  * Translates a search result into the model the screen already uses.
  *
- * `source` is set by the two search sources: `MagisSource` (com.arkiv.player.data.magis) with
- * `"magis"` and `DituSource` (com.arkiv.player.data.ditu) with `"ditu"`; `plugin:<id>` is set by
- * `PluginContentSource`. Any other value returns `null`: this APK wouldn't know what to do with it.
+ * `source` is set by the search sources: `DituSource` (com.arkiv.player.data.ditu) with `"ditu"`
+ * and `PluginContentSource` with `plugin:<id>`. `"magis"` was the native `MagisSource`'s, deleted
+ * in Task 13c: nothing emits it any more, so that branch is unreachable from a fresh search. Any other value returns `null`: this APK wouldn't know what to do with it.
  *
  * The magnet and the page URL are NOT filled in: everything is resolved at playback time, from
  * [GatewayResult.ref].

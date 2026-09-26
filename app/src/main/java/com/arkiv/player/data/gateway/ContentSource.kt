@@ -7,9 +7,10 @@ import kotlinx.coroutines.flow.Flow
  *
  * Exists so sub-project 2A's wiring is a constructor change: the screens depend on this
  * interface and not on a concrete gateway client, so moving from the gateway to the portal's
- * direct client doesn't touch them. Today two sources implement it, `MagisSource` and
- * `DituSource`, and a third implementation, `CompositeSource`, joins them behind the single
- * object the screens see (`AppGraph.contentSource`). The models are still called `Gateway*`
+ * direct client doesn't touch them. Today it's implemented by `DituSource`, `PluginContentSource`
+ * (one per installed plugin, Xuper included) and `LegacyXuperRefSource` (Xuper refs saved before
+ * Xuper became a plugin; the native `MagisSource` it replaced is gone), and `CompositeSource` joins
+ * them behind the single object the screens see (`AppGraph.contentSource`). The models are still called `Gateway*`
  * because renaming them would be churn with no gain (they're the contract, not the transport).
  *
  * Errors travel as [GatewayException]: whoever calls already catches them that way.
@@ -17,7 +18,7 @@ import kotlinx.coroutines.flow.Flow
 interface ContentSource {
     /**
      * Whether this `ref` belongs to this source. Exists since there's more than one
-     * implementation (`MagisSource`, `DituSource`): each one knows how to read its own —including
+     * implementation (`DituSource`, `PluginContentSource`, `LegacyXuperRefSource`): each one knows how to read its own —including
      * old gateway ones, which carry no visible prefix— without whoever dispatches having to guess
      * from outside.
      */

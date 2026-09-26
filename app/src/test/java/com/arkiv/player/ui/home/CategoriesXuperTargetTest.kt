@@ -70,11 +70,12 @@ class CategoriesXuperTargetTest {
     @Test fun `a tile opens the xuper plugin's Ver mas over that row id`() = runBlocking {
         val vm = CategoriesViewModel(catalog, MutableStateFlow(listOf(plugin("mi-xuper", XuperPrivilege.SOURCE_REPO))))
         val spec = withTimeout(5_000) { vm.rows.first { it.isNotEmpty() } }.first { it.id == "magis_g_series_drama" }
+        withTimeout(5_000) { vm.loading.first { !it } }
 
         assertEquals(PluginMoreTarget.Browse("mi-xuper", spec.title, "magis_g_series_drama"), vm.browseTarget(spec))
     }
 
-    @Test fun `the tiles go away while the xuper plugin isn't usable, and come back with it`() = runBlocking {
+    @Test fun `the tiles go away while the xuper plugin isn't usable, and come back with it`() = runBlocking<Unit> {
         val plugins = MutableStateFlow(listOf(plugin("xuper", XuperPrivilege.SOURCE_REPO)))
         val vm = CategoriesViewModel(catalog, plugins)
         val spec = withTimeout(5_000) { vm.rows.first { it.isNotEmpty() } }.first()
@@ -88,5 +89,48 @@ class CategoriesXuperTargetTest {
 
         plugins.value = listOf(plugin("xuper", XuperPrivilege.SOURCE_REPO))
         assertTrue(vm.rows.value.isNotEmpty())
+        // Becoming usable again reloads (cache-first): let it land before Main is reset.
+        withTimeout(5_000) { vm.loading.first { !it } }
+    }
+
+    // --- no portal read without a usable Xuper plugin ------------------------------------------
+
+    /** The same catalog, counting every portal tree read (`rows()` with no store always ends in `load()`, which reads it). */
+    private val treeReads = java.util.concurrent.atomic.AtomicInteger()
+    private val countingCatalog = MagisHomeCatalog(tree = { root ->
+        treeReads.incrementAndGet()
+        if (root != "series") emptyList() else listOf(
+            CatalogSection(
+                id = 1, name = "All", adult = false,
+                items = (1..6).map { CatalogItem(id = "s$it", title = "t$it", poster = null, durationS = 0, type = "teleplay", genres = listOf("Drama")) },
+            ),
+        )
+    })
+
+    @Test fun `without a usable xuper plugin the catalog is never read, not even on reload`() = runBlocking {
+        for (installed in listOf(
+            emptyList(),
+            listOf(plugin("xuper", XuperPrivilege.SOURCE_REPO, enabled = false)),
+            listOf(plugin("xuper", XuperPrivilege.SOURCE_REPO, damaged = true)),
+            listOf(plugin("xuper", "someone-else/kino-plugin-xuper")),
+        )) {
+            val reload = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+            val vm = CategoriesViewModel(countingCatalog, MutableStateFlow(installed), reload)
+            reload.emit(Unit)
+            assertEquals(installed.toString(), 0, treeReads.get())
+            assertTrue(vm.rows.value.isEmpty())
+            assertEquals(false, vm.loading.value)
+        }
+    }
+
+    @Test fun `the catalog is read once the xuper plugin becomes usable`() = runBlocking {
+        val plugins = MutableStateFlow(listOf(plugin("xuper", XuperPrivilege.SOURCE_REPO, enabled = false)))
+        val vm = CategoriesViewModel(countingCatalog, plugins)
+        assertEquals(0, treeReads.get())
+
+        plugins.value = listOf(plugin("xuper", XuperPrivilege.SOURCE_REPO))
+        withTimeout(5_000) { vm.rows.first { it.isNotEmpty() } }
+        withTimeout(5_000) { vm.loading.first { !it } }
+        assertTrue(treeReads.get() > 0)
     }
 }

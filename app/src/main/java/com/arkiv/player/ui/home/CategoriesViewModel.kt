@@ -12,7 +12,9 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
@@ -36,12 +38,14 @@ data class CategorySpec(val id: String, val title: String, val previewUrl: Strin
  * category's real titles ([MagisHomeRow.all]), paged like any plugin row's "Ver más".
  *
  * The tiles only show while that plugin is usable ([xuperPluginId]): a disabled or uninstalled
- * plugin contributes no Home rows, and these tiles are those same rows, so they go too.
+ * plugin contributes no Home rows, and these tiles are those same rows, so they go too. Nor is the
+ * catalog read at all without it: no portal query from a screen the person can't act on. The
+ * tiles load as soon as the plugin is (or becomes) usable.
  */
 class CategoriesViewModel(
     private val magisHome: MagisHomeCatalog,
     /** The installed plugins (`PluginRegistry.plugins`): where the Xuper plugin is looked up. */
-    plugins: Flow<List<InstalledPlugin>>,
+    private val plugins: Flow<List<InstalledPlugin>>,
     /** Manual "recargar catálogo" pulses from the home's top bar (`AppGraph.homeReloads`). */
     reload: Flow<Unit> = emptyFlow(),
 ) : ViewModel() {
@@ -65,7 +69,12 @@ class CategoriesViewModel(
     var tvScrollOffset: Int = 0
 
     init {
-        refresh(force = false)
+        // Cache-first load once Xuper is usable -- right away if it already is, or when it becomes
+        // usable later (installed or re-enabled while this screen lives). Never while it isn't.
+        plugins.map { xuperPluginId(it) != null }
+            .distinctUntilChanged()
+            .onEach { usable -> if (usable) refresh(force = false) else _loading.value = false }
+            .launchIn(viewModelScope)
         // The top-bar reload refetches the shared catalog, bypassing the cache.
         reload.onEach { refresh(force = true) }.launchIn(viewModelScope)
     }
@@ -73,10 +82,15 @@ class CategoriesViewModel(
     /**
      * (Re)builds the category tiles. [force] bypasses the 6 h cache and asks the portal (the reload
      * button); otherwise it's cache-first. A refetch that comes back empty keeps the current tiles
-     * instead of blanking them -- unless there were none to begin with.
+     * instead of blanking them -- unless there were none to begin with. Does nothing (no portal
+     * read) while there's no usable Xuper plugin, the same check that hides the tiles.
      */
     private fun refresh(force: Boolean) {
         viewModelScope.launch {
+            if (xuperPluginId(plugins.first()) == null) {
+                _loading.value = false
+                return@launch
+            }
             _loading.value = true
             // Fetch + classification + tile building run off the main thread (weak-device jank).
             val specs = withContext(Dispatchers.Default) {

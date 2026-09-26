@@ -2,18 +2,14 @@ package com.arkiv.player.data.plugin
 
 import com.arkiv.player.data.catalog.TmdbApi
 import com.arkiv.player.data.gateway.GatewayResult
-import com.arkiv.player.data.gateway.GatewaySearchQuery
-import com.arkiv.player.data.gateway.SearchEvent
 import com.arkiv.player.data.magis.FakePortalClient
 import com.arkiv.player.data.magis.MagisCatalog
 import com.arkiv.player.data.magis.MagisPluginBridge
 import com.arkiv.player.data.magis.MagisRef
 import com.arkiv.player.data.magis.MagisResolve
 import com.arkiv.player.data.magis.MagisResult
-import com.arkiv.player.data.magis.MagisSource
 import com.arkiv.player.data.magis.testSession
 import com.arkiv.player.ui.home.MagisHomeCatalog
-import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.Dispatcher
@@ -33,20 +29,23 @@ import org.junit.rules.TemporaryFolder
 import java.io.File
 
 /**
- * `kino.xuper.search` against `MagisSource.search`, on inputs recorded from a REAL activated session.
+ * `kino.xuper.search` against what the native `MagisSource.search` produced on a REAL activated
+ * session, frozen in the capture.
  *
  * Each `src/test/resources/xuper-parity/search-<n>.json` was captured on the phone by running the
  * real `MagisSource.search` (throwaway instrumented harness, see the Task 5 report): the request,
  * every portal `v3/searchByName` answer and every TMDB body it consumed, in call order, and the
- * results it produced. The only edit is the redaction its own `redaction` field describes.
+ * results it produced (`expected`). The only edit is the redaction its own `redaction` field
+ * describes.
  *
- * Per fixture, both sides are fed the SAME recorded answers:
- *  1. the real [MagisSource] on the replay reproduces the device's results exactly -- proves the
- *     replay is faithful, so step 2 compares against real behavior, not against a mock's;
- *  2. `xuperSearch` makes the same portal calls, in the same order, with the same beans, and each of
- *     its items carries everything the device's `GatewayResult` had: rebuilding the result from the
- *     item plus the request gives back the device's JSON, field for field;
- *  3. the plugin contract reader ([PluginOutput.page]) keeps every item it returned.
+ * `MagisSource` itself is gone (Task 13c). Until then this class also replayed every fixture through
+ * it and required it to reproduce `expected` exactly, which proved the replay faithful; that check
+ * passed on the last tree that still had the class, and the fixtures are unchanged since. What stays:
+ *  1. `xuperSearch`, fed the recorded answers, makes the same portal calls, in the same order, with
+ *     the same beans, and each of its items carries everything the device's `GatewayResult` had:
+ *     rebuilding the result from the item plus the request gives back the device's frozen JSON,
+ *     field for field;
+ *  2. the plugin contract reader ([PluginOutput.page]) keeps every item it returned.
  */
 class XuperSearchParityTest {
 
@@ -106,14 +105,6 @@ class XuperSearchParityTest {
         }
     }
 
-    private fun query(request: JSONObject) = GatewaySearchQuery(
-        q = request.getString("q"),
-        type = request.getString("type"),
-        season = request.getInt("season"),
-        episode = request.getInt("episode"),
-        tmdbId = request.getInt("tmdbId"),
-    )
-
     /** What `kino.xuper.search` is called with: the request's own fields. */
     private fun argsJson(request: JSONObject) = JSONObject()
         .put("q", request.getString("q"))
@@ -131,8 +122,9 @@ class XuperSearchParityTest {
         .put("extra", JSONObject(extra.toSortedMap() as Map<*, *>))
 
     /**
-     * The `GatewayResult` `MagisSource.resultFrom` would have built, rebuilt from one `xuperSearch`
-     * item plus the request -- so nothing MagisSource put in a result may be missing from the item.
+     * The `GatewayResult` the retired `MagisSource.resultFrom` would have built, rebuilt from one
+     * `xuperSearch` item plus the request -- so nothing the device's result carried may be missing
+     * from the item.
      */
     private fun rebuilt(item: JSONObject, request: JSONObject): JSONObject {
         val ref = MagisRef.decode(item.getString("ref"))!!
@@ -196,28 +188,15 @@ class XuperSearchParityTest {
         assertTrue(all.any { it.getJSONObject("request").getInt("season") > 0 })
     }
 
-    @Test fun `MagisSource on the replay reproduces the device's results`() = runBlocking {
-        for ((name, fixture) in fixtures()) {
-            loadTmdb(fixture)
-            val fake = replayPortal(fixture)
-            val session = testSession(fake)
-            val source = MagisSource(MagisCatalog(fake, session), MagisResolve(fake, session), tmdb())
-            val events = source.search(query(fixture.getJSONObject("request"))).toList()
-            val actual = JSONArray(events.filterIsInstance<SearchEvent.ResultEvent>().map { it.item.toJson() })
-            val expected = fixture.getJSONObject("expected")
-            assertEquals(name, expected.getJSONArray("results").toString(2), actual.toString(2))
-            assertTrue(name, events.none { it is SearchEvent.SourceError })
-            assertEquals(name, recordedBeans(fixture), beans(fake))
-        }
-    }
-
-    @Test fun `xuperSearch matches MagisSource search for every captured fixture`() = runBlocking {
+    @Test fun `xuperSearch reproduces the device's captured results for every fixture`() = runBlocking {
         for ((name, fixture) in fixtures()) {
             loadTmdb(fixture)
             val request = fixture.getJSONObject("request")
             val fake = replayPortal(fixture)
             val envelope = JSONObject(host(fake).xuperSearch(argsJson(request)))
 
+            // Every capture is one the device answered without an error.
+            assertTrue(name, fixture.getJSONObject("expected").isNull("error"))
             assertTrue(name + ": " + envelope, envelope.getBoolean("ok"))
             val data = envelope.getJSONArray("data")
             val rebuilt = JSONArray((0 until data.length()).map { rebuilt(data.getJSONObject(it), request) })
@@ -240,7 +219,7 @@ class XuperSearchParityTest {
     // NOT device captures: a geo-blocked session couldn't be produced on the test phone without
     // touching its real session/region state (see the Task 5 report). These feed a portal error
     // through the same replay and check that the code reaches Task 4's mapping instead of being
-    // flattened into a message the way MagisSource's `explain` does.
+    // flattened into a message the way the retired MagisSource's `explain` did.
 
     private suspend fun searchFailingWith(result: MagisResult<JSONObject>): JSONObject {
         val fake = FakePortalClient().apply { defaultResponse = result }
@@ -264,14 +243,6 @@ class XuperSearchParityTest {
         val envelope = searchFailingWith(MagisResult.RedError(java.io.IOException("timeout")))
         assertFalse(envelope.getBoolean("ok"))
         assertEquals(PluginErrors.UNAVAILABLE, envelope.getString("code"))
-    }
-
-    @Test fun `MagisSource reports the same geo-blocked search as a source error`() = runBlocking {
-        val fake = FakePortalClient().apply { defaultResponse = MagisResult.PortalError("portal100024", "blocked") }
-        val session = testSession(fake)
-        val events = MagisSource(MagisCatalog(fake, session), MagisResolve(fake, session), tmdb())
-            .search(GatewaySearchQuery(q = "Dune", type = "movie")).toList()
-        assertTrue(events.filterIsInstance<SearchEvent.SourceError>().single().error.contains("portal100024"))
     }
 
     @Test fun `one failing query is not an error when another form answered`() = runBlocking {

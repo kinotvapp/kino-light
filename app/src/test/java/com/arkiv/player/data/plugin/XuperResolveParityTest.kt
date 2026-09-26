@@ -1,7 +1,6 @@
 package com.arkiv.player.data.plugin
 
 import com.arkiv.player.data.catalog.TmdbApi
-import com.arkiv.player.data.gateway.GatewayBlockedException
 import com.arkiv.player.data.gateway.GatewayPlayable
 import com.arkiv.player.data.magis.FakeCredentialStore
 import com.arkiv.player.data.magis.FakePortalClient
@@ -10,7 +9,6 @@ import com.arkiv.player.data.magis.MagisPluginBridge
 import com.arkiv.player.data.magis.MagisResolve
 import com.arkiv.player.data.magis.MagisResult
 import com.arkiv.player.data.magis.MagisSession
-import com.arkiv.player.data.magis.MagisSource
 import com.arkiv.player.data.magis.StoredSession
 import com.arkiv.player.data.magis.testSession
 import com.arkiv.player.ui.home.MagisHomeCatalog
@@ -21,30 +19,33 @@ import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
-import org.junit.Assert.fail
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
 
 /**
- * `kino.xuper.resolve` against `MagisSource.resolve`, on inputs recorded from a REAL activated session.
+ * `kino.xuper.resolve` against what the native `MagisSource.resolve` produced on a REAL activated
+ * session, frozen in the capture.
  *
  * Each `src/test/resources/xuper-parity/resolve-<n>.json` (local-only, never committed) was captured
  * on the phone by running the real `MagisSource.resolve` (throwaway instrumented harness, see the
  * Task 6 report): the ref, every portal call it made with its answer, and the playable or the error
- * it produced. The harness ran on an in-memory copy of the session and refused every call that would
- * (re)activate or log in a device; those refused calls are marked `blockedByHarness` and are replayed
- * as the same refusal. The only edit is the redaction each file's `redaction` field describes.
+ * it produced (`expected`). The harness ran on an in-memory copy of the session and refused every
+ * call that would (re)activate or log in a device; those refused calls are marked `blockedByHarness`
+ * and are replayed as the same refusal. The only edit is the redaction each file's `redaction` field
+ * describes.
  *
- * Per fixture, both sides are fed the SAME recorded answers:
- *  1. the real [MagisSource] on the replay reproduces the device's playable or error exactly, with the
- *     same portal calls -- proves the replay is faithful, so step 2 compares against real behavior;
- *  2. `xuperResolve` makes the same portal calls, in the same order, with the same beans, and:
- *     - where the device got a playable, rebuilding a `GatewayPlayable` from the stream gives back the
- *       device's JSON, field for field;
- *     - where the device got an error from a portal answer, the envelope carries that answer's code
- *       through Task 4's `toPluginError()`; any other error is `unavailable` with MagisSource's text.
+ * `MagisSource` itself is gone (Task 13c). Until then this class also replayed every fixture through
+ * it and required it to reproduce `expected` (and the recorded calls) exactly, which proved the
+ * replay faithful; that check passed on the last tree that still had the class, and the fixtures are
+ * unchanged since. What stays: `xuperResolve`, fed the recorded answers, makes the same portal calls,
+ * in the same order, with the same beans, and:
+ *  - where the device got a playable, rebuilding a `GatewayPlayable` from the stream gives back the
+ *    device's frozen JSON, field for field;
+ *  - where the device got an error from a portal answer, the envelope carries that answer's code
+ *    through Task 4's `toPluginError()`; any other error is `unavailable` with the device's own
+ *    frozen message text.
  */
 class XuperResolveParityTest {
 
@@ -103,11 +104,6 @@ class XuperResolveParityTest {
         )
     }
 
-    private fun source(fixture: JSONObject, fake: FakePortalClient): MagisSource {
-        val session = sessionFor(fixture, fake)
-        return MagisSource(MagisCatalog(fake, session), resolver(fixture, fake, session), TmdbApi())
-    }
-
     /** Same serialization the capture harness used for the device's playable. */
     private fun GatewayPlayable.toJson() = JSONObject()
         .put("kind", kind).put("url", url).put("headers", JSONObject(headers.toSortedMap() as Map<*, *>))
@@ -117,7 +113,7 @@ class XuperResolveParityTest {
         .put("subtitles", JSONArray(subtitles.map { JSONObject().put("lang", it.lang).put("url", it.url).put("format", it.format) }))
 
     /**
-     * The `GatewayPlayable` MagisSource would have returned, rebuilt from one `xuperResolve` stream
+     * The `GatewayPlayable` the retired MagisSource would have returned, rebuilt from one `xuperResolve` stream
      * plus the headers the bridge kept natively for its URL (the stream itself carries none).
      */
     private fun rebuilt(stream: JSONObject, streams: XuperStreams): JSONObject {
@@ -202,28 +198,7 @@ class XuperResolveParityTest {
         assertTrue(all.any { it.optJSONObject("deadSession") != null })
     }
 
-    @Test fun `MagisSource on the replay reproduces the device's resolution`() = runBlocking {
-        for ((name, fixture) in fixtures()) {
-            val fake = replayPortal(fixture)
-            val expected = fixture.getJSONObject("expected")
-            val ref = fixture.getJSONObject("request").getString("ref")
-            try {
-                val playable = source(fixture, fake).resolve(ref)
-                assertTrue(name + " resolved but the device failed: " + expected, expected.has("playable"))
-                assertEquals(name, sorted(expected.getJSONObject("playable")), sorted(playable.toJson()))
-            } catch (e: AssertionError) {
-                throw e
-            } catch (e: Exception) {
-                assertTrue("$name failed but the device resolved: $e", expected.has("error"))
-                val error = expected.getJSONObject("error")
-                assertEquals(name, error.getString("type"), e.javaClass.simpleName)
-                assertEquals(name, error.getString("message"), e.message)
-            }
-            assertEquals(name, recordedCalls(fixture), calls(fake, fixture))
-        }
-    }
-
-    @Test fun `xuperResolve matches MagisSource resolve for every captured fixture`() = runBlocking {
+    @Test fun `xuperResolve reproduces the device's captured resolution for every fixture`() = runBlocking {
         for ((name, fixture) in fixtures()) {
             val fake = replayPortal(fixture)
             val expected = fixture.getJSONObject("expected")
@@ -249,7 +224,7 @@ class XuperResolveParityTest {
         }
         val recorded = fixture.getJSONArray("portal")
         val fake = replayPortal(fixture)
-        // Queue the device's answers once more, minus the chapter listing (the first call): MagisSource
+        // Queue the device's answers once more, minus the chapter listing (the first call): the bridge
         // caches that listing, so a second resolve must not ask for it again.
         for (i in 1 until recorded.length()) recorded.getJSONObject(i).let { fake.queueResponse(it.getString("path"), answerOf(it)) }
         val host = host(fixture, fake)
@@ -314,8 +289,8 @@ class XuperResolveParityTest {
     //
     // A geo-blocked session couldn't be produced on the test phone without touching its real
     // session/region state (see the Task 5 and Task 6 reports). This feeds the geo-block answer
-    // through a fake portal and checks the code reaches Task 4's mapping, while MagisSource shows it
-    // as its own blocked dialog.
+    // through a fake portal and checks the code reaches Task 4's mapping (the retired MagisSource
+    // showed it as its own blocked dialog; `geo_blocked` is what the plugin path shows it as).
 
     private fun syntheticHost(fake: FakePortalClient): DefaultPrivilegedXuperHost {
         val session = testSession(fake)
@@ -335,26 +310,17 @@ class XuperResolveParityTest {
         )
     }
 
-    @Test fun `a geo-blocked resolve is geo_blocked, and MagisSource shows it as blocked`() = runBlocking {
+    @Test fun `a geo-blocked resolve is geo_blocked`() = runBlocking {
         val blocked = MagisResult.PortalError("portal100024", "blocked")
         for (ref in listOf("magis1:movie:0:ABC", "magis1:teleplay:2:ABC")) {
             val envelope = JSONObject(syntheticHost(FakePortalClient().apply { defaultResponse = blocked }).xuperResolve(ref))
             assertFalse(envelope.getBoolean("ok"))
             assertEquals(ref, PluginErrors.GEO_BLOCKED, envelope.getString("code"))
             assertEquals(ref, "blocked", envelope.getString("message"))
-
-            val fake = FakePortalClient().apply { defaultResponse = blocked }
-            val session = testSession(fake)
-            try {
-                MagisSource(MagisCatalog(fake, session), MagisResolve(fake, session), TmdbApi()).resolve(ref)
-                fail("MagisSource resolved a geo-blocked $ref")
-            } catch (e: GatewayBlockedException) {
-                // expected: the same answer MagisSource turns into its blocked dialog
-            }
         }
     }
 
-    @Test fun `a ref that isn't Xuper's is unavailable with MagisSource's text`() = runBlocking {
+    @Test fun `a ref that isn't Xuper's is unavailable with the native text`() = runBlocking {
         val envelope = JSONObject(syntheticHost(FakePortalClient()).xuperResolve("https://example.com/video.mp4"))
         assertFalse(envelope.getBoolean("ok"))
         assertEquals(PluginErrors.UNAVAILABLE, envelope.getString("code"))

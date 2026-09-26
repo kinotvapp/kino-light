@@ -1,7 +1,6 @@
 package com.arkiv.player.data.plugin
 
 import com.arkiv.player.data.catalog.TmdbApi
-import com.arkiv.player.data.gateway.GatewayBlockedException
 import com.arkiv.player.data.gateway.GatewayEpisode
 import com.arkiv.player.data.gateway.GatewaySeries
 import com.arkiv.player.data.magis.FakePortalClient
@@ -9,7 +8,6 @@ import com.arkiv.player.data.magis.MagisCatalog
 import com.arkiv.player.data.magis.MagisPluginBridge
 import com.arkiv.player.data.magis.MagisResolve
 import com.arkiv.player.data.magis.MagisResult
-import com.arkiv.player.data.magis.MagisSource
 import com.arkiv.player.data.magis.testSession
 import com.arkiv.player.ui.home.MagisHomeCatalog
 import kotlinx.coroutines.runBlocking
@@ -24,7 +22,6 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
-import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -33,26 +30,30 @@ import java.io.File
 import java.util.Collections
 
 /**
- * `kino.xuper.episodes` against `MagisSource.episodesWithSeries`, on inputs recorded from a REAL
- * activated session and the real TMDB.
+ * `kino.xuper.episodes` against what the native `MagisSource.episodesWithSeries` produced on a REAL
+ * activated session and the real TMDB, frozen in the capture.
  *
  * Each `src/test/resources/xuper-parity/episodes-<n>.json` (local-only, never committed) was captured
  * on the phone by running the real `MagisSource.episodesWithSeries` (throwaway instrumented harness,
  * see the Task 7 report): the ref, every portal call it made with its answer, every TMDB body it
- * consumed (path + language, never the key), and the episodes/series or the error it produced. The
- * harness ran on an in-memory copy of the session and refused every call that would (re)activate or
- * log in a device; those are marked `blockedByHarness` and replayed as the same refusal. The only
- * edit is the redaction each file's `redaction` field describes; the `case` field is an added label.
+ * consumed (path + language, never the key), and the episodes/series or the error it produced
+ * (`expected`). The harness ran on an in-memory copy of the session and refused every call that
+ * would (re)activate or log in a device; those are marked `blockedByHarness` and replayed as the same
+ * refusal. The only edit is the redaction each file's `redaction` field describes; the `case` field
+ * is an added label.
  *
- * Per fixture, both sides are fed the SAME recorded answers:
- *  1. the real [MagisSource] on the replay reproduces the device's episodes/series or error exactly,
- *     with the same portal and TMDB calls -- proves the replay is faithful;
- *  2. `xuperEpisodes` makes the same portal and TMDB calls, in the same order, and:
- *     - where the device got a listing, rebuilding MagisSource's `GatewayEpisode`s/`GatewaySeries`
- *       from the answer gives back the device's JSON, field for field;
+ * `MagisSource` itself is gone (Task 13c). Until then this class also replayed every fixture through
+ * it and required it to reproduce `expected` (and the recorded portal and TMDB calls) exactly, which
+ * proved the replay faithful; that check passed on the last tree that still had the class, and the
+ * fixtures are unchanged since. What stays:
+ *  1. `xuperEpisodes`, fed the recorded answers, makes the same portal and TMDB calls, in the same
+ *     order, and:
+ *     - where the device got a listing, rebuilding the device's `GatewayEpisode`s/`GatewaySeries`
+ *       from the answer gives back the device's frozen JSON, field for field;
  *     - where the device got an error from a portal answer, the envelope carries that answer's code
- *       through Task 4's `toPluginError()`; any other error is `unavailable` with MagisSource's text;
- *  3. the plugin contract reader ([PluginOutput.episodes]) keeps every episode and the series ids.
+ *       through Task 4's `toPluginError()`; any other error is `unavailable` with the device's own
+ *       frozen message text;
+ *  2. the plugin contract reader ([PluginOutput.episodes]) keeps every episode and the series ids.
  */
 class XuperEpisodesParityTest {
 
@@ -147,10 +148,6 @@ class XuperEpisodesParityTest {
 
     private fun host(fake: FakePortalClient) = host(bridge(fake))
 
-    private fun source(fake: FakePortalClient): MagisSource = testSession(fake).let { session ->
-        MagisSource(MagisCatalog(fake, session), MagisResolve(fake, session), tmdb())
-    }
-
     /** Same serialization the capture harness used for the device's listing. */
     private fun GatewayEpisode.toJson() = JSONObject()
         .put("number", number).put("title", title).put("ref", ref)
@@ -165,10 +162,10 @@ class XuperEpisodesParityTest {
         .put("episodes", JSONArray(episodes.map { it.toJson() }))
         .put("series", series?.toJson() ?: JSONObject.NULL)
 
-    /** `as? String`: an absent key is MagisSource's null (the JVM's org.json has no "null" text trap here). */
+    /** `as? String`: an absent key is the device's null (the JVM's org.json has no "null" text trap here). */
     private fun JSONObject.nullableString(key: String): String? = opt(key) as? String
 
-    /** The episodes/series `MagisSource.episodesWithSeries` would have returned, rebuilt from one `xuperEpisodes` answer. */
+    /** The episodes/series the retired `MagisSource.episodesWithSeries` would have returned, rebuilt from one `xuperEpisodes` answer. */
     private fun rebuilt(data: JSONObject): JSONObject {
         val list = data.getJSONArray("episodes")
         val episodes = (0 until list.length()).map { i ->
@@ -272,30 +269,7 @@ class XuperEpisodesParityTest {
         assertEquals(setOf(PluginErrors.NOT_FOUND), failureCodes)
     }
 
-    @Test fun `MagisSource on the replay reproduces the device's listing`() = runBlocking {
-        for ((name, fixture) in fixtures()) {
-            loadTmdb(fixture)
-            val fake = replayPortal(fixture)
-            val expected = fixture.getJSONObject("expected")
-            try {
-                val (episodes, series) = source(fake).episodesWithSeries(ref(fixture))
-                assertTrue(name + " listed but the device failed: " + expected, expected.has("episodes"))
-                assertEquals(name, sorted(expected.getJSONArray("episodes")), sorted(JSONArray(episodes.map { it.toJson() })))
-                assertEquals(name, sorted(expected.get("series")), sorted(series?.toJson() ?: JSONObject.NULL))
-            } catch (e: AssertionError) {
-                throw e
-            } catch (e: Exception) {
-                assertTrue("$name failed but the device listed: $e", expected.has("error"))
-                val error = expected.getJSONObject("error")
-                assertEquals(name, error.getString("type"), e.javaClass.simpleName)
-                assertEquals(name, error.getString("message"), e.message)
-            }
-            assertEquals(name, recordedCalls(fixture), calls(fake, fixture))
-            assertEquals(name, recordedTmdb(fixture), tmdbCalls.toList())
-        }
-    }
-
-    @Test fun `xuperEpisodes matches MagisSource episodesWithSeries for every captured fixture`() = runBlocking {
+    @Test fun `xuperEpisodes reproduces the device's captured listing for every fixture`() = runBlocking {
         for ((name, fixture) in fixtures()) {
             loadTmdb(fixture)
             val fake = replayPortal(fixture)
@@ -339,7 +313,7 @@ class XuperEpisodesParityTest {
                 assertEquals(name, series.getString("backdropUrl"), read.series!!.backdrop)
                 // The reader takes the season from the EPISODES (absent = 1), and PluginContentSource
                 // builds GatewaySeries.seasonNumber from their minimum: each episode must carry the
-                // season MagisSource put in its series block, or a saved T5 series is rewritten as T1.
+                // season the device's series block carries, or a saved T5 series is rewritten as T1.
                 val season = series.getInt("seasonNumber")
                 if (season > 0) {
                     assertEquals(name, device.map { season }, read.episodes.map { it.season })
@@ -374,25 +348,19 @@ class XuperEpisodesParityTest {
     //
     // A geo-blocked session couldn't be produced on the test phone without touching its real
     // session/region state (see the Task 5 and Task 6 reports). This feeds the geo-block answer
-    // through a fake portal and checks the code reaches Task 4's mapping, while MagisSource shows it
-    // as its own blocked dialog.
+    // through a fake portal and checks the code reaches Task 4's mapping (the retired MagisSource
+    // showed it as its own blocked dialog; `geo_blocked` is what the plugin path shows it as).
 
-    @Test fun `a geo-blocked listing is geo_blocked, and MagisSource shows it as blocked`() = runBlocking {
+    @Test fun `a geo-blocked listing is geo_blocked`() = runBlocking {
         val blocked = MagisResult.PortalError("portal100024", "blocked")
         val ref = "magis1:teleplay:0:ABC"
         val envelope = JSONObject(host(FakePortalClient().apply { defaultResponse = blocked }).xuperEpisodes(ref))
         assertFalse(envelope.getBoolean("ok"))
         assertEquals(PluginErrors.GEO_BLOCKED, envelope.getString("code"))
         assertEquals("blocked", envelope.getString("message"))
-        try {
-            source(FakePortalClient().apply { defaultResponse = blocked }).episodesWithSeries(ref)
-            fail("MagisSource listed a geo-blocked series")
-        } catch (e: GatewayBlockedException) {
-            // expected: the same answer MagisSource turns into its blocked dialog
-        }
     }
 
-    @Test fun `a ref that isn't Xuper's is unavailable with MagisSource's text`() = runBlocking {
+    @Test fun `a ref that isn't Xuper's is unavailable with the native text`() = runBlocking {
         val envelope = JSONObject(host(FakePortalClient()).xuperEpisodes("https://example.com/video.mp4"))
         assertFalse(envelope.getBoolean("ok"))
         assertEquals(PluginErrors.UNAVAILABLE, envelope.getString("code"))
