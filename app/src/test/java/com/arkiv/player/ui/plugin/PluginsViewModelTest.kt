@@ -367,6 +367,48 @@ class PluginsViewModelTest {
         assertNull(vm.catalog.value.rows.single().installed)
     }
 
+    // ---- Canonical-address matching: "same plugin" is the installer's canonical form, not the raw string ----
+
+    private fun installedAt(address: String) = installedPlugin.copy(record = installedPlugin.record.copy(address = address))
+
+    private fun installedIdFor(entryRepo: String, installedAddress: String): String? {
+        val admin = FakeAdmin().apply { plugins.value = listOf(installedAt(installedAddress)) }
+        return vm(admin, FakeCatalog(entry("demo", entryRepo))).catalog.value.rows.single().installed?.id
+    }
+
+    @Test fun `a catalog repo with a dot-git suffix matches the plugin installed without it`() {
+        assertEquals("demo", installedIdFor("a/b.git", "a/b"))
+    }
+
+    @Test fun `a catalog repo without the suffix matches a plugin installed with it`() {
+        assertEquals("demo", installedIdFor("a/b", "a/b.git"))
+    }
+
+    @Test fun `a github URL and an explicit HEAD ref are the same plugin as the bare repo`() {
+        assertEquals("demo", installedIdFor("a/b", "https://github.com/a/b"))
+        assertEquals("demo", installedIdFor("a/b", "a/b@HEAD"))
+    }
+
+    @Test fun `two different repos never match`() {
+        assertNull(installedIdFor("a/b", "a/c"))
+        assertNull(installedIdFor("a/b.git", "x/b"))
+    }
+
+    @Test fun `a different ref or folder is another plugin`() {
+        assertNull(installedIdFor("a/b", "a/b@v2"))
+        assertNull(installedIdFor("a/b", "a/b/sub"))
+    }
+
+    @Test fun `canonical does not fold case, so neither does the match (the installer compares the same way)`() {
+        assertNull(installedIdFor("A/B", "a/b"))
+    }
+
+    @Test fun `an address that does not parse never matches a valid one, only itself`() {
+        assertNull(installedIdFor("a/b", "not an address"))
+        assertNull(installedIdFor("a b/c", "a/c"))
+        assertEquals("demo", installedIdFor("a b/c", "a b/c"))
+    }
+
     @Test fun `the query is kept in the state for the search box`() {
         val vm = vm(FakeAdmin())
         vm.onQueryChange("archive")

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.arkiv.player.data.plugin.InstallPreview
 import com.arkiv.player.data.plugin.InstalledPlugin
+import com.arkiv.player.data.plugin.PluginAddress
 import com.arkiv.player.data.plugin.PluginAdmin
 import com.arkiv.player.data.plugin.UpdateOutcome
 import com.arkiv.player.data.plugin.catalog.CatalogEntry
@@ -100,11 +101,23 @@ fun catalogRefreshLine(catalog: CatalogUiState): CatalogRefreshLine? =
 
 private val EMPTY_SEED = CatalogResult(PluginCatalog(emptyList()), CatalogOrigin.SEED)
 
-/** The rows for one snapshot of the catalog, the query and the installed plugins (each row marked by repo). */
+/**
+ * Whether two plugin addresses name the same plugin. `installed.json` stores [PluginAddress.canonical], so
+ * `a/b.git`, `a/b@HEAD` and `https://github.com/a/b` are all `a/b`; comparing the raw strings would show
+ * a plugin installed from one spelling as not installed under another. An address that does not parse has
+ * no canonical form, so it only equals the very same string.
+ */
+internal fun sameAddress(a: String, b: String): Boolean {
+    val canonicalA = PluginAddress.parse(a)?.canonical
+    val canonicalB = PluginAddress.parse(b)?.canonical
+    return if (canonicalA != null && canonicalB != null) canonicalA == canonicalB else a == b
+}
+
+/** The rows for one snapshot of the catalog, the query and the installed plugins (each row marked by its address). */
 private fun catalogUiState(result: CatalogResult, refreshing: Boolean, query: String, installed: List<InstalledPlugin>): CatalogUiState =
     CatalogUiState(
         loading = refreshing && result.catalog.entries.isEmpty(),
-        rows = filterCatalog(result.catalog.entries, query).map { e -> CatalogRow(e, installed.firstOrNull { it.record.address == e.repo }) },
+        rows = filterCatalog(result.catalog.entries, query).map { e -> CatalogRow(e, installed.firstOrNull { sameAddress(it.record.address, e.repo) }) },
         origin = result.origin,
         refreshing = refreshing,
         failures = result.failures,
@@ -141,7 +154,7 @@ class PluginsViewModel(
     private var catalogLoad: Job? = null
     private var loadGeneration = 0
 
-    /** The catalog as rows: filtered by the query, each marked with the installed plugin it matches (by repo). */
+    /** The catalog as rows: filtered by the query, each marked with the installed plugin it matches (by [sameAddress]). */
     val catalog: StateFlow<CatalogUiState> =
         combine(loaded, refreshing, query, admin.plugins) { result, isRefreshing, q, installed ->
             catalogUiState(result, isRefreshing, q, installed)
