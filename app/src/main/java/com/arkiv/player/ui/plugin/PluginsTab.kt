@@ -103,7 +103,11 @@ private fun PluginRow(p: InstalledPlugin, busy: Boolean, message: String?, vm: P
                 onCheckedChange = { on -> vm.setEnabled(p.id, on) },
             )
         }
-        Text("Se conectará a: ${p.hosts.labels.joinToString(", ")}", style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary)
+        Text(
+            pluginConsentHostLine(address = p.record.address, hostsLabel = p.hosts.labels.joinToString(", ")),
+            style = MaterialTheme.typography.bodySmall,
+            color = ArkivTextSecondary,
+        )
         message?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Color.White) }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (p.manifest.settings.isNotEmpty()) {

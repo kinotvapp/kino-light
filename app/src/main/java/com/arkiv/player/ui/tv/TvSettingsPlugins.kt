@@ -30,6 +30,7 @@ import com.arkiv.player.data.plugin.PluginStatus
 import com.arkiv.player.ui.plugin.PluginConsentDialog
 import com.arkiv.player.ui.plugin.PluginUninstallDialog
 import com.arkiv.player.ui.plugin.PluginsViewModel
+import com.arkiv.player.ui.plugin.pluginConsentHostLine
 import com.arkiv.player.ui.plugin.pluginStatusText
 import com.arkiv.player.ui.plugin.rowMessagePluginId
 import com.arkiv.player.ui.rememberGraph
@@ -80,7 +81,11 @@ internal fun TvSettingsPlugins() {
         if (plugins.isEmpty()) Text("Todavía no tienes plugins.", color = ArkivTextSecondary)
         plugins.forEach { p ->
             Text("${p.manifest.name} · ${p.record.version} — ${pluginStatusText(p.status)}", style = MaterialTheme.typography.bodyLarge, color = Color.White)
-            Text("Se conectará a: ${p.hosts.labels.joinToString(", ")}", style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary)
+            Text(
+                pluginConsentHostLine(address = p.record.address, hostsLabel = p.hosts.labels.joinToString(", ")),
+                style = MaterialTheme.typography.bodySmall,
+                color = ArkivTextSecondary,
+            )
             if (rowMessageId == p.id) {
                 state.message?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = Color.White) }
             }
