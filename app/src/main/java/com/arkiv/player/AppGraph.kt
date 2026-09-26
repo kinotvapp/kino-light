@@ -241,7 +241,7 @@ class AppGraph(context: Context) {
      *  installs flip it immediately (nothing to warm -> the activation screen shows at once). */
     val warmedUp: kotlinx.coroutines.flow.StateFlow<Boolean> = _warmedUp
 
-    fun warmUpCredentials() {
+    suspend fun warmUpCredentials() {
         val t0 = android.os.SystemClock.elapsedRealtime()
         var built = false
         try {
@@ -267,6 +267,13 @@ class AppGraph(context: Context) {
             runCatching { reconcilePluginSecrets() }
                 .onFailure { android.util.Log.w("KinoPlugin", "warm-up: plugin secrets not reconciled: ${it.javaClass.simpleName}") }
             pluginRegistry.reload()
+            // One-time migration (Task 12): a person activated before this app version shipped
+            // never "installed" anything -- Xuper was simply always there. Guarded exactly like
+            // reconcilePluginSecrets() above: no network right now (or GitHub unreachable) must
+            // never abort the rest of warm-up, and this isn't gated behind a "did we already try"
+            // flag, so the next cold start just tries again. See autoInstallXuperPluginIfNeeded.
+            runCatching { autoInstallXuperPluginIfNeeded(credentialsStore, pluginRegistry, pluginAdmin) }
+                .onFailure { android.util.Log.w("KinoPlugin", "warm-up: Xuper plugin not auto-installed: ${it.javaClass.simpleName}") }
             contentSource
             magisAccount
             built = true
@@ -1284,4 +1291,43 @@ class AppGraph(context: Context) {
                 instance ?: AppGraph(context).also { instance = it }
             }
     }
+}
+
+/**
+ * One-time migration (Task 12, `docs/superpowers/specs/2026-09-25-xuper-privileged-plugin-design.md`): someone
+ * who activated Xuper before this app version shipped never "installed" anything -- Xuper was
+ * simply always there. Once `contentSource` stops special-casing it, their Home/Categorías/search
+ * would go blank unless the plugin is installed for them, so this installs it once, silently, with
+ * NO consent screen -- the one deliberate exception in the whole plugin system, since activating
+ * Xuper already granted everything this plugin needs.
+ *
+ * "Already there" means present in [pluginRegistry] at all, REGARDLESS of enabled/damaged/
+ * unresponsive status -- not [PluginRegistry.usable], which excludes a disabled plugin. A person
+ * who deliberately disabled Xuper after this ran once must not have it silently re-previewed and
+ * re-installed (a network round-trip) on every single cold start after that; [PluginInstaller]
+ * would preserve their `enabled = false` either way (`install()` carries the previous record's
+ * `enabled` forward), but repeating the fetch forever for no visible effect is exactly the kind of
+ * silent cost this migration must not add. [XuperPrivilege.grants] is the one recognized comparison
+ * (exact-string match on [InstalledRecord.address]; see its own KDoc for why nothing should
+ * reproduce it) -- called against every installed record, not just an id-keyed lookup, since the
+ * Xuper plugin's manifest `id` isn't known ahead of the network fetch [PluginAdmin.preview] does.
+ *
+ * [pluginAdmin]'s calls are left to throw straight into the caller's `runCatching` (see
+ * [AppGraph.warmUpCredentials]): the manual "type an address" install flow
+ * ([com.arkiv.player.ui.plugin.PluginsViewModel]) is the only other caller of
+ * [PluginAdmin.preview]/[PluginAdmin.install], and it already treats every failure from them
+ * (a bad manifest, no network, GitHub unreachable) as an ordinary [InstallException]/[IOException]
+ * to show and move on from, never as something to special-case -- this migration does the same,
+ * just with nothing to show, so the next cold start simply tries again.
+ */
+suspend fun autoInstallXuperPluginIfNeeded(
+    credentialsStore: com.arkiv.player.data.credentials.RemoteCredentialsStore,
+    pluginRegistry: PluginRegistry,
+    pluginAdmin: PluginAdmin,
+) {
+    if (credentialsStore.read() == null) return // never activated: nothing to migrate
+    val alreadyThere = pluginRegistry.plugins.value.any { XuperPrivilege.grants(it.record) }
+    if (alreadyThere) return
+    val preview = pluginAdmin.preview(XuperPrivilege.SOURCE_REPO)
+    pluginAdmin.install(preview)
 }
