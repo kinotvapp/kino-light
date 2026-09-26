@@ -12,6 +12,11 @@ import com.arkiv.player.data.plugin.PluginSettingsForm
 import com.arkiv.player.data.plugin.SettingType
 import com.arkiv.player.data.plugin.PluginTimeoutException
 import com.arkiv.player.data.plugin.UpdateOutcome
+import com.arkiv.player.data.plugin.catalog.CatalogEntry
+import com.arkiv.player.data.plugin.catalog.CatalogOrigin
+import com.arkiv.player.data.plugin.catalog.CatalogProvider
+import com.arkiv.player.data.plugin.catalog.CatalogResult
+import com.arkiv.player.data.plugin.catalog.PluginCatalog
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -22,6 +27,7 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -48,7 +54,8 @@ class PluginsViewModelTest {
         var updateChecks = 0
         val enabled = mutableMapOf<String, Boolean>()
         val uninstalled = mutableListOf<String>()
-        override suspend fun preview(input: String): InstallPreview { previewGate?.await(); return previewResult() }
+        val previewed = mutableListOf<String>()
+        override suspend fun preview(input: String): InstallPreview { previewed += input; previewGate?.await(); return previewResult() }
         override suspend fun install(preview: InstallPreview) { installResult(); installed += preview }
         override suspend fun checkUpdate(id: String): UpdateOutcome { updateChecks++; return update() }
         override fun setEnabled(id: String, enabled: Boolean) { this.enabled[id] = enabled }
@@ -60,7 +67,16 @@ class PluginsViewModelTest {
         override suspend fun saveSettings(id: String, values: Map<String, Any?>): String? { saved += values; return saveResult }
     }
 
-    private fun vm(admin: PluginAdmin) = PluginsViewModel(admin, io = dispatcher)
+    private class FakeCatalog(vararg entries: CatalogEntry) : CatalogProvider {
+        private val result = CatalogResult(PluginCatalog(entries.toList()), CatalogOrigin.FRESH)
+        val forceFlags = mutableListOf<Boolean>()
+        override suspend fun load(force: Boolean): CatalogResult { forceFlags += force; return result }
+    }
+
+    private fun entry(id: String, repo: String, name: String = id) = CatalogEntry(id, repo, name, "")
+
+    private fun vm(admin: PluginAdmin, catalog: CatalogProvider = FakeCatalog()) =
+        PluginsViewModel(admin, io = dispatcher, catalogProvider = catalog)
 
     @Test fun `adding shows the consent sheet and nothing is installed until confirmed`() {
         val admin = FakeAdmin().apply { previewResult = { preview } }
@@ -275,5 +291,80 @@ class PluginsViewModelTest {
         vm.openSettings("demo")
         assertNull(vm.state.value.configuring)
         assertTrue(vm.state.value.settingsClosed)
+    }
+
+    @Test fun `the catalog loads on start and marks the entries that are installed`() {
+        val admin = FakeAdmin().apply { plugins.value = listOf(installedPlugin) }
+        val vm = vm(admin, FakeCatalog(entry("demo", "o/r"), entry("own", "o/own")))
+        val rows = vm.catalog.value.rows
+        assertEquals(listOf("demo", "own"), rows.map { it.entry.id })
+        assertEquals("demo", rows[0].installed?.id)
+        assertNull(rows[1].installed)
+        assertFalse(vm.catalog.value.loading)
+    }
+
+    @Test fun `the query filters the catalog rows`() {
+        val vm = vm(FakeAdmin(), FakeCatalog(entry("ia", "o/ia", "Internet Archive"), entry("own", "o/own", "Tu servidor")))
+        vm.onQueryChange("servidor")
+        assertEquals(listOf("own"), vm.catalog.value.rows.map { it.entry.id })
+    }
+
+    @Test fun `installing a catalog entry previews ITS repo and opens the consent sheet`() {
+        val admin = FakeAdmin().apply { previewResult = { preview } }
+        val vm = vm(admin, FakeCatalog(entry("ia", "kinotvapp/kino-plugin-archive")))
+        vm.installFromCatalog(vm.catalog.value.rows.single().entry)
+        assertEquals(listOf("kinotvapp/kino-plugin-archive"), admin.previewed)
+        assertNotNull(vm.state.value.consent)
+    }
+
+    @Test fun `a catalog entry with a repo the parser would refuse never reaches preview`() {
+        val admin = FakeAdmin().apply { previewResult = { preview } }
+        val vm = vm(admin)
+        for (repo in listOf("../evil", "https://evil.example/x", "a/b/c", "a/b?x=1", "")) {
+            vm.installFromCatalog(CatalogEntry("x", repo, "X", ""))
+        }
+        assertTrue(admin.previewed.isEmpty())
+    }
+
+    @Test fun `reloading the catalog forces a fresh download`() {
+        val catalog = FakeCatalog(entry("a", "o/a"))
+        val vm = vm(FakeAdmin(), catalog)
+        vm.reloadCatalog()
+        assertEquals(listOf(false, true), catalog.forceFlags)
+    }
+
+    @Test fun `a row follows the installed plugins after the catalog has loaded`() {
+        val admin = FakeAdmin()
+        val vm = vm(admin, FakeCatalog(entry("demo", "o/r")))
+        assertNull(vm.catalog.value.rows.single().installed)
+        admin.plugins.value = listOf(installedPlugin)
+        assertEquals("demo", vm.catalog.value.rows.single().installed?.id)
+        admin.plugins.value = emptyList()
+        assertNull(vm.catalog.value.rows.single().installed)
+    }
+
+    @Test fun `the query is kept in the state for the search box`() {
+        val vm = vm(FakeAdmin())
+        vm.onQueryChange("archive")
+        assertEquals("archive", vm.state.value.query)
+    }
+
+    @Test fun `a catalog that throws ends the loading state with no rows`() {
+        val vm = vm(FakeAdmin(), CatalogProvider { throw IllegalStateException("boom") })
+        assertFalse(vm.catalog.value.loading)
+        assertTrue(vm.catalog.value.rows.isEmpty())
+    }
+
+    @Test fun `a slow older load never lands on top of a newer one`() {
+        val gate = CompletableDeferred<CatalogResult>()
+        val fresh = CatalogResult(PluginCatalog(listOf(entry("fresh", "o/fresh"))), CatalogOrigin.FRESH)
+        var calls = 0
+        val vm = vm(FakeAdmin(), CatalogProvider { force -> if (calls++ == 0) gate.await() else fresh.also { assertTrue(force) } })
+        assertTrue(vm.catalog.value.loading)
+        vm.reloadCatalog()
+        assertEquals(listOf("fresh"), vm.catalog.value.rows.map { it.entry.id })
+        gate.complete(CatalogResult(PluginCatalog(listOf(entry("stale", "o/stale"))), CatalogOrigin.CACHE))
+        assertEquals(listOf("fresh"), vm.catalog.value.rows.map { it.entry.id })
+        assertEquals(CatalogOrigin.FRESH, vm.catalog.value.origin)
     }
 }

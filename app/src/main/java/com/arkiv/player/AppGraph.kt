@@ -526,6 +526,21 @@ class AppGraph(context: Context) {
         )
     }
 
+    /**
+     * The recommended-plugins catalog. Its own plain client, NOT [pluginBaseHttp]: that one carries plugin
+     * traffic; the catalog repository derives from this a redirect-following, time-bounded client of its own.
+     */
+    val pluginCatalog: com.arkiv.player.data.plugin.catalog.CatalogProvider by lazy {
+        com.arkiv.player.data.plugin.catalog.CatalogRepository(
+            client = okhttp3.OkHttpClient.Builder()
+                .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+                .build(),
+            cacheFile = java.io.File(appContext.filesDir, "plugins/catalog.json"),
+            seed = { appContext.assets.open("plugin-catalog-seed.json").bufferedReader().use { it.readText() } },
+        )
+    }
+
     val pluginAdmin: PluginAdmin by lazy {
         DefaultPluginAdmin(
             pluginRegistry, pluginInstaller, pluginRuntimes, pluginConfigStore,
