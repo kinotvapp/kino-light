@@ -37,11 +37,12 @@ object PluginCatalogParser {
     private const val MAX_DESCRIPTION = 200
     private const val MAX_TAGS = 5
     private const val MAX_TAG = 30
-    private val REPO = Regex("^[A-Za-z0-9_-]{1,100}/[A-Za-z0-9_-]{1,100}$")
+    private val REPO = Regex("^[A-Za-z0-9._-]{1,100}/[A-Za-z0-9._-]{1,100}$")
     private val ID = Regex("^[a-z0-9][a-z0-9-]{0,39}$")
 
-    /** The one rule for what an `owner/repo` from the catalog may look like (also checked before installing). */
-    fun isValidRepo(repo: String): Boolean = REPO.matches(repo)
+    /** The one rule for what an `owner/repo` from the catalog may look like (also checked before installing).
+     * Refuses `.` and `..` segments to prevent directory-traversal-like patterns. */
+    fun isValidRepo(repo: String): Boolean = REPO.matches(repo) && repo.split('/').none { it == "." || it == ".." }
 
     /** [capabilities]: what THIS build can do; entries that require anything else are hidden. */
     fun parse(json: String, capabilities: Set<String>): PluginCatalog? {
@@ -61,7 +62,7 @@ object PluginCatalogParser {
 
     private fun entryOf(o: JSONObject): CatalogEntry? {
         val id = (o.opt("id") as? String)?.takeIf { ID.matches(it) } ?: return null
-        val repo = (o.opt("repo") as? String)?.takeIf { REPO.matches(it) } ?: return null
+        val repo = (o.opt("repo") as? String)?.takeIf { isValidRepo(it) } ?: return null
         val name = (o.opt("name") as? String)?.trim()?.takeIf { it.isNotEmpty() }?.take(MAX_NAME) ?: return null
         return CatalogEntry(
             id = id,

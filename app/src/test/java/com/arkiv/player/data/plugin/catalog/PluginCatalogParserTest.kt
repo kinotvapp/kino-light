@@ -81,8 +81,13 @@ class PluginCatalogParserTest {
     }
 
     @Test fun `isValidRepo is the same rule the parser applies`() {
-        assertTrue(PluginCatalogParser.isValidRepo("kinotvapp/kino-plugin-archive"))
-        for (bad in listOf("../x", "a/b/c", "a/b?x=1", "own er/name", "", "https://x/y")) assertFalse("'$bad'", PluginCatalogParser.isValidRepo(bad))
+        for (good in listOf("kinotvapp/kino-plugin-archive", "owner/my.plugin", "some.org/repo_name.v2")) assertTrue("'$good'", PluginCatalogParser.isValidRepo(good))
+        for (bad in listOf("../x", "a/b/c", "a/b?x=1", "own er/name", "", "https://x/y", "./x", "x/.", "x/..", "../..", "..")) assertFalse("'$bad'", PluginCatalogParser.isValidRepo(bad))
+    }
+
+    @Test fun `catalog entries with dotted repo names are kept`() {
+        val c = parse(catalog(entry("dotted", "owner/my.plugin")))!!
+        assertEquals(listOf("owner/my.plugin"), c.entries.map { it.repo })
     }
 
     @Test fun `an id that is not a slug is dropped`() {
