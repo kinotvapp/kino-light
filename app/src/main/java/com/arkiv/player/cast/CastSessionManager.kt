@@ -2,8 +2,12 @@ package com.arkiv.player.cast
 
 import androidx.media3.cast.CastPlayer
 import androidx.media3.cast.SessionAvailabilityListener
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.Player
+import com.arkiv.player.crash.Crash
+import com.arkiv.player.crash.CastFailure
 import com.arkiv.player.data.ArkivRepository
 import com.google.android.gms.cast.framework.CastContext
 import kotlinx.coroutines.CoroutineScope
@@ -74,6 +78,39 @@ class CastSessionManager(
     /** [currentRequest]'s generation -- see the comment next to `generation`. */
     val mediaGeneration: Int get() = generation
 
+    /** True once THIS session already reported a failure to GlitchTip: a stalled receiver would
+     *  otherwise report on every poll. Reset on every new session, see `onCastSessionAvailable`. */
+    @Volatile private var sessionReported = false
+
+    /**
+     * Sends ONE [CastFailure] for the current session, with whatever the receiver's own diagnostics
+     * already know: model, what was asked of it, and the video track it ended up with (or didn't).
+     */
+    private fun reportFailure(reason: String, error: androidx.media3.common.PlaybackException? = null) {
+        if (sessionReported) return
+        sessionReported = true
+        val device = runCatching { castContext.sessionManager.currentCastSession?.castDevice }.getOrNull()
+        val videoFormat = runCatching {
+            player.currentTracks.groups.firstOrNull { it.type == C.TRACK_TYPE_VIDEO }
+                ?.takeIf { it.length > 0 }?.getTrackFormat(0)
+        }.getOrNull()
+        Crash.report(
+            error ?: CastFailure(reason),
+            "cast-failure",
+            extras = mapOf(
+                "reason" to reason,
+                "receiver" to (device?.friendlyName ?: ""),
+                "receiver_model" to (device?.modelName ?: ""),
+                "episode" to (pending?.episodeId ?: ""),
+                "requested_mime" to (pending?.mimeType ?: ""),
+                "video_codec" to (videoFormat?.sampleMimeType ?: ""),
+                "video_size" to (videoFormat?.let { "${it.width}x${it.height}" } ?: ""),
+                "playback_state" to player.playbackState.toString(),
+                "position_ms" to player.currentPosition.toString(),
+            ),
+        )
+    }
+
     /**
      * Receiver diagnostics. Without this, a TV that REJECTS the media (a container or codec it
      * doesn't support) fails in absolute silence: nothing happens on the phone and there's nothing
@@ -94,6 +131,7 @@ class CastSessionManager(
                 "the receiver failed: code=${error.errorCode} (${error.errorCodeName}) · ${error.message}",
                 error,
             )
+            reportFailure("player_error: ${error.errorCodeName}", error)
         }
 
         override fun onPlaybackStateChanged(state: Int) {
@@ -118,6 +156,10 @@ class CastSessionManager(
                 android.util.Log.w(TAG, "the receiver isn't reporting ANY track")
                 return
             }
+            var hasVideo = false
+            var videoSupported = false
+            var hasAudio = false
+            var audioSupported = false
             tracks.groups.forEach { g ->
                 for (i in 0 until g.length) {
                     val f = g.getTrackFormat(i)
@@ -126,7 +168,17 @@ class CastSessionManager(
                         "track type=${g.type} codec=${f.codecs} mime=${f.sampleMimeType} " +
                             "language=${f.language} supported=${g.isTrackSupported(i)} selected=${g.isTrackSelected(i)}",
                     )
+                    when (g.type) {
+                        C.TRACK_TYPE_VIDEO -> { hasVideo = true; videoSupported = videoSupported || g.isTrackSupported(i) }
+                        C.TRACK_TYPE_AUDIO -> { hasAudio = true; audioSupported = audioSupported || g.isTrackSupported(i) }
+                    }
                 }
+            }
+            // Sound but no picture: the receiver took the audio and rejected every video track it was
+            // offered. Silent otherwise -- nothing on the phone, nothing on the TV, no clue why -- until
+            // this. Typically an older Chromecast whose decoder can't take the profile.
+            if (hasVideo && !videoSupported && hasAudio && audioSupported) {
+                reportFailure("video_track_unsupported")
             }
         }
     }
@@ -136,6 +188,7 @@ class CastSessionManager(
         player.setSessionAvailabilityListener(object : SessionAvailabilityListener {
             override fun onCastSessionAvailable() {
                 _casting.value = true
+                sessionReported = false
                 val device = runCatching {
                     castContext.sessionManager.currentCastSession?.castDevice?.friendlyName
                 }.getOrNull()
@@ -296,15 +349,21 @@ class CastSessionManager(
      */
     private fun startProgressLoop() {
         scope.launch {
+            // Consecutive ticks the receiver has had this same episode loaded without reaching
+            // READY/ENDED: the OTHER way a cast "does nothing" (media WAS handed to it, unlike the
+            // "nothing pending" case above) -- the idle logo sitting there because the receiver never
+            // got past buffering, not because nothing was ever asked of it.
+            var stuckTicks = 0
             while (true) {
                 delay(PROGRESS_MS)
-                if (!_casting.value) continue
+                if (!_casting.value) { stuckTicks = 0; continue }
                 val request = pending
                 if (request == null) {
                     // A session with nothing pending is one of the two ways a cast "does nothing",
                     // and the one that used to leave no trace at all: the receiver sits on its logo
                     // because it was never handed any media, not because it refused ours.
                     android.util.Log.w(TAG, "casting with NOTHING pending: the receiver was never given media")
+                    stuckTicks = 0
                     continue
                 }
                 val epId = request.episodeId
@@ -312,10 +371,17 @@ class CastSessionManager(
                 // setMedia() updates `pending` synchronously but the receiver takes (network) time
                 // to load the new item, so without this check the old episode's position/duration
                 // could get saved under the new one's id.
+                var notReady = false
                 val (mediaId, pos, dur) = withContext(Dispatchers.Main) {
+                    notReady = player.playbackState != Player.STATE_READY && player.playbackState != Player.STATE_ENDED
                     Triple(player.currentMediaItem?.mediaId, player.currentPosition, player.duration)
                 }
-                if (mediaId != epId) continue
+                if (mediaId != epId) { stuckTicks = 0; continue }
+                stuckTicks = if (notReady) stuckTicks + 1 else 0
+                if (stuckTicks == STUCK_TICKS) {
+                    android.util.Log.w(TAG, "receiver stuck loading · ${stuckTicks * PROGRESS_MS}ms with no READY")
+                    reportFailure("stuck_loading")
+                }
                 // Without a transcoder the receiver reports the real position and duration; the
                 // only reason not to save is a live stream, which sends TIME_UNSET.
                 // The receiver reports no duration for a stream announced as live, and a remux
@@ -346,5 +412,7 @@ class CastSessionManager(
         const val TAG = "ArkivCast"
         const val PROGRESS_MS = 5_000L
         const val STOP_WINDOW_MS = 15_000L
+        /** Ticks of [PROGRESS_MS] (30s) a loaded episode may sit short of READY before it counts as stuck. */
+        const val STUCK_TICKS = 6
     }
 }

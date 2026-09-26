@@ -110,3 +110,14 @@ class LiveInPlaceRecovery(message: String) : Exception(message)
  * person as "se cortó la señal", not counting every retry.
  */
 class LiveSeedRotated(message: String) : Exception(message)
+
+/**
+ * A Chromecast session failed silently: the receiver's own `onPlayerError`, or -- with no exception at all --
+ * the tell-tale "audio plays, picture doesn't" (the receiver accepted the audio track and rejected every video
+ * one, usually an old Chromecast that can't decode the profile) or a receiver stuck on its idle logo long after
+ * being handed media. The message carries only the reason (`player_error: <code>`, `video_track_unsupported`,
+ * `stuck_loading`), so GlitchTip keeps one issue per reason; the receiver's model, the episode, the attempted
+ * mime/codec and the playback state travel as Sentry extras. Reported once per cast session. See
+ * `CastSessionManager`.
+ */
+class CastFailure(message: String) : Exception(message)
