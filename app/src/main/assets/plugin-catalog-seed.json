@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "plugins": [
+    {
+      "id": "xuper",
+      "repo": "kinotvapp/kino-plugin-xuper",
+      "name": "Xuper",
+      "description": "Películas y series. Lo que ya usabas en Kino.",
+      "tags": ["películas", "series"],
+      "legacyDefault": true,
+      "bundled": true,
+      "requires": ["xuper-bridge"]
+    },
+    {
+      "id": "internet-archive",
+      "repo": "kinotvapp/kino-plugin-archive",
+      "name": "Internet Archive",
+      "description": "Películas de dominio público y televisión clásica de archive.org.",
+      "tags": ["películas", "clásicos", "gratis"]
+    },
+    {
+      "id": "own-server",
+      "repo": "kinotvapp/kino-plugin-own-server",
+      "name": "Tu servidor",
+      "description": "Ve el contenido de tu propio servidor de video. Necesita que escribas su dirección.",
+      "tags": ["servidor", "propio"],
+      "needsSetup": true
+    }
+  ]
+}
