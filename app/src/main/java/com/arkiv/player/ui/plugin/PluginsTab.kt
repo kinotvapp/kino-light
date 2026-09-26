@@ -72,7 +72,7 @@ fun PluginsTab() {
             Text("Todavía no tienes plugins.", style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary)
         }
         plugins.forEach { p ->
-            PluginRow(p, busy = state.busy, message = state.message.takeIf { rowMessageId == p.id }, vm = vm)
+            InstalledPluginRow(p, busy = state.busy, message = state.message.takeIf { rowMessageId == p.id }, vm = vm)
         }
         Spacer(Modifier.padding(bottom = 24.dp))
     }
@@ -82,8 +82,13 @@ fun PluginsTab() {
     state.configuring?.let { PluginConfigDialog(it, isTv = false, vm = vm) }
 }
 
+/**
+ * One installed plugin: name and version, status, the hosts it may reach, the on/off switch and its
+ * actions. Shared by Ajustes ▸ Plugins and the "Agregar plugin" window, which drive it with the same
+ * [PluginsViewModel] state; [message] is the line for THIS row (see [rowMessagePluginId]).
+ */
 @Composable
-private fun PluginRow(p: InstalledPlugin, busy: Boolean, message: String?, vm: PluginsViewModel) {
+internal fun InstalledPluginRow(p: InstalledPlugin, busy: Boolean, message: String?, vm: PluginsViewModel) {
     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             if (p.iconFile != null) {
