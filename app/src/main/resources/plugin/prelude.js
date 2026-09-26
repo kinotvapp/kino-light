@@ -338,7 +338,11 @@
   // reads .ok itself, so nothing here throws.
   if (typeof n.xuperSearch === 'function') {
     kino.xuper = freeze({
-      search: freeze(async function search(args) { await null; return parse(await n.xuperSearch(stringify(args))); }),
+      // toStr(stringify(...)), same guard the str() helper above uses: JSON.stringify(undefined) is
+      // the JS value undefined, not a string -- calling search() with no args would otherwise cross
+      // a raw `undefined` to the native binding instead of a string. ref/cursor below don't need
+      // this: toStr() already coerces anything, undefined included, to a real string.
+      search: freeze(async function search(args) { await null; return parse(await n.xuperSearch(toStr(stringify(args)))); }),
       home: freeze(async function home() { await null; return parse(await n.xuperHome()); }),
       browse: freeze(async function browse(ref, cursor) { await null; return parse(await n.xuperBrowse(toStr(ref), cursor == null ? null : toStr(cursor))); }),
       episodes: freeze(async function episodes(ref) { await null; return parse(await n.xuperEpisodes(toStr(ref))); }),

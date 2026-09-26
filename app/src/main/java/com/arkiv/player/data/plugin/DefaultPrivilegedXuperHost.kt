@@ -21,3 +21,23 @@ class DefaultPrivilegedXuperHost(
     override suspend fun xuperEpisodes(ref: String): String = throw NotImplementedError("Task 7")
     override suspend fun xuperResolve(ref: String): String = throw NotImplementedError("Task 6")
 }
+
+/**
+ * The one production decision of which [PluginHost] a plugin's runtime gets: [DefaultPrivilegedXuperHost]
+ * only for the plugin [XuperPrivilege.grants], [DefaultPluginHost] for every other one.
+ * `AppGraph.openPluginRuntime` calls this rather than inlining the branch, and so does
+ * `XuperPrivilegeGateTest` -- the SAME function, not a reproduction of its condition, so a later
+ * change to the gate (or its removal) can't leave a test green while the real gate silently breaks.
+ */
+fun pluginHostFor(
+    plugin: InstalledPlugin,
+    http: PluginHttp,
+    storage: PluginStorage,
+    config: PluginConfig,
+    cookies: PluginCookies?,
+    hosts: EffectiveHosts,
+): PluginHost = if (XuperPrivilege.grants(plugin.record)) {
+    DefaultPrivilegedXuperHost(plugin.id, http, storage, config, cookies, hosts)
+} else {
+    DefaultPluginHost(plugin.id, http, storage, config, cookies, hosts)
+}

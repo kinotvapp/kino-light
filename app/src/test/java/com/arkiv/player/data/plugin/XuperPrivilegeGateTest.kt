@@ -21,15 +21,18 @@ import java.io.IOException
  * `record.address` here comes from a real [PluginInstaller.install] call (as [PluginInstallerTest]
  * does), never a hand-built [InstalledRecord] -- a hand-built one would prove nothing, since the
  * whole point of the gate is that only a validated install can ever set that field. [PluginRegistry]
- * then reads it back from disk the same way the app does. From there, [installAndOpen] does exactly
- * what `AppGraph.openPluginRuntime` does with it -- compare `record.address` to
- * [XuperPrivilege.SOURCE_REPO], build [DefaultPrivilegedXuperHost] or [DefaultPluginHost]
- * accordingly, then [PluginRuntime.open] -- the same real `bind()` / `js.define("__kinoNative")`
- * conditional and the same real prelude.js feature-detect this task added. `AppGraph` itself is not
- * called: it needs an Android `Context` and the app's whole dependency graph (Room, TMDB, AniList...)
- * to construct, which a JVM unit test can't provide -- [PluginReferenceTest] takes the same
- * shortcut, building a runtime directly instead of through `AppGraph`. Nothing security-relevant is
- * skipped by that shortcut: openPluginRuntime's own body is exactly the lines reproduced below.
+ * then reads it back from disk the same way the app does. From there, [installAndOpen] calls the
+ * SAME [pluginHostFor] production function `AppGraph.openPluginRuntime` calls -- never a
+ * reproduction of its `if` condition, so a later change to the gate (or its removal) can't leave
+ * this test green while the real gate silently breaks -- then the same real [PluginRuntime.open],
+ * so the real `bind()` / `js.define("__kinoNative")` conditional and the same real prelude.js
+ * feature-detect this task added both run for real. `AppGraph` itself is not called: it needs an
+ * Android `Context` and the app's whole dependency graph (Room, TMDB, AniList...) to construct,
+ * which a JVM unit test can't provide -- [PluginReferenceTest] takes the same shortcut, building a
+ * runtime directly instead of through `AppGraph`.
+ *
+ * [XuperPrivilegeTest] separately pins [XuperPrivilege.grants]'s exact-match behavior (an `@ref`, a
+ * `/path`, a different owner) directly and fast, without paying for an install + runtime each time.
  */
 class XuperPrivilegeGateTest {
     @get:Rule val tmp = TemporaryFolder()
@@ -76,12 +79,8 @@ class XuperPrivilegeGateTest {
         val hosts = plugin.hosts
         val http = PluginHttp(OkHttpClient(), id, hosts, "9.9.9")
         val storage = PluginStorage(File(storeDir, "storage.json"))
-        // The exact branch AppGraph.openPluginRuntime runs: gated on record.address, never manifest.id.
-        val host = if (plugin.record.address == XuperPrivilege.SOURCE_REPO) {
-            DefaultPrivilegedXuperHost(id, http, storage, PluginConfig.EMPTY, null, hosts)
-        } else {
-            DefaultPluginHost(id, http, storage, PluginConfig.EMPTY, null, hosts)
-        }
+        // The SAME function AppGraph.openPluginRuntime calls -- not a reproduction of its condition.
+        val host = pluginHostFor(plugin, http, storage, PluginConfig.EMPTY, null, hosts)
         return PluginRuntime.open(id, script, host, PluginEnv(appVersion = "9.9.9")).also { opened += it }
     }
 
