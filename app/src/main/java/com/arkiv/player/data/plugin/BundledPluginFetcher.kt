@@ -7,12 +7,15 @@ import java.io.IOException
  * installing it through the normal flow (`preview("kinotvapp/kino-plugin-xuper")`, consent, install)
  * works offline and through the SAME validation path as any other plugin.
  *
- * Only a URL that is EXACTLY what [PluginAddress.rawUrl] builds for the Xuper repo at `HEAD`, whose
- * file [assets] knows, is served from here. The same file under another ref, another owner, another
- * repo or a sub-folder goes to [delegate]: whoever installs from those has not installed Xuper, and
- * the privileges Xuper's address carries must never be reachable through a look-alike.
+ * Only a URL that is EXACTLY what [PluginAddress.rawUrl] builds for the Xuper repo at `HEAD`, and
+ * whose remainder is a plain file name (see [bundledFileOf]), is looked up in [assets]. Anything
+ * else goes to [delegate] without [assets] ever being asked: another ref, owner or repo, a
+ * sub-folder, a query, a fragment, an encoded or backslashed name. Whoever installs from those has
+ * not installed Xuper, and the privileges Xuper's address carries must never be reachable through
+ * a look-alike.
  *
- * [assets] returns a bundled file's bytes, or null when there is no such file.
+ * [assets] returns a bundled file's bytes, or null when there is no such file (which then falls to
+ * [delegate] too). It must not throw for a missing file: an exception is not caught here.
  */
 class BundledPluginFetcher(
     private val assets: (file: String) -> ByteArray?,
@@ -28,12 +31,18 @@ class BundledPluginFetcher(
         return bytes
     }
 
-    /** The file name inside the Xuper repo that [url] points at, or null when it points anywhere else. */
+    /**
+     * The plain file name inside the Xuper repo that [url] points at, or null when it points anywhere
+     * else or the name is not a plain one. "Plain" is the manifest's own path rule
+     * ([ManifestParser.isSafeRelativePath]: `[A-Za-z0-9._-]` segments, no `.`/`..` segment, no leading
+     * or double `/`, no backslash, at most [ManifestParser.MAX_PATH_CHARS]) restricted to one segment,
+     * because the bundled folder is flat. An allow-list, so a query, a fragment, a `%` escape or
+     * anything else nobody thought of is refused by default instead of reaching the lookup.
+     */
     private fun bundledFileOf(url: String): String? {
         if (!url.startsWith(XUPER_RAW_PREFIX)) return null
         val file = url.removePrefix(XUPER_RAW_PREFIX)
-        // The bare root has no file; ".." would let a lookup climb out of the bundled folder.
-        return file.takeIf { it.isNotEmpty() && ".." !in it }
+        return file.takeIf { '/' !in it && ManifestParser.isSafeRelativePath(it) }
     }
 
     private companion object {
