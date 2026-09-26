@@ -1319,6 +1319,17 @@ class AppGraph(context: Context) {
  * (a bad manifest, no network, GitHub unreachable) as an ordinary [InstallException]/[IOException]
  * to show and move on from, never as something to special-case -- this migration does the same,
  * just with nothing to show, so the next cold start simply tries again.
+ *
+ * Fix round 1: an absent record isn't the only way "not already there" can be true -- a person
+ * who explicitly uninstalled the auto-installed Xuper plugin also has no live record, but their
+ * uninstall must stick, forever, exactly like it does for every other plugin ([PluginStore]'s
+ * `removed.json` tombstone, checked here through [PluginRegistry.wasExplicitlyRemoved], is what
+ * makes that stick even across [PluginInstaller.install]'s own `isUpdate=false` path, which has
+ * no live record to compare against and so can't apply [PluginStore.finishInstall]'s own
+ * `isUpdate` guard). The check has to happen AFTER [PluginAdmin.preview] fetches the manifest,
+ * same as [XuperPrivilege.grants] above it: Xuper's real manifest `id` isn't known before that
+ * fetch, so there's no id to look up a tombstone for any earlier. This still costs only the one
+ * network call [preview] already made -- [install] is simply skipped when the tombstone is there.
  */
 suspend fun autoInstallXuperPluginIfNeeded(
     credentialsStore: com.arkiv.player.data.credentials.RemoteCredentialsStore,
@@ -1329,5 +1340,6 @@ suspend fun autoInstallXuperPluginIfNeeded(
     val alreadyThere = pluginRegistry.plugins.value.any { XuperPrivilege.grants(it.record) }
     if (alreadyThere) return
     val preview = pluginAdmin.preview(XuperPrivilege.SOURCE_REPO)
+    if (pluginRegistry.wasExplicitlyRemoved(preview.manifest.id)) return // person's own uninstall stands
     pluginAdmin.install(preview)
 }

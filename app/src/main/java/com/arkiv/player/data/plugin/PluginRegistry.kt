@@ -120,6 +120,15 @@ class PluginRegistry(
 
     fun find(id: String): InstalledPlugin? = plugins.value.firstOrNull { it.id == id }
 
+    /**
+     * True when [id] carries the store's removal tombstone (see [PluginStore.removedName]):
+     * [uninstall] writes it, and only committing a fresh install for the same id clears it. A
+     * caller that would otherwise install over a plugin with no live record must check this
+     * first -- an absent record alone can't tell "never installed" from "explicitly uninstalled"
+     * apart (see `autoInstallXuperPluginIfNeeded` in `AppGraph.kt`).
+     */
+    fun wasExplicitlyRemoved(id: String): Boolean = store.removedName(id) != null
+
     fun setEnabled(id: String, enabled: Boolean) =
         update(id) { it.copy(enabled = enabled, unresponsive = if (enabled) false else it.unresponsive) }
 

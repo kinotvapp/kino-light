@@ -158,4 +158,25 @@ class AutoInstallXuperPluginTest {
 
         assertEquals(listOf(XuperPrivilege.SOURCE_REPO), admin.installedAddresses)
     }
+
+    /**
+     * Fix round 1: a person who explicitly uninstalled the auto-installed Xuper plugin has no
+     * live record left, same as someone who never had it migrated -- [PluginRegistry.plugins]
+     * can't tell those apart. [PluginRegistry.uninstall] is what leaves the real signal, the
+     * store's `removed.json` tombstone (see [PluginStore.removedName]); this must be honored
+     * instead of silently reinstalling on the very next cold start.
+     */
+    @Test fun `a Xuper plugin explicitly uninstalled before is never silently reinstalled`() = runTest {
+        install("xuper", address = XuperPrivilege.SOURCE_REPO)
+        registry.uninstall("xuper")
+        val credentials = FakeRemoteCredentialsStore(sampleCredentials())
+        val admin = RecordingPluginAdmin()
+
+        autoInstallXuperPluginIfNeeded(credentials, registry, admin)
+
+        // preview() still runs: it's the only way to learn Xuper's real manifest id, needed to
+        // look up the tombstone at all -- the bug this test guards against is install() running.
+        assertEquals(listOf(XuperPrivilege.SOURCE_REPO), admin.previewedInputs)
+        assertTrue(admin.installedAddresses.isEmpty())
+    }
 }
