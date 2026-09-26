@@ -10,10 +10,6 @@ import org.junit.Test
 /** Which rows get drawn in the TV results, in what order, and which ones are skipped. */
 class SourceTabTest {
 
-    private fun magis(title: String) = PlaySource.Magis(
-        GatewayResult(source = "magis", title = title, ref = "r-$title"),
-    )
-
     private fun caracol(title: String) = PlaySource.Ditu(
         GatewayResult(source = "ditu", title = title, ref = "ditu1:VOD:$title"),
     )
@@ -23,17 +19,17 @@ class SourceTabTest {
     )
 
     @Test fun `plugin tabs come after the fixed ones, in arrival order, only when they bring results`() {
-        val sources = listOf(plugin("a", "p2", "Dos"), magis("m"), plugin("b", "p1", "Uno"))
-        assertEquals(listOf("all", "magis", "ditu", "plugin:p2", "plugin:p1"), tabsFor(sources).map { it.key })
-        assertEquals(listOf("all", "magis", "ditu"), tabsFor(listOf(magis("m"))).map { it.key })
+        val sources = listOf(plugin("a", "p2", "Dos"), caracol("c"), plugin("b", "p1", "Uno"))
+        assertEquals(listOf("all", "ditu", "plugin:p2", "plugin:p1"), tabsFor(sources).map { it.key })
+        assertEquals(listOf("all", "ditu"), tabsFor(listOf(caracol("c"))).map { it.key })
     }
 
-    /** Xuper searches through its plugin now: a native tab that is always there would only read "Xuper 0". */
-    @Test fun `with no native magis result there is no native xuper tab, only the plugin's`() {
+    /** Xuper searches through its plugin: its tab is the plugin's, there is no native one. */
+    @Test fun `xuper's tab is its plugin's, there is no native xuper tab`() {
         val sources = listOf(plugin("a", "xuper", "Xuper"))
         assertEquals(listOf("all", "ditu", "plugin:xuper"), tabsFor(sources).map { it.key })
         assertEquals(listOf("all", "ditu"), tabsFor(emptyList()).map { it.key })
-        assertFalse(SourceTab.MAGIS in countsByTab(sources))
+        assertFalse(countsByTab(sources).keys.any { it.key == "magis" })
         assertEquals(listOf(SourceTab.ALL, SourceTab.CARACOL), SourceTab.FIXED)
     }
 
@@ -56,32 +52,33 @@ class SourceTabTest {
 
     @Test fun `the counts include caracol even at zero`() {
         // Without the key, Caracol's chip doesn't paint until its first result arrives.
-        val counts = countsByTab(listOf(magis("m")))
+        val counts = countsByTab(listOf(plugin("p")))
         assertTrue(SourceTab.CARACOL in counts)
         assertEquals(0, counts[SourceTab.CARACOL])
-        assertEquals(1, counts[SourceTab.MAGIS])
+        assertEquals(1, counts[tabOf(plugin("p"))])
         assertEquals(1, counts[SourceTab.ALL])
     }
 
-    @Test fun `caracol goes after magis even if it arrives first`() {
-        val r = visibleRows(listOf(caracol("c"), magis("m")), SourceTab.ALL)
-        assertEquals(listOf(SourceTab.MAGIS, SourceTab.CARACOL), r.map { it.first })
+    @Test fun `caracol goes before a plugin even if the plugin arrives first`() {
+        val r = visibleRows(listOf(plugin("p"), caracol("c")), SourceTab.ALL)
+        assertEquals(listOf(SourceTab.CARACOL, tabOf(plugin("p"))), r.map { it.first })
     }
 
     @Test fun `the caracol filter leaves only caracol`() {
-        val r = visibleRows(listOf(caracol("c"), magis("m")), SourceTab.CARACOL)
+        val r = visibleRows(listOf(caracol("c"), plugin("p")), SourceTab.CARACOL)
         assertEquals(listOf(SourceTab.CARACOL), r.map { it.first })
-        assertEquals(listOf(caracol("c")), filterByTab(listOf(caracol("c"), magis("m")), SourceTab.CARACOL))
+        assertEquals(listOf(caracol("c")), filterByTab(listOf(caracol("c"), plugin("p")), SourceTab.CARACOL))
     }
 
     @Test fun `the rows go in the fixed order`() {
-        val r = visibleRows(listOf(magis("m")), SourceTab.ALL)
-        assertEquals(listOf(SourceTab.MAGIS), r.map { it.first })
+        val r = visibleRows(listOf(plugin("p"), caracol("c")), SourceTab.ALL)
+        assertEquals(listOf(SourceTab.CARACOL, tabOf(plugin("p"))), r.map { it.first })
     }
 
     @Test fun `a source with no results leaves no row`() {
-        val r = visibleRows(listOf(magis("m")), SourceTab.ALL)
-        assertEquals(listOf(SourceTab.MAGIS), r.map { it.first })
+        // Caracol is a fixed tab but brought nothing here: no row for it.
+        val r = visibleRows(listOf(plugin("p")), SourceTab.ALL)
+        assertEquals(listOf(tabOf(plugin("p"))), r.map { it.first })
     }
 
     @Test fun `with no results there's no row at all`() {
@@ -89,18 +86,19 @@ class SourceTabTest {
     }
 
     @Test fun `with a filter set only one row is left`() {
-        val r = visibleRows(listOf(magis("m")), SourceTab.MAGIS)
-        assertEquals(listOf(SourceTab.MAGIS), r.map { it.first })
+        val tab = tabOf(plugin("p"))
+        val r = visibleRows(listOf(plugin("p"), caracol("c")), tab)
+        assertEquals(listOf(tab), r.map { it.first })
         assertEquals(1, r.first().second.size)
     }
 
     @Test fun `a filter over an empty source leaves no rows`() {
-        assertTrue(visibleRows(emptyList(), SourceTab.MAGIS).isEmpty())
+        assertTrue(visibleRows(emptyList(), SourceTab.CARACOL).isEmpty())
     }
 
     @Test fun `each row keeps its source's arrival order`() {
-        val sources = listOf(magis("a"), magis("b"))
-        val row = visibleRows(sources, SourceTab.ALL).first { it.first == SourceTab.MAGIS }
-        assertEquals(listOf("a", "b"), row.second.map { (it as PlaySource.Magis).result.title })
+        val sources = listOf(caracol("a"), caracol("b"))
+        val row = visibleRows(sources, SourceTab.ALL).first { it.first == SourceTab.CARACOL }
+        assertEquals(listOf("a", "b"), row.second.map { (it as PlaySource.Ditu).result.title })
     }
 }

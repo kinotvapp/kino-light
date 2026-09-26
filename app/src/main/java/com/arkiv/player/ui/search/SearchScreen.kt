@@ -34,7 +34,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -60,7 +59,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -82,7 +80,6 @@ import com.arkiv.player.ui.catalog.SourceRow
 import com.arkiv.player.ui.catalog.posterFor
 import com.arkiv.player.ui.catalog.SourceCard
 import com.arkiv.player.ui.catalog.SourceSectionHeader
-import com.arkiv.player.ui.catalog.ArkivMagisBlue
 import com.arkiv.player.ui.catalog.ArkivCaracolVerde
 import com.arkiv.player.ui.catalog.isSeries
 import com.arkiv.player.ui.catalog.MetaChip
@@ -97,7 +94,7 @@ import kotlinx.coroutines.launch
 
 /**
  * Unified search wizard: QUERY phase (search box + TMDB/anime cards), REFINE step (optional
- * season/chapter) and RESULTS phase (multi-source search in Magis and Caracol for the chosen
+ * season/chapter) and RESULTS phase (multi-source search in Caracol and the installed plugins for the chosen
  * card, with S/E injected if given, or by name alone otherwise — the latter surfaces
  * whole-season/series packs).
  */
@@ -145,28 +142,15 @@ fun SearchScreen(
     val recentTitles by vm.recentTitles.collectAsStateWithLifecycle()
 
     val scope = rememberCoroutineScope()
-    val context = LocalContext.current
     // Notification permission (API 33+): asked when triggering a download (the local downloads
     // worker also notifies). See rememberPostNotificationsRequest.
     val askNotifications = com.arkiv.player.ui.offline.rememberPostNotificationsRequest()
-    // Shows "you already have that downloaded" when the queue skips a movie download as a
-    // duplicate: same helper the library uses (DetailScreen.saveEpisodesLocally).
-    val notifyDuplicates = com.arkiv.player.ui.offline.rememberDuplicateDownloadNotice()
     val playback = remember { SearchPlayback(graph) }
     var preparing by remember { mutableStateOf(false) }
     var playError by remember { mutableStateOf<String?>(null) }
-    // Whether a download strategy is registered for Magis (today there always is one): decides
-    // whether a movie's dialog offers "Descargar película". See `DownloadSource.hasStrategy`.
-    val magisDownloadable = remember { DownloadSource.hasStrategy("magis", graph.downloadStrategies.keys) }
     val caracolDownloadable = remember { DownloadSource.hasStrategy("ditu", graph.downloadStrategies.keys) }
-    // Open Magis season: a series result from the portal IS a whole season, so its chapter list
-    // opens instead of playing it directly.
-    var magisSeason by remember { mutableStateOf<com.arkiv.player.data.gateway.GatewayResult?>(null) }
-    // Magis movie that was tapped: instead of playing right away, ask whether to watch or download.
-    var magisMovieChoice by remember { mutableStateOf<MagisTapDecision.ShowMovieDialog?>(null) }
-    // Open Caracol series: same as Magis, chapters are picked before playing. It's SEPARATE state
-    // from Magis's on purpose: what's tapped in its window only ever reaches
-    // `playback.playDituSeason`, so a Caracol chapter never falls into Magis's save path.
+    // Open Caracol series: chapters are picked before playing. Its own state, apart from the
+    // plugin's: what's tapped in its window only ever reaches `playback.playDituSeason`.
     var dituSeason by remember { mutableStateOf<com.arkiv.player.data.gateway.GatewayResult?>(null) }
     // Open plugin series: same path as Caracol, saved through `playback.playPluginSeason`.
     var pluginSeason by remember { mutableStateOf<PlaySource.Plugin?>(null) }
@@ -198,46 +182,6 @@ fun SearchScreen(
         }
     }
 
-    // Plays the movie exactly like playMagisResult used to before this dialog existed: same path,
-    // just triggered from "Ver película" instead of directly on tapping the card.
-    fun watchMagisMovie(r: com.arkiv.player.data.gateway.GatewayResult) {
-        preparing = true; playError = null
-        scope.launch { applyResult(playback.playMagis(r)) }
-    }
-
-    // Saves the movie and enqueues it for a device download, same as the library does in
-    // DetailScreen.saveEpisodesLocally: same permission helper, same duplicate notice, and the same
-    // DownloadSource.sourceFor(epId) to pick the queue's strategy. The "queued" toast only fires for a
-    // fresh EnqueueOutcome.QUEUED — ALREADY_QUEUED/ALREADY_DOWNLOADED already get their own message
-    // from notifyDuplicates, and showing both would be misleading. See [queuedDownloadToastText].
-    fun downloadMagisMovie(r: com.arkiv.player.data.gateway.GatewayResult) {
-        askNotifications()
-        scope.launch {
-            val epId = playback.magisEpisodeId(r)
-            if (epId == null) {
-                playError = "No se pudo preparar la descarga de Xuper."
-                return@launch
-            }
-            val outcome = graph.localDownloads.enqueue(epId, DownloadSource.sourceFor(epId))
-            notifyDuplicates(listOf(outcome))
-            queuedDownloadToastText(outcome, r.title)?.let {
-                android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-
-    fun playMagisResult(r: com.arkiv.player.data.gateway.GatewayResult) {
-        // Series → open the season dialog to pick a chapter, same as always. Movie → play it
-        // directly now: the watch-or-download choice (`decideMagisTap`, MagisTapDecision.kt)
-        // moved to long-press (see `longPressResult`) -- asking on every single tap got in the
-        // way when someone's just browsing to watch, and a movie only has that ONE thing to pick
-        // between watching or downloading it (a series still opens its own list first either way).
-        when (val decision = decideMagisTap(r, magisDownloadable)) {
-            is MagisTapDecision.OpenSeasonDialog -> magisSeason = decision.result
-            is MagisTapDecision.ShowMovieDialog -> watchMagisMovie(r)
-        }
-    }
-
     fun playDituResult(source: PlaySource.Ditu) {
         // Series → open its chapters. Movie → play directly (and it stays in the library).
         if (source.isSeries()) { dituSeason = source.result; return }
@@ -253,21 +197,8 @@ fun SearchScreen(
     }
 
     fun playResult(source: PlaySource) = when (source) {
-        is PlaySource.Magis -> playMagisResult(source.result)
         is PlaySource.Ditu -> playDituResult(source)
         is PlaySource.Plugin -> playPluginResult(source)
-    }
-
-    /**
-     * Long-press: the ONLY gesture left that opens [magisMovieChoice] (watch-or-download) for a
-     * Magis movie. A series has nothing extra to offer here -- it opens the same season dialog
-     * either way -- and Caracol has no download strategy to offer at all (Widevine), so both fall
-     * through with nothing to do.
-     */
-    fun longPressResult(source: PlaySource) {
-        if (source !is PlaySource.Magis) return
-        val decision = decideMagisTap(source.result, magisDownloadable)
-        if (decision is MagisTapDecision.ShowMovieDialog) magisMovieChoice = decision
     }
 
     Box(Modifier.fillMaxSize().background(ArkivBlack)) {
@@ -324,7 +255,6 @@ fun SearchScreen(
                     sourcesState = sourcesState,
                     enabled = !preparing,
                     onPlay = { playResult(it) },
-                    onLongPlay = { longPressResult(it) },
                     pluginMore = pluginMore,
                     onBrowsePlugin = onBrowsePlugin,
                 )
@@ -358,58 +288,6 @@ fun SearchScreen(
         }
     }
 
-    magisMovieChoice?.let { choice ->
-        val r = choice.result
-        AlertDialog(
-            onDismissRequest = { magisMovieChoice = null },
-            title = { Text(r.title) },
-            confirmButton = {
-                TextButton(onClick = { magisMovieChoice = null; watchMagisMovie(r) }) {
-                    Text("Ver película")
-                }
-            },
-            dismissButton = {
-                if (choice.canDownload) {
-                    TextButton(onClick = { magisMovieChoice = null; downloadMagisMovie(r) }) {
-                        Text("Descargar película")
-                    }
-                }
-            },
-        )
-    }
-
-    magisSeason?.let { season ->
-        com.arkiv.player.ui.catalog.MagisSeasonDialog(
-            season = season,
-            client = graph.contentSource,
-            onDismiss = { magisSeason = null },
-            onPlay = { chapters, chapter, series ->
-                magisSeason = null
-                preparing = true; playError = null
-                scope.launch { applyResult(playback.playMagisSeason(season, chapters, chapter, series)) }
-            },
-            onSave = { _, chosen, series ->
-                askNotifications()
-                scope.launch {
-                    // Saved chapter by chapter: each one is a separate file on the CDN and the
-                    // queue already knows how to group by series to show them together in Descargas.
-                    var queued = 0
-                    for (chapter in chosen) {
-                        val epId = playback.magisEpisodeIdFor(season, chapter, series) ?: continue
-                        if (graph.localDownloads.enqueue(epId, "magis") ==
-                            com.arkiv.player.data.local.EnqueueOutcome.QUEUED
-                        ) queued++
-                    }
-                    playError = when {
-                        queued == 0 -> "Esos capítulos ya estaban guardados."
-                        queued == chosen.size -> null
-                        else -> "Se encolaron $queued de ${chosen.size} (el resto ya estaba)."
-                    }
-                }
-            },
-        )
-    }
-
     dituSeason?.let { caracolSeries ->
         com.arkiv.player.ui.catalog.MagisSeasonDialog(
             season = caracolSeries,
@@ -422,8 +300,8 @@ fun SearchScreen(
                 preparing = true; playError = null
                 scope.launch { applyResult(playback.playDituSeason(caracolSeries, chapters, chapter, series)) }
             },
-            // Caracol CAN be downloaded, since 2026-09-13. Not like Magis: what stays on the device
-            // are its encrypted segments, and opening them still needs a network license (a few
+            // Caracol CAN be downloaded, since 2026-09-13: what stays on the device are its
+            // encrypted segments, and opening them still needs a network license (a few
             // KB). See `CaracolStore`. Only offered if a strategy is registered, the same gate the
             // rest of the app uses.
             onSave = if (!caracolDownloadable) null else { all, chosen, series ->
@@ -786,7 +664,7 @@ private fun RefineContent(card: TitleCard, onContinue: (season: Int?, episode: I
 }
 
 /**
- * RESULTS phase: multi-source search (Magis/Caracol) for the chosen card, with S/E injected if it
+ * RESULTS phase: multi-source search (Caracol and plugins) for the chosen card, with S/E injected if it
  * came from REFINE or by name alone otherwise. Reuses SourceSectionHeader (same collapsible
  * pattern as CineDetailScreen's bottom sheet).
  */
@@ -803,16 +681,15 @@ private fun ResultsContent(
     sourcesState: SourcesState,
     enabled: Boolean,
     onPlay: (PlaySource) -> Unit,
-    onLongPlay: (PlaySource) -> Unit,
     pluginMore: Map<String, com.arkiv.player.ui.plugin.PluginMoreTarget> = emptyMap(),
     onBrowsePlugin: ((com.arkiv.player.ui.plugin.PluginMoreTarget) -> Unit)? = null,
 ) {
-    // Both start open by default: a section that starts collapsed looks empty even if it brings results.
-    var expandedSections by remember { mutableStateOf(setOf("MAGIS", "CARACOL")) }
+    // Caracol's section starts open: a section that starts collapsed looks empty even if it brings results.
+    var expandedSections by remember { mutableStateOf(setOf("CARACOL")) }
     fun toggle(k: String) { expandedSections = if (k in expandedSections) expandedSections - k else expandedSections + k }
     // `rememberSaveable` and not `remember`: this screen gets destroyed when the player opens, and
     // with `remember` the chosen origin was lost -- you'd come back from watching something via
-    // Magis and the list was back on "Todo", with the item you'd just tapped buried among dozens of results.
+    // a plugin and the list was back on "Todo", with the item you'd just tapped buried among dozens of results.
     // The KEY is saved (a `SourceTab` isn't Saveable); a plugin tab that's gone falls back to "Todo".
     var tabKey by rememberSaveable { mutableStateOf(SourceTab.ALL.key) }
     val tabs = tabsFor(sources)
@@ -820,7 +697,6 @@ private fun ResultsContent(
     // Plugin sections start open like the fixed ones; this remembers the ones the person closed.
     var collapsedPlugins by rememberSaveable { mutableStateOf(setOf<String>()) }
 
-    val magis = sources.filterIsInstance<PlaySource.Magis>()
     val caracol = sources.filterIsInstance<PlaySource.Ditu>()
     val anyLoading = searchingSources.any
     val counts = countsByTab(sources)
@@ -863,19 +739,14 @@ private fun ResultsContent(
             }
         } else if (tab == SourceTab.ALL) {
             // "Todo": a collapsible section per origin, in [SourceTab]'s order.
-            // The native Xuper section only when a native Magis result is there: Xuper searches
-            // through its plugin now, whose own section below lists its titles (see tabsFor).
-            if (magis.isNotEmpty()) {
-                sourceSection(this, "XUPER", ArkivMagisBlue, magis, searchingSources.isSearching(SourceTab.MAGIS), "MAGIS" in expandedSections, { toggle("MAGIS") }, enabled, onPlay, onLongPlay, emptySectionText(SourceTab.MAGIS, sourcesState))
-            }
-            sourceSection(this, "CARACOL", ArkivCaracolVerde, caracol, searchingSources.isSearching(SourceTab.CARACOL), "CARACOL" in expandedSections, { toggle("CARACOL") }, enabled, onPlay, onLongPlay, emptySectionText(SourceTab.CARACOL, sourcesState))
+            sourceSection(this, "CARACOL", ArkivCaracolVerde, caracol, searchingSources.isSearching(SourceTab.CARACOL), "CARACOL" in expandedSections, { toggle("CARACOL") }, enabled, onPlay, emptySectionText(SourceTab.CARACOL, sourcesState))
             // Then one section per plugin that brought results, in [tabsFor]'s order.
             tabs.filter { PluginIds.pluginIdOfSource(it.key) != null }.forEach { t ->
                 sourceSection(
                     this, t.label.uppercase(), t.accent, filterByTab(sources, t), searchingSources.isSearching(t),
                     t.key !in collapsedPlugins,
                     { collapsedPlugins = if (t.key in collapsedPlugins) collapsedPlugins - t.key else collapsedPlugins + t.key },
-                    enabled, onPlay, onLongPlay, emptySectionText(t, sourcesState), key = t.key,
+                    enabled, onPlay, emptySectionText(t, sourcesState), key = t.key,
                 )
             }
         } else {
@@ -892,11 +763,11 @@ private fun ResultsContent(
                 }
             }
             if (shown.any { posterFor(it).isNotBlank() }) {
-                twoColumnCards("tab", shown, enabled, onPlay, onLongPlay)
+                twoColumnCards("tab", shown, enabled, onPlay)
             } else {
                 items(shown, key = { sourceKey(it) }) { s ->
                     Box(Modifier.padding(horizontal = HPAD)) {
-                        SourceRow(s, enabled = enabled, onLongClick = { onLongPlay(s) }) { onPlay(s) }
+                        SourceRow(s, enabled = enabled) { onPlay(s) }
                     }
                 }
             }
@@ -1030,7 +901,6 @@ private fun LazyListScope.twoColumnCards(
     items: List<PlaySource>,
     enabled: Boolean,
     onPlay: (PlaySource) -> Unit,
-    onLongPlay: (PlaySource) -> Unit,
 ) {
     items(items.chunked(2), key = { pair -> "$tag-grid-${sourceKey(pair.first())}" }) { pair ->
         Row(
@@ -1039,7 +909,7 @@ private fun LazyListScope.twoColumnCards(
         ) {
             pair.forEach { s ->
                 Box(Modifier.weight(1f)) {
-                    SourceCard(s, enabled = enabled, onLongClick = { onLongPlay(s) }) { onPlay(s) }
+                    SourceCard(s, enabled = enabled) { onPlay(s) }
                 }
             }
             // Odd one out: a spacer takes the gap so the last card doesn't stretch to full width.
@@ -1058,7 +928,6 @@ private fun sourceSection(
     onToggle: () -> Unit,
     enabled: Boolean,
     onPlay: (PlaySource) -> Unit,
-    onLongPlay: (PlaySource) -> Unit,
     /** What shows below the section when it brought back nothing ([emptySectionText]). */
     empty: String,
     /** The section's LazyColumn identity; defaults to [tag], but two plugins may share a display name. */
@@ -1071,11 +940,11 @@ private fun sourceSection(
     }
     if (expanded) {
         if (items.any { posterFor(it).isNotBlank() }) {
-            scope.twoColumnCards(key, items, enabled, onPlay, onLongPlay)
+            scope.twoColumnCards(key, items, enabled, onPlay)
         } else {
             scope.items(items, key = { "$key-${sourceKey(it)}" }) { s ->
                 Box(Modifier.padding(horizontal = HPAD)) {
-                    SourceRow(s, enabled = enabled, onLongClick = { onLongPlay(s) }) { onPlay(s) }
+                    SourceRow(s, enabled = enabled) { onPlay(s) }
                 }
             }
         }
@@ -1093,7 +962,6 @@ private fun sourceSection(
 /** A source's stable identity, for the LazyColumn's keys (two different results with the same
  *  name would break the list if they shared a key). Same criterion the TV search uses. */
 private fun sourceKey(s: PlaySource): String = when (s) {
-    is PlaySource.Magis -> "m-${s.result.extra["content_id"] ?: s.result.ref}"
     // Caracol's ref is already unique per content: `ditu1:<contentType>:<contentId>`.
     is PlaySource.Ditu -> "d-${s.result.ref}"
     // The plugin item id is stable and unique within its plugin; the source keeps plugins apart.

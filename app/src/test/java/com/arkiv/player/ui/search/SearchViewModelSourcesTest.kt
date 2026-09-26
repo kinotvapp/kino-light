@@ -63,13 +63,13 @@ class SearchViewModelSourcesTest {
         searchHistory = SearchHistoryRepo(EmptyHistory(), EmptyRecents()),
     )
 
-    @Test fun `if caracol goes down, magis shows and caracol's failure stays exposed`() = runTest {
+    @Test fun `if caracol goes down, a plugin's results show and caracol's failure stays exposed`() = runTest {
         val noNetwork = java.net.UnknownHostException("sin red")
         val vm = vm(TestSource {
             listOf(
-                SearchEvent.SourceStart("magis"),
-                SearchEvent.ResultEvent("magis", GatewayResult(source = "magis", title = "Rigo", ref = "m1")),
-                SearchEvent.SourceDone("magis", 1, 5),
+                SearchEvent.SourceStart("plugin:demo"),
+                SearchEvent.ResultEvent("plugin:demo", GatewayResult(source = "plugin:demo", title = "Rigo", ref = "plg1:demo:1")),
+                SearchEvent.SourceDone("plugin:demo", 1, 5),
                 SearchEvent.SourceStart("ditu"),
                 SearchEvent.SourceError("ditu", "sin red", 5, 0, cause = noNetwork),
                 SearchEvent.Done(10),
@@ -79,22 +79,22 @@ class SearchViewModelSourcesTest {
         vm.searchSourcesByText("rigo")
         advanceUntilIdle()
 
-        assertEquals(listOf("Rigo"), vm.sources.value.map { (it as PlaySource.Magis).result.title })
+        assertEquals(listOf("Rigo"), vm.sources.value.map { (it as PlaySource.Plugin).result.title })
         assertEquals(mapOf("ditu" to "sin red"), vm.sourcesState.value.failed)
         // The exception reaches the screen: it's what `CaracolFailure` writes the line with.
         assertEquals(mapOf<String, Throwable>("ditu" to noNetwork), vm.sourcesState.value.causes)
-        assertEquals(setOf("magis"), vm.sourcesState.value.responded)
+        assertEquals(setOf("plugin:demo"), vm.sourcesState.value.responded)
         assertFalse(vm.searchingSources.value.any)
     }
 
-    /** "Buscando en Magis…" turns off with Magis's SourceDone, not with the whole search's Done. */
-    @Test fun `magis stops spinning as soon as it responds, even if caracol keeps searching`() = runTest {
+    /** "Buscando en <plugin>…" turns off with the plugin's SourceDone, not with the whole search's Done. */
+    @Test fun `a plugin stops spinning as soon as it responds, even if caracol keeps searching`() = runTest {
         val caracolAnswers = CompletableDeferred<Unit>()
         val vm = vm(FlowSource {
             flow {
-                emit(SearchEvent.SourceStart("magis"))
-                emit(SearchEvent.ResultEvent("magis", GatewayResult(source = "magis", title = "Rigo", ref = "m1")))
-                emit(SearchEvent.SourceDone("magis", 1, 5))
+                emit(SearchEvent.SourceStart("plugin:demo"))
+                emit(SearchEvent.ResultEvent("plugin:demo", GatewayResult(source = "plugin:demo", title = "Rigo", ref = "plg1:demo:1")))
+                emit(SearchEvent.SourceDone("plugin:demo", 1, 5))
                 emit(SearchEvent.SourceStart("ditu"))
                 caracolAnswers.await()
                 emit(SearchEvent.SourceDone("ditu", 0, 5))
@@ -105,7 +105,7 @@ class SearchViewModelSourcesTest {
         vm.searchSourcesByText("rigo")
         advanceUntilIdle()
 
-        assertFalse(vm.searchingSources.value.isSearching(SourceTab.MAGIS))
+        assertFalse(vm.searchingSources.value.isSearching(tabForSource("plugin:demo")!!))
         assertTrue(vm.searchingSources.value.isSearching(SourceTab.CARACOL))
         assertTrue(vm.searchingSources.value.isSearching(SourceTab.ALL))
 
@@ -139,7 +139,7 @@ class SearchViewModelSourcesTest {
         assertEquals("cursor2", (more as com.arkiv.player.ui.plugin.PluginMoreTarget.Search).cursor)
     }
 
-    /** Magis and Caracol never carry a cursor: `pluginMore` must stay empty for them. */
+    /** Non-plugin sources (Caracol, or a legacy name like "magis") never carry a cursor: `pluginMore` must stay empty for them. */
     @Test fun `magis and caracol never populate pluginMore, even if SourceDone somehow carried more`() = runTest {
         val vm = vm(TestSource {
             listOf(

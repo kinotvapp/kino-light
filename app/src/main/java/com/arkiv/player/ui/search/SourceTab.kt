@@ -2,7 +2,6 @@ package com.arkiv.player.ui.search
 
 import androidx.compose.ui.graphics.Color
 import com.arkiv.player.ui.catalog.ArkivCaracolVerde
-import com.arkiv.player.ui.catalog.ArkivMagisBlue
 import com.arkiv.player.ui.catalog.PlaySource
 import com.arkiv.player.ui.catalog.accent
 
@@ -10,11 +9,9 @@ import com.arkiv.player.ui.catalog.accent
  * Filter by result origin. With several sections open at once the screen turns into a wall: this
  * lets a single origin show once you already know which one you want.
  *
- * "Todo" and Caracol are fixed ([FIXED]); the native Xuper tab sits between them only when a
- * native Magis result is present (Xuper searches through its plugin now, whose own tab lists its
- * titles, so an always-present native tab just read "Xuper 0"); after them, one tab per installed
- * plugin that brought results, in arrival order ([tabsFor]). A tab IS its [key] — the
- * source name the search events use (`"magis"`, `"ditu"`, `"plugin:<id>"`) — so the tab built
+ * "Todo" and Caracol are fixed ([FIXED]); after them, one tab per installed plugin that brought
+ * results, in arrival order ([tabsFor]) — Xuper included, which searches through its plugin. A tab
+ * IS its [key] — the source name the search events use (`"ditu"`, `"plugin:<id>"`) — so the tab built
  * from a result and the one built from an error event for the same source are equal.
  */
 class SourceTab private constructor(val key: String, val label: String, val accent: Color) {
@@ -24,7 +21,6 @@ class SourceTab private constructor(val key: String, val label: String, val acce
 
     companion object {
         val ALL = SourceTab("all", "Todo", Color.White)
-        val MAGIS = SourceTab("magis", "Xuper", ArkivMagisBlue)
         val CARACOL = SourceTab("ditu", "Caracol", ArkivCaracolVerde)
 
         /** The tabs every search shows, in order, even at zero. */
@@ -36,18 +32,15 @@ class SourceTab private constructor(val key: String, val label: String, val acce
 
 /** The tab a source belongs to. */
 fun tabOf(source: PlaySource): SourceTab = when (source) {
-    is PlaySource.Magis -> SourceTab.MAGIS
     is PlaySource.Ditu -> SourceTab.CARACOL
     is PlaySource.Plugin -> SourceTab.plugin(source.result.source, source.pluginName, source.accent)
 }
 
 /**
- * "Todo", the native Xuper tab only if [sources] has a native Magis result, Caracol, then one tab
- * per plugin present in [sources], in order of first appearance.
+ * "Todo", Caracol, then one tab per plugin present in [sources], in order of first appearance.
  */
 fun tabsFor(sources: List<PlaySource>): List<SourceTab> =
     listOf(SourceTab.ALL) +
-        listOfNotNull(SourceTab.MAGIS.takeIf { sources.any { it is PlaySource.Magis } }) +
         listOf(SourceTab.CARACOL) +
         sources.filterIsInstance<PlaySource.Plugin>().map(::tabOf).distinct()
 

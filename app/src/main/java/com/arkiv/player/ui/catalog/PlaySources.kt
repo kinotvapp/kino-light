@@ -1,9 +1,7 @@
 package com.arkiv.player.ui.catalog
 
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -45,19 +43,16 @@ import com.arkiv.player.ui.theme.ArkivSurfaceHigh
 import com.arkiv.player.ui.theme.ArkivTextSecondary
 
 /**
- * A playable source: Magis, Caracol Streaming (Ditu) or an installed plugin.
+ * A playable source: Caracol Streaming (Ditu) or an installed plugin.
  *
  * Up until this branch's pruning (light-magis) there was also an `Archive` variant, deleted along
  * with the rest of archive.org. Ditu was deleted in that same pruning and came back with a direct
- * client, no server of its own (`com.arkiv.player.data.ditu`).
+ * client, no server of its own (`com.arkiv.player.data.ditu`). A native `Magis` variant existed
+ * until Xuper moved to its plugin: Xuper results arrive as [Plugin] now.
  */
 sealed interface PlaySource {
-    /** Result from the Magis portal (VOD only). The `ref` is opaque: it's sent as-is to
-     *  `MagisResolve.resolveVod` and the app never interprets it. */
-    data class Magis(val result: com.arkiv.player.data.gateway.GatewayResult) : PlaySource
-
-    /** Result from Caracol Streaming. Unlike Magis, its `ref` CAN be saved to the library: it
-     *  encodes Caracol ids, which are stable (see `DituRef`). */
+    /** Result from Caracol Streaming. Its `ref` CAN be saved to the library: it encodes Caracol
+     *  ids, which are stable (see `DituRef`). */
     data class Ditu(val result: com.arkiv.player.data.gateway.GatewayResult) : PlaySource
 
     /**
@@ -73,7 +68,7 @@ sealed interface PlaySource {
     ) : PlaySource
 }
 
-/** Magis blue: the accent color of its row, its section and its filter chip. */
+/** Magis blue: the default accent of the season dialog (`MagisSeasonDialog`). */
 val ArkivMagisBlue = Color(0xFF64B5F6)
 
 /** Caracol green: the accent color of its row, its section and its filter chip. */
@@ -86,7 +81,6 @@ val PlaySource.Plugin.accent: Color get() = Color(color)
 fun PlaySource.Plugin.isSeries(): Boolean = result.kind == "series"
 
 fun accentOf(source: PlaySource): Color = when (source) {
-    is PlaySource.Magis -> ArkivMagisBlue
     is PlaySource.Ditu -> ArkivCaracolVerde
     is PlaySource.Plugin -> source.accent
 }
@@ -147,19 +141,13 @@ fun SourceSectionHeader(
  * A source row, as a card: accent bar in the origin's color on the left, name in white and the
  * loose data (quality/language/seeds/size) as pills. The bar's color says the origin without
  * spending a text label on every row.
- *
- * [onLongClick] is a Magis movie's watch-or-download choice (see `SearchScreen`'s
- * `longPressResult`): a tap plays it directly now, so that choice moved off the tap gesture --
- * asking on every single card got in the way when someone's just browsing to watch. `null` for
- * anything that doesn't have that choice to offer (series, Caracol).
  */
-@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun SourceRow(
     source: PlaySource,
     enabled: Boolean,
     download: RowDownload? = null,
-    onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     val accent = accentOf(source)
@@ -170,11 +158,11 @@ fun SourceRow(
         modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min).padding(vertical = 4.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(ArkivSurfaceHigh.copy(alpha = 0.55f))
-            .combinedClickable(enabled = enabled, onLongClick = onLongClick, onClick = onClick),
+            .clickable(enabled = enabled, onClick = onClick),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.width(3.dp).fillMaxHeight().background(accent))
-        // Magis and Caracol bring a cover per result ([posterFor]). With no poster, nothing gets drawn.
+        // Caracol and plugins bring a cover per result ([posterFor]). With no poster, nothing gets drawn.
         val thumbnail = posterFor(source)
         if (thumbnail.isNotBlank()) {
             AsyncImage(
@@ -191,23 +179,6 @@ fun SourceRow(
         )
         Column(Modifier.weight(1f).padding(vertical = 10.dp, horizontal = 2.dp)) {
             when (source) {
-                is PlaySource.Magis -> {
-                    val r = source.result
-                    Text(
-                        r.title, color = Color.White, style = MaterialTheme.typography.bodyMedium,
-                        maxLines = 2, overflow = TextOverflow.Ellipsis,
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        MetaChip("Xuper", ArkivMagisBlue)
-                        if (r.extra["program_type"] == "teleplay") MetaChip("Serie")
-                        if (r.year.isNotBlank()) MetaChip(r.year)
-                        if (r.lang.isNotBlank()) MetaChip(r.lang)
-                    }
-                }
                 is PlaySource.Ditu -> {
                     val r = source.result
                     Text(
@@ -250,10 +221,9 @@ fun SourceRow(
     }
 }
 
-/** A source's cover, or "" if that source has none. Magis, Caracol and plugins bring it in
+/** A source's cover, or "" if that source has none. Caracol and plugins bring it in
  *  `extra["poster"]`. */
 fun posterFor(source: PlaySource): String = when (source) {
-    is PlaySource.Magis -> source.result.extra["poster"].orEmpty()
     is PlaySource.Ditu -> source.result.extra["poster"].orEmpty()
     is PlaySource.Plugin -> source.result.extra["poster"].orEmpty()
 }
@@ -261,18 +231,17 @@ fun posterFor(source: PlaySource): String = when (source) {
 /**
  * A source as a cover CARD, to paint in two columns.
  *
- * The alternative to [SourceRow] when the source brings an image: twenty Magis results in text
+ * The alternative to [SourceRow] when the source brings an image: twenty results in text
  * rows are a wall where every title looks alike; with the cover, which is which is recognized at
  * a glance. Sources with no image stay in a row -- see [SourceRow].
  */
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun SourceCard(source: PlaySource, enabled: Boolean, onLongClick: (() -> Unit)? = null, onClick: () -> Unit) {
+fun SourceCard(source: PlaySource, enabled: Boolean, onClick: () -> Unit) {
     val poster = posterFor(source)
     Column(
         Modifier.clip(RoundedCornerShape(10.dp))
             .background(ArkivSurfaceHigh.copy(alpha = 0.55f))
-            .combinedClickable(enabled = enabled, onLongClick = onLongClick, onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(bottom = 8.dp),
     ) {
         Box(Modifier.fillMaxWidth().aspectRatio(2f / 3f).background(ArkivSurfaceHigh)) {
@@ -299,11 +268,6 @@ fun SourceCard(source: PlaySource, enabled: Boolean, onLongClick: (() -> Unit)? 
             modifier = Modifier.padding(start = 8.dp, end = 8.dp, top = 4.dp),
         ) {
             when (source) {
-                is PlaySource.Magis -> {
-                    MetaChip("Xuper", ArkivMagisBlue)
-                    if (source.result.extra["program_type"] == "teleplay") MetaChip("Serie")
-                    if (source.result.year.isNotBlank()) MetaChip(source.result.year)
-                }
                 is PlaySource.Ditu -> {
                     MetaChip("Caracol", ArkivCaracolVerde)
                     if (source.isSeries()) MetaChip("Serie")
@@ -320,7 +284,6 @@ fun SourceCard(source: PlaySource, enabled: Boolean, onLongClick: (() -> Unit)? 
 }
 
 private fun titleOf(source: PlaySource): String = when (source) {
-    is PlaySource.Magis -> source.result.title
     is PlaySource.Ditu -> source.result.title
     is PlaySource.Plugin -> source.result.title
 }

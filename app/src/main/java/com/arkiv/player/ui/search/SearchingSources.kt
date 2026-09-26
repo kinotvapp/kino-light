@@ -15,8 +15,8 @@ package com.arkiv.player.ui.search
  * The end of the entire search ([allFinished]) turns everything off regardless: a source that
  * never got to send either one can't leave its tab spinning forever.
  *
- * Sources go by the name they travel under in the events (`"magis"`, `"ditu"`, `"plugin:<id>"`),
- * same as in [SourcesState].
+ * Sources go by the name they travel under in the events (`"ditu"`, `"plugin:<id>"`), same as in
+ * [SourcesState].
  */
 data class SearchingSources(
     /** The sources that already responded or went down. */
