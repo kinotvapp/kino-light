@@ -22,7 +22,7 @@ class PluginCatalogParserTest {
     }
 
     @Test fun `a repo that is not owner slash name is dropped and the rest kept`() {
-        val bad = listOf("../etc/passwd", "https://evil.example/x", "a/b/c", "owner/", "/name", "own er/name", "a/b?x=1", "")
+        val bad = listOf("../etc/passwd", "https://evil.example/x", "a/b/c", "owner/", "/name", "own er/name", "a/b?x=1", "", "../x", "x/..", "./x", "x/.")
         for (repo in bad) {
             val c = parse(catalog(entry("bad", repo), entry("good", "o/good")))!!
             assertEquals("repo '$repo'", listOf("good"), c.entries.map { it.id })
@@ -88,6 +88,24 @@ class PluginCatalogParserTest {
     @Test fun `catalog entries with dotted repo names are kept`() {
         val c = parse(catalog(entry("dotted", "owner/my.plugin")))!!
         assertEquals(listOf("owner/my.plugin"), c.entries.map { it.repo })
+    }
+
+    @Test fun `deeply nested JSON in valid catalog gives null`() {
+        val nested = "[".repeat(200)
+        val deepCatalog = """{"schema":1,"plugins":[$nested${entry()}${"]".repeat(200)}]}"""
+        assertNull(parse(deepCatalog))
+    }
+
+    @Test fun `brackets inside string values do not count toward depth`() {
+        val bracketsInString = """{"schema":1,"plugins":[{"id":"a","repo":"o/a","name":"Test","description":"${"[".repeat(100)}"}]}"""
+        val c = parse(bracketsInString)!!
+        assertEquals(100, c.entries.single().description.length)
+    }
+
+    @Test fun `a legitimate catalog parses despite brackets in description`() {
+        val bracketsInDesc = """{"schema":1,"plugins":[{"id":"test","repo":"o/r","name":"Test","description":"See [docs] for [details]"}]}"""
+        val c = parse(bracketsInDesc)!!
+        assertEquals("See [docs] for [details]", c.entries.single().description)
     }
 
     @Test fun `an id that is not a slug is dropped`() {

@@ -37,6 +37,7 @@ object PluginCatalogParser {
     private const val MAX_DESCRIPTION = 200
     private const val MAX_TAGS = 5
     private const val MAX_TAG = 30
+    private const val MAX_DEPTH = 16
     private val REPO = Regex("^[A-Za-z0-9._-]{1,100}/[A-Za-z0-9._-]{1,100}$")
     private val ID = Regex("^[a-z0-9][a-z0-9-]{0,39}$")
 
@@ -47,6 +48,7 @@ object PluginCatalogParser {
     /** [capabilities]: what THIS build can do; entries that require anything else are hidden. */
     fun parse(json: String, capabilities: Set<String>): PluginCatalog? {
         if (json.toByteArray().size > MAX_BYTES) return null
+        if (getMaxDepth(json) > MAX_DEPTH) return null
         val root = try { JSONObject(json) } catch (e: JSONException) { return null }
         if (root.optInt("schema", 0) != SUPPORTED_SCHEMA) return null
         val array = root.optJSONArray("plugins") ?: return null
@@ -79,4 +81,42 @@ object PluginCatalogParser {
 
     private fun strings(array: JSONArray?): List<String> =
         (0 until (array?.length() ?: 0)).mapNotNull { array?.opt(it) as? String }
+
+    private fun getMaxDepth(json: String): Int {
+        var maxDepth = 0
+        var currentDepth = 0
+        var i = 0
+        while (i < json.length) {
+            val c = json[i]
+            when {
+                c == '\\' && i + 1 < json.length -> i += 2  // Skip escaped character
+                c == '"' -> {
+                    // Skip string content
+                    i++
+                    while (i < json.length) {
+                        val sc = json[i]
+                        if (sc == '\\' && i + 1 < json.length) {
+                            i += 2
+                        } else if (sc == '"') {
+                            break
+                        } else {
+                            i++
+                        }
+                    }
+                    i++
+                }
+                c == '[' || c == '{' -> {
+                    currentDepth++
+                    maxDepth = maxOf(maxDepth, currentDepth)
+                    i++
+                }
+                c == ']' || c == '}' -> {
+                    currentDepth--
+                    i++
+                }
+                else -> i++
+            }
+        }
+        return maxDepth
+    }
 }
