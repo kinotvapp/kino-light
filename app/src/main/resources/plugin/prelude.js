@@ -329,6 +329,22 @@
     error: freeze(function error(code, message) { return codedError(code, message); }),
     log: freeze((...a) => log('info', a)),
   };
+  // --- kino.xuper: present only for the one installed plugin the native side recognizes as the
+  // real Xuper source (see XuperPrivilege.SOURCE_REPO / AppGraph.openPluginRuntime). n.xuperSearch
+  // exists on __kinoNative ONLY for that one runtime's bind() call, so this is a true feature
+  // detect -- nothing plugin.js can set itself -- not a flag. Same shape as kino.fetch: async,
+  // checks (there are none to make here) go after the first await; see the alpha13 note above.
+  // Every method answers the ok/data or ok/code/message envelope Kotlin already built -- plugin.js
+  // reads .ok itself, so nothing here throws.
+  if (typeof n.xuperSearch === 'function') {
+    kino.xuper = freeze({
+      search: freeze(async function search(args) { await null; return parse(await n.xuperSearch(stringify(args))); }),
+      home: freeze(async function home() { await null; return parse(await n.xuperHome()); }),
+      browse: freeze(async function browse(ref, cursor) { await null; return parse(await n.xuperBrowse(toStr(ref), cursor == null ? null : toStr(cursor))); }),
+      episodes: freeze(async function episodes(ref) { await null; return parse(await n.xuperEpisodes(toStr(ref))); }),
+      resolve: freeze(async function resolve(ref) { await null; return parse(await n.xuperResolve(toStr(ref))); }),
+    });
+  }
   globalThis.kino = freeze(kino);
   globalThis.console = freeze({
     log: freeze((...a) => log('info', a)), info: freeze((...a) => log('info', a)),

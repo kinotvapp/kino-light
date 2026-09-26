@@ -321,6 +321,16 @@ class PluginRuntime private constructor(
                 function("cookiesClear") { _ -> host.cookiesClear() }
                 function("crypto") { args -> host.crypto(args[0] as String) }
                 asyncFunction("sleep") { args -> host.sleep((args[0] as Number).toLong()); null }
+                // Present only when this runtime's host is the one gated to the recognized Xuper
+                // source (see XuperPrivilege / AppGraph.openPluginRuntime): prelude.js feature-detects
+                // these on __kinoNative to decide whether to expose kino.xuper at all.
+                if (host is PrivilegedXuperHost) {
+                    asyncFunction("xuperSearch") { args -> host.xuperSearch(args[0] as String) }
+                    asyncFunction("xuperHome") { _ -> host.xuperHome() }
+                    asyncFunction("xuperBrowse") { args -> host.xuperBrowse(args[0] as String, args.getOrNull(1) as String?) }
+                    asyncFunction("xuperEpisodes") { args -> host.xuperEpisodes(args[0] as String) }
+                    asyncFunction("xuperResolve") { args -> host.xuperResolve(args[0] as String) }
+                }
             }
         }
 

@@ -487,7 +487,15 @@ class AppGraph(context: Context) {
         val http = PluginHttp(pluginBaseHttp, id, hosts, BuildConfig.VERSION_NAME, cookies = cookies)
         pluginHttps[id] = http
         val storage = PluginStorage(java.io.File(dataDir, "storage.json"))
-        val runtime = PluginRuntime.open(id, script, DefaultPluginHost(id, http, storage, config, cookies, hosts), PluginEnv(appVersion = BuildConfig.VERSION_NAME))
+        // Only the one recognized Xuper source gets the extra kino.xuper.* host functions -- gated on
+        // the ADDRESS PluginInstaller recorded from a validated fetch, never the manifest's
+        // self-declared id (any other repo could copy that verbatim). See XuperPrivilege's KDoc.
+        val host = if (plugin.record.address == XuperPrivilege.SOURCE_REPO) {
+            DefaultPrivilegedXuperHost(id, http, storage, config, cookies, hosts)
+        } else {
+            DefaultPluginHost(id, http, storage, config, cookies, hosts)
+        }
+        val runtime = PluginRuntime.open(id, script, host, PluginEnv(appVersion = BuildConfig.VERSION_NAME))
         // F5: drop this plugin's PluginHttp the moment its runtime is closed -- idle timeout, or an
         // explicit pool.close() from DefaultPluginAdmin's disable/update/uninstall -- so pluginHttps
         // never keeps a stale, no-longer-approved host list around after the runtime that used it is
