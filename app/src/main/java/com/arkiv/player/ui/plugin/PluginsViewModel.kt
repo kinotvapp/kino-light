@@ -64,6 +64,12 @@ data class CatalogUiState(
     val rows: List<CatalogRow> = emptyList(),
     val origin: CatalogOrigin? = null,
     val refreshing: Boolean = false,
+    /**
+     * Why the sources behind [rows] failed, as [CatalogResult.failures] reports it (the keys "cache" and
+     * "seed" are local labels), so a later phase can report which one broke. Empty when nothing failed.
+     * The windows do not read it.
+     */
+    val failures: Map<String, String> = emptyMap(),
 )
 
 /** What the seed line of the window says and does; the phone and the TV window both draw it. */
@@ -101,6 +107,7 @@ private fun catalogUiState(result: CatalogResult, refreshing: Boolean, query: St
         rows = filterCatalog(result.catalog.entries, query).map { e -> CatalogRow(e, installed.firstOrNull { it.record.address == e.repo }) },
         origin = result.origin,
         refreshing = refreshing,
+        failures = result.failures,
     )
 
 /**

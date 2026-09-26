@@ -507,6 +507,43 @@ class PluginsViewModelTest {
         assertTrue(vm.catalog.value.refreshing)
     }
 
+    // ---- failures: which sources failed, for Phase 2's telemetry ----
+
+    @Test fun `a load whose result has failures exposes them in the catalog state`() {
+        val failed = result(CatalogOrigin.SEED, "seed").copy(failures = mapOf("network" to "timeout", "cache" to "unreadable"))
+        val vm = vm(FakeAdmin(), ScriptedCatalog(result(CatalogOrigin.SEED, "seed")) { failed })
+        assertEquals(mapOf("network" to "timeout", "cache" to "unreadable"), vm.catalog.value.failures)
+    }
+
+    @Test fun `the disk copy shown first carries the failures of cachedOrSeed`() {
+        val gate = CompletableDeferred<CatalogResult>()
+        val disk = result(CatalogOrigin.SEED, "seed").copy(failures = mapOf("cache" to "corrupt"))
+        val vm = vm(FakeAdmin(), ScriptedCatalog(disk) { gate.await() })
+        assertTrue(vm.catalog.value.refreshing)
+        assertEquals(mapOf("cache" to "corrupt"), vm.catalog.value.failures)
+    }
+
+    @Test fun `a disk copy with no failures shows none`() {
+        val gate = CompletableDeferred<CatalogResult>()
+        val vm = vm(FakeAdmin(), ScriptedCatalog(result(CatalogOrigin.CACHE, "a")) { gate.await() })
+        assertTrue(vm.catalog.value.failures.isEmpty())
+    }
+
+    @Test fun `a later successful load replaces the failures`() {
+        val gate = CompletableDeferred<CatalogResult>()
+        val disk = result(CatalogOrigin.SEED, "seed").copy(failures = mapOf("cache" to "corrupt"))
+        val vm = vm(FakeAdmin(), ScriptedCatalog(disk) { gate.await() })
+        assertEquals(mapOf("cache" to "corrupt"), vm.catalog.value.failures)
+        gate.complete(result(CatalogOrigin.FRESH, "new"))
+        assertTrue(vm.catalog.value.failures.isEmpty())
+    }
+
+    @Test fun `a download that throws keeps the failures of the copy on screen`() {
+        val disk = result(CatalogOrigin.SEED, "seed").copy(failures = mapOf("cache" to "corrupt"))
+        val vm = vm(FakeAdmin(), ScriptedCatalog(disk) { throw java.io.IOException("offline") })
+        assertEquals(mapOf("cache" to "corrupt"), vm.catalog.value.failures)
+    }
+
     @Test fun `an older load that ends after a newer one started does not switch refreshing off`() {
         // A real provider blocks on IO, so the cancelled load finishes AFTER the reload has started: replay
         // that order with a queueing dispatcher.
