@@ -19,6 +19,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -28,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusManager
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
@@ -60,6 +62,10 @@ import com.arkiv.player.ui.plugin.rowMessagePluginId
 import com.arkiv.player.ui.rememberGraph
 import com.arkiv.player.ui.theme.ArkivRed
 import com.arkiv.player.ui.theme.ArkivTextSecondary
+import kotlinx.coroutines.delay
+
+/** How long the text fields stay out of focus at most while the first recommended row takes it; see [TvAddPluginScreen]. */
+private const val INITIAL_FOCUS_GRACE_MS = 1_500L
 
 /**
  * The "Agregar plugin" window on the TV: the phone's sections ([com.arkiv.player.ui.plugin.AddPluginScreen])
@@ -85,13 +91,29 @@ fun TvAddPluginScreen(mode: AddPluginMode, onClose: () -> Unit) {
     val rowMessageId = rowMessagePluginId(state, plugins)
     val rows = legacyFirst(catalog.rows)
 
-    // Initial focus goes to the first recommended row, but rows arrive after the window opens: the
-    // request only starts once one exists (a requester on a row that is not composed throws), and it
-    // stops for good as soon as focus is anywhere in the list, so a catalog that reloads or a search
-    // that filters never takes focus away from the person.
+    // Initial focus goes to the first recommended row, with no keyboard. Two things make that fragile:
+    //  1. On a TV (non-touch mode) Android gives the window's Compose view focus on the first frame, and Compose
+    //     hands it to the first focusable node it finds -- the search field, which sits at the top of the list.
+    //     A focused text field opens the system keyboard by itself, covering the list. So both text fields
+    //     refuse focus (canFocus = false) until [initialFocusPlaced]; the default focus then lands on another
+    //     control and [FocusWhenReady] moves it to the first row a moment later.
+    //  2. The rows may arrive after the window opens, and a requester on a row that is not composed throws, so
+    //     the request only runs while a row exists (and [FocusWhenReady] retries until the row is attached).
+    // [initialFocusPlaced] turns true, for good, as soon as that first row has focus. If that never happens
+    // (no rows, or the row could not take focus) it turns true anyway after [INITIAL_FOCUS_GRACE_MS], so the
+    // fields are never unreachable. Once true nothing requests focus again, so a catalog that reloads or a
+    // search that filters never takes focus away from the person, and moving INTO the search field by D-pad
+    // (Up from the first row) works, keyboard included, as it always did.
     val firstRowFocus = remember { FocusRequester() }
-    var focusInList by remember { mutableStateOf(false) }
-    if (!focusInList && rows.isNotEmpty()) FocusWhenReady(firstRowFocus)
+    var initialFocusPlaced by remember { mutableStateOf(false) }
+    if (!initialFocusPlaced && rows.isNotEmpty()) FocusWhenReady(firstRowFocus)
+    LaunchedEffect(Unit) {
+        delay(INITIAL_FOCUS_GRACE_MS)
+        initialFocusPlaced = true
+    }
+    val firstRowModifier = Modifier
+        .focusRequester(firstRowFocus)
+        .onFocusChanged { if (it.hasFocus) initialFocusPlaced = true }
 
     Column(modifier = Modifier.fillMaxSize().padding(horizontal = 64.dp, vertical = 32.dp)) {
         Text("Agregar plugin", style = MaterialTheme.typography.headlineMedium, color = Color.White)
@@ -104,10 +126,7 @@ fun TvAddPluginScreen(mode: AddPluginMode, onClose: () -> Unit) {
             }
         }
         LazyColumn(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .onFocusChanged { if (it.hasFocus) focusInList = true },
+            modifier = Modifier.weight(1f).fillMaxWidth(),
             contentPadding = PaddingValues(top = 16.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -120,7 +139,7 @@ fun TvAddPluginScreen(mode: AddPluginMode, onClose: () -> Unit) {
                     // `Done` just leaves the field (the list filters as you type).
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                     keyboardActions = KeyboardActions(onDone = { focusManager.moveFocus(FocusDirection.Down) }),
-                    modifier = Modifier.fillMaxWidth(0.6f).downLeavesTheField(focusManager),
+                    modifier = Modifier.fillMaxWidth(0.6f).focusProperties { canFocus = initialFocusPlaced }.downLeavesTheField(focusManager),
                 )
             }
             // Only while the list is still the copy shipped in the APK. The notice waits for the refresh to end
@@ -141,7 +160,7 @@ fun TvAddPluginScreen(mode: AddPluginMode, onClose: () -> Unit) {
                 }
             }
             items(rows, key = { "catalog-${it.entry.id}" }) { row ->
-                TvCatalogRow(row, vm, focusRequester = if (row.entry.id == rows.first().entry.id) firstRowFocus else null)
+                TvCatalogRow(row, vm, modifier = if (row.entry.id == rows.first().entry.id) firstRowModifier else Modifier)
             }
             if (rows.isEmpty() && !catalog.loading) {
                 item(key = "no-match") {
@@ -165,7 +184,7 @@ fun TvAddPluginScreen(mode: AddPluginMode, onClose: () -> Unit) {
                         // leaves the field, since a closed IME otherwise traps focus in it.
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
                         keyboardActions = KeyboardActions(onDone = { vm.add(); focusManager.moveFocus(FocusDirection.Down) }),
-                        modifier = Modifier.fillMaxWidth(0.6f).downLeavesTheField(focusManager),
+                        modifier = Modifier.fillMaxWidth(0.6f).focusProperties { canFocus = initialFocusPlaced }.downLeavesTheField(focusManager),
                     )
                     TvActionOption(label = if (state.busy) "Revisando…" else "Agregar") { vm.add() }
                 }
@@ -199,14 +218,14 @@ fun TvAddPluginScreen(mode: AddPluginMode, onClose: () -> Unit) {
  * focusable so the list is still walked one row at a time.
  */
 @Composable
-private fun TvCatalogRow(row: CatalogRow, vm: PluginsViewModel, focusRequester: FocusRequester?) {
+private fun TvCatalogRow(row: CatalogRow, vm: PluginsViewModel, modifier: Modifier) {
     val entry = row.entry
     val installed = row.installed
     val action = catalogActionOf(row)
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         TvActionOption(
             label = catalogRowLabel(action, entry.name),
-            modifier = if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier,
+            modifier = modifier,
         ) {
             when (action) {
                 CatalogAction.INSTALL -> vm.installFromCatalog(entry)
