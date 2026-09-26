@@ -48,8 +48,15 @@ object PluginCatalogParser {
     /** [capabilities]: what THIS build can do; entries that require anything else are hidden. */
     fun parse(json: String, capabilities: Set<String>): PluginCatalog? {
         if (json.toByteArray().size > MAX_BYTES) return null
-        if (getMaxDepth(json) > MAX_DEPTH) return null
-        val root = try { JSONObject(json) } catch (e: JSONException) { return null }
+        if (!isSafeToParse(json)) return null
+        val root = try {
+            JSONObject(json)
+        } catch (e: JSONException) {
+            return null
+        } catch (e: StackOverflowError) {
+            // Backstop only: Android's JSONTokener recurses with no depth limit and an Error is not a JSONException.
+            return null
+        }
         if (root.optInt("schema", 0) != SUPPORTED_SCHEMA) return null
         val array = root.optJSONArray("plugins") ?: return null
         val seen = HashSet<String>()
@@ -82,9 +89,15 @@ object PluginCatalogParser {
     private fun strings(array: JSONArray?): List<String> =
         (0 until (array?.length() ?: 0)).mapNotNull { array?.opt(it) as? String }
 
-    private fun getMaxDepth(json: String): Int {
-        var maxDepth = 0
-        var currentDepth = 0
+    /**
+     * The gate every body passes before [JSONObject] sees it: true only for strict JSON nested at most [MAX_DEPTH]
+     * deep. Android's JSONTokener is lenient (it skips slash-star and `//` and `#` comments and reads
+     * single-quoted strings) and recurses with no limit, so a body that hides brackets or a quote from this scan
+     * behind one of those could overflow the stack. Strict JSON never has `'`, `/` or `#` outside a `"` string, so
+     * any of them there refuses the body; inside a `"` string they are ordinary text (URLs, descriptions).
+     */
+    internal fun isSafeToParse(json: String): Boolean {
+        var depth = 0
         var i = 0
         while (i < json.length) {
             val c = json[i]
@@ -105,18 +118,19 @@ object PluginCatalogParser {
                     }
                     i++
                 }
+                c == '\'' || c == '/' || c == '#' -> return false  // Lenient-JSON syntax outside a string
                 c == '[' || c == '{' -> {
-                    currentDepth++
-                    maxDepth = maxOf(maxDepth, currentDepth)
+                    depth++
+                    if (depth > MAX_DEPTH) return false
                     i++
                 }
                 c == ']' || c == '}' -> {
-                    currentDepth--
+                    depth--
                     i++
                 }
                 else -> i++
             }
         }
-        return maxDepth
+        return true
     }
 }

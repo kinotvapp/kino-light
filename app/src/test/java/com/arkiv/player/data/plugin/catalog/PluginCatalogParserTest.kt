@@ -108,6 +108,36 @@ class PluginCatalogParserTest {
         assertEquals("See [docs] for [details]", c.entries.single().description)
     }
 
+    // The JVM test jar (org.json:json) rejects comments and single quotes on its own, so an end-to-end parse() test cannot tell
+    // fixed from unfixed code. Android's JSONTokener is lenient and recurses without a limit: these tests pin the pre-check itself.
+
+    @Test fun `a comment that hides a quote from the depth scan is refused`() {
+        val deep = "[".repeat(1000)
+        assertFalse(PluginCatalogParser.isSafeToParse("""{"schema":1,"plugins":[/*"*/$deep${"]".repeat(1000)}/*"*/]}"""))
+    }
+
+    @Test fun `a single-quoted string that hides a quote from the depth scan is refused`() {
+        val deep = "[".repeat(1000)
+        assertFalse(PluginCatalogParser.isSafeToParse("""{"schema":1,"plugins":['"',$deep${"]".repeat(1000)},'"']}"""))
+    }
+
+    @Test fun `hash and both comment styles outside a string are refused`() {
+        for (lenient in listOf("#", "//", "/*", "'")) {
+            assertFalse("'$lenient'", PluginCatalogParser.isSafeToParse("""{"schema":1,$lenient "plugins":[]}"""))
+        }
+    }
+
+    @Test fun `a catalog with lenient-JSON lookalikes only inside strings still parses`() {
+        val description = """See https://example.com/a#b, 'quoted' and // not a comment /* nor this */"""
+        val c = parse("""{"schema":1,"plugins":[{"id":"a","repo":"o/a","name":"Test","description":"$description"}]}""")!!
+        assertEquals(description, c.entries.single().description)
+    }
+
+    @Test fun `an escaped quote inside a string does not end the string for the lenient-JSON check`() {
+        val json = """{"schema":1,"plugins":[{"id":"a","repo":"o/a","name":"Test","description":"say \"hi\" // #tag 'x'"}]}"""
+        assertEquals("""say "hi" // #tag 'x'""", parse(json)!!.entries.single().description)
+    }
+
     @Test fun `an id that is not a slug is dropped`() {
         val c = parse(catalog(entry("Bad Id!", "o/a"), entry("ok-1", "o/b")))!!
         assertEquals(listOf("ok-1"), c.entries.map { it.id })
