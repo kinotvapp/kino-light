@@ -337,8 +337,21 @@ class XuperEpisodesParityTest {
                 assertEquals(name, series.getString("title"), read.series!!.title)
                 assertEquals(name, series.getString("posterUrl"), read.series!!.poster)
                 assertEquals(name, series.getString("backdropUrl"), read.series!!.backdrop)
+                // The reader takes the season from the EPISODES (absent = 1), and PluginContentSource
+                // builds GatewaySeries.seasonNumber from their minimum: each episode must carry the
+                // season MagisSource put in its series block, or a saved T5 series is rewritten as T1.
+                val season = series.getInt("seasonNumber")
+                if (season > 0) {
+                    assertEquals(name, device.map { season }, read.episodes.map { it.season })
+                }
             }
         }
+    }
+
+    @Test fun `the captures include a season other than the first, so the season check can fail`() {
+        val seasons = fixtures().mapNotNull { it.second.getJSONObject("expected").optJSONObject("series") }
+            .map { it.getInt("seasonNumber") }
+        assertTrue(seasons.toString(), seasons.any { it > 1 })
     }
 
     @Test fun `a second listing of the same series reuses the chapters, and so does resolve`() = runBlocking {
