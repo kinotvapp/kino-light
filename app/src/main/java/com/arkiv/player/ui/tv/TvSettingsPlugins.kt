@@ -26,7 +26,7 @@ import com.arkiv.player.ui.theme.ArkivTextSecondary
 @Composable
 internal fun TvSettingsPlugins(onOpenAddPlugin: () -> Unit = {}) {
     val graph = rememberGraph()
-    val vm: PluginsViewModel = viewModel(factory = viewModelFactory { initializer { PluginsViewModel(graph.pluginAdmin, catalogProvider = graph.pluginCatalog) } })
+    val vm: PluginsViewModel = viewModel(factory = viewModelFactory { initializer { PluginsViewModel(graph.pluginAdmin) } })
     val plugins by vm.plugins.collectAsStateWithLifecycle()
     val state by vm.state.collectAsStateWithLifecycle()
     val rowMessageId = rowMessagePluginId(state, plugins)

@@ -303,6 +303,16 @@ class PluginsViewModelTest {
         assertFalse(vm.catalog.value.loading)
     }
 
+    @Test fun `a view model built without a catalog provider settles on an empty seed catalog`() {
+        // Ajustes ▸ Plugins and Configurar build it this way so visiting them never downloads the catalog.
+        val vm = PluginsViewModel(FakeAdmin(), io = dispatcher)
+        with(vm.catalog.value) {
+            assertFalse(loading)
+            assertTrue(rows.isEmpty())
+            assertEquals(CatalogOrigin.SEED, origin)
+        }
+    }
+
     @Test fun `the query filters the catalog rows`() {
         val vm = vm(FakeAdmin(), FakeCatalog(entry("ia", "o/ia", "Internet Archive"), entry("own", "o/own", "Tu servidor")))
         vm.onQueryChange("servidor")
