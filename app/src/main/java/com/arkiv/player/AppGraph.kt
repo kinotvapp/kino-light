@@ -338,6 +338,7 @@ class AppGraph(context: Context) {
             tmdb = tmdbApi,
             vodStore = com.arkiv.player.data.magis.VodSearchStore(database.vodSearchCacheDao()),
             streams = xuperStreams,
+            homeCatalog = magisHomeCatalog,
         )
     }
 

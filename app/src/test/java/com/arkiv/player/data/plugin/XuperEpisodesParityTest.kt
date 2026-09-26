@@ -11,6 +11,7 @@ import com.arkiv.player.data.magis.MagisResolve
 import com.arkiv.player.data.magis.MagisResult
 import com.arkiv.player.data.magis.MagisSource
 import com.arkiv.player.data.magis.testSession
+import com.arkiv.player.ui.home.MagisHomeCatalog
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.Dispatcher
@@ -128,7 +129,10 @@ class XuperEpisodesParityTest {
     }
 
     private fun bridge(fake: FakePortalClient): MagisPluginBridge = testSession(fake).let { session ->
-        MagisPluginBridge(MagisCatalog(fake, session), MagisResolve(fake, session), tmdb(), vodStore = null, streams = XuperStreams())
+        MagisPluginBridge(
+            MagisCatalog(fake, session), MagisResolve(fake, session), tmdb(),
+            vodStore = null, streams = XuperStreams(), homeCatalog = MagisHomeCatalog(tree = { emptyList() }),
+        )
     }
 
     private fun host(bridge: MagisPluginBridge) = DefaultPrivilegedXuperHost(

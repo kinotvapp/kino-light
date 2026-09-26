@@ -13,6 +13,7 @@ import com.arkiv.player.data.magis.MagisSession
 import com.arkiv.player.data.magis.MagisSource
 import com.arkiv.player.data.magis.StoredSession
 import com.arkiv.player.data.magis.testSession
+import com.arkiv.player.ui.home.MagisHomeCatalog
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import org.json.JSONArray
@@ -93,7 +94,12 @@ class XuperResolveParityTest {
             PluginConfig.EMPTY,
             null,
             EffectiveHosts(emptyList()),
-            lazyOf(MagisPluginBridge(MagisCatalog(fake, session), resolver(fixture, fake, session), TmdbApi(), vodStore = null, streams = streams)),
+            lazyOf(
+                MagisPluginBridge(
+                    MagisCatalog(fake, session), resolver(fixture, fake, session), TmdbApi(),
+                    vodStore = null, streams = streams, homeCatalog = MagisHomeCatalog(tree = { emptyList() }),
+                ),
+            ),
         )
     }
 
@@ -320,7 +326,12 @@ class XuperResolveParityTest {
             PluginConfig.EMPTY,
             null,
             EffectiveHosts(emptyList()),
-            lazyOf(MagisPluginBridge(MagisCatalog(fake, session), MagisResolve(fake, session), TmdbApi(), vodStore = null, streams = XuperStreams())),
+            lazyOf(
+                MagisPluginBridge(
+                    MagisCatalog(fake, session), MagisResolve(fake, session), TmdbApi(),
+                    vodStore = null, streams = XuperStreams(), homeCatalog = MagisHomeCatalog(tree = { emptyList() }),
+                ),
+            ),
         )
     }
 

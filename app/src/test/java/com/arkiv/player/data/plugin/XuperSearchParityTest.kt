@@ -12,6 +12,7 @@ import com.arkiv.player.data.magis.MagisResolve
 import com.arkiv.player.data.magis.MagisResult
 import com.arkiv.player.data.magis.MagisSource
 import com.arkiv.player.data.magis.testSession
+import com.arkiv.player.ui.home.MagisHomeCatalog
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
@@ -162,7 +163,12 @@ class XuperSearchParityTest {
         null,
         EffectiveHosts(emptyList()),
         testSession(fake).let { session ->
-            lazyOf(MagisPluginBridge(MagisCatalog(fake, session), MagisResolve(fake, session), tmdb(), vodStore = null, streams = XuperStreams()))
+            lazyOf(
+                MagisPluginBridge(
+                    MagisCatalog(fake, session), MagisResolve(fake, session), tmdb(),
+                    vodStore = null, streams = XuperStreams(), homeCatalog = MagisHomeCatalog(tree = { emptyList() }),
+                ),
+            )
         },
     )
 

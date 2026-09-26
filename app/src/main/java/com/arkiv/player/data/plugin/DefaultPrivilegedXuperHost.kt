@@ -35,7 +35,24 @@ class DefaultPrivilegedXuperHost internal constructor(
     override suspend fun xuperSearch(argsJson: String): String = envelope {
         magis.value.search(searchQueryOf(JSONObject(argsJson)))
     }
-    override suspend fun xuperHome(): String = throw NotImplementedError("Task 9")
+    /**
+     * Answer: the envelope around [MagisPluginBridge.home]'s rows. Unlike [envelope]
+     * (search/episodes/resolve), [MagisPluginBridge.home] never answers a portal error of its own
+     * -- `MagisHomeCatalog`'s rows are cache-first and a failing root just contributes nothing, see
+     * its own KDoc -- so there is no `MagisResult` here to pattern-match, and this gets its own
+     * minimal wrapping instead of reusing [envelope]. Only a genuinely unexpected throw (nothing
+     * `MagisHomeCatalog`/`HomeCatalogStore` cause today, both total and defensive by design; see
+     * the Task 9 report) collapses to the same `unavailable` shape the other `xuper*` members use.
+     */
+    override suspend fun xuperHome(): String = withContext(Dispatchers.IO) {
+        try {
+            JSONObject().put("ok", true).put("data", magis.value.home()).toString()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            failure(PluginErrors.UNAVAILABLE, e.message ?: "error de Xuper")
+        }
+    }
     override suspend fun xuperBrowse(ref: String, cursor: String?): String = throw NotImplementedError("Task 10")
 
     /**
