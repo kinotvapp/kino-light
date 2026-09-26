@@ -31,6 +31,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.arkiv.player.ui.player.PlayerScreen
+import com.arkiv.player.ui.player.shouldOfferPluginConfigurar
 import com.arkiv.player.ui.rememberGraph
 import com.arkiv.player.ui.theme.ArkivBlack
 
@@ -283,9 +284,13 @@ fun ArkivTvRoot(
                 onNextEpisode = { goToPlayer(it) },
                 isTv = true,
                 // The player leaves: after configuring, Back returns to where the title was.
+                // No destination at all for the recognized Xuper plugin -- see
+                // shouldOfferPluginConfigurar's KDoc for why "Configurar" is meaningless there.
                 onOpenPluginSettings = { id ->
-                    navController.navigate("plugin_config/${Uri.encode(id)}") {
-                        popUpTo("player/{episodeId}") { inclusive = true }
+                    if (shouldOfferPluginConfigurar(graph.pluginRegistry.find(id)?.record?.address)) {
+                        navController.navigate("plugin_config/${Uri.encode(id)}") {
+                            popUpTo("player/{episodeId}") { inclusive = true }
+                        }
                     }
                 },
             )
@@ -326,7 +331,11 @@ fun ArkivTvRoot(
                 TvPluginMoreScreen(
                     target = target,
                     onPlayEpisode = { goToPlayer(it) },
-                    onOpenPluginSettings = { id -> navController.navigate("plugin_config/${Uri.encode(id)}") },
+                    onOpenPluginSettings = { id ->
+                        if (shouldOfferPluginConfigurar(graph.pluginRegistry.find(id)?.record?.address)) {
+                            navController.navigate("plugin_config/${Uri.encode(id)}")
+                        }
+                    },
                     onBack = { navController.popBackStack() },
                 )
             }

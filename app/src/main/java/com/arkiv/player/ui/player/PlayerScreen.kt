@@ -140,6 +140,7 @@ import com.arkiv.player.cast.localAudioFormat
 import com.arkiv.player.cast.localVideoFormat
 import com.arkiv.player.data.ChapterMarker
 import com.arkiv.player.data.magis.MagisAccountState
+import com.arkiv.player.data.plugin.XuperPrivilege
 import com.arkiv.player.ui.settings.MagisLinkOffer
 import com.arkiv.player.ui.tv.TvMagisLinkOffer
 import com.arkiv.player.ui.tv.library.SAFE_H
@@ -298,6 +299,18 @@ internal fun reloadInSoftware(
     player.prepare()
     player.playWhenReady = true
 }
+
+/**
+ * Whether a plugin's "Falta configurar" prompt should offer a "Configurar" button. False only for
+ * the recognized Xuper install ([XuperPrivilege.SOURCE_REPO]): there is no Xuper-specific settings
+ * screen, and re-establishing a dead session is something `MagisSession` already retries on its own,
+ * not something a person can fix from a settings form. [address] is the installed record's address
+ * (e.g. `pluginRegistry.find(id)?.record?.address`), never the manifest's self-declared id -- see
+ * [XuperPrivilege.grants]'s KDoc for why that distinction matters. A missing record (null) offers
+ * the button, same as before this check existed, since only a positively recognized Xuper install
+ * should ever lose it.
+ */
+internal fun shouldOfferPluginConfigurar(address: String?): Boolean = address != XuperPrivilege.SOURCE_REPO
 
 @Composable
 private fun rememberMediaController(): MediaController? {
@@ -4058,18 +4071,29 @@ private fun PlayerContent(
         )
     }
 
-    // A plugin title whose plugin needs configuring (auth_required): straight to its Configurar.
+    // A plugin title whose plugin needs configuring (auth_required): straight to its Configurar --
+    // except for the recognized Xuper install, which has no settings destination worth offering
+    // (see shouldOfferPluginConfigurar).
     val pluginSetup by vm.pluginSetup.collectAsStateWithLifecycle()
     pluginSetup?.let { prompt ->
+        val offerConfigurar = shouldOfferPluginConfigurar(graph.pluginRegistry.find(prompt.pluginId)?.record?.address)
         AlertDialog(
             onDismissRequest = { vm.dismissPluginSetup(); onBack() },
             title = { Text("Falta configurar") },
             text = { Text(prompt.message) },
             confirmButton = {
-                TextButton(onClick = { vm.dismissPluginSetup(); onOpenPluginSettings(prompt.pluginId) }) { Text("Configurar") }
+                if (offerConfigurar) {
+                    TextButton(onClick = { vm.dismissPluginSetup(); onOpenPluginSettings(prompt.pluginId) }) { Text("Configurar") }
+                } else {
+                    // No useful destination to send them to: one honest "Cerrar" here, not a
+                    // "Configurar" that navigates nowhere plus a redundant dismissButton doing the same thing.
+                    TextButton(onClick = { vm.dismissPluginSetup(); onBack() }) { Text("Cerrar") }
+                }
             },
-            dismissButton = {
-                TextButton(onClick = { vm.dismissPluginSetup(); onBack() }) { Text("Cerrar") }
+            dismissButton = if (offerConfigurar) {
+                { TextButton(onClick = { vm.dismissPluginSetup(); onBack() }) { Text("Cerrar") } }
+            } else {
+                null
             },
         )
     }

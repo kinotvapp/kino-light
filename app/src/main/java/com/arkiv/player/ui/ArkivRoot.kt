@@ -67,6 +67,7 @@ import com.arkiv.player.ui.home.HomeScreen
 import com.arkiv.player.ui.home.RowBrowseScreen
 import com.arkiv.player.ui.library.LibraryScreen
 import com.arkiv.player.ui.player.PlayerScreen
+import com.arkiv.player.ui.player.shouldOfferPluginConfigurar
 import com.arkiv.player.ui.search.SearchScreen
 import com.arkiv.player.ui.settings.SettingsScreen
 import com.arkiv.player.ui.theme.ArkivBlack
@@ -443,9 +444,13 @@ fun ArkivRoot(
                     },
                     onNextEpisode = { goToPlayer(it) },
                     // The player leaves: after configuring, Back returns to where the title was.
+                    // No destination at all for the recognized Xuper plugin -- see
+                    // shouldOfferPluginConfigurar's KDoc for why "Configurar" is meaningless there.
                     onOpenPluginSettings = { id ->
-                        navController.navigate("plugin_config/${Uri.encode(id)}") {
-                            popUpTo("player/{episodeId}") { inclusive = true }
+                        if (shouldOfferPluginConfigurar(graph.pluginRegistry.find(id)?.record?.address)) {
+                            navController.navigate("plugin_config/${Uri.encode(id)}") {
+                                popUpTo("player/{episodeId}") { inclusive = true }
+                            }
                         }
                     },
                 )
@@ -469,7 +474,11 @@ fun ArkivRoot(
                     com.arkiv.player.ui.plugin.PluginMoreScreen(
                         target = target,
                         onPlayEpisode = { playEpisode(it) },
-                        onOpenPluginSettings = { id -> navController.navigate("plugin_config/${Uri.encode(id)}") },
+                        onOpenPluginSettings = { id ->
+                            if (shouldOfferPluginConfigurar(graph.pluginRegistry.find(id)?.record?.address)) {
+                                navController.navigate("plugin_config/${Uri.encode(id)}")
+                            }
+                        },
                         onBack = { navController.popBackStack() },
                     )
                 }
