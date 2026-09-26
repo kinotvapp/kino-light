@@ -62,8 +62,16 @@ data class InstalledPlugin(
 /** Whether a saved plugin title can play now, and the plugin's name for the message if not. */
 sealed interface PluginAccess {
     val name: String
-    /** [hosts]: the ones the person APPROVED plus the servers they typed; the player gates the stream to them. */
-    data class Ready(override val name: String, val hosts: EffectiveHosts = EffectiveHosts(emptyList())) : PluginAccess
+    /**
+     * [hosts]: the ones the person APPROVED plus the servers they typed; the player gates the stream to them.
+     * [xuper]: [XuperPrivilege.grants] on the INSTALLED record (never the manifest id, which any
+     * repo can copy): only then does the player's gate honor the [XuperStreams] carve-out.
+     */
+    data class Ready(
+        override val name: String,
+        val hosts: EffectiveHosts = EffectiveHosts(emptyList()),
+        val xuper: Boolean = false,
+    ) : PluginAccess
     data class Disabled(override val name: String) : PluginAccess
     data class Uninstalled(override val name: String) : PluginAccess
     data class Damaged(override val name: String) : PluginAccess
@@ -131,7 +139,7 @@ class PluginRegistry(
             p == null -> PluginAccess.Uninstalled(pluginId?.let(store::removedName) ?: pluginId ?: "desconocido")
             p.record.damaged -> PluginAccess.Damaged(p.manifest.name)
             !p.isUsable -> PluginAccess.Disabled(p.manifest.name)
-            else -> PluginAccess.Ready(p.manifest.name, p.hosts)
+            else -> PluginAccess.Ready(p.manifest.name, p.hosts, xuper = XuperPrivilege.grants(p.record))
         }
     }
 

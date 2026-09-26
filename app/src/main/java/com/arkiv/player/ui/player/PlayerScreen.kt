@@ -2773,7 +2773,7 @@ private fun PlayerContent(
                 startPositionMs = mItem.startPositionMs,
                 subtitleConfigs = (webExtras?.subtitles ?: emptyList()).toExoSubtitleConfigs(),
                 requestHeaders = mItem.requestHeaders,
-                http = streamHttpFor(mItem.kind, mItem.pluginHosts),
+                http = streamHttpFor(mItem.kind, mItem.pluginHosts, mItem.pluginXuper),
                 mimeType = mItem.mime.ifBlank { null },
                 crashTag = if (mItem.kind == SourceKind.PLUGIN) "plugin" else "magis",
                 onPlayerReady = { player ->

@@ -1,9 +1,13 @@
 package com.arkiv.player.data.plugin
 
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+
 /**
  * The streams the native Magis bridge resolved for `kino.xuper.resolve`, keyed by their exact URL,
  * with the request headers the CDN needs to serve each one. One per process (`AppGraph`), shared by
- * the bridge (the only writer) and [PluginContentSource] (the only reader).
+ * the bridge (the only writer), [PluginContentSource] and the player's [PluginStreamGate] (the
+ * readers, and only for the Xuper plugin's streams).
  *
  * Two jobs, both for the one plugin [XuperPrivilege.grants] and nobody else:
  *  - **The headers never reach the plugin's JS.** They are live session credentials. The bridge
@@ -14,6 +18,8 @@ package com.arkiv.player.data.plugin
  *    vary per session, so no manifest can declare them. [PluginOutput.stream] waives the https and
  *    declared-host checks only for a URL found here: one the bridge itself resolved, byte for byte.
  *    Any other URL the script returns, including an `http://` one, is checked like any plugin's.
+ *    The player's own per-request gate ([PluginHostGate.check]) waives the same two checks for the
+ *    same URLs ([resolved]), or it would refuse at playback what [PluginOutput.stream] accepted.
  *
  * Bounded: the oldest entries go first. A re-resolve of the same URL replaces its headers with the
  * fresh ones.
@@ -37,6 +43,19 @@ class XuperStreams(private val cap: Int = DEFAULT_CAP) {
     /** The headers for exactly [url] (empty for a subtitle), or null when the bridge never resolved it. */
     @Synchronized
     fun headersFor(url: String): Map<String, String>? = entries[url]
+
+    /**
+     * Whether the bridge resolved exactly [url], as the player's HTTP stack will request it: the
+     * playback-time gate ([PluginHostGate.check]) only has OkHttp's canonical form of the string
+     * [PluginOutput.stream] let through (host lowercased, unsafe characters percent-encoded), so an
+     * entry matches when it IS that string or parses to that same URL. Never a prefix or host match.
+     * A read-only lookup: it does not refresh an entry's age.
+     */
+    @Synchronized
+    fun resolved(url: HttpUrl): Boolean {
+        val canonical = url.toString()
+        return entries.keys.any { it == canonical || it.toHttpUrlOrNull() == url }
+    }
 
     companion object {
         const val DEFAULT_CAP = 64

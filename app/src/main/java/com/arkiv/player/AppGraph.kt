@@ -433,9 +433,14 @@ class AppGraph(context: Context) {
      * The player's client for one plugin stream, gated to [hosts] (the approved ones plus the
      * servers typed in its settings, carried in `PlayerData.pluginHosts`) on every request and
      * redirect hop. See PluginStreamHttp.
+     *
+     * [xuper] (`PlayerData.pluginXuper`, from `PluginAccess.Ready.xuper`: [XuperPrivilege.grants] on
+     * the installed record) hands the gate the SAME [xuperStreams] the bridge writes and
+     * [PluginContentSource] reads -- never a second table, or a URL accepted at resolve time would
+     * be refused at playback. False for every other plugin: the gate is then exactly as before.
      */
-    fun pluginStreamClient(hosts: EffectiveHosts): okhttp3.OkHttpClient =
-        PluginStreamHttp.client(pluginBaseHttp, hosts)
+    fun pluginStreamClient(hosts: EffectiveHosts, xuper: Boolean = false): okhttp3.OkHttpClient =
+        PluginStreamHttp.client(pluginBaseHttp, hosts, xuper = xuperStreams.takeIf { xuper })
 
     /** The live PluginHttp of each open runtime, so the pool can reset its per-call request budget. */
     private val pluginHttps = java.util.concurrent.ConcurrentHashMap<String, PluginHttp>()

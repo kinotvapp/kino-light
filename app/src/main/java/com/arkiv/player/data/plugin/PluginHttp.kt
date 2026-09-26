@@ -49,7 +49,15 @@ object PluginHostGate {
      */
     private val IP_SHAPED_HOST = Regex("([0-9a-fA-F]*:[0-9a-fA-F:.]*)|([\\d.]+)")
 
-    fun check(url: HttpUrl, hosts: EffectiveHosts, allowInsecureLocalhost: Boolean = false) {
+    /**
+     * [xuper] is non-null ONLY for a stream of the one plugin [XuperPrivilege.grants] (the player
+     * learns it from `PluginAccess.Ready.xuper`, computed from the INSTALLED record's address). It
+     * is the playback-time twin of [PluginOutput.stream]'s carve-out: a URL the native bridge itself
+     * resolved ([XuperStreams.resolved]) skips the declared-host and https checks -- the same two,
+     * and only those. A local address is refused first, as for any plugin. With [xuper] null, or
+     * for any URL not in it, every check runs exactly as before.
+     */
+    fun check(url: HttpUrl, hosts: EffectiveHosts, allowInsecureLocalhost: Boolean = false, xuper: XuperStreams? = null) {
         if (hosts.userHostFor(url) != null) {
             // userHostOf already refused these when the value was saved; a second look costs nothing.
             if (PluginHosts.isForbiddenUserHost(url.host)) throw HostNotAllowedException(url.host)
@@ -60,6 +68,7 @@ object PluginHostGate {
         }
         val testLocalhost = allowInsecureLocalhost && url.host == "localhost"
         if (HostRules.isLocalAddress(url.host) && !testLocalhost) throw HostNotAllowedException(url.host)
+        if (xuper?.resolved(url) == true) return
         if (!HostRules.matches(url.host, hosts.declared)) throw HostNotAllowedException(url.host)
         if (url.scheme == "https") return
         if (testLocalhost) return
@@ -69,10 +78,11 @@ object PluginHostGate {
     /**
      * One redirect hop, [from] -> [to]: [to] must pass [check], and a request that started at a
      * user host may only move to that same user host or to a declared host — never to another
-     * typed server (spec §1.4).
+     * typed server (spec §1.4). With [xuper], [to] is waived only when it is itself in the table
+     * (see [check]): coming FROM a bridge-resolved URL grants its redirect target nothing.
      */
-    fun checkRedirect(from: HttpUrl, to: HttpUrl, hosts: EffectiveHosts, allowInsecureLocalhost: Boolean = false) {
-        check(to, hosts, allowInsecureLocalhost)
+    fun checkRedirect(from: HttpUrl, to: HttpUrl, hosts: EffectiveHosts, allowInsecureLocalhost: Boolean = false, xuper: XuperStreams? = null) {
+        check(to, hosts, allowInsecureLocalhost, xuper)
         val origin = hosts.userHostFor(from) ?: return
         val target = hosts.userHostFor(to) ?: return
         if (target != origin) throw HostNotAllowedException(to.host)
