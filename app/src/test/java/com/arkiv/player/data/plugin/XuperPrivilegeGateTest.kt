@@ -80,7 +80,7 @@ class XuperPrivilegeGateTest {
         val http = PluginHttp(OkHttpClient(), id, hosts, "9.9.9")
         val storage = PluginStorage(File(storeDir, "storage.json"))
         // The SAME function AppGraph.openPluginRuntime calls -- not a reproduction of its condition.
-        val host = pluginHostFor(plugin, http, storage, PluginConfig.EMPTY, null, hosts)
+        val host = pluginHostFor(plugin, http, storage, PluginConfig.EMPTY, null, hosts, lazy { error("no Magis objects in this test") })
         return PluginRuntime.open(id, script, host, PluginEnv(appVersion = "9.9.9")).also { opened += it }
     }
 
