@@ -8,7 +8,7 @@ import kotlinx.coroutines.coroutineScope
 /**
  * One pass over the VOD roots: the classified [rows], and the roots that contributed nothing to
  * them -- they failed, or came back with no sections, which `tree` also answers when the portal
- * errors. Either way it's worth asking again later (see [shouldRefetch]).
+ * errors. Either way it's worth asking again later: a later [MagisHomeCatalog.load] retries them.
  */
 data class MagisHome(val rows: List<MagisHomeRow>, val missing: Set<MagisKind>)
 
@@ -25,7 +25,7 @@ class MagisHomeCatalog(
     private val tree: suspend (root: String) -> List<CatalogSection>,
     /** The persistent cache. Null in the JVM tests, which exercise the classification with no Room. */
     private val store: HomeCatalogStore? = null,
-    /** A cold snapshot older than this is refreshed instead of served (see [rows]/[magisHomeRows]). */
+    /** A cold snapshot older than this is refreshed instead of served (see [rows]). */
     private val ttlMs: Long = TTL_MS,
     private val now: () -> Long = System::currentTimeMillis,
 ) {
@@ -60,9 +60,8 @@ class MagisHomeCatalog(
     }
 
     /**
-     * Cache-first rows for the Categorías screen: the persisted snapshot while it's within [ttlMs],
-     * otherwise a fresh [load]. (The home uses [magisHomeRows] instead, which paints the snapshot
-     * AND then refreshes it.)
+     * Cache-first rows for the Categorías screen and the Xuper plugin's `home`/`browse` (see
+     * `MagisPluginBridge`): the persisted snapshot while it's within [ttlMs], otherwise a fresh [load].
      */
     suspend fun rows(): List<MagisHomeRow> {
         cached()?.let { if (now() - it.fetchedAt < ttlMs) return it.rows }

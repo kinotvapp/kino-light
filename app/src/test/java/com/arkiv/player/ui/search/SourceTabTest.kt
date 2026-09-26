@@ -3,6 +3,7 @@ package com.arkiv.player.ui.search
 import com.arkiv.player.data.gateway.GatewayResult
 import com.arkiv.player.ui.catalog.PlaySource
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -25,6 +26,15 @@ class SourceTabTest {
         val sources = listOf(plugin("a", "p2", "Dos"), magis("m"), plugin("b", "p1", "Uno"))
         assertEquals(listOf("all", "magis", "ditu", "plugin:p2", "plugin:p1"), tabsFor(sources).map { it.key })
         assertEquals(listOf("all", "magis", "ditu"), tabsFor(listOf(magis("m"))).map { it.key })
+    }
+
+    /** Xuper searches through its plugin now: a native tab that is always there would only read "Xuper 0". */
+    @Test fun `with no native magis result there is no native xuper tab, only the plugin's`() {
+        val sources = listOf(plugin("a", "xuper", "Xuper"))
+        assertEquals(listOf("all", "ditu", "plugin:xuper"), tabsFor(sources).map { it.key })
+        assertEquals(listOf("all", "ditu"), tabsFor(emptyList()).map { it.key })
+        assertFalse(SourceTab.MAGIS in countsByTab(sources))
+        assertEquals(listOf(SourceTab.ALL, SourceTab.CARACOL), SourceTab.FIXED)
     }
 
     @Test fun `a plugin tab filters and counts its own results`() {

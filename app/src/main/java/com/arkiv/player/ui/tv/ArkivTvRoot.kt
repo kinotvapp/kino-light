@@ -19,8 +19,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import com.arkiv.player.playback.MagisEphemeral
-import com.arkiv.player.ui.home.isMagisSeries
-import com.arkiv.player.ui.home.toGatewayResult
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -71,24 +69,6 @@ fun ArkivTvRoot(
         navController.navigate("player/${Uri.encode(id)}") { launchSingleTop = true }
     }
 
-    val magisScope = rememberCoroutineScope()
-    val magisPlayback = remember(graph) { com.arkiv.player.ui.search.SearchPlayback(graph) }
-
-    /** A home Magis card: a series opens its chapters, a movie plays (saved like a search result). */
-    fun openMagis(item: com.arkiv.player.data.gateway.CatalogItem) {
-        if (item.isMagisSeries) {
-            navController.navigate(magisSeriesRoute(item))
-            return
-        }
-        magisScope.launch {
-            when (val r = magisPlayback.playMagis(item.toGatewayResult())) {
-                is com.arkiv.player.ui.search.PlaybackResult.Ready -> goToPlayer(r.episodeId)
-                is com.arkiv.player.ui.search.PlaybackResult.Failed ->
-                    Toast.makeText(context, r.message, Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-
     // Most Magis live channels play on an anonymous session (verified against the portal), so we no
     // longer block on a linked account up front -- we TRY. Only if the portal refuses THIS channel
     // (a premium one) does the player show the "link your Xuper account" message
@@ -133,10 +113,6 @@ fun ArkivTvRoot(
                 onOpenCaracol = { navController.navigate("caracol") },
                 onOpenCategorias = { navController.navigate("categorias") },
                 onOpenCategoriasHome = { navController.navigate("categorias_home") },
-                onOpenMagis = { openMagis(it) },
-                onBrowseMagisRow = { rowId, title ->
-                    navController.navigate("magis_row/$rowId?title=${android.net.Uri.encode(title)}")
-                },
                 onBrowsePluginRow = { navController.navigate(com.arkiv.player.ui.plugin.PluginMoreTarget.route(it)) },
             )
         }
@@ -198,36 +174,9 @@ fun ArkivTvRoot(
                 onBack = { navController.popBackStack() },
             )
         }
-        composable(
-            MAGIS_SERIES_ROUTE,
-            arguments = listOf(
-                navArgument("id") { type = NavType.StringType },
-                navArgument("type") { type = NavType.StringType; defaultValue = "teleplay" },
-                navArgument("title") { type = NavType.StringType; defaultValue = "" },
-                navArgument("poster") { type = NavType.StringType; defaultValue = "" },
-                navArgument("backdrop") { type = NavType.StringType; defaultValue = "" },
-                navArgument("count") { type = NavType.IntType; defaultValue = 0 },
-            ),
-        ) { entry ->
-            val args = entry.arguments
-            TvMagisSeriesScreen(
-                item = magisSeriesItem(
-                    id = args?.getString("id").orEmpty(),
-                    type = args?.getString("type").orEmpty(),
-                    title = args?.getString("title").orEmpty(),
-                    poster = args?.getString("poster").orEmpty(),
-                    backdrop = args?.getString("backdrop").orEmpty(),
-                    count = args?.getInt("count") ?: 0,
-                ),
-                onPlay = { goToPlayer(it) },
-                onBack = { navController.popBackStack() },
-            )
-        }
         composable("categorias_home") {
             TvCategoriesScreen(
-                onBrowseRow = { rowId, title ->
-                    navController.navigate("magis_row/$rowId?title=${android.net.Uri.encode(title)}")
-                },
+                onBrowse = { navController.navigate(com.arkiv.player.ui.plugin.PluginMoreTarget.route(it)) },
                 onOpenSearchRoute = { navController.navigate(it) },
                 onBack = { navController.popBackStack() },
             )
@@ -345,20 +294,6 @@ fun ArkivTvRoot(
                 pluginId = Uri.decode(entry.arguments?.getString("pluginId").orEmpty()),
                 isTv = true,
                 onDone = { navController.popBackStack() },
-            )
-        }
-        composable(
-            "magis_row/{rowId}?title={title}",
-            arguments = listOf(
-                navArgument("rowId") { type = NavType.StringType },
-                navArgument("title") { type = NavType.StringType; defaultValue = "" },
-            ),
-        ) { entry ->
-            TvMagisRowBrowseScreen(
-                rowId = entry.arguments?.getString("rowId").orEmpty(),
-                title = entry.arguments?.getString("title").orEmpty(),
-                onOpenMagis = { openMagis(it) },
-                onBack = { navController.popBackStack() },
             )
         }
     }

@@ -863,7 +863,11 @@ private fun ResultsContent(
             }
         } else if (tab == SourceTab.ALL) {
             // "Todo": a collapsible section per origin, in [SourceTab]'s order.
-            sourceSection(this, "XUPER", ArkivMagisBlue, magis, searchingSources.isSearching(SourceTab.MAGIS), "MAGIS" in expandedSections, { toggle("MAGIS") }, enabled, onPlay, onLongPlay, emptySectionText(SourceTab.MAGIS, sourcesState))
+            // The native Xuper section only when a native Magis result is there: Xuper searches
+            // through its plugin now, whose own section below lists its titles (see tabsFor).
+            if (magis.isNotEmpty()) {
+                sourceSection(this, "XUPER", ArkivMagisBlue, magis, searchingSources.isSearching(SourceTab.MAGIS), "MAGIS" in expandedSections, { toggle("MAGIS") }, enabled, onPlay, onLongPlay, emptySectionText(SourceTab.MAGIS, sourcesState))
+            }
             sourceSection(this, "CARACOL", ArkivCaracolVerde, caracol, searchingSources.isSearching(SourceTab.CARACOL), "CARACOL" in expandedSections, { toggle("CARACOL") }, enabled, onPlay, onLongPlay, emptySectionText(SourceTab.CARACOL, sourcesState))
             // Then one section per plugin that brought results, in [tabsFor]'s order.
             tabs.filter { PluginIds.pluginIdOfSource(it.key) != null }.forEach { t ->

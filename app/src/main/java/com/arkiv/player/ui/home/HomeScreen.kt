@@ -3,7 +3,6 @@ package com.arkiv.player.ui.home
 import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,13 +24,11 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SignalWifiOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -54,8 +51,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
@@ -63,7 +58,6 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import coil.compose.AsyncImage
 import com.arkiv.player.data.db.LibraryRow
 import com.arkiv.player.data.db.LiveChannelCacheEntity
-import com.arkiv.player.data.gateway.CatalogItem
 import com.arkiv.player.data.gateway.LiveChannel
 import com.arkiv.player.thumbnails.ThumbnailChoice
 import com.arkiv.player.ui.components.ContinueCard
@@ -109,9 +103,8 @@ private fun homeSizes(): HomeSizes =
     }
 
 /**
- * Discovery home (Amazon/Netflix style): hero of what was last watched, library and rows built
- * from the Magis catalog (see `MagisHomeCatalog`/`MagisHomeClassifier`), fetched in one pass and
- * classified on the device -- not the per-row lazy TMDB fetch this screen used to do.
+ * Discovery home (Amazon/Netflix style): hero of what was last watched, library, and the installed
+ * plugins' Home rows (Xuper's among them, see `PluginHomeRows`).
  */
 @Composable
 fun HomeScreen(
@@ -122,8 +115,6 @@ fun HomeScreen(
     /** Opens the "En vivo" tab with the full grid (channel row's last card). */
     onOpenLive: () -> Unit,
     onOpenLibrary: () -> Unit,
-    /** "Ver todo" of a Magis row: the grid with every title of that row. */
-    onBrowseMagisRow: (rowId: String, title: String) -> Unit,
     contentPadding: PaddingValues,
     /** "Ver más" of a plugin row that carries a `ref` (the plugin declares `browse`). */
     onBrowsePluginRow: (com.arkiv.player.ui.plugin.PluginMoreTarget) -> Unit = {},
@@ -131,27 +122,20 @@ fun HomeScreen(
     val graph = rememberGraph()
     val sizes = homeSizes()
     val vm: HomeViewModel = viewModel(
-        factory = viewModelFactory { initializer { HomeViewModel(graph.repository, graph.settings, graph.magisHomeCatalog, graph.hasInternet, graph.homeReloads, graph.pluginHomeRows, graph.pluginsChanged) } },
+        factory = viewModelFactory { initializer { HomeViewModel(graph.repository, graph.settings, graph.homeReloads, graph.pluginHomeRows, graph.pluginsChanged) } },
     )
-    // A Magis root that failed on the way in (e.g. a cold start before the network is up) gets
-    // another chance each time this screen comes back to the front; see HomeViewModel.magisRows.
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.onResume() }
     // This screen doesn't collect `vm.library` (ordered by addedAt): that subscription only lives
     // in the VM's `init`, for `ensureArtwork`/the TV home's hero. The "Mi biblioteca" row uses
     // `orderedLibrary` to match the grid's order (same rule, see LibraryOrder).
     val orderedLibrary by vm.orderedLibrary.collectAsStateWithLifecycle()
     val continueWatching by vm.continueWatching.collectAsStateWithLifecycle()
     val artwork by vm.artwork.collectAsStateWithLifecycle()
-    val magisRows by vm.magisRows.collectAsStateWithLifecycle()
     val pluginRows by vm.pluginRows.collectAsStateWithLifecycle()
     val seedsExhausted by graph.seedsExhausted.collectAsStateWithLifecycle()
-    val magisActions = rememberMagisActions(onPlay = onPlayEpisode)
     val openPlugin = rememberPluginOpener(onPlay = onPlayEpisode)
     val scope = rememberCoroutineScope()
-    // Card whose long-press menu is open: null = no menu. Long-pressing any Magis card (a row's
-    // poster or the hero) opens the sheet below to watch OR download it -- the same choice the
-    // library gives, brought to the discovery home.
-    var menuItem by remember { mutableStateOf<CatalogItem?>(null) }
+    // The hero's fallback when nothing is in progress (see pluginHeroPick).
+    val heroPick = remember(pluginRows) { pluginHeroPick(pluginRows) }
 
     // On tapping a library item: if it's a movie, play it directly; if it's a series, open the detail screen.
     fun open(row: LibraryRow) {
@@ -255,7 +239,7 @@ fun HomeScreen(
     // to their real content as their data loads. While the person hasn't scrolled, snap back to
     // the top whenever that shape changes -- the safety net for staying at the top of the list.
     val topSectionsSignature = TopSectionsSignature(
-        heroVisible = continueWatching.firstOrNull() != null || magisFeatured(magisRows) != null,
+        heroVisible = continueWatching.firstOrNull() != null || heroPick != null,
         continueWatchingCount = (continueWatching.size - 1).coerceAtLeast(0),
         channelsCount = channelsRow.size,
         libraryCount = orderedLibrary.size,
@@ -298,8 +282,8 @@ fun HomeScreen(
                 )
             }
         }
-        // 1. Hero: the last thing watched, or if nothing's in progress, the first Magis title
-        // (once loaded).
+        // 1. Hero: the last thing watched, or if nothing's in progress, the first item of the first
+        // plugin Home row (once loaded, see pluginHeroPick).
         // Always-present, keyed item (renders nothing until it has data) -- see TopSectionsSignature:
         // an unkeyed, conditionally-emitted item here is what let this section get inserted ABOVE the
         // already-visible, keyed remote rows and land the person mid-list.
@@ -334,25 +318,19 @@ fun HomeScreen(
                     onAction = { onPlayEpisode(heroContinue.episodeId) },
                     onClick = { onPlayEpisode(heroContinue.episodeId) },
                 )
-            } else {
-                val featured = magisFeatured(magisRows)
-                if (featured != null) {
-                    // The landscape (1920×1080) image on every device, not just wide/tablet ones:
-                    // the hero box itself is full-width × 220 dp landscape, so the portrait
-                    // (262×370) poster would need a ~4× upscale and a crop to fill it. Either one
-                    // falls back to the other, so the hero never ends up empty.
-                    val heroImage = featured.backdrop ?: featured.poster
-                    Hero(
-                        sizes = sizes,
-                        backdropUrl = heroImage,
-                        title = featured.title,
-                        subtitle = featured.homeMeta(),
-                        actionLabel = null,
-                        onAction = null,
-                        onClick = { magisActions.open(featured) },
-                        onLongClick = { menuItem = featured },
-                    )
-                }
+            } else if (heroPick != null) {
+                // The landscape image first on every device, not just wide/tablet ones: the hero
+                // box itself is full-width × 220 dp landscape, so a portrait poster would need a
+                // big upscale and a crop to fill it (see PluginHeroPick.imageUrl).
+                Hero(
+                    sizes = sizes,
+                    backdropUrl = heroPick.imageUrl,
+                    title = heroPick.item.title,
+                    subtitle = heroPick.meta(),
+                    actionLabel = null,
+                    onAction = null,
+                    onClick = { openPlugin(heroPick.item) },
+                )
             }
         }
 
@@ -446,29 +424,7 @@ fun HomeScreen(
             }
         }
 
-        // 5. Magis rows: what Xuper actually has, by type × genre (see MagisHomeClassifier).
-        val loadedRows = magisRows
-        if (loadedRows == null) {
-            item(key = "magis_loading") {
-                Box(Modifier.fillMaxWidth().height(180.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = ArkivRed, strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
-                }
-            }
-        } else {
-            loadedRows.forEach { row ->
-                item(key = row.id) {
-                    MagisRow(
-                        row = row,
-                        sizes = sizes,
-                        onOpen = magisActions.open,
-                        onLongPress = { menuItem = it },
-                        onSeeMore = { onBrowseMagisRow(row.id, row.title) },
-                    )
-                }
-            }
-        }
-
-        // 6. Plugin rows, after Magis's: each titled by the plugin's row with the plugin as a chip.
+        // 5. Plugin rows (Xuper's among them): each titled by the plugin's row with the plugin as a chip.
         pluginRows.forEach { row ->
             item(key = "plugin-${row.pluginId}-${row.id}") {
                 PluginRow(
@@ -478,90 +434,9 @@ fun HomeScreen(
             }
         }
     }
-
-    // Long-press menu for a Magis card: watch it, or (if a download strategy is registered) save it
-    // to the device -- a movie enqueues, a series opens its chapter picker. Same choice the library
-    // offers, brought to the home's discovery rows and hero.
-    menuItem?.let { item ->
-        MagisCardMenu(
-            item = item,
-            canDownload = magisActions.canDownload,
-            onDismiss = { menuItem = null },
-            onPlay = {
-                menuItem = null
-                magisActions.open(item)
-            },
-            onDownload = {
-                menuItem = null
-                magisActions.download(item)
-            },
-        )
-    }
-}
-
-/**
- * Bottom sheet raised by long-pressing a Magis card: "watch" always, "download" only when a
- * strategy is registered ([MagisCardActions.canDownload]). The wording follows the item's kind so a
- * series reads as chapters, not a single file. Choosing an action closes the sheet; the action
- * itself (playing, or opening the chapter picker) is driven by the caller through [MagisCardActions].
- */
-@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
-@Composable
-private fun MagisCardMenu(
-    item: CatalogItem,
-    canDownload: Boolean,
-    onDismiss: () -> Unit,
-    onPlay: () -> Unit,
-    onDownload: () -> Unit,
-) {
-    val isSeries = item.isMagisSeries
-    androidx.compose.material3.ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(Modifier.padding(bottom = 24.dp)) {
-            Text(
-                text = item.title,
-                style = MaterialTheme.typography.titleMedium,
-                color = Color.White,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
-            )
-            MagisCardMenuRow(
-                icon = Icons.Default.PlayArrow,
-                label = if (isSeries) "Ver capítulos" else "Reproducir",
-                onClick = onPlay,
-            )
-            if (canDownload) {
-                MagisCardMenuRow(
-                    icon = Icons.Default.Download,
-                    label = if (isSeries) "Descargar capítulos" else "Descargar",
-                    onClick = onDownload,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun MagisCardMenuRow(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 20.dp, vertical = 16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        Icon(icon, contentDescription = null, tint = Color.White)
-        Text(label, style = MaterialTheme.typography.bodyLarge, color = Color.White)
-    }
 }
 
 /** Full-width feature: backdrop, bottom gradient, title/subtitle and optional action. */
-@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun Hero(
     sizes: HomeSizes,
@@ -571,13 +446,12 @@ private fun Hero(
     actionLabel: String?,
     onAction: (() -> Unit)?,
     onClick: () -> Unit,
-    onLongClick: (() -> Unit)? = null,
 ) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(sizes.heroHeight)
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+            .clickable(onClick = onClick),
     ) {
         AsyncImage(
             model = backdropUrl,
@@ -700,42 +574,6 @@ private fun LiveChannelCard(channel: LiveChannel, width: Dp = 140.dp, onClick: (
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(top = 6.dp),
         )
-    }
-}
-
-/** A Magis row: title, the row's cards, and "Ver todo" at the end. */
-@Composable
-private fun MagisRow(
-    row: MagisHomeRow,
-    sizes: HomeSizes,
-    onOpen: (CatalogItem) -> Unit,
-    onLongPress: (CatalogItem) -> Unit,
-    onSeeMore: () -> Unit,
-) {
-    Column(Modifier.padding(top = 16.dp)) {
-        Text(
-            row.title,
-            style = MaterialTheme.typography.titleMedium,
-            color = Color.White,
-            modifier = Modifier.padding(start = 16.dp, bottom = 8.dp),
-        )
-        LazyRow(
-            contentPadding = PaddingValues(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            items(row.shown, key = { "${row.id}-${it.id}" }) { item ->
-                com.arkiv.player.ui.components.PosterCard(
-                    title = item.title,
-                    imageUrl = item.poster,
-                    modifier = Modifier.width(sizes.posterWidth),
-                    onClick = { onOpen(item) },
-                    onLongClick = { onLongPress(item) },
-                )
-            }
-            item(key = "${row.id}-ver-mas") {
-                SeeMorePosterCard(width = sizes.posterWidth, onClick = onSeeMore)
-            }
-        }
     }
 }
 

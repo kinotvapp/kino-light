@@ -10,8 +10,10 @@ import com.arkiv.player.ui.catalog.accent
  * Filter by result origin. With several sections open at once the screen turns into a wall: this
  * lets a single origin show once you already know which one you want.
  *
- * "Todo", Xuper and Caracol are fixed and always in that order ([FIXED]); after them, one tab per
- * installed plugin that brought results, in arrival order ([tabsFor]). A tab IS its [key] — the
+ * "Todo" and Caracol are fixed ([FIXED]); the native Xuper tab sits between them only when a
+ * native Magis result is present (Xuper searches through its plugin now, whose own tab lists its
+ * titles, so an always-present native tab just read "Xuper 0"); after them, one tab per installed
+ * plugin that brought results, in arrival order ([tabsFor]). A tab IS its [key] — the
  * source name the search events use (`"magis"`, `"ditu"`, `"plugin:<id>"`) — so the tab built
  * from a result and the one built from an error event for the same source are equal.
  */
@@ -26,7 +28,7 @@ class SourceTab private constructor(val key: String, val label: String, val acce
         val CARACOL = SourceTab("ditu", "Caracol", ArkivCaracolVerde)
 
         /** The tabs every search shows, in order, even at zero. */
-        val FIXED: List<SourceTab> = listOf(ALL, MAGIS, CARACOL)
+        val FIXED: List<SourceTab> = listOf(ALL, CARACOL)
 
         fun plugin(source: String, label: String, accent: Color): SourceTab = SourceTab(source, label, accent)
     }
@@ -39,9 +41,15 @@ fun tabOf(source: PlaySource): SourceTab = when (source) {
     is PlaySource.Plugin -> SourceTab.plugin(source.result.source, source.pluginName, source.accent)
 }
 
-/** [SourceTab.FIXED], then one tab per plugin present in [sources], in order of first appearance. */
+/**
+ * "Todo", the native Xuper tab only if [sources] has a native Magis result, Caracol, then one tab
+ * per plugin present in [sources], in order of first appearance.
+ */
 fun tabsFor(sources: List<PlaySource>): List<SourceTab> =
-    SourceTab.FIXED + sources.filterIsInstance<PlaySource.Plugin>().map(::tabOf).distinct()
+    listOf(SourceTab.ALL) +
+        listOfNotNull(SourceTab.MAGIS.takeIf { sources.any { it is PlaySource.Magis } }) +
+        listOf(SourceTab.CARACOL) +
+        sources.filterIsInstance<PlaySource.Plugin>().map(::tabOf).distinct()
 
 /** How many sources per tab (ALL included), to paint on the chip. Fixed tabs always have a key,
  *  even at zero, so the chips don't jump around as results arrive. */

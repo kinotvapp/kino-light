@@ -21,7 +21,7 @@ import com.arkiv.player.ui.search.SearchPlayback
 
 /**
  * What tapping a plugin card on the phone's Home does — the same as in search: a movie is saved
- * and played, a series opens its chapter list. Hosts that list itself, like `rememberMagisActions`.
+ * and played, a series opens its chapter list. Hosts that list itself.
  */
 @Composable
 fun rememberPluginOpener(onPlay: (episodeId: String) -> Unit): (GatewayResult) -> Unit {

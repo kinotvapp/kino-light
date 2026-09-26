@@ -7,9 +7,7 @@ import com.arkiv.player.data.SettingsStore
 import com.arkiv.player.data.db.ArtworkEntity
 import com.arkiv.player.data.db.ContinueRow
 import com.arkiv.player.data.db.LibraryRow
-import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.Dispatchers
@@ -26,9 +24,6 @@ import kotlinx.coroutines.launch
 class HomeViewModel(
     repo: ArkivRepository,
     private val settings: SettingsStore,
-    magisHome: MagisHomeCatalog,
-    /** `AppGraph.hasInternet`: its false → true flips retry a home pass that left a root out. */
-    online: Flow<Boolean>,
     /** Manual "recargar catálogo" pulses from the top bar (`AppGraph.homeReloads`). */
     reload: Flow<Unit>,
     /** Rows from installed plugins; see [PluginHomeRows]. */
@@ -57,33 +52,11 @@ class HomeViewModel(
     val artwork: StateFlow<Map<String, ArtworkEntity>> = repo.observeArtwork()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
-    private val resumed = MutableSharedFlow<Unit>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
-
     /**
-     * The Magis rows for both homes; null while the first pass loads. See [MagisHomeCatalog].
-     *
-     * Started by the first collector, not in `init`: the library screen builds this ViewModel too
-     * and never draws these rows. A pass that left a root out (a cold start before the network is
-     * up) is asked again when connectivity comes back or the home resumes, see [magisHomeRows].
-     */
-    val magisRows: StateFlow<List<MagisHomeRow>?> =
-        magisHomeRows(
-            cached = magisHome::cached,
-            fetch = magisHome::load,
-            signals = merge(
-                merge(online.reconnections(), resumed).map { Refetch.IfMissing },
-                reload.map { Refetch.Force },
-            ),
-        )
-            // Cache read, portal fetch and on-device classification all run off the main thread;
-            // only the resulting StateFlow is observed on it. Keeps a weak device's UI thread free.
-            .flowOn(Dispatchers.Default)
-            .stateIn(viewModelScope, SharingStarted.Lazily, null)
-
-    /**
-     * Plugin rows, drawn after Magis's on phone and TV. Empty while loading and when no plugin has
-     * the `home` capability; a failing plugin contributes nothing. Started by the first collector,
-     * like [magisRows].
+     * Plugin rows (Xuper's among them), the discovery rows of both homes. Empty while loading and
+     * when no plugin has the `home` capability; a failing plugin contributes nothing. Started by the
+     * first collector, not in `init`: the library screen builds this ViewModel too and never draws
+     * these rows.
      */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val pluginRows: StateFlow<List<com.arkiv.player.data.plugin.PluginHomeRow>> =
@@ -109,10 +82,5 @@ class HomeViewModel(
                 if (repo.repairArtworkMatches(rows)) settings.setArtworkRematchDone(true)
             }
         }
-    }
-
-    /** The home is in front again: a chance to fill in a root the last pass left out. */
-    fun onResume() {
-        resumed.tryEmit(Unit)
     }
 }

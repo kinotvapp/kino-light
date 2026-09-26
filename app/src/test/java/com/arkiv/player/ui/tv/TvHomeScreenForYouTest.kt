@@ -1,8 +1,8 @@
 package com.arkiv.player.ui.tv
 
 import com.arkiv.player.data.db.RecommendationEntity
-import com.arkiv.player.data.gateway.CatalogItem
-import com.arkiv.player.ui.home.homeMeta
+import com.arkiv.player.data.gateway.GatewayResult
+import com.arkiv.player.data.plugin.PluginHomeRow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -10,24 +10,16 @@ import org.junit.Test
 /**
  * Covers the pure logic behind the TV home's "Para ti" row: whether it's drawn or not
  * ([showForYouRow]) and what the hero shows on focusing a card ([recommendationFeatured]) or a
- * Magis card ([magisCardFeatured]). Compose for TV has no UI test infrastructure in this project
+ * plugin row's card ([pluginCardFeatured], also the hero's fallback with nothing in progress). Compose for TV has no UI test infrastructure in this project
  * (same reason as `TvMagisLinkOfferTest`), so these functions -extracted outside the composable on
  * purpose- are the part that CAN be tested in a plain JVM.
  */
 class TvHomeScreenForYouTest {
 
-    private fun catalogItem(
-        id: String = "P1",
-        title: String = "Una película",
-        description: String = "",
-        genres: List<String> = emptyList(),
-        score: Double? = null,
-        backdrop: String? = null,
-        poster: String? = null,
-    ) = CatalogItem(
-        id = id, title = title, poster = poster, durationS = 0,
-        type = "movie", genres = genres, score = score, backdrop = backdrop, description = description,
-    )
+    private val row = PluginHomeRow(pluginId = "xuper", pluginName = "Xuper", color = 0L, id = "r", title = "Fila", items = emptyList())
+
+    private fun pluginItem(title: String, extra: Map<String, String>) =
+        GatewayResult(source = "plugin:xuper", title = title, ref = "plg1:xuper:$title", extra = extra)
 
     private fun recommendation(
         id: String = "r1",
@@ -85,32 +77,25 @@ class TvHomeScreenForYouTest {
         assertEquals("https://image.tmdb.org/poster.jpg", f.imageUrl)
     }
 
-    // --- magisCardFeatured: what a discovery row's card puts in the hero on focus ---
+    // --- pluginCardFeatured: what a plugin row's card (or the hero fallback) puts in the hero ---
 
-    @Test fun `with a description, it's the subtitle and homeMeta goes in meta`() {
-        val item = catalogItem(
-            title = "Interestelar",
-            description = "Un grupo de astronautas viaja a través de un agujero de gusano.",
-            genres = listOf("Sci-Fi"),
-            score = 8.6,
-            backdrop = "https://i/interestelar-bd.jpg",
-            poster = "https://i/interestelar-poster.jpg",
+    @Test fun `the plugin's name is the subtitle and the synopsis goes in meta`() {
+        val item = pluginItem(
+            "Interestelar",
+            mapOf("overview" to "Un grupo de astronautas viaja.", "backdrop" to "https://i/bd.jpg", "poster" to "https://i/p.jpg"),
         )
 
-        val f = magisCardFeatured(item)
+        val f = pluginCardFeatured(row, item)
 
-        assertEquals("Un grupo de astronautas viaja a través de un agujero de gusano.", f.subtitle)
-        assertEquals(item.homeMeta(), f.meta)
-        assertEquals("https://i/interestelar-bd.jpg", f.imageUrl)
+        assertEquals("Interestelar", f.title)
+        assertEquals("Xuper", f.subtitle)
+        assertEquals("Un grupo de astronautas viaja.", f.meta)
+        assertEquals("https://i/bd.jpg", f.imageUrl)
     }
 
-    @Test fun `with a blank description, the subtitle is blank, not homeMeta repeated`() {
-        val item = catalogItem(title = "Sin sinopsis", description = "", poster = "https://i/p.jpg")
-
-        val f = magisCardFeatured(item)
-
-        assertEquals("", f.subtitle)
-        assertEquals(item.homeMeta(), f.meta)
-        assertEquals("https://i/p.jpg", f.imageUrl)
+    @Test fun `with no backdrop the poster is the image, and with neither there's none`() {
+        assertEquals("https://i/p.jpg", pluginCardFeatured(row, pluginItem("A", mapOf("backdrop" to "", "poster" to "https://i/p.jpg"))).imageUrl)
+        assertNull(pluginCardFeatured(row, pluginItem("A", emptyMap())).imageUrl)
+        assertEquals("", pluginCardFeatured(row, pluginItem("A", emptyMap())).meta)
     }
 }

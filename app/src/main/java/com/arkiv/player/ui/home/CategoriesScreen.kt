@@ -49,6 +49,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import coil.compose.AsyncImage
 import com.arkiv.player.ui.gridColumns
 import com.arkiv.player.ui.isLandscapeTablet
+import com.arkiv.player.ui.plugin.PluginMoreTarget
 import com.arkiv.player.ui.rememberGraph
 import com.arkiv.player.ui.theme.ArkivBlack
 
@@ -58,12 +59,16 @@ private val CARD_RADIUS = RoundedCornerShape(10.dp)
 @Composable
 fun CategoriesScreen(
     contentPadding: PaddingValues,
-    onBrowseRow: (rowId: String, title: String) -> Unit,
+    /** A tile was tapped: the Xuper plugin's "Ver más" over that category. */
+    onBrowse: (PluginMoreTarget) -> Unit,
 ) {
     val graph = rememberGraph()
     val vm: CategoriesViewModel = viewModel(
-        factory = viewModelFactory { initializer { CategoriesViewModel(graph.magisHomeCatalog, graph.homeReloads) } },
+        factory = viewModelFactory { initializer { CategoriesViewModel(graph.magisHomeCatalog, graph.pluginRegistry.plugins, graph.homeReloads) } },
     )
+    fun onBrowseRow(spec: CategorySpec) {
+        vm.browseTarget(spec)?.let(onBrowse)
+    }
     val rows by vm.rows.collectAsStateWithLifecycle()
     val loading by vm.loading.collectAsStateWithLifecycle()
 
@@ -135,7 +140,7 @@ fun CategoriesScreen(
                 CategoryCard(
                     title = spec.title,
                     imageUrl = spec.previewUrl,
-                    onClick = { onBrowseRow(spec.id, spec.title) },
+                    onClick = { onBrowseRow(spec) },
                 )
             }
         }
@@ -146,7 +151,7 @@ fun CategoriesScreen(
                 CategoryCard(
                     title = spec.title.removeSuffix(" · Películas"),
                     imageUrl = spec.previewUrl,
-                    onClick = { onBrowseRow(spec.id, spec.title) },
+                    onClick = { onBrowseRow(spec) },
                 )
             }
         }
@@ -157,7 +162,7 @@ fun CategoriesScreen(
                 CategoryCard(
                     title = spec.title.removeSuffix(" · Series"),
                     imageUrl = spec.previewUrl,
-                    onClick = { onBrowseRow(spec.id, spec.title) },
+                    onClick = { onBrowseRow(spec) },
                 )
             }
         }
@@ -168,7 +173,7 @@ fun CategoriesScreen(
                 CategoryCard(
                     title = spec.title.removeSuffix(" · Anime"),
                     imageUrl = spec.previewUrl,
-                    onClick = { onBrowseRow(spec.id, spec.title) },
+                    onClick = { onBrowseRow(spec) },
                 )
             }
         }
@@ -179,7 +184,7 @@ fun CategoriesScreen(
                 CategoryCard(
                     title = spec.title.removeSuffix(" · Infantil"),
                     imageUrl = spec.previewUrl,
-                    onClick = { onBrowseRow(spec.id, spec.title) },
+                    onClick = { onBrowseRow(spec) },
                 )
             }
         }
@@ -187,7 +192,10 @@ fun CategoriesScreen(
         if (displayRows.isEmpty()) {
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Box(Modifier.fillMaxWidth().padding(top = 32.dp), contentAlignment = Alignment.Center) {
-                    Text("Sin resultados para \"$query\"", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        if (query.isBlank()) "No hay categorías para mostrar" else "Sin resultados para \"$query\"",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }

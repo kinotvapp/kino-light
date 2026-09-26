@@ -284,9 +284,6 @@ fun ArkivRoot(
                         }
                     },
                     onOpenLibrary = { navController.navigate("library") },
-                    onBrowseMagisRow = { rowId, title ->
-                        navController.navigate("magis_row/$rowId?title=${android.net.Uri.encode(title)}")
-                    },
                     contentPadding = padding,
                     onBrowsePluginRow = { navController.navigate(com.arkiv.player.ui.plugin.PluginMoreTarget.route(it)) },
                 )
@@ -332,9 +329,7 @@ fun ArkivRoot(
             composable("categorias_home") {
                 com.arkiv.player.ui.home.CategoriesScreen(
                     contentPadding = padding,
-                    onBrowseRow = { rowId, title ->
-                        navController.navigate("magis_row/$rowId?title=${android.net.Uri.encode(title)}")
-                    },
+                    onBrowse = { navController.navigate(com.arkiv.player.ui.plugin.PluginMoreTarget.route(it)) },
                 )
             }
             composable("catalog") {
@@ -488,20 +483,6 @@ fun ArkivRoot(
                     pluginId = Uri.decode(entry.arguments?.getString("pluginId").orEmpty()),
                     isTv = false,
                     onDone = { navController.popBackStack() },
-                )
-            }
-            composable(
-                "magis_row/{rowId}?title={title}",
-                arguments = listOf(
-                    navArgument("rowId") { type = NavType.StringType },
-                    navArgument("title") { type = NavType.StringType; defaultValue = "" },
-                ),
-            ) { entry ->
-                com.arkiv.player.ui.home.MagisRowBrowseScreen(
-                    rowId = entry.arguments?.getString("rowId").orEmpty(),
-                    title = entry.arguments?.getString("title").orEmpty(),
-                    onPlay = { playEpisode(it) },
-                    onBack = { navController.popBackStack() },
                 )
             }
             composable(
