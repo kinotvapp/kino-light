@@ -213,7 +213,10 @@ fun LibraryScreen(
                 // Only if there's something to download it with: with no strategy for its source
                 // (Caracol, or an old archive.org row) the download used to end up FAILED with
                 // "Fuente no soportada" after accepting it. An option that's going to fail isn't shown.
-                if (com.arkiv.player.data.local.DownloadSource.hasStrategy(row.source, strategies)) SheetAction("Guardar en el dispositivo") {
+                // A plugin row of the recognized Xuper install downloads as `DownloadSource.XUPER`; any other
+                // plugin row keeps its `plugin:<id>` source, which has no strategy.
+                val downloadSource = com.arkiv.player.data.local.DownloadSource.sourceForItem(row.source, graph::isXuperPlugin)
+                if (com.arkiv.player.data.local.DownloadSource.hasStrategy(downloadSource, strategies)) SheetAction("Guardar en el dispositivo") {
                     scope.launch {
                         // A movie is a single-episode item; a series is saved from its detail
                         // screen, chapter by chapter (queuing 200 chapters from a contextual menu
@@ -226,7 +229,7 @@ fun LibraryScreen(
                             // branch, which no longer have a download strategy — see
                             // `AppGraph.downloadStrategies`): it's the real stored value, not a
                             // heuristic.
-                            notifyDuplicates(listOf(graph.localDownloads.enqueue(single.id, row.source)))
+                            notifyDuplicates(listOf(graph.localDownloads.enqueue(single.id, downloadSource)))
                         } else {
                             onOpenItem(row.identifier)
                         }

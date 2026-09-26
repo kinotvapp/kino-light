@@ -170,7 +170,7 @@ fun DetailScreen(
         askNotifications()
         scope.launch {
             // A single notice for the whole batch, not one per chapter.
-            notifyDuplicates(episodes.map { graph.localDownloads.enqueue(it.id, DownloadSource.sourceFor(it.id)) })
+            notifyDuplicates(episodes.map { graph.localDownloads.enqueue(it.id, DownloadSource.sourceFor(it.id, graph::isXuperPlugin)) })
         }
     }
 
@@ -204,7 +204,8 @@ fun DetailScreen(
     // or an old archive.org row used to end up FAILED with "Fuente no soportada" AFTER this screen
     // said "Guardando": an option that's going to fail isn't shown. See `DownloadSource.canDownload`.
     val strategies = remember { graph.downloadStrategies.keys }
-    val canDownload: (Episode) -> Boolean = { ep -> DownloadSource.canDownload(ep.id, strategies) }
+    // The recognized Xuper plugin's chapters are downloadable too (`DownloadSource.XUPER`); no other plugin's.
+    val canDownload: (Episode) -> Boolean = { ep -> DownloadSource.canDownload(ep.id, strategies, graph::isXuperPlugin) }
     val savableEpisodes = detail?.episodes.orEmpty().filter(canDownload)
 
     // This screen's button saves TO THE DEVICE (local worker), not to any server of our own: the

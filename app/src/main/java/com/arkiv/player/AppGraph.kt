@@ -312,7 +312,7 @@ class AppGraph(context: Context) {
         com.arkiv.player.data.magis.MagisCatalog(magisPortal, magisSession)
     }
 
-    /** Magis playback resolution, shared by [magisSource] and [magisPluginBridge] (one CDN-info cache). */
+    /** Magis playback resolution for [magisPluginBridge] (one CDN-info cache). */
     private val magisResolve: com.arkiv.player.data.magis.MagisResolve by lazy {
         val creds = credentialsStore.read()!!
         com.arkiv.player.data.magis.MagisResolve(
@@ -322,19 +322,9 @@ class AppGraph(context: Context) {
         )
     }
 
-    /** Magis titles, straight from the portal. Only visible from outside through [contentSource]. */
-    private val magisSource: com.arkiv.player.data.gateway.ContentSource by lazy {
-        com.arkiv.player.data.magis.MagisSource(
-            catalog = magisCatalog,
-            vodResolver = magisResolve,
-            tmdb = tmdbApi,
-            vodStore = com.arkiv.player.data.magis.VodSearchStore(database.vodSearchCacheDao()),
-        )
-    }
-
     /**
      * The Magis side of the privileged `kino.xuper.*` host functions (see `DefaultPrivilegedXuperHost`),
-     * over the same objects [magisSource] is built with. One per process, so its caches outlive a
+     * over the portal's catalog, resolver and TMDB. One per process, so its caches outlive a
      * plugin runtime's idle close. A plain [Lazy], not a `by lazy` property: it is handed to every
      * plugin runtime's host selection, and only the privileged host ever reads it.
      */
@@ -377,10 +367,12 @@ class AppGraph(context: Context) {
     }
 
     /**
-     * Where the titles the app searches and plays come from: Magis and Caracol behind a single
-     * object. To resolve and list episodes it dispatches by `ref` (each source recognizes its
-     * own); to search, it merges both. See [com.arkiv.player.data.gateway.CompositeSource].
-     * Plus every usable installed plugin, read on EACH call: installing, disabling or
+     * Where the titles the app searches and plays come from: Caracol and the installed plugins
+     * (Xuper among them) behind a single object. To resolve and list episodes it dispatches by
+     * `ref` (each source recognizes its own); to search, it merges them. See
+     * [com.arkiv.player.data.gateway.CompositeSource]. Xuper refs saved before Xuper became a
+     * plugin are claimed by [LegacyXuperRefSource] and forwarded to the Xuper plugin.
+     * Every usable installed plugin is read on EACH call: installing, disabling or
      * uninstalling a plugin applies to the next search/resolve with no restart. A ref of a plugin
      * that isn't usable falls through to [UnusablePluginSource], last, which answers with the
      * registry's reason ("Activa el plugin X…") instead of "no source can open this".
@@ -388,11 +380,24 @@ class AppGraph(context: Context) {
     val contentSource: com.arkiv.player.data.gateway.ContentSource by lazy {
         val unusablePlugins = UnusablePluginSource(pluginRegistry)
         com.arkiv.player.data.gateway.CompositeSource {
-            listOf(magisSource, dituSource) +
-                pluginRegistry.usable().map { PluginContentSource(it, pluginCaller, it.hosts, xuperStreams) } +
+            val pluginSources = pluginRegistry.usable().map { PluginContentSource(it, pluginCaller, it.hosts, xuperStreams) } +
                 unusablePlugins
+            // Xuper refs saved before Xuper became a plugin (`magis1:`), forwarded to the installed
+            // Xuper plugin through the SAME plugin sources below. In MagisSource's old slot: first.
+            val legacyXuper = LegacyXuperRefSource(
+                pluginRegistry.plugins.value,
+                com.arkiv.player.data.gateway.CompositeSource(pluginSources),
+            )
+            listOf(legacyXuper, dituSource) + pluginSources
         }
     }
+
+    /**
+     * Whether the INSTALLED plugin with manifest id [pluginId] is the recognized Xuper install
+     * ([XuperPrivilege.grants] on its record, never the id itself). The only plugin whose titles
+     * get a download strategy: see `DownloadSource.sourceFor`.
+     */
+    fun isXuperPlugin(pluginId: String): Boolean = pluginRegistry.isXuper(pluginId)
 
     // --- Plugins (docs/superpowers/specs/2026-09-24-plugin-sources-design.md) ---
 
@@ -878,6 +883,7 @@ class AppGraph(context: Context) {
             strategies = { downloadStrategies },
             // Downloads are never allowed on a TV (see `DownloadAvailability`).
             isTelevision = { com.arkiv.player.DeviceType.isTelevision(appContext) },
+            isXuperPlugin = ::isXuperPlugin,
         )
     }
 
@@ -988,10 +994,16 @@ class AppGraph(context: Context) {
      * `DownloadSource.canDownload`/`hasStrategy` using this map's keys.
      */
     val downloadStrategies: Map<String, com.arkiv.player.data.local.DownloadStrategy> by lazy {
+        // One strategy for both Xuper keys: it resolves whatever ref the chapter saved through
+        // `contentSource`, a legacy `magis1:` one (via `LegacyXuperRefSource`) or the plugin's `plg1:`.
+        val xuper = com.arkiv.player.data.local.MagisDownloadStrategy(repository, contentSource, httpRangeDownloader)
         mapOf(
-            "magis" to com.arkiv.player.data.local.MagisDownloadStrategy(
-                repository, contentSource, httpRangeDownloader,
-            ),
+            "magis" to xuper,
+            // The recognized Xuper plugin's chapters, and no other plugin's: `DownloadSource.sourceFor`
+            // only maps a plugin episode here when `isXuperPlugin`, and the wrapper checks it again
+            // when the download runs. Every other plugin stays on "plugin", which has no entry.
+            com.arkiv.player.data.local.DownloadSource.XUPER to
+                com.arkiv.player.data.local.XuperPluginDownloadStrategy(xuper, ::isXuperPlugin),
             // Caracol. With this key present, `DownloadSource.canDownload` starts saying yes for
             // its episodes and the UI shows the button on its own -- that's exactly the contract
             // this documents: a source with no strategy stays hidden, one with a strategy shows up.

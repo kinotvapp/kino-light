@@ -121,6 +121,14 @@ class PluginRegistry(
     fun find(id: String): InstalledPlugin? = plugins.value.firstOrNull { it.id == id }
 
     /**
+     * Whether the installed plugin with manifest id [id] is the recognized Xuper install:
+     * [XuperPrivilege.grants] on its RECORD, whatever its state. The id only locates the record
+     * (ids are unique in the store); it never decides the answer, so another repo's plugin that
+     * claims `xuper` as its id is still `false`.
+     */
+    fun isXuper(id: String): Boolean = find(id)?.let { XuperPrivilege.grants(it.record) } == true
+
+    /**
      * True when [id] carries the store's removal tombstone (see [PluginStore.removedName]):
      * [uninstall] writes it, and only committing a fresh install for the same id clears it. A
      * caller that would otherwise install over a plugin with no live record must check this
