@@ -330,11 +330,20 @@ class DlnaController(
         // structure that isn't there -- see VideoContainer's KDoc.
         val container = com.arkiv.player.playback.VideoContainer.of(sniffHeader(archiveUrl), archiveUrl)
 
-        // A bare TS is what stalled the Samsung TVs that DO claim mp4 support (mime_listed=true):
-        // remux it into a real MP4 first, the exact same fix already shipped for Chromecast and the
-        // same on-disk cache (see RemuxPolicy/TsRemuxer) -- a title already remuxed for the
-        // Chromecast bar is reused here too, instead of lying about the container like this used to.
+        // A bare TS is what stalled the Samsung TVs that DO claim mp4 support (mime_listed=true).
+        // But some renderers -- often an OLDER TV with no mp4 in its list at all, like a 2011
+        // Philips -- already list MPEG-TS as playable: asking first, instead of always remuxing,
+        // is what keeps this fix from costing THEM the time and battery of a conversion they never
+        // needed, and serves them the one container their whole `sink_mimes` list agrees on.
         if (com.arkiv.player.playback.RemuxPolicy.needsRemux(container.mime)) {
+            val sinkMimes = fetchSinkMimes(device)
+            if (sinkMimes.isNotEmpty() && DlnaXml.isSupported(container.mime, sinkMimes)) {
+                DlnaLog.i("cast: renderer already lists ${container.mime} (${sinkMimes.size} types): skipping the remux")
+                return playViaProxy(device, archiveUrl, container, title)
+            }
+            // Remux into a real MP4, the exact same fix already shipped for Chromecast and the same
+            // on-disk cache (see RemuxPolicy/TsRemuxer) -- a title already remuxed for the Chromecast
+            // bar is reused here too, instead of lying about the container like this used to.
             val c = beginCast(device, kind = "vod-remux", mime = com.arkiv.player.playback.Container.MP4.mime, title = title, source = archiveUrl)
             val key = com.arkiv.player.playback.RemuxPolicy.keyFrom(archiveUrl, 0L)
             return when (val result = tsRemuxer.remux(archiveUrl, key)) {
@@ -349,6 +358,16 @@ class DlnaController(
             }
         }
 
+        return playViaProxy(device, archiveUrl, container, title)
+    }
+
+    /** Proxies [archiveUrl] to the TV as-is, honestly labeled as [container] -- no remux involved. */
+    private fun playViaProxy(
+        device: DlnaDevice,
+        archiveUrl: String,
+        container: com.arkiv.player.playback.Container,
+        title: String,
+    ): Boolean {
         val c = beginCast(device, kind = "vod-proxy", mime = container.mime, title = title, source = archiveUrl)
         val ip = wifiIp() ?: return failPreflight(c, "no_wifi_ip", "No se detectó la red WiFi del teléfono", "wifiEnabled=${wifi.isWifiEnabled}")
         proxy.setTarget(archiveUrl, container.mime)
@@ -630,13 +649,11 @@ class DlnaController(
 
     /** What the renderer says it can play; one line, and a warning when the MIME we declared isn't in it. */
     private fun logSinkProtocols(c: Cast) {
-        val url = c.device.connectionManagerUrl
-        if (url == null) {
+        if (c.device.connectionManagerUrl == null) {
             DlnaLog.i("renderer formats: unknown (no ConnectionManager service)")
             return
         }
-        val r = soap(url, "GetProtocolInfo", "<u:GetProtocolInfo xmlns:u=\"$CM\"/>", CM)
-        val mimes = DlnaXml.sinkMimes(r.body)
+        val mimes = fetchSinkMimes(c.device)
         c.sinkMimes = mimes
         if (mimes.isEmpty()) {
             DlnaLog.i("renderer formats: none listed (can't tell)")
@@ -645,6 +662,14 @@ class DlnaController(
         } else {
             DlnaLog.w("renderer formats: declared ${c.mime} is NOT in what the TV lists: $mimes")
         }
+    }
+
+    /** What [device] can play (`GetProtocolInfo`), or empty if it has no ConnectionManager service
+     *  or didn't answer -- callers then fall back to whatever they'd do with no information at all. */
+    private fun fetchSinkMimes(device: DlnaDevice): List<String> {
+        val url = device.connectionManagerUrl ?: return emptyList()
+        val r = soap(url, "GetProtocolInfo", "<u:GetProtocolInfo xmlns:u=\"$CM\"/>", CM)
+        return DlnaXml.sinkMimes(r.body)
     }
 
     /**
