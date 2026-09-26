@@ -334,6 +334,7 @@ fun ArkivRoot(
         // "downloads" is now a tab (see TABS above): go through the same goToTab() the drawer/rail
         // use, so the tab shows selected and the back stack behaves like any other tab switch.
         onOpenDownloads = { goToTab(TABS.first { it.route == "downloads" }) },
+        onOpenAddPlugin = { navController.navigate("plugin_add") { launchSingleTop = true } },
     )
 }
             composable("categorias_home") {
@@ -497,6 +498,12 @@ fun ArkivRoot(
                         onBack = { navController.popBackStack() },
                     )
                 }
+            }
+            composable("plugin_add") {
+                com.arkiv.player.ui.plugin.AddPluginScreen(
+                    com.arkiv.player.ui.plugin.AddPluginMode.SETTINGS,
+                    onClose = { navController.popBackStack() },
+                )
             }
             composable("plugin_config/{pluginId}") { entry ->
                 com.arkiv.player.ui.plugin.PluginConfigRoute(

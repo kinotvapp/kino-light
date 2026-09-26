@@ -8,11 +8,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -22,8 +19,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -36,9 +31,12 @@ import com.arkiv.player.ui.rememberGraph
 import com.arkiv.player.ui.theme.ArkivRed
 import com.arkiv.player.ui.theme.ArkivTextSecondary
 
-/** Ajustes ▸ Plugins on the phone: add by `usuario/repositorio`, and manage what's installed. */
+/**
+ * Ajustes ▸ Plugins on the phone: manage what's installed. Adding a plugin (from the recommended list
+ * or by `usuario/repositorio`) is the "Agregar plugin" window, opened by [onOpenAddPlugin].
+ */
 @Composable
-fun PluginsTab() {
+fun PluginsTab(onOpenAddPlugin: () -> Unit = {}) {
     val graph = rememberGraph()
     val vm: PluginsViewModel = viewModel(factory = viewModelFactory { initializer { PluginsViewModel(graph.pluginAdmin, catalogProvider = graph.pluginCatalog) } })
     val plugins by vm.plugins.collectAsStateWithLifecycle()
@@ -51,19 +49,7 @@ fun PluginsTab() {
             "Agrega fuentes de video publicadas en GitHub. Cada plugin solo puede conectarse con los sitios que te muestra antes de instalarlo.",
             style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary,
         )
-        OutlinedTextField(
-            value = state.address,
-            onValueChange = vm::onAddressChange,
-            label = { Text("usuario/repositorio") },
-            singleLine = true,
-            enabled = !state.busy,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
-            keyboardActions = KeyboardActions(onDone = { vm.add() }),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Button(onClick = vm::add, enabled = !state.busy && state.address.isNotBlank()) {
-            Text(if (state.busy) "Revisando…" else "Agregar")
-        }
+        Button(onClick = onOpenAddPlugin) { Text("Agregar plugin") }
         if (rowMessageId == null) {
             state.message?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Color.White) }
         }

@@ -55,7 +55,7 @@ private enum class SettingsTab(val label: String) {
  * outside the scroll, so it's always within reach.
  */
 @Composable
-fun SettingsScreen(contentPadding: PaddingValues, onOpenDownloads: () -> Unit = {}) {
+fun SettingsScreen(contentPadding: PaddingValues, onOpenDownloads: () -> Unit = {}, onOpenAddPlugin: () -> Unit = {}) {
     val graph = rememberGraph()
     val magisAccount = graph.magisAccount
     // Reactive: this can flip WHILE the person is sitting on this screen (the next catalog call
@@ -128,7 +128,7 @@ fun SettingsScreen(contentPadding: PaddingValues, onOpenDownloads: () -> Unit = 
                         accountUnavailable = regionGeoBlocked,
                     )
                     SettingsTab.APP -> AppTab(onOpenDownloads = onOpenDownloads)
-                    SettingsTab.PLUGINS -> com.arkiv.player.ui.plugin.PluginsTab()
+                    SettingsTab.PLUGINS -> com.arkiv.player.ui.plugin.PluginsTab(onOpenAddPlugin = onOpenAddPlugin)
                     SettingsTab.CONNECT -> CompanionSettings()
                 }
                 // The bottom shell adds the air below: the tabs don't need to know there's a
