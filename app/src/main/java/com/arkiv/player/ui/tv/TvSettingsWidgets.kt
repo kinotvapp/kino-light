@@ -29,10 +29,11 @@ internal fun tvButtonBorder() = arkivTvSurfaceBorder()
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-internal fun TvActionOption(label: String, onClick: () -> Unit) {
+internal fun TvActionOption(label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Surface(
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth(0.6f),
+        // The caller's modifier goes first so a `focusRequester` on it reaches this Surface's own focus target.
+        modifier = modifier.fillMaxWidth(0.6f),
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
         // Black surface + white idle border, Arkiv red on focus/press (shared standard in
         // TvButtonStyle.kt). Without explicit colors, tv.material3's Surface falls back to the

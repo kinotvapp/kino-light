@@ -60,7 +60,7 @@ private enum class TvSettingsTab(val label: String) {
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-fun TvSettingsScreen() {
+fun TvSettingsScreen(onOpenAddPlugin: () -> Unit = {}) {
     val graph = rememberGraph()
     val magisAccount = graph.magisAccount
     // Reactive: this can flip WHILE the person is sitting on this screen (the next catalog call
@@ -102,12 +102,13 @@ fun TvSettingsScreen() {
     // "Subtitles" left the screen starting halfway down.
     val scroll = rememberSaveable(tab, saver = ScrollState.Saver) { ScrollState(0) }
 
-    // Focus enters through the first tab. Without this it starts on the content's first row and
-    // the row above gets discovered by accident.
-    val firstTabFocus = remember { FocusRequester() }
+    // Focus enters through the selected tab: the first one on a fresh visit, the one the person was on
+    // when coming back from a window opened out of it (Agregar plugin). Without this it starts on the
+    // content's first row and the row above gets discovered by accident.
+    val selectedTabFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) {
         repeat(20) {
-            if (runCatching { firstTabFocus.requestFocus() }.isSuccess) return@LaunchedEffect
+            if (runCatching { selectedTabFocus.requestFocus() }.isSuccess) return@LaunchedEffect
             delay(50)
         }
     }
@@ -127,7 +128,7 @@ fun TvSettingsScreen() {
                     label = t.label,
                     selected = t == tab,
                     onClick = { tab = t },
-                    modifier = if (i == 0) Modifier.focusRequester(firstTabFocus) else Modifier,
+                    modifier = if (t == tab) Modifier.focusRequester(selectedTabFocus) else Modifier,
                 )
             }
         }
@@ -144,7 +145,7 @@ fun TvSettingsScreen() {
                     accountUnavailable = regionGeoBlocked,
                 )
                 TvSettingsTab.APP -> TvSettingsApp()
-                TvSettingsTab.PLUGINS -> TvSettingsPlugins()
+                TvSettingsTab.PLUGINS -> TvSettingsPlugins(onOpenAddPlugin)
                 TvSettingsTab.CONNECT -> TvCompanionSettings()
             }
         }

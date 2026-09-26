@@ -2,25 +2,11 @@ package com.arkiv.player.ui.tv
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
-import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -38,41 +24,20 @@ import com.arkiv.player.ui.theme.ArkivTextSecondary
 
 /** Ajustes ▸ Plugins on the TV: the phone's section with D-pad-sized actions. */
 @Composable
-internal fun TvSettingsPlugins() {
+internal fun TvSettingsPlugins(onOpenAddPlugin: () -> Unit = {}) {
     val graph = rememberGraph()
     val vm: PluginsViewModel = viewModel(factory = viewModelFactory { initializer { PluginsViewModel(graph.pluginAdmin, catalogProvider = graph.pluginCatalog) } })
     val plugins by vm.plugins.collectAsStateWithLifecycle()
     val state by vm.state.collectAsStateWithLifecycle()
-    val focusManager = LocalFocusManager.current
     val rowMessageId = rowMessagePluginId(state, plugins)
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Agregar un plugin", style = MaterialTheme.typography.titleMedium, color = Color.White)
+        Text("Plugins", style = MaterialTheme.typography.titleMedium, color = Color.White)
         Text(
-            "Escribe usuario/repositorio de GitHub. Antes de instalar vas a ver con qué sitios se conecta.",
+            "Agrega fuentes de video publicadas en GitHub. Cada plugin solo puede conectarse con los sitios que te muestra antes de instalarlo.",
             style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary,
         )
-        OutlinedTextField(
-            value = state.address,
-            onValueChange = vm::onAddressChange,
-            label = { Text("usuario/repositorio") },
-            singleLine = true,
-            // Same as the adult-lock field in TvSettingsApp: `Done` applies, and D-pad Down always
-            // leaves the field, since a closed IME otherwise traps focus in it.
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
-            keyboardActions = KeyboardActions(onDone = { vm.add(); focusManager.moveFocus(FocusDirection.Down) }),
-            modifier = Modifier
-                .fillMaxWidth(0.6f)
-                .onPreviewKeyEvent { e ->
-                    if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionDown) {
-                        focusManager.moveFocus(FocusDirection.Down)
-                        true
-                    } else {
-                        false
-                    }
-                },
-        )
-        TvActionOption(label = if (state.busy) "Revisando…" else "Agregar") { vm.add() }
+        TvActionOption(label = "Agregar plugin") { onOpenAddPlugin() }
         if (rowMessageId == null) {
             state.message?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = Color.White) }
         }
