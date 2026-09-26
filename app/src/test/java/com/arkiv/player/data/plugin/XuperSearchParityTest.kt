@@ -161,7 +161,9 @@ class XuperSearchParityTest {
         PluginConfig.EMPTY,
         null,
         EffectiveHosts(emptyList()),
-        lazyOf(MagisPluginBridge(MagisCatalog(fake, testSession(fake)), tmdb(), vodStore = null)),
+        testSession(fake).let { session ->
+            lazyOf(MagisPluginBridge(MagisCatalog(fake, session), MagisResolve(fake, session), tmdb(), vodStore = null))
+        },
     )
 
     /** Key order differs between Android's and the JVM's org.json, so beans compare key-sorted. */

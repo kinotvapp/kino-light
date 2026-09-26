@@ -38,7 +38,12 @@ class DefaultPrivilegedXuperHost internal constructor(
     override suspend fun xuperHome(): String = throw NotImplementedError("Task 9")
     override suspend fun xuperBrowse(ref: String, cursor: String?): String = throw NotImplementedError("Task 10")
     override suspend fun xuperEpisodes(ref: String): String = throw NotImplementedError("Task 7")
-    override suspend fun xuperResolve(ref: String): String = throw NotImplementedError("Task 6")
+
+    /**
+     * Argument: the item's own `ref`, as `kino.xuper.search` returned it. Answer: the envelope
+     * around [MagisPluginBridge.resolve]'s stream.
+     */
+    override suspend fun xuperResolve(ref: String): String = envelope { magis.value.resolve(ref) }
 }
 
 /**

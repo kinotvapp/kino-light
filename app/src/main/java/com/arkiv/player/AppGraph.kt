@@ -305,16 +305,21 @@ class AppGraph(context: Context) {
         com.arkiv.player.data.magis.MagisCatalog(magisPortal, magisSession)
     }
 
+    /** Magis playback resolution, shared by [magisSource] and [magisPluginBridge] (one CDN-info cache). */
+    private val magisResolve: com.arkiv.player.data.magis.MagisResolve by lazy {
+        val creds = credentialsStore.read()!!
+        com.arkiv.player.data.magis.MagisResolve(
+            magisPortal, magisSession,
+            appId = creds.iptvAppId,
+            apkVersion = creds.iptvApkVersion,
+        )
+    }
+
     /** Magis titles, straight from the portal. Only visible from outside through [contentSource]. */
     private val magisSource: com.arkiv.player.data.gateway.ContentSource by lazy {
-        val creds = credentialsStore.read()!!
         com.arkiv.player.data.magis.MagisSource(
             catalog = magisCatalog,
-            vodResolver = com.arkiv.player.data.magis.MagisResolve(
-                magisPortal, magisSession,
-                appId = creds.iptvAppId,
-                apkVersion = creds.iptvApkVersion,
-            ),
+            vodResolver = magisResolve,
             tmdb = tmdbApi,
             vodStore = com.arkiv.player.data.magis.VodSearchStore(database.vodSearchCacheDao()),
         )
@@ -329,6 +334,7 @@ class AppGraph(context: Context) {
     private val magisPluginBridge: Lazy<com.arkiv.player.data.magis.MagisPluginBridge> = lazy {
         com.arkiv.player.data.magis.MagisPluginBridge(
             catalog = magisCatalog,
+            vodResolver = magisResolve,
             tmdb = tmdbApi,
             vodStore = com.arkiv.player.data.magis.VodSearchStore(database.vodSearchCacheDao()),
         )
