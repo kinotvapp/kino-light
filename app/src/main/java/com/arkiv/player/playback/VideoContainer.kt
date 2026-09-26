@@ -125,6 +125,18 @@ object VideoContainer {
     fun mimeByName(nameOrUrl: String): String =
         (byExtension(nameOrUrl) ?: Container.MP4).mime
 
+    /** The canonical extension for [container] -- for synthesizing a URL a renderer can name-sniff too. */
+    fun extensionFor(container: Container): String = when (container) {
+        Container.MP4 -> "mp4"
+        Container.MATROSKA -> "mkv"
+        Container.WEBM -> "webm"
+        Container.MPEGTS -> "ts"
+        Container.AVI -> "avi"
+        Container.MPEGPS -> "mpg"
+        Container.ASF -> "wmv"
+        Container.OGG -> "ogv"
+    }
+
     /**
      * [of] reading [file]'s header. Any read problem —the file doesn't exist yet, or a torrent
      * that hasn't downloaded its head yet— falls back to the name in silence: there's nothing to

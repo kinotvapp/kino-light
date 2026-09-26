@@ -43,7 +43,16 @@ data class DlnaDevice(
  * afterwards, its transport state polled until the cast ends. A failure is reported once per cast as
  * [DlnaFailure] with the stage that broke.
  */
-class DlnaController(context: Context) {
+class DlnaController(
+    context: Context,
+    /** The SAME remux engine/cache Chromecast uses (see [com.arkiv.player.playback.RemuxPolicy]):
+     *  a title already remuxed for the TV is reused here without redoing the work. */
+    private val tsRemuxer: com.arkiv.player.playback.TsRemuxer,
+    /** Its OWN server, not [com.arkiv.player.AppGraph.localFileServer]: that one is single-file and
+     *  restarts its socket on every change, so sharing it with Chromecast would steal the port out
+     *  from under whichever of the two casts second. */
+    private val localFileServer: com.arkiv.player.playback.LocalFileServer,
+) {
 
     private val appContext = context.applicationContext
     private val wifi = appContext.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
@@ -305,22 +314,64 @@ class DlnaController(context: Context) {
      * source that needed this detour (the renderer can't take its direct URL). Returns true if it
      * could start; on false, [lastError] says why.
      */
-    fun setUrlAndPlay(device: DlnaDevice, archiveUrl: String, title: String): Boolean {
-        val c = beginCast(device, kind = "vod-proxy", mime = "video/mp4", title = title, source = archiveUrl)
+    suspend fun setUrlAndPlay(device: DlnaDevice, archiveUrl: String, title: String): Boolean {
         // A file:// (a download) can't be proxied: OkHttp only speaks http(s), so the TV would get a
         // connection that closes with nothing, silently. Say so instead.
         if (!archiveUrl.startsWith("http", ignoreCase = true)) {
+            val c = beginCast(device, kind = "vod-proxy", mime = "video/mp4", title = title, source = archiveUrl)
             return failPreflight(
                 c, "source_not_http", "Este contenido no se puede enviar a la TV por DLNA (es un archivo local)",
                 "source=${DlnaXml.safeUrl(archiveUrl)}",
             )
         }
+        // The container comes from the BYTES, not from a guess: the source's own Content-Type is
+        // often generic (`application/octet-stream`), and most of this catalog is really MPEG-TS.
+        // A renderer that trusts a wrong "video/mp4" label seeks around forever looking for box
+        // structure that isn't there -- see VideoContainer's KDoc.
+        val container = com.arkiv.player.playback.VideoContainer.of(sniffHeader(archiveUrl), archiveUrl)
+
+        // A bare TS is what stalled the Samsung TVs that DO claim mp4 support (mime_listed=true):
+        // remux it into a real MP4 first, the exact same fix already shipped for Chromecast and the
+        // same on-disk cache (see RemuxPolicy/TsRemuxer) -- a title already remuxed for the
+        // Chromecast bar is reused here too, instead of lying about the container like this used to.
+        if (com.arkiv.player.playback.RemuxPolicy.needsRemux(container.mime)) {
+            val c = beginCast(device, kind = "vod-remux", mime = com.arkiv.player.playback.Container.MP4.mime, title = title, source = archiveUrl)
+            val key = com.arkiv.player.playback.RemuxPolicy.keyFrom(archiveUrl, 0L)
+            return when (val result = tsRemuxer.remux(archiveUrl, key)) {
+                is com.arkiv.player.playback.TsRemuxer.RemuxResult.Failed ->
+                    failPreflight(c, "remux_failed", "No se pudo preparar el video para la TV", "reason=${result.reason}")
+                is com.arkiv.player.playback.TsRemuxer.RemuxResult.Done -> {
+                    val localUrl = localFileServer.serve(result.file)
+                        ?: return failPreflight(c, "no_wifi_ip", "No se detectó la red WiFi del teléfono", "wifiEnabled=${wifi.isWifiEnabled}")
+                    DlnaLog.i("cast: remuxed ${result.file.name} (${result.file.length()}B) -> serving as $localUrl")
+                    startPlayback(c, localUrl, title)
+                }
+            }
+        }
+
+        val c = beginCast(device, kind = "vod-proxy", mime = container.mime, title = title, source = archiveUrl)
         val ip = wifiIp() ?: return failPreflight(c, "no_wifi_ip", "No se detectó la red WiFi del teléfono", "wifiEnabled=${wifi.isWifiEnabled}")
-        proxy.setTarget(archiveUrl)
+        proxy.setTarget(archiveUrl, container.mime)
         val port = proxy.ensureStarted()
-        val localUrl = "http://$ip:$port/stream.mp4"
+        val ext = com.arkiv.player.playback.VideoContainer.extensionFor(container)
+        val localUrl = "http://$ip:$port/stream.$ext"
         DlnaLog.i("cast: proxy on $ip:$port serving ${DlnaXml.safeUrl(archiveUrl)} as $localUrl (declared ${c.mime})")
         return startPlayback(c, localUrl, title)
+    }
+
+    /** First [com.arkiv.player.playback.VideoContainer.SIGNATURE_BYTES] of [url], or empty if the
+     *  source didn't answer in time -- the container then falls back to the URL's extension (see
+     *  [com.arkiv.player.playback.VideoContainer.of]), same as when there are no bytes at all. */
+    private fun sniffHeader(url: String): ByteArray {
+        val req = Request.Builder().url(url)
+            .header("User-Agent", "Arkiv")
+            .header("Range", "bytes=0-${com.arkiv.player.playback.VideoContainer.SIGNATURE_BYTES - 1}")
+            .build()
+        return runCatching {
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) ByteArray(0) else resp.body?.bytes() ?: ByteArray(0)
+            }
+        }.getOrDefault(ByteArray(0))
     }
 
     /** Plays a raw URL already reachable over LAN (today, the live channel's HLS proxy). */

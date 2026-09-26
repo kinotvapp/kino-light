@@ -22,6 +22,8 @@ class DlnaProxyServer {
 
     @Volatile
     private var target: String = ""
+    @Volatile
+    private var mime: String = "video/mp4"
     private var serverSocket: ServerSocket? = null
     private val client = OkHttpClient.Builder()
         .followRedirects(true)
@@ -37,7 +39,13 @@ class DlnaProxyServer {
     private val dlnaContentFeatures =
         "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000"
 
-    fun setTarget(url: String) { target = url }
+    /** [mime] is what the TV gets told in `Content-Type`: it has to be the container the BYTES
+     *  actually are (see [com.arkiv.player.playback.VideoContainer]), not a guess -- a renderer
+     *  that trusts a wrong label seeks around forever looking for structure that isn't there. */
+    fun setTarget(url: String, mime: String) {
+        target = url
+        this.mime = mime
+    }
 
     /** Starts the server if it isn't running yet and returns the port. */
     @Synchronized
@@ -113,12 +121,6 @@ class DlnaProxyServer {
                         out.flush()
                         return@use
                     }
-                    if (upstreamType != null && !upstreamType.contains("mp4", ignoreCase = true)) {
-                        DlnaLog.w(
-                            "proxy: declaring video/mp4 to the TV but the source is '$upstreamType'. A renderer that " +
-                                "trusts the declared type will choke on a different container (e.g. MPEG-TS).",
-                        )
-                    }
                     if (isHead) {
                         // Size of the whole file: `Content-Range: bytes 0-0/TOTAL` from the 1-byte GET, or the
                         // Content-Length if the source ignored the Range and answered 200.
@@ -126,7 +128,7 @@ class DlnaProxyServer {
                             ?: resp.header("Content-Length")?.toLongOrNull()
                         DlnaLog.i("proxy: answering the TV's HEAD from a ranged GET · total=${total ?: "unknown"}")
                         val head = StringBuilder("HTTP/1.1 200 OK\r\n")
-                        head.append("Content-Type: video/mp4\r\n")
+                        head.append("Content-Type: ").append(mime).append("\r\n")
                         total?.let { head.append("Content-Length: ").append(it).append("\r\n") }
                         head.append("Accept-Ranges: bytes\r\n")
                         head.append("contentFeatures.dlna.org: ").append(dlnaContentFeatures).append("\r\n")
@@ -139,7 +141,7 @@ class DlnaProxyServer {
                     val statusLine = if (resp.code == 206) "HTTP/1.1 206 Partial Content" else "HTTP/1.1 200 OK"
                     val sb = StringBuilder()
                     sb.append(statusLine).append("\r\n")
-                    sb.append("Content-Type: video/mp4\r\n")
+                    sb.append("Content-Type: ").append(mime).append("\r\n")
                     resp.header("Content-Length")?.let { sb.append("Content-Length: ").append(it).append("\r\n") }
                     resp.header("Content-Range")?.let { sb.append("Content-Range: ").append(it).append("\r\n") }
                     sb.append("Accept-Ranges: bytes\r\n")

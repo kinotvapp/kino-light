@@ -971,7 +971,15 @@ class AppGraph(context: Context) {
         )
     }
 
-    val dlna: DlnaController by lazy { DlnaController(appContext) }
+    val dlna: DlnaController by lazy {
+        DlnaController(
+            appContext,
+            tsRemuxer = tsRemuxer,
+            // Its OWN server, not [localFileServer]: that one is single-file and would have its
+            // socket stolen out from under it by whichever of DLNA/Chromecast casts second.
+            localFileServer = com.arkiv.player.playback.LocalFileServer(lanIp = { lanIp() }),
+        )
+    }
 
     /**
      * Phone<->TV LAN companion link (discovery/pairing/transport; `com.arkiv.player.companion`).
