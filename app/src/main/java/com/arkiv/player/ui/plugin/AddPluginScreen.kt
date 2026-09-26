@@ -46,7 +46,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
-import com.arkiv.player.data.plugin.catalog.CatalogOrigin
 import com.arkiv.player.ui.catalog.MetaChip
 import com.arkiv.player.ui.readingWidth
 import com.arkiv.player.ui.rememberGraph
@@ -132,15 +131,19 @@ fun AddPluginScreen(mode: AddPluginMode, onClose: () -> Unit) {
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
-                    if (catalog.origin == CatalogOrigin.SEED) {
+                    // Only while the list is still the copy shipped in the APK. The notice waits for the refresh to
+                    // end (it may still succeed); meanwhile the action reads "Actualizando…" and does nothing.
+                    catalogRefreshLine(catalog)?.let { line ->
                         item(key = "seed-notice") {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    "Sin conexión: mostrando la lista guardada.",
+                                    line.notice.orEmpty(),
                                     style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary,
                                     modifier = Modifier.weight(1f),
                                 )
-                                TextButton(onClick = vm::reloadCatalog) { Text("Reintentar", color = ArkivRed) }
+                                TextButton(onClick = vm::reloadCatalog, enabled = line.actionEnabled) {
+                                    Text(line.actionLabel, color = if (line.actionEnabled) ArkivRed else ArkivTextSecondary)
+                                }
                             }
                         }
                     }

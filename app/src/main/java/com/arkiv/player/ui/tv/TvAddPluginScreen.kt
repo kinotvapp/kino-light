@@ -44,7 +44,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
-import com.arkiv.player.data.plugin.catalog.CatalogOrigin
 import com.arkiv.player.ui.plugin.AddPluginMode
 import com.arkiv.player.ui.plugin.CatalogAction
 import com.arkiv.player.ui.plugin.CatalogRow
@@ -54,6 +53,7 @@ import com.arkiv.player.ui.plugin.PluginConfigDialog
 import com.arkiv.player.ui.plugin.PluginUninstallDialog
 import com.arkiv.player.ui.plugin.PluginsViewModel
 import com.arkiv.player.ui.plugin.catalogActionOf
+import com.arkiv.player.ui.plugin.catalogRefreshLine
 import com.arkiv.player.ui.plugin.legacyFirst
 import com.arkiv.player.ui.plugin.pluginStatusText
 import com.arkiv.player.ui.plugin.rowMessagePluginId
@@ -123,11 +123,14 @@ fun TvAddPluginScreen(mode: AddPluginMode, onClose: () -> Unit) {
                     modifier = Modifier.fillMaxWidth(0.6f).downLeavesTheField(focusManager),
                 )
             }
-            if (catalog.origin == CatalogOrigin.SEED) {
+            // Only while the list is still the copy shipped in the APK. The notice waits for the refresh to end
+            // (it may still succeed); meanwhile the action reads "Actualizando…" and does nothing, but stays
+            // focusable so focus is not thrown out from under the person when the label changes.
+            catalogRefreshLine(catalog)?.let { line ->
                 item(key = "seed-notice") {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text("Sin conexión: mostrando la lista guardada.", style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary)
-                        TvActionOption(label = "Reintentar") { vm.reloadCatalog() }
+                        line.notice?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary) }
+                        TvActionOption(label = line.actionLabel) { if (line.actionEnabled) vm.reloadCatalog() }
                     }
                 }
             }
