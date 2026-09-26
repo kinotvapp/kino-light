@@ -139,7 +139,7 @@ fun TvAddPluginScreen(mode: AddPluginMode, onClose: () -> Unit) {
                     // `Done` just leaves the field (the list filters as you type).
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                     keyboardActions = KeyboardActions(onDone = { focusManager.moveFocus(FocusDirection.Down) }),
-                    modifier = Modifier.fillMaxWidth(0.6f).focusProperties { canFocus = initialFocusPlaced }.downLeavesTheField(focusManager),
+                    modifier = Modifier.fillMaxWidth(0.6f).focusProperties { canFocus = initialFocusPlaced }.dpadLeavesTheField(focusManager),
                 )
             }
             // Only while the list is still the copy shipped in the APK. The notice waits for the refresh to end
@@ -184,7 +184,7 @@ fun TvAddPluginScreen(mode: AddPluginMode, onClose: () -> Unit) {
                         // leaves the field, since a closed IME otherwise traps focus in it.
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
                         keyboardActions = KeyboardActions(onDone = { vm.add(); focusManager.moveFocus(FocusDirection.Down) }),
-                        modifier = Modifier.fillMaxWidth(0.6f).focusProperties { canFocus = initialFocusPlaced }.downLeavesTheField(focusManager),
+                        modifier = Modifier.fillMaxWidth(0.6f).focusProperties { canFocus = initialFocusPlaced }.dpadLeavesTheField(focusManager),
                     )
                     TvActionOption(label = if (state.busy) "Revisando…" else "Agregar") { vm.add() }
                 }
@@ -255,10 +255,22 @@ internal fun catalogRowLabel(action: CatalogAction, name: String): String = when
     CatalogAction.INSTALLED -> "$name: instalado"
 }
 
-/** D-pad Down always leaves a text field: a closed IME otherwise traps focus in it. */
-private fun Modifier.downLeavesTheField(focusManager: FocusManager): Modifier = onPreviewKeyEvent { e ->
-    if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionDown) {
-        focusManager.moveFocus(FocusDirection.Down)
+/**
+ * The direction a D-pad key takes focus out of a text field, or null when the field keeps the key.
+ * A single-line field has no use for Up/Down (they only moved the caret), and a closed IME otherwise
+ * traps focus in it: with rows above and below the field, both must leave.
+ */
+internal fun fieldExitDirection(key: Key): FocusDirection? = when (key) {
+    Key.DirectionUp -> FocusDirection.Up
+    Key.DirectionDown -> FocusDirection.Down
+    else -> null
+}
+
+/** D-pad Up and Down always leave a text field (see [fieldExitDirection]). */
+private fun Modifier.dpadLeavesTheField(focusManager: FocusManager): Modifier = onPreviewKeyEvent { e ->
+    val direction = if (e.type == KeyEventType.KeyDown) fieldExitDirection(e.key) else null
+    if (direction != null) {
+        focusManager.moveFocus(direction)
         true
     } else {
         false
