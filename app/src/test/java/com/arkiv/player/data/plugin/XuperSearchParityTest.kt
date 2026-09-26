@@ -162,7 +162,7 @@ class XuperSearchParityTest {
         null,
         EffectiveHosts(emptyList()),
         testSession(fake).let { session ->
-            lazyOf(MagisPluginBridge(MagisCatalog(fake, session), MagisResolve(fake, session), tmdb(), vodStore = null))
+            lazyOf(MagisPluginBridge(MagisCatalog(fake, session), MagisResolve(fake, session), tmdb(), vodStore = null, streams = XuperStreams()))
         },
     )
 

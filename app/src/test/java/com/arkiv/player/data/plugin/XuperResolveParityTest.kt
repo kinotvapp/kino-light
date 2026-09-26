@@ -84,7 +84,7 @@ class XuperResolveParityTest {
     private fun resolver(fixture: JSONObject, fake: FakePortalClient, session: MagisSession) =
         MagisResolve(fake, session, appId = fixture.getString("appId"), apkVersion = fixture.getString("apkVersion"))
 
-    private fun host(fixture: JSONObject, fake: FakePortalClient): DefaultPrivilegedXuperHost {
+    private fun host(fixture: JSONObject, fake: FakePortalClient, streams: XuperStreams = XuperStreams()): DefaultPrivilegedXuperHost {
         val session = sessionFor(fixture, fake)
         return DefaultPrivilegedXuperHost(
             "xuper",
@@ -93,7 +93,7 @@ class XuperResolveParityTest {
             PluginConfig.EMPTY,
             null,
             EffectiveHosts(emptyList()),
-            lazyOf(MagisPluginBridge(MagisCatalog(fake, session), resolver(fixture, fake, session), TmdbApi(), vodStore = null)),
+            lazyOf(MagisPluginBridge(MagisCatalog(fake, session), resolver(fixture, fake, session), TmdbApi(), vodStore = null, streams = streams)),
         )
     }
 
@@ -110,9 +110,12 @@ class XuperResolveParityTest {
         .put("drmLicenseUrl", drmLicenseUrl)
         .put("subtitles", JSONArray(subtitles.map { JSONObject().put("lang", it.lang).put("url", it.url).put("format", it.format) }))
 
-    /** The `GatewayPlayable` MagisSource would have returned, rebuilt from one `xuperResolve` stream. */
-    private fun rebuilt(stream: JSONObject): JSONObject {
-        val headers = stream.getJSONObject("headers").let { h -> h.keys().asSequence().associateWith { h.getString(it) } }
+    /**
+     * The `GatewayPlayable` MagisSource would have returned, rebuilt from one `xuperResolve` stream
+     * plus the headers the bridge kept natively for its URL (the stream itself carries none).
+     */
+    private fun rebuilt(stream: JSONObject, streams: XuperStreams): JSONObject {
+        val headers = streams.headersFor(stream.getString("url")) ?: emptyMap()
         val subs = stream.getJSONArray("subtitles")
         return GatewayPlayable(
             kind = "magis",
@@ -218,11 +221,12 @@ class XuperResolveParityTest {
         for ((name, fixture) in fixtures()) {
             val fake = replayPortal(fixture)
             val expected = fixture.getJSONObject("expected")
-            val envelope = JSONObject(host(fixture, fake).xuperResolve(fixture.getJSONObject("request").getString("ref")))
+            val streams = XuperStreams()
+            val envelope = JSONObject(host(fixture, fake, streams).xuperResolve(fixture.getJSONObject("request").getString("ref")))
 
             if (expected.has("playable")) {
                 assertTrue(name + ": " + envelope, envelope.getBoolean("ok"))
-                assertEquals(name, sorted(expected.getJSONObject("playable")), sorted(rebuilt(envelope.getJSONObject("data"))))
+                assertEquals(name, sorted(expected.getJSONObject("playable")), sorted(rebuilt(envelope.getJSONObject("data"), streams)))
             } else {
                 assertFalse(name + ": " + envelope, envelope.getBoolean("ok"))
                 val (code, message) = expectedFailure(fixture)
@@ -251,6 +255,55 @@ class XuperResolveParityTest {
         assertEquals(1, fake.timesCalled(recorded.getJSONObject(0).getString("path")))
     }
 
+    // --- the auth headers never reach the script --------------------------------------------------
+
+    private fun playableFixtures() = fixtures().filter { it.second.getJSONObject("expected").has("playable") }
+
+    /** The device's real headers for [fixture]'s playable. */
+    private fun deviceHeaders(fixture: JSONObject): Map<String, String> =
+        fixture.getJSONObject("expected").getJSONObject("playable").getJSONObject("headers")
+            .let { h -> h.keys().asSequence().associateWith { h.getString(it) } }
+
+    @Test fun `the envelope the script reads carries no header, and none of their values`() = runBlocking {
+        for ((name, fixture) in playableFixtures()) {
+            val raw = host(fixture, replayPortal(fixture)).xuperResolve(fixture.getJSONObject("request").getString("ref"))
+            assertFalse(name, JSONObject(raw).getJSONObject("data").has("headers"))
+            // The session secrets, by value: wherever they might be smuggled, they aren't in the text.
+            for (key in listOf("Content-Auth", "Content-License", "App")) {
+                val value = deviceHeaders(fixture).getValue(key)
+                assertTrue("$name: $key is blank in the fixture", value.length > 8)
+                assertFalse("$name: $key's value reached the script", raw.contains(value))
+            }
+            // Nor any piece of the two auth strings that carries a credential.
+            for (key in listOf("Content-Auth", "Content-License")) {
+                val token = deviceHeaders(fixture).getValue(key).split('&').first { it.startsWith("token=") }
+                assertFalse("$name: $key's token reached the script", raw.contains(token.removePrefix("token=")))
+            }
+        }
+    }
+
+    @Test fun `what the script relays plays with the device's real headers`() = runBlocking {
+        for ((name, fixture) in playableFixtures()) {
+            val streams = XuperStreams()
+            val raw = host(fixture, replayPortal(fixture), streams).xuperResolve(fixture.getJSONObject("request").getString("ref"))
+            // A thin plugin.js relays the envelope's data as its own resolve() answer; a hostile one
+            // adds headers of its own. Either way the source attaches the bridge's, and only those.
+            val relayed = JSONObject(raw).getJSONObject("data").put("headers", JSONObject().put("Content-Auth", "forged"))
+            val xuper = InstalledPlugin(
+                PluginManifest("xuper", "Xuper", "1.0.0", 1, "plugin.js", "", "", "", emptyList(), setOf("search", "resolve"), null, null),
+                InstalledRecord(XuperPrivilege.SOURCE_REPO, "1.0.0", "x", emptyList(), 0L),
+                null,
+            )
+            val source = PluginContentSource(xuper, { _, _, _, _ -> relayed.toString() }, xuper.hosts, xuperStreams = streams, log = {})
+            val play = source.resolve(PluginRef("xuper", "m1", PluginRef.MOVIE, fixture.getJSONObject("request").getString("ref")).encode())
+            val device = fixture.getJSONObject("expected").getJSONObject("playable")
+            assertEquals(name, device.getString("url"), play.url)
+            assertEquals(name, deviceHeaders(fixture), play.headers)
+            val subs = device.getJSONArray("subtitles")
+            assertEquals(name, (0 until subs.length()).map { subs.getJSONObject(it).getString("url") }, play.subtitles.map { it.url })
+        }
+    }
+
     // --- not device captures ---------------------------------------------------------------------
     //
     // A geo-blocked session couldn't be produced on the test phone without touching its real
@@ -267,7 +320,7 @@ class XuperResolveParityTest {
             PluginConfig.EMPTY,
             null,
             EffectiveHosts(emptyList()),
-            lazyOf(MagisPluginBridge(MagisCatalog(fake, session), MagisResolve(fake, session), TmdbApi(), vodStore = null)),
+            lazyOf(MagisPluginBridge(MagisCatalog(fake, session), MagisResolve(fake, session), TmdbApi(), vodStore = null, streams = XuperStreams())),
         )
     }
 

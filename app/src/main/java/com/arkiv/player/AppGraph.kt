@@ -337,8 +337,16 @@ class AppGraph(context: Context) {
             vodResolver = magisResolve,
             tmdb = tmdbApi,
             vodStore = com.arkiv.player.data.magis.VodSearchStore(database.vodSearchCacheDao()),
+            streams = xuperStreams,
         )
     }
+
+    /**
+     * The streams [magisPluginBridge] resolved, with their CDN headers kept out of the plugin's
+     * script: written by the bridge, read by the Xuper plugin's [PluginContentSource] (and only
+     * its: see [XuperStreams]). Cheap and credential-free, so not lazy.
+     */
+    private val xuperStreams = XuperStreams()
 
     // --- Direct Caracol (Ditu) -----------------------------------------------------------------
     //
@@ -373,7 +381,7 @@ class AppGraph(context: Context) {
         val unusablePlugins = UnusablePluginSource(pluginRegistry)
         com.arkiv.player.data.gateway.CompositeSource {
             listOf(magisSource, dituSource) +
-                pluginRegistry.usable().map { PluginContentSource(it, pluginCaller, it.hosts) } +
+                pluginRegistry.usable().map { PluginContentSource(it, pluginCaller, it.hosts, xuperStreams) } +
                 unusablePlugins
         }
     }
@@ -468,7 +476,7 @@ class AppGraph(context: Context) {
 
     /** "Ver más" talks to one plugin directly; null when it isn't usable any more. */
     fun pluginSource(id: String): PluginContentSource? =
-        pluginRegistry.find(id)?.takeIf { it.isUsable }?.let { PluginContentSource(it, pluginCaller, it.hosts) }
+        pluginRegistry.find(id)?.takeIf { it.isUsable }?.let { PluginContentSource(it, pluginCaller, it.hosts, xuperStreams) }
 
     val pluginRuntimes: PluginRuntimePool by lazy {
         PluginRuntimePool(

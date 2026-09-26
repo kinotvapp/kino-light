@@ -15,7 +15,8 @@ object XuperPrivilege {
      * appends `@<ref>` for anything but the default branch and `/<path>` for a subfolder, so
      * `kinotvapp/kino-plugin-xuper@some-branch`, `kinotvapp/kino-plugin-xuper/sub`, and any other
      * owner (e.g. `someone-else/kino-plugin-xuper`) must all be refused, not just a different repo
-     * name. [pluginHostFor] is the only caller in production; call THIS from a test too, never
+     * name. Production callers: [pluginHostFor] (the `kino.xuper.*` functions) and
+     * [PluginContentSource] (the [XuperStreams] carve-out on its streams); call THIS from a test too, never
      * reproduce the comparison, or a test can go on passing after the real gate silently changes.
      */
     fun grants(record: InstalledRecord): Boolean = record.address == SOURCE_REPO

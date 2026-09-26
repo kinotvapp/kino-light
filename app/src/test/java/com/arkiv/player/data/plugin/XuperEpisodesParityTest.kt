@@ -128,7 +128,7 @@ class XuperEpisodesParityTest {
     }
 
     private fun bridge(fake: FakePortalClient): MagisPluginBridge = testSession(fake).let { session ->
-        MagisPluginBridge(MagisCatalog(fake, session), MagisResolve(fake, session), tmdb(), vodStore = null)
+        MagisPluginBridge(MagisCatalog(fake, session), MagisResolve(fake, session), tmdb(), vodStore = null, streams = XuperStreams())
     }
 
     private fun host(bridge: MagisPluginBridge) = DefaultPrivilegedXuperHost(
