@@ -1,5 +1,7 @@
 package com.arkiv.player.data.plugin.catalog
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
@@ -12,6 +14,8 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.io.IOException
+import java.util.concurrent.TimeUnit
 
 class CatalogRepositoryTest {
     @get:Rule val tmp = TemporaryFolder()
@@ -33,15 +37,26 @@ class CatalogRepositoryTest {
 
     private val seedJson = json("seed")
 
-    private fun repo() = CatalogRepository(
-        client = OkHttpClient(),
-        sources = listOf(CatalogSource("first", first.url("/c.json").toString()), CatalogSource("second", second.url("/c.json").toString())),
+    private fun defaultSources() = listOf(
+        CatalogSource("first", first.url("/c.json").toString()),
+        CatalogSource("second", second.url("/c.json").toString()),
+    )
+
+    private fun repo(
+        client: OkHttpClient = OkHttpClient(),
+        sources: List<CatalogSource> = defaultSources(),
+        seed: () -> String = { seedJson },
+    ) = CatalogRepository(
+        client = client,
+        sources = sources,
         cacheFile = cache,
-        seed = { seedJson },
+        seed = seed,
         capabilities = emptySet(),
         clock = { now },
         ttlMs = 6 * 3600_000L,
     )
+
+    private val emptyJson = """{"schema":1,"plugins":[]}"""
 
     private fun ids(r: CatalogResult) = r.catalog.entries.map { it.id }
 
@@ -103,5 +118,91 @@ class CatalogRepositoryTest {
         cache.writeText("{not json"); cache.setLastModified(now - 7 * 3600_000L)
         first.enqueue(MockResponse().setResponseCode(500)); second.enqueue(MockResponse().setResponseCode(500))
         assertEquals(listOf("seed"), ids(repo().load(false)))
+    }
+
+    // ---- Fix round 1 ----
+
+    @Test fun `a failed cache write does not lose a good download`() = runBlocking {
+        // A directory where the cache file should be makes every write to it fail with an IOException.
+        cache.mkdirs()
+        first.enqueue(MockResponse().setBody(json("a")))
+        val r = repo().load(false)
+        assertEquals(listOf("a"), ids(r)); assertEquals(CatalogOrigin.FRESH, r.origin)
+        assertEquals("FileNotFoundException", r.failures["cache"])
+    }
+
+    @Test fun `an empty catalog from a source is skipped for the next source`() = runBlocking {
+        first.enqueue(MockResponse().setBody(emptyJson))
+        second.enqueue(MockResponse().setBody(json("b")))
+        val r = repo().load(false)
+        assertEquals(listOf("b"), ids(r)); assertEquals(CatalogOrigin.FRESH, r.origin)
+        assertEquals("empty catalog", r.failures["first"])
+    }
+
+    @Test fun `a catalog whose entries are all invalid counts as empty`() = runBlocking {
+        first.enqueue(MockResponse().setBody("""{"schema":1,"plugins":[{"id":"BAD ID","repo":"nope","name":""}]}"""))
+        second.enqueue(MockResponse().setBody(json("b")))
+        val r = repo().load(false)
+        assertEquals(listOf("b"), ids(r))
+        assertEquals("empty catalog", r.failures["first"])
+    }
+
+    @Test fun `an empty catalog never replaces a good cache`() = runBlocking {
+        cache.writeText(json("good")); cache.setLastModified(now - 7 * 3600_000L)
+        first.enqueue(MockResponse().setBody(emptyJson)); second.enqueue(MockResponse().setBody(emptyJson))
+        val r = repo().load(false)
+        assertEquals(listOf("good"), ids(r)); assertEquals(CatalogOrigin.CACHE, r.origin)
+        assertEquals(json("good"), cache.readText())
+    }
+
+    @Test fun `an empty cache file falls through to the seed`() = runBlocking {
+        cache.writeText(emptyJson); cache.setLastModified(now - 7 * 3600_000L)
+        first.enqueue(MockResponse().setResponseCode(500)); second.enqueue(MockResponse().setResponseCode(500))
+        val r = repo().load(false)
+        assertEquals(listOf("seed"), ids(r)); assertEquals(CatalogOrigin.SEED, r.origin)
+    }
+
+    @Test fun `an empty cache file inside the TTL does not stop a download`() = runBlocking {
+        cache.writeText(emptyJson); cache.setLastModified(now - 1000)
+        first.enqueue(MockResponse().setBody(json("new")))
+        val r = repo().load(false)
+        assertEquals(listOf("new"), ids(r)); assertEquals(CatalogOrigin.FRESH, r.origin)
+    }
+
+    @Test fun `an unreadable seed does not throw out of load`() = runBlocking {
+        first.enqueue(MockResponse().setResponseCode(500)); second.enqueue(MockResponse().setResponseCode(500))
+        val r = repo(seed = { throw IOException("asset missing") }).load(false)
+        assertTrue(r.catalog.entries.isEmpty()); assertEquals(CatalogOrigin.SEED, r.origin)
+        assertEquals("unreadable", r.failures["seed"])
+        assertEquals("HTTP 500", r.failures["first"])
+    }
+
+    @Test fun `a cache dated in the future is stale`() = runBlocking {
+        cache.writeText(json("cached")); cache.setLastModified(now + 24 * 3600_000L)
+        first.enqueue(MockResponse().setBody(json("new")))
+        val r = repo().load(false)
+        assertEquals(listOf("new"), ids(r)); assertEquals(CatalogOrigin.FRESH, r.origin)
+        assertEquals(1, first.requestCount)
+    }
+
+    @Test fun `redirects are followed even when the injected client refuses them`() = runBlocking {
+        first.enqueue(MockResponse().setResponseCode(302).setHeader("Location", second.url("/real.json").toString()))
+        second.enqueue(MockResponse().setBody(json("redirected")))
+        val noRedirects = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false).build()
+        val r = repo(client = noRedirects, sources = listOf(CatalogSource("first", first.url("/c.json").toString()))).load(false)
+        assertEquals(listOf("redirected"), ids(r)); assertEquals(CatalogOrigin.FRESH, r.origin)
+    }
+
+    @Test fun `cancelling during a request stops the chain before the next source`() = runBlocking {
+        // The first source answers slowly; the job is cancelled while that call is in flight. The blocking
+        // call cannot be interrupted, so the loop must notice the cancellation before it starts source two.
+        first.enqueue(MockResponse().setResponseCode(503).setHeadersDelay(1, TimeUnit.SECONDS))
+        second.enqueue(MockResponse().setBody(json("b")))
+        val job = launch(Dispatchers.Default) { repo().load(false) }
+        first.takeRequest(5, TimeUnit.SECONDS)
+        job.cancel()
+        job.join()
+        assertTrue(job.isCancelled)
+        assertEquals(0, second.requestCount)
     }
 }
