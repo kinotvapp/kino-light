@@ -23,20 +23,24 @@ import com.arkiv.player.data.magis.MagisResult
  * collapses into generic phrases in the original app and which Kino has no resellers to route to --
  * falls back to [PluginErrors.UNAVAILABLE].
  *
- * Nothing here ever produces [PluginErrors.AUTH_REQUIRED]: a session-dead rejection wants
- * reauthentication, not one of these 5 codes, and `MagisSession.withValidSession` already retries or
- * fails before a [MagisResult.PortalError] reaches this mapping (see `MagisResult.kt`'s
- * `isContentGone` KDoc). Nothing here produces [PluginErrors.RATE_LIMITED] either: Magis has no
- * portal code for it.
+ * This mapping has no explicit branch for the session-dead codes (`aaa100027`/`aaa100028`, see
+ * `MagisSession.kt`'s `SESSION_DEAD`). `MagisSession.withValidSession` reauthenticates and retries on
+ * any `PortalError` before returning one, but if that reauthentication itself fails -- a linked
+ * account's relogin rejected, or every seed-rescue round exhausted for an anonymous session -- it
+ * falls through to `return result` with the ORIGINAL, still-`SESSION_DEAD`-coded `PortalError` intact
+ * (not swallowed or replaced). So one of those codes CAN reach here; when it does, it has no explicit
+ * branch below and falls into the generic [PluginErrors.UNAVAILABLE] case rather than
+ * [PluginErrors.AUTH_REQUIRED] -- a safe fallback, not a deliberate claim that this can never happen.
+ * Nothing here produces [PluginErrors.RATE_LIMITED] either: Magis has no portal code for it.
  */
 private const val CONTENT_GONE_MARKER = "不存在"
 
 internal fun MagisResult.PortalError.toPluginError(): Pair<String, String> {
     val message = msg.orEmpty()
     return when {
-        msg?.contains(CONTENT_GONE_MARKER) == true -> PluginErrors.NOT_FOUND to message
         code == "portal100004" -> PluginErrors.NOT_FOUND to message
         code == "portal100024" -> PluginErrors.GEO_BLOCKED to message
+        msg?.contains(CONTENT_GONE_MARKER) == true -> PluginErrors.NOT_FOUND to message
         else -> PluginErrors.UNAVAILABLE to message
     }
 }
