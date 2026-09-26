@@ -12,8 +12,7 @@ import org.json.JSONObject
  * The production [PrivilegedXuperHost]. [DefaultPluginHost] is `final` (this codebase has no other
  * open production class), so every ordinary `kino.*` member -- fetch/storage/cookies/config/crypto,
  * all unchanged from any other installed plugin -- is delegated to one, by interface delegation
- * rather than inheritance. Only the 5 `xuper*` members are this class's own; the one still
- * throwing is a stub until Task 10 replaces it with the real, protected Magis call.
+ * rather than inheritance. Only the 5 `xuper*` members are this class's own.
  */
 class DefaultPrivilegedXuperHost internal constructor(
     id: String,
@@ -54,7 +53,28 @@ class DefaultPrivilegedXuperHost internal constructor(
             failure(PluginErrors.UNAVAILABLE, e.message ?: "error de Xuper")
         }
     }
-    override suspend fun xuperBrowse(ref: String, cursor: String?): String = throw NotImplementedError("Task 10")
+
+    /**
+     * Argument: a Home row's own `ref` (`kino.xuper.home`'s row `ref`, equal to its `id`), and a
+     * numeric offset `cursor` ("Ver más" page). Answer: the envelope around
+     * [MagisPluginBridge.browse]'s `{items, next}`, paging over the row's already-fetched
+     * `MagisHomeRow.all` -- no new portal call. Like [xuperHome] (and for the same reason: no
+     * `MagisResult` here to pattern-match), this doesn't reuse [envelope]. A `ref` that matches no
+     * current row answers plain `not_found`, the same shape every other installed plugin's browse
+     * of an unknown ref already answers with -- not a portal error, so it never goes through
+     * [MagisResult.toPluginError].
+     */
+    override suspend fun xuperBrowse(ref: String, cursor: String?): String = withContext(Dispatchers.IO) {
+        try {
+            val page = magis.value.browse(ref, cursor)
+                ?: return@withContext failure(PluginErrors.NOT_FOUND, "")
+            JSONObject().put("ok", true).put("data", page).toString()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            failure(PluginErrors.UNAVAILABLE, e.message ?: "error de Xuper")
+        }
+    }
 
     /**
      * Argument: a series item's own `ref`, as `kino.xuper.search` returned it. Answer: the envelope
