@@ -24,8 +24,17 @@ enum class CatalogOrigin { FRESH, CACHE, SEED }
  */
 data class CatalogResult(val catalog: PluginCatalog, val origin: CatalogOrigin, val failures: Map<String, String> = emptyMap())
 
-fun interface CatalogProvider {
+interface CatalogProvider {
+    /** The catalog as [CatalogRepository] resolves it: may download, so it can take seconds. */
     suspend fun load(force: Boolean): CatalogResult
+
+    /**
+     * What is on the device right now, without touching the network: the last good download (whatever its
+     * age) when it parses and has entries, else the copy shipped in the APK. Never throws, so a screen can
+     * paint a list on its first frame and let [load] refresh it in the background. Reads two small local
+     * files; origin is [CatalogOrigin.CACHE] or [CatalogOrigin.SEED].
+     */
+    fun cachedOrSeed(): CatalogResult
 }
 
 /** What THIS build can do; catalog entries that require anything else are hidden. Phase 2 adds `xuper-bridge`. */
@@ -101,14 +110,23 @@ class CatalogRepository(
             return@withContext CatalogResult(catalog, CatalogOrigin.FRESH, failures)
         }
         if (cached != null) return@withContext CatalogResult(cached, CatalogOrigin.CACHE, failures)
-        val seeded = try {
+        CatalogResult(readSeed(failures), CatalogOrigin.SEED, failures)
+    }
+
+    override fun cachedOrSeed(): CatalogResult {
+        readCache()?.let { return CatalogResult(it, CatalogOrigin.CACHE) }
+        val failures = LinkedHashMap<String, String>()
+        return CatalogResult(readSeed(failures), CatalogOrigin.SEED, failures)
+    }
+
+    /** The APK's copy; an unreadable or invalid one is an empty catalog, with `seed` in [failures] when it could not be read. */
+    private fun readSeed(failures: MutableMap<String, String>): PluginCatalog =
+        try {
             PluginCatalogParser.parse(seed(), capabilities) ?: PluginCatalog(emptyList())
         } catch (e: IOException) {
             failures["seed"] = "unreadable"
             PluginCatalog(emptyList())
         }
-        CatalogResult(seeded, CatalogOrigin.SEED, failures)
-    }
 
     private fun readCache(): PluginCatalog? =
         if (cacheFile.exists()) {

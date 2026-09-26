@@ -21,6 +21,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
@@ -71,6 +72,19 @@ class PluginsViewModelTest {
         private val result = CatalogResult(PluginCatalog(entries.toList()), CatalogOrigin.FRESH)
         val forceFlags = mutableListOf<Boolean>()
         override suspend fun load(force: Boolean): CatalogResult { forceFlags += force; return result }
+        // What the disk holds: the same entries, as the cache would give them.
+        override fun cachedOrSeed(): CatalogResult = result.copy(origin = CatalogOrigin.CACHE)
+    }
+
+    private val emptySeed = CatalogResult(PluginCatalog(emptyList()), CatalogOrigin.SEED)
+
+    /** A provider whose disk copy is [onDisk] and whose download is whatever [download] does. */
+    private class ScriptedCatalog(
+        private val onDisk: CatalogResult,
+        private val download: suspend (force: Boolean) -> CatalogResult,
+    ) : CatalogProvider {
+        override suspend fun load(force: Boolean): CatalogResult = download(force)
+        override fun cachedOrSeed(): CatalogResult = onDisk
     }
 
     private fun entry(id: String, repo: String, name: String = id) = CatalogEntry(id, repo, name, "")
@@ -359,9 +373,10 @@ class PluginsViewModelTest {
         assertEquals("archive", vm.state.value.query)
     }
 
-    @Test fun `a catalog that throws ends the loading state with no rows`() {
-        val vm = vm(FakeAdmin(), CatalogProvider { throw IllegalStateException("boom") })
+    @Test fun `a catalog that throws with nothing on disk ends the loading state with no rows`() {
+        val vm = vm(FakeAdmin(), ScriptedCatalog(emptySeed) { throw IllegalStateException("boom") })
         assertFalse(vm.catalog.value.loading)
+        assertFalse(vm.catalog.value.refreshing)
         assertTrue(vm.catalog.value.rows.isEmpty())
     }
 
@@ -369,12 +384,145 @@ class PluginsViewModelTest {
         val gate = CompletableDeferred<CatalogResult>()
         val fresh = CatalogResult(PluginCatalog(listOf(entry("fresh", "o/fresh"))), CatalogOrigin.FRESH)
         var calls = 0
-        val vm = vm(FakeAdmin(), CatalogProvider { force -> if (calls++ == 0) gate.await() else fresh.also { assertTrue(force) } })
+        val vm = vm(FakeAdmin(), ScriptedCatalog(emptySeed) { force -> if (calls++ == 0) gate.await() else fresh.also { assertTrue(force) } })
         assertTrue(vm.catalog.value.loading)
         vm.reloadCatalog()
         assertEquals(listOf("fresh"), vm.catalog.value.rows.map { it.entry.id })
         gate.complete(CatalogResult(PluginCatalog(listOf(entry("stale", "o/stale"))), CatalogOrigin.CACHE))
         assertEquals(listOf("fresh"), vm.catalog.value.rows.map { it.entry.id })
         assertEquals(CatalogOrigin.FRESH, vm.catalog.value.origin)
+    }
+
+    // ---- Device pass: instant first paint, background refresh ----
+
+    private fun result(origin: CatalogOrigin, vararg ids: String) =
+        CatalogResult(PluginCatalog(ids.map { entry(it, "o/$it") }), origin)
+
+    @Test fun `the rows are there on the first frame while the download is still pending`() {
+        val gate = CompletableDeferred<CatalogResult>()
+        val vm = vm(FakeAdmin(), ScriptedCatalog(result(CatalogOrigin.CACHE, "a", "b")) { gate.await() })
+        with(vm.catalog.value) {
+            assertEquals(listOf("a", "b"), rows.map { it.entry.id })
+            assertFalse(loading)
+            assertTrue(refreshing)
+            assertEquals(CatalogOrigin.CACHE, origin)
+        }
+    }
+
+    @Test fun `the seed shows at once when there is no cache, and no spinner hides it`() {
+        val gate = CompletableDeferred<CatalogResult>()
+        val vm = vm(FakeAdmin(), ScriptedCatalog(result(CatalogOrigin.SEED, "seed")) { gate.await() })
+        with(vm.catalog.value) {
+            assertEquals(listOf("seed"), rows.map { it.entry.id })
+            assertFalse(loading)
+            assertTrue(refreshing)
+            assertEquals(CatalogOrigin.SEED, origin)
+        }
+    }
+
+    @Test fun `only an empty list with a download pending counts as loading`() {
+        val gate = CompletableDeferred<CatalogResult>()
+        val vm = vm(FakeAdmin(), ScriptedCatalog(emptySeed) { gate.await() })
+        assertTrue(vm.catalog.value.loading)
+        assertTrue(vm.catalog.value.refreshing)
+        gate.complete(emptySeed)
+        assertFalse(vm.catalog.value.loading)
+        assertFalse(vm.catalog.value.refreshing)
+    }
+
+    @Test fun `the download replaces the rows and ends refreshing`() {
+        val gate = CompletableDeferred<CatalogResult>()
+        val vm = vm(FakeAdmin(), ScriptedCatalog(result(CatalogOrigin.SEED, "seed")) { gate.await() })
+        assertTrue(vm.catalog.value.refreshing)
+        gate.complete(result(CatalogOrigin.FRESH, "new1", "new2"))
+        with(vm.catalog.value) {
+            assertEquals(listOf("new1", "new2"), rows.map { it.entry.id })
+            assertEquals(CatalogOrigin.FRESH, origin)
+            assertFalse(refreshing)
+            assertFalse(loading)
+        }
+    }
+
+    @Test fun `a download that fails keeps the rows and ends refreshing`() {
+        val gate = CompletableDeferred<CatalogResult>()
+        val vm = vm(FakeAdmin(), ScriptedCatalog(result(CatalogOrigin.CACHE, "a")) { gate.await() })
+        gate.completeExceptionally(java.io.IOException("offline"))
+        with(vm.catalog.value) {
+            assertEquals(listOf("a"), rows.map { it.entry.id })
+            assertEquals(CatalogOrigin.CACHE, origin)
+            assertFalse(refreshing)
+        }
+    }
+
+    @Test fun `a download that ends on the seed again leaves the seed showing and refreshing over`() {
+        val vm = vm(FakeAdmin(), ScriptedCatalog(result(CatalogOrigin.SEED, "seed")) { result(CatalogOrigin.SEED, "seed") })
+        with(vm.catalog.value) {
+            assertEquals(listOf("seed"), rows.map { it.entry.id })
+            assertEquals(CatalogOrigin.SEED, origin)
+            assertFalse(refreshing)
+        }
+    }
+
+    @Test fun `reloading sets refreshing again until the forced download ends`() {
+        val gates = mutableListOf<CompletableDeferred<CatalogResult>>()
+        val vm = vm(FakeAdmin(), ScriptedCatalog(result(CatalogOrigin.SEED, "seed")) { CompletableDeferred<CatalogResult>().also { gates += it }.await() })
+        gates[0].complete(result(CatalogOrigin.SEED, "seed"))
+        assertFalse(vm.catalog.value.refreshing)
+        vm.reloadCatalog()
+        assertTrue(vm.catalog.value.refreshing)
+        assertEquals(listOf("seed"), vm.catalog.value.rows.map { it.entry.id })
+        gates[1].complete(result(CatalogOrigin.FRESH, "new"))
+        assertFalse(vm.catalog.value.refreshing)
+        assertEquals(listOf("new"), vm.catalog.value.rows.map { it.entry.id })
+    }
+
+    @Test fun `a forced reload that fails keeps the rows on screen`() {
+        var calls = 0
+        val vm = vm(FakeAdmin(), ScriptedCatalog(result(CatalogOrigin.SEED, "seed")) { if (calls++ == 0) result(CatalogOrigin.FRESH, "a") else throw IllegalStateException("boom") })
+        vm.reloadCatalog()
+        assertEquals(listOf("a"), vm.catalog.value.rows.map { it.entry.id })
+        assertFalse(vm.catalog.value.refreshing)
+    }
+
+    @Test fun `a provider whose disk read throws still gives a view model, and the download still lands`() {
+        val gate = CompletableDeferred<CatalogResult>()
+        val provider = object : CatalogProvider {
+            override suspend fun load(force: Boolean) = gate.await()
+            override fun cachedOrSeed(): CatalogResult = throw IllegalStateException("disk")
+        }
+        val vm = vm(FakeAdmin(), provider)
+        // Nothing to show yet, and a download pending: the spinner, not a crash.
+        assertTrue(vm.catalog.value.rows.isEmpty())
+        assertTrue(vm.catalog.value.loading)
+        gate.complete(result(CatalogOrigin.FRESH, "a"))
+        assertEquals(listOf("a"), vm.catalog.value.rows.map { it.entry.id })
+        assertFalse(vm.catalog.value.refreshing)
+    }
+
+    @Test fun `the query filters the rows painted from the disk before the download ends`() {
+        val gate = CompletableDeferred<CatalogResult>()
+        val vm = vm(FakeAdmin(), ScriptedCatalog(CatalogResult(PluginCatalog(listOf(entry("ia", "o/ia", "Internet Archive"), entry("own", "o/own", "Tu servidor"))), CatalogOrigin.CACHE)) { gate.await() })
+        vm.onQueryChange("servidor")
+        assertEquals(listOf("own"), vm.catalog.value.rows.map { it.entry.id })
+        assertTrue(vm.catalog.value.refreshing)
+    }
+
+    @Test fun `an older load that ends after a newer one started does not switch refreshing off`() {
+        // A real provider blocks on IO, so the cancelled load finishes AFTER the reload has started: replay
+        // that order with a queueing dispatcher.
+        val standard = StandardTestDispatcher()
+        Dispatchers.setMain(standard)
+        val gates = mutableListOf<CompletableDeferred<CatalogResult>>()
+        val vm = vm(FakeAdmin(), ScriptedCatalog(result(CatalogOrigin.SEED, "seed")) { CompletableDeferred<CatalogResult>().also { gates += it }.await() })
+        standard.scheduler.runCurrent()
+        assertEquals(1, gates.size)
+        vm.reloadCatalog()
+        standard.scheduler.runCurrent()
+        assertEquals(2, gates.size)
+        assertTrue(vm.catalog.value.refreshing)
+        gates[1].complete(result(CatalogOrigin.FRESH, "new"))
+        standard.scheduler.runCurrent()
+        assertFalse(vm.catalog.value.refreshing)
+        assertEquals(listOf("new"), vm.catalog.value.rows.map { it.entry.id })
     }
 }

@@ -193,6 +193,64 @@ class CatalogRepositoryTest {
         assertEquals(listOf("redirected"), ids(r)); assertEquals(CatalogOrigin.FRESH, r.origin)
     }
 
+    // ---- Device pass: the list paints from disk, before any download ----
+
+    @Test fun `cachedOrSeed returns a fresh cache without touching the network`() {
+        cache.writeText(json("cached")); cache.setLastModified(now - 1000)
+        val r = repo().cachedOrSeed()
+        assertEquals(listOf("cached"), ids(r)); assertEquals(CatalogOrigin.CACHE, r.origin)
+        assertEquals(0, first.requestCount); assertEquals(0, second.requestCount)
+    }
+
+    @Test fun `cachedOrSeed returns a stale cache too, its age is ignored`() {
+        cache.writeText(json("stale")); cache.setLastModified(now - 7 * 3600_000L)
+        val r = repo().cachedOrSeed()
+        assertEquals(listOf("stale"), ids(r)); assertEquals(CatalogOrigin.CACHE, r.origin)
+        assertEquals(0, first.requestCount)
+    }
+
+    @Test fun `cachedOrSeed returns a cache dated in the future too`() {
+        cache.writeText(json("cached")); cache.setLastModified(now + 24 * 3600_000L)
+        assertEquals(listOf("cached"), ids(repo().cachedOrSeed()))
+    }
+
+    @Test fun `cachedOrSeed falls back to the seed when there is no cache`() {
+        val r = repo().cachedOrSeed()
+        assertEquals(listOf("seed"), ids(r)); assertEquals(CatalogOrigin.SEED, r.origin)
+        assertTrue(r.failures.isEmpty())
+        assertEquals(0, first.requestCount)
+    }
+
+    @Test fun `cachedOrSeed ignores an empty cache`() {
+        cache.writeText(emptyJson); cache.setLastModified(now - 1000)
+        val r = repo().cachedOrSeed()
+        assertEquals(listOf("seed"), ids(r)); assertEquals(CatalogOrigin.SEED, r.origin)
+    }
+
+    @Test fun `cachedOrSeed ignores a corrupt cache`() {
+        cache.writeText("{not json"); cache.setLastModified(now - 1000)
+        val r = repo().cachedOrSeed()
+        assertEquals(listOf("seed"), ids(r)); assertEquals(CatalogOrigin.SEED, r.origin)
+    }
+
+    @Test fun `cachedOrSeed never throws when the seed cannot be read`() {
+        val r = repo(seed = { throw IOException("asset missing") }).cachedOrSeed()
+        assertTrue(r.catalog.entries.isEmpty()); assertEquals(CatalogOrigin.SEED, r.origin)
+        assertEquals("unreadable", r.failures["seed"])
+    }
+
+    @Test fun `cachedOrSeed with a seed that is not a catalog is an empty seed result`() {
+        val r = repo(seed = { "<html>" }).cachedOrSeed()
+        assertTrue(r.catalog.entries.isEmpty()); assertEquals(CatalogOrigin.SEED, r.origin)
+    }
+
+    @Test fun `cachedOrSeed leaves the cache file as it found it`() {
+        cache.writeText(json("cached")); cache.setLastModified(now - 7 * 3600_000L)
+        repo().cachedOrSeed()
+        assertEquals(json("cached"), cache.readText())
+        assertEquals(now - 7 * 3600_000L, cache.lastModified())
+    }
+
     @Test fun `cancelling during a request stops the chain before the next source`() = runBlocking {
         // The first source answers slowly; the job is cancelled while that call is in flight. The blocking
         // call cannot be interrupted, so the loop must notice the cancellation before it starts source two.

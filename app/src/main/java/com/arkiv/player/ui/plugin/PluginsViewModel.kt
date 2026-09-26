@@ -53,12 +53,55 @@ data class PluginsUiState(
 /** One catalog entry as the list shows it: [installed] is the plugin already installed from that repo, or null. */
 data class CatalogRow(val entry: CatalogEntry, val installed: InstalledPlugin?)
 
-/** [loading] is true only until the first result arrives; a later reload keeps showing the rows it has. */
+/**
+ * What the recommended list shows. The rows are there from the first frame (the disk copy: the last good
+ * download, else the seed shipped in the APK) and are replaced when a download ends. [refreshing] is true
+ * from the start of a network load until it ends, forced reloads included. [loading] is true only while
+ * there is truly nothing to show yet: no rows at all and a download pending.
+ */
 data class CatalogUiState(
     val loading: Boolean = true,
     val rows: List<CatalogRow> = emptyList(),
     val origin: CatalogOrigin? = null,
+    val refreshing: Boolean = false,
 )
+
+/** What the seed line of the window says and does; the phone and the TV window both draw it. */
+data class CatalogRefreshLine(
+    /** The notice, or null while a refresh is running (nothing to apologise for yet). */
+    val notice: String?,
+    /** "Reintentar", or "Actualizando…" while a refresh is running. */
+    val actionLabel: String,
+    /** False while a refresh is running: the action is shown but ignored. */
+    val actionEnabled: Boolean,
+)
+
+/**
+ * The line under the search box when the list is still the copy shipped in the APK, or null when the list
+ * came from the network or the cache. While a refresh runs it shows no notice (the refresh may still
+ * succeed); only a refresh that ended without replacing the seed says so.
+ */
+fun catalogRefreshLine(catalog: CatalogUiState): CatalogRefreshLine? =
+    if (catalog.origin != CatalogOrigin.SEED) {
+        null
+    } else {
+        CatalogRefreshLine(
+            notice = if (catalog.refreshing) null else "No se pudo actualizar la lista de recomendados; mostrando la que viene con la app.",
+            actionLabel = if (catalog.refreshing) "Actualizando…" else "Reintentar",
+            actionEnabled = !catalog.refreshing,
+        )
+    }
+
+private val EMPTY_SEED = CatalogResult(PluginCatalog(emptyList()), CatalogOrigin.SEED)
+
+/** The rows for one snapshot of the catalog, the query and the installed plugins (each row marked by repo). */
+private fun catalogUiState(result: CatalogResult, refreshing: Boolean, query: String, installed: List<InstalledPlugin>): CatalogUiState =
+    CatalogUiState(
+        loading = refreshing && result.catalog.entries.isEmpty(),
+        rows = filterCatalog(result.catalog.entries, query).map { e -> CatalogRow(e, installed.firstOrNull { it.record.address == e.repo }) },
+        origin = result.origin,
+        refreshing = refreshing,
+    )
 
 /**
  * Ajustes ▸ Plugins on phone and TV: the same state, two layouts.
@@ -72,7 +115,10 @@ data class CatalogUiState(
 class PluginsViewModel(
     private val admin: PluginAdmin,
     private val io: CoroutineDispatcher = Dispatchers.IO,
-    private val catalogProvider: CatalogProvider = CatalogProvider { CatalogResult(PluginCatalog(emptyList()), CatalogOrigin.SEED) },
+    private val catalogProvider: CatalogProvider = object : CatalogProvider {
+        override suspend fun load(force: Boolean) = EMPTY_SEED
+        override fun cachedOrSeed() = EMPTY_SEED
+    },
 ) : ViewModel() {
     val plugins: StateFlow<List<InstalledPlugin>> = admin.plugins
 
@@ -80,25 +126,23 @@ class PluginsViewModel(
     val state: StateFlow<PluginsUiState> = _state.asStateFlow()
 
     // Declared before [catalog], which combines them: an Eagerly started flow reads them on creation.
-    private val loaded = MutableStateFlow<CatalogResult?>(null)
+    // [loaded] starts as what is on the device, so the very first state already has rows: the network only
+    // refreshes them. [refreshing] starts true because [init] starts that refresh at once.
+    private val loaded = MutableStateFlow(diskCatalog())
+    private val refreshing = MutableStateFlow(true)
     private val query = MutableStateFlow("")
     private var catalogLoad: Job? = null
+    private var loadGeneration = 0
 
     /** The catalog as rows: filtered by the query, each marked with the installed plugin it matches (by repo). */
     val catalog: StateFlow<CatalogUiState> =
-        combine(loaded, query, admin.plugins) { result, q, installed ->
-            if (result == null) {
-                CatalogUiState()
-            } else {
-                CatalogUiState(
-                    loading = false,
-                    rows = filterCatalog(result.catalog.entries, q).map { e ->
-                        CatalogRow(e, installed.firstOrNull { it.record.address == e.repo })
-                    },
-                    origin = result.origin,
-                )
-            }
-        }.stateIn(viewModelScope, SharingStarted.Eagerly, CatalogUiState())
+        combine(loaded, refreshing, query, admin.plugins) { result, isRefreshing, q, installed ->
+            catalogUiState(result, isRefreshing, q, installed)
+        }.stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            catalogUiState(loaded.value, refreshing.value, query.value, admin.plugins.value),
+        )
 
     init { loadCatalog(force = false) }
 
@@ -111,19 +155,35 @@ class PluginsViewModel(
     fun reloadCatalog() = loadCatalog(force = true)
 
     /**
+     * What is on the device (see [CatalogProvider.cachedOrSeed]), read on the calling thread: two small
+     * local files. A provider that throws anyway leaves an empty list, which the download then fills.
+     */
+    private fun diskCatalog(): CatalogResult =
+        try {
+            catalogProvider.cachedOrSeed()
+        } catch (e: Exception) {
+            EMPTY_SEED
+        }
+
+    /**
      * The newest request wins: an older one still running is cancelled, so a slow cached answer can
-     * never land on top of a forced download. A provider that throws keeps the rows already shown,
-     * or, when there are none yet, ends the loading state with an empty catalog.
+     * never land on top of a forced download, and only the newest one may end [refreshing] (a cancelled
+     * load that blocks on IO finishes after its replacement has started). A download that fails keeps
+     * the rows already shown.
      */
     private fun loadCatalog(force: Boolean) {
         catalogLoad?.cancel()
+        val generation = ++loadGeneration
+        refreshing.value = true
         catalogLoad = viewModelScope.launch {
-            loaded.value = try {
-                catalogProvider.load(force)
+            try {
+                loaded.value = catalogProvider.load(force)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                loaded.value ?: CatalogResult(PluginCatalog(emptyList()), CatalogOrigin.SEED, mapOf("load" to e.javaClass.simpleName))
+                // Keep what is on screen: the person can still read and install from it.
+            } finally {
+                if (generation == loadGeneration) refreshing.value = false
             }
         }
     }
