@@ -36,12 +36,33 @@ class PluginApiTest {
     @Test fun `every new function is frozen and can't be renamed`() {
         val out = home(
             """
-            const fns = [kino.sleep, kino.error, kino.config.get, kino.config.all, kino.storage.get, kino.storage.set, kino.storage.remove, kino.storage.keys];
+            const fns = [kino.sleep, kino.error, kino.config.get, kino.config.all, kino.storage.get, kino.storage.set, kino.storage.remove, kino.storage.keys, kino.rank.shortQuery, kino.rank.sortBySimilarity, kino.rank.filterRelevant];
             const renamed = fns.map((f) => { try { Object.defineProperty(f, 'name', { value: 'x' }); return 'renamed'; } catch (e) { return 'refused'; } });
-            return [renamed.every((r) => r === 'refused'), Object.isFrozen(kino.config), Object.isFrozen(kino.storage), fns.every((f) => Object.isFrozen(f))];
+            return [renamed.every((r) => r === 'refused'), Object.isFrozen(kino.config), Object.isFrozen(kino.storage), Object.isFrozen(kino.rank), fns.every((f) => Object.isFrozen(f))];
             """,
         )
-        assertEquals("[true,true,true,true]", out)
+        assertEquals("[true,true,true,true,true]", out)
+    }
+
+    @Test fun `kino rank sorts and filters items by shared words with the query, and shortens it`() {
+        val out = home(
+            """
+            const items = [
+              { title: 'Saga of Something Else' },
+              { title: 'Totally Unrelated Movie' },
+              { title: 'Warrior Saga Legends' },
+              { title: 'Dragon Warrior Saga: Special Edition' },
+            ];
+            const sorted = kino.rank.sortBySimilarity(items, 'Dragon Warrior Saga').map((x) => x.title);
+            const relevant = kino.rank.filterRelevant(items, 'Dragon Warrior Saga').map((x) => x.title);
+            const short = kino.rank.shortQuery('Avatar: Aang, El ultimo Maestro Aire');
+            return [sorted, relevant, short];
+            """,
+        )
+        assertEquals(
+            """[["Dragon Warrior Saga: Special Edition","Warrior Saga Legends","Saga of Something Else","Totally Unrelated Movie"],["Warrior Saga Legends","Dragon Warrior Saga: Special Edition"],"Avatar"]""",
+            out,
+        )
     }
 
     @Test fun `kino error builds a typed error the app reads, before or after the first await`() {

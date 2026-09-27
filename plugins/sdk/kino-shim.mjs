@@ -11,6 +11,7 @@ import { createCipheriv, createDecipheriv, createHash, createHmac, pbkdf2Sync, r
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { contract, hostMatches, isUserServer, kb } from "./contract.mjs";
+import { filterRelevant, shortQuery, sortBySimilarity } from "./kino-rank.mjs";
 
 // Captured at load: the runner later replaces console.error to keep stdout clean, and kino.log
 // must not be routed through that replacement (it would print two prefixes).
@@ -340,6 +341,7 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", stora
       clear() { cookieJar.length = 0; saveJson(cookiesFile, cookieJar); },
     }),
     crypto,
+    rank: Object.freeze({ shortQuery, sortBySimilarity, filterRelevant }),
     async sleep(ms) {
       await null;
       if (!Number.isInteger(ms) || ms < 0 || ms > contract.sleep.maxMs) throw kinoError("invalid_request", `kino.sleep acepta de 0 a ${contract.sleep.maxMs} ms`);

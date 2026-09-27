@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkOutput, contract, validateManifest } from "../contract.mjs";
 import { createKino } from "../kino-shim.mjs";
+import { filterRelevant, shortQuery, sortBySimilarity } from "../kino-rank.mjs";
 import { validate } from "../validate.mjs";
 import { scaffold } from "../init.mjs";
 import { call } from "../run.mjs";
@@ -199,6 +200,110 @@ test("kino.storage entries with a ttlMs expire, are purged, and old data keeps w
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// Ported from the cookbook this promoted (branch feat/plugin-sdk-ranking-helper), against the
+// shipped kino.rank.* functions rather than a copy-pasted recipe.
+test("kino.rank.shortQuery cuts at the first separator, but never a plain hyphen", () => {
+  assert.equal(shortQuery("Avatar: Aang, El ultimo Maestro Aire"), "Avatar");
+  assert.equal(shortQuery("Movie – Subtitle"), "Movie");
+  assert.equal(shortQuery("Movie — Subtitle"), "Movie");
+  assert.equal(shortQuery("One, Two, Three"), "One");
+  // A one- or two-letter head identifies nothing: the whole text is kept instead.
+  assert.equal(shortQuery("A: The Beginning"), "A: The Beginning");
+  // No separator present at all: the whole (trimmed) text is the head, so it is returned either way.
+  assert.equal(shortQuery("  El Ultimo Refugio  "), "El Ultimo Refugio");
+  // Not a plain "-": it must not cut inside a hyphenated word.
+  assert.equal(shortQuery("Spider-Man: Far From Home"), "Spider-Man");
+  assert.equal(shortQuery(""), "");
+});
+
+test("kino.rank.sortBySimilarity puts the item sharing the most words first, stable on ties", () => {
+  const items = [
+    { name: "Saga of Something Else" }, // shares only "saga": 1
+    { name: "Totally Unrelated Movie" }, // shares nothing: 0
+    { name: "Warrior Saga Legends" }, // shares "warrior", "saga": 2
+    { name: "Dragon Warrior Saga: Special Edition" }, // shares all 3
+  ];
+  const getTitle = (x) => x.name;
+  const sorted = sortBySimilarity(items, "Dragon Warrior Saga", getTitle).map(getTitle);
+  assert.deepEqual(sorted, [
+    "Dragon Warrior Saga: Special Edition",
+    "Warrior Saga Legends",
+    "Saga of Something Else",
+    "Totally Unrelated Movie",
+  ]);
+  // Several forms of the query (a title known in more than one language): the best match of any wins.
+  assert.deepEqual(sortBySimilarity(items, ["Ay", "Dragon Warrior Saga"], getTitle).map(getTitle), sorted);
+  // No requested title carries any 3+ letter token: nothing to rank by, so the order is untouched.
+  assert.deepEqual(sortBySimilarity(items, "Ay", getTitle).map(getTitle), items.map(getTitle));
+  // getTitle defaults to `.title`.
+  const titled = items.map((x) => ({ title: x.name }));
+  assert.deepEqual(sortBySimilarity(titled, "Dragon Warrior Saga").map((x) => x.title), sorted);
+});
+
+test("kino.rank.filterRelevant drops hits that only share a stray word", () => {
+  const items = [
+    { name: "Saga of Something Else" }, // 1 of 3 tokens: 0.33, dropped
+    { name: "Totally Unrelated Movie" }, // 0 of 3: dropped
+    { name: "Warrior Saga Legends" }, // 2 of 3: 0.67, kept
+    { name: "Dragon Warrior Saga: Special Edition" }, // 3 of 3: kept
+  ];
+  const getTitle = (x) => x.name;
+  assert.deepEqual(
+    filterRelevant(items, "Dragon Warrior Saga", getTitle).map(getTitle),
+    ["Warrior Saga Legends", "Dragon Warrior Saga: Special Edition"],
+  );
+  // An absent title: 0 results, not a page of near-misses.
+  assert.deepEqual(filterRelevant(items, "Completely Different Name", getTitle), []);
+});
+
+test("kino.rank: filterRelevant then sortBySimilarity leaves the real match first, the noise gone", () => {
+  const items = [
+    { name: "Saga of Something Else" },
+    { name: "Totally Unrelated Movie" },
+    { name: "Warrior Saga Legends" },
+    { name: "Dragon Warrior Saga: Special Edition" },
+  ];
+  const getTitle = (x) => x.name;
+  const result = sortBySimilarity(filterRelevant(items, "Dragon Warrior Saga", getTitle), "Dragon Warrior Saga", getTitle).map(getTitle);
+  assert.deepEqual(result, ["Dragon Warrior Saga: Special Edition", "Warrior Saga Legends"]);
+});
+
+test("kino.rank: titleTokens folds accents and keeps a word whose only accent is ã or å", () => {
+  // Regression coverage via the public functions: an earlier FOLD_ACCENTS with no ã/å entry fell
+  // outside the word regex and dropped the whole word instead of just leaving an accent on it.
+  const items = [{ title: "São Paulo em Chamas" }, { title: "Unrelated" }];
+  assert.deepEqual(sortBySimilarity(items, "Sao Paulo").map((x) => x.title), ["São Paulo em Chamas", "Unrelated"]);
+  assert.deepEqual(filterRelevant(items, "Sao Paulo").map((x) => x.title), ["São Paulo em Chamas"]);
+});
+
+test("kino.rank: the shim wires the exact same functions the runtime inlines", () => {
+  const { kino } = createKino(JSON.parse(manifest()));
+  // Same module, not a copy: kino-shim.mjs imports kino-rank.mjs directly.
+  assert.equal(kino.rank.shortQuery, shortQuery);
+  assert.equal(kino.rank.sortBySimilarity, sortBySimilarity);
+  assert.equal(kino.rank.filterRelevant, filterRelevant);
+});
+
+// The app's prelude.js has no module loader to import kino-rank.mjs with, so it carries a literal
+// copy of the algorithm instead (see both files' own comments). This is what keeps that copy honest.
+test("kino.rank: the shim and the runtime run the exact same code", () => {
+  const BEGIN = "kino.rank shared core: BEGIN (byte-identical in kino-rank.mjs and prelude.js)";
+  const END = "kino.rank shared core: END";
+  const coreOf = (path) => {
+    const text = readFileSync(path, "utf8");
+    const beginIdx = text.indexOf(BEGIN);
+    assert.notEqual(beginIdx, -1, `${path} is missing the BEGIN marker`);
+    const contentStart = text.indexOf("\n", beginIdx) + 1;
+    const endIdx = text.indexOf(END, contentStart);
+    assert.notEqual(endIdx, -1, `${path} is missing the END marker`);
+    const contentEnd = text.lastIndexOf("\n", endIdx) + 1;
+    return text.slice(contentStart, contentEnd);
+  };
+  const shim = coreOf(join(here, "..", "kino-rank.mjs"));
+  const prelude = coreOf(join(here, "..", "..", "..", "app", "src", "main", "resources", "plugin", "prelude.js"));
+  assert.equal(prelude, shim);
 });
 
 // Same as the app: a url setting's manifest default is never a server the plugin may reach, even

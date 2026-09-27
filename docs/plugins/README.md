@@ -344,9 +344,17 @@ all or nothing.
 | `ref` | A non-empty string of at most 4096 characters. |
 | `kind` | `"movie"` or `"series"`. A `series` item from a plugin that does not declare `episodes` is dropped: it could never be opened. |
 | Text fields | `title` is required and non-blank, up to 200 characters. `overview` up to 2000; `lang` and `quality` up to 20 (for example `"es"`, `"1080p"`); `year` up to 10 (a number is accepted and converted). Longer text is cut; the text of `SeriesInfo` and `Episode` is cut the same way (200 characters for titles, 2000 for overviews). |
-| Extra item fields | All optional; a wrong one is ignored, not the item. `genres` at most 5, each at most 30 characters; `badges` (shown as chips, e.g. `"HD"`, `"Latino"`) at most 3 of at most 20; `rating` from 0 to 10; `runtimeMinutes` from 1 to 1000; `ids.tmdb` a positive integer (Kino uses it to match your title with TMDB and to find it again from search); `ids.imdb` matches `^tt\d{5,10}$`. An episode's `airDate` is `YYYY-MM-DD`. |
+| Extra item fields | All optional; a wrong one is ignored, not the item. `genres` at most 5, each at most 30 characters; `badges` (shown as chips, e.g. `"HD"`, `"Latino"`) at most 3 of at most 20; `rating` from 0 to 10; `runtimeMinutes` from 1 to 1000; `ids.tmdb` a positive integer (Kino uses it to match your title with TMDB, to find it again from search, and to enrich its info page -- see below); `ids.imdb` matches `^tt\d{5,10}$` (also enriches a movie's info page when you have no `ids.tmdb`). An episode's `airDate` is `YYYY-MM-DD`. |
 | `adult` | An item with `adult: true` is dropped: Kino has no place behind its 18+ lock for plugin titles yet. |
 | Images | `poster`, `backdrop` and `still` must be `https` URLs of at most 2048 characters, or they are ignored. Images are loaded by Kino directly and are **not** checked against `hosts` (they are display only), and Kino does not send your headers or cookies with them. This is the one exception to the host rule, with one limit: an image on an IP address or a local name (`localhost`, `.local`, `.lan`, …) is ignored too, unless it is on a server the person typed in your settings (then `http` works too). |
+
+**`ids.tmdb` enriches the info page, not only matching.** When TMDB has this exact title (matched by
+`ids.tmdb`, or by `ids.imdb` on a movie when you gave no `ids.tmdb`), opening it fills in whatever
+TMDB knows and you left blank: a movie's runtime, the synopsis (only if yours was empty), the year
+(only if yours was empty), the rating, a tagline, the director or (for a series) creator, the cast
+and the age rating; TMDB's genres replace whatever you gave. It does **not** add a poster, a
+backdrop or seasons from TMDB -- those stay exactly what your `Item`/`SeriesInfo`/`episodes` answer
+gave, or blank if you left them out.
 
 **The `Stream` rules.**
 
@@ -592,6 +600,58 @@ export async function home() {
 Also `console.log`, `console.info`, `console.warn` and `console.error`: they all go to the log
 (tag `KinoPlugin` in `adb logcat`), objects are written as JSON, and a message is cut at 2000
 characters. Under the Node kit they go to stderr.
+
+### `kino.rank`
+
+For a search backend that only matches a loose bag of shared words rather than a title as a whole:
+asking it a long title can return twenty unrelated results that merely share one common word, with
+the real match buried on page two. These three pure functions make a backend like that behave like a
+title search, without touching its own JSON shape.
+
+```js
+kino.rank.shortQuery(query)
+kino.rank.sortBySimilarity(items, query, getTitle?)
+kino.rank.filterRelevant(items, query, getTitle?)
+```
+
+- **`shortQuery(query)`** returns the title's HEAD, up to its first `:`, `,`, `|`, en dash or em
+  dash: ask your backend that instead of the whole title, so its own ranking has less noise to sort
+  through. A one- or two-letter head ("El", "A") identifies nothing, so the whole (trimmed) text
+  comes back instead; a plain `-` is never a cut point (it would split "Spider-Man"). Try it against
+  your backend first -- some do worse with a short query, not better.
+- **`sortBySimilarity(items, query, getTitle?)`** reorders `items` so the ones sharing the most words
+  with `query` come first; ties keep the backend's own order.
+- **`filterRelevant(items, query, getTitle?)`** drops items that only share a stray word with
+  `query`. Reordering alone still shows a full page of near-misses when the title genuinely is not on
+  the backend; this makes an absent title come back with 0 results instead.
+
+`query` is a title, or an array of several forms of one worth trying together --
+`[query.q, query.originalTitle, ...query.altTitles]`, since a backend may only know a title in one
+language. `getTitle` reads a title off one of your own `items`; it defaults to
+`(item) => item.title`, and may itself return an array the same way `query` can, when an item keeps
+a title in more than one field or language (every form's words are combined). Matching folds accents
+and case and ignores words of 1-2 letters (the "el", "de", "of" that make unrelated titles look
+alike); `filterRelevant` keeps an item once it shares at least 60% of a requested title's distinctive
+words.
+
+```js
+export async function search(query) {
+  const titles = [query.q, query.originalTitle, ...query.altTitles];
+  const r = await kino.fetch(BASE + "/search?q=" + encodeURIComponent(kino.rank.shortQuery(query.q)));
+  const found = r.json().results; // whatever shape your backend answers with
+  const relevant = kino.rank.filterRelevant(found, titles, (x) => x.name);
+  return kino.rank.sortBySimilarity(relevant, titles, (x) => x.name).map(toItem);
+}
+```
+
+If your backend already ranks a full title well, skip `shortQuery` and run only
+`filterRelevant`/`sortBySimilarity`, on what it gives you for `query.q` as typed.
+
+Two things left out on purpose. Neither retries with the full title: if `shortQuery`'s head happens
+to be a common word (e.g. "Love, Death & Robots" -> "Love") and the backend returns nothing relevant
+for it, retry `search` with the full title yourself when the short one comes back empty. And neither
+does anything with season numbers or ordering: how a backend spells "season 2" in its own titles
+("T2", "Temporada 2", …) is specific to that backend, not something these can fold in.
 
 ## 6. Limits and engine quirks
 

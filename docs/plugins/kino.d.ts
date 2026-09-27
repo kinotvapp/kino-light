@@ -275,6 +275,31 @@ declare namespace kino {
     /** A random (v4) UUID. */
     function uuid(): string;
   }
+
+  namespace rank {
+    /**
+     * The title's HEAD, up to its first `:`, `,`, `|`, en dash or em dash -- for a search backend
+     * that ranks a short query better than a long one. A one- or two-letter head identifies
+     * nothing, so the whole (trimmed) text comes back instead; a plain "-" is never a cut point (it
+     * would split a hyphenated word like "Spider-Man").
+     */
+    function shortQuery(query: string): string;
+    /**
+     * Reorders `items` so the ones sharing the most words with `query` come first; ties keep
+     * `items`' own order. `query` is a title, or several forms of one (try `query.q`,
+     * `query.originalTitle` and `query.altTitles` together: a backend may only know a title in one
+     * language). `getTitle` reads a title off an item, string or array of them; it defaults to
+     * `(item) => item.title`.
+     */
+    function sortBySimilarity(items: any[], query: string | string[], getTitle?: (item: any) => string | string[]): any[];
+    /**
+     * Drops items sharing too few words with `query` (under 60% of its distinctive words of 3+
+     * letters): reordering alone (`sortBySimilarity`) still shows a full page of near-misses when
+     * the title genuinely is not on the backend, so an absent title comes back with 0 results
+     * instead.
+     */
+    function filterRelevant(items: any[], query: string | string[], getTitle?: (item: any) => string | string[]): any[];
+  }
 }
 
 // ---------- web globals Kino adds (QuickJS has none of them natively) ----------
