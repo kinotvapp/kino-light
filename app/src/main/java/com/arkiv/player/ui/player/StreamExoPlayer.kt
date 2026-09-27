@@ -88,7 +88,14 @@ private class PreparedSource(val player: ExoPlayer, val mediaItem: MediaItem, va
  * for [fallbackAudioTracks]'s retry after a merged track turns out unusable.
  */
 @androidx.annotation.OptIn(UnstableApi::class)
-private fun applyAudioTracks(prepared: PreparedSource, tracks: List<ResolvedAudioTrack>, startPositionMs: Long) {
+private fun applyAudioTracks(
+    prepared: PreparedSource,
+    tracks: List<ResolvedAudioTrack>,
+    startPositionMs: Long,
+    // The first prepare starts playing; a retry after a failed audio track keeps whatever the person
+    // had chosen, so a track that dies in the background while paused never un-pauses the video.
+    playWhenReady: Boolean = true,
+) {
     val player = prepared.player
     if (tracks.isEmpty()) {
         player.setMediaItem(prepared.mediaItem)
@@ -102,7 +109,7 @@ private fun applyAudioTracks(prepared: PreparedSource, tracks: List<ResolvedAudi
     }
     player.prepare()
     if (startPositionMs > 0L) player.seekTo(startPositionMs)
-    player.playWhenReady = true
+    player.playWhenReady = playWhenReady
     Log.i(TAG, "ExoPlayer prepared · seekTo=$startPositionMs audioTracks=${tracks.size}")
 }
 
@@ -370,7 +377,7 @@ internal fun StreamExoPlayer(
                     val next = fallbackAudioTracks(activeAudioTracks, failureText)
                     Log.w(TAG, "audio track(s) unusable, retrying without them · ${activeAudioTracks.size} -> ${next.size} · $failureText")
                     activeAudioTracks = next
-                    applyAudioTracks(prepared, next, exoPlayer.currentPosition.coerceAtLeast(0L))
+                    applyAudioTracks(prepared, next, exoPlayer.currentPosition.coerceAtLeast(0L), playWhenReady = exoPlayer.playWhenReady)
                     return
                 }
                 val msg = error.message ?: "Error de reproducción (${error.errorCode})"
