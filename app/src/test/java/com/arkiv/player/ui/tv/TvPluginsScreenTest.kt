@@ -69,6 +69,20 @@ class TvPluginsScreenTest {
         assertFalse(focusReturnsToAdd(wasShown = true, shown = true))
     }
 
+    // Uninstalling from the actions dialog removes the very card the dialog is about to send focus back
+    // to. Found on the KALLEY TV: focus fell through to Ajustes' first chip instead of staying on Instalados.
+    @Test fun `focus returns to the same card when it is still installed`() {
+        assertEquals("b", installedFocusReturnTarget(returnId = "b", remainingIds = listOf("a", "b", "c")))
+    }
+
+    @Test fun `an uninstalled card's focus falls to the first remaining card`() {
+        assertEquals("a", installedFocusReturnTarget(returnId = "b", remainingIds = listOf("a", "c")))
+    }
+
+    @Test fun `uninstalling the last plugin leaves no card to focus`() {
+        assertNull(installedFocusReturnTarget(returnId = "b", remainingIds = emptyList()))
+    }
+
     private val manifest = PluginManifest("demo", "Demo", "1.0.0", 1, "plugin.js", "", "lordmacu", "", listOf("example.com"), setOf("search", "resolve"), null, null)
     private val record = InstalledRecord("o/r", "1.0.0", "x", listOf("example.com"), 0L)
 

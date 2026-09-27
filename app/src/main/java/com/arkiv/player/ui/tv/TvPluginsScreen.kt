@@ -556,7 +556,12 @@ private fun InstalledTab(
     var returnFocusTo by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(returnFocusTo) {
         returnFocusTo?.let { id ->
-            cardFocus[id]?.let { requestFocusWhenReady(it) }
+            // An uninstall from inside the dialog can remove the very card focus is meant to return to
+            // (found on the KALLEY TV: the key then fell through to Ajustes' first chip). [entryFocus] is
+            // the fallback -- it already carries whichever the first remaining card is, or "Ver
+            // recomendados" once none are left (see the empty branch above and its own `itemsIndexed`).
+            val target = installedFocusReturnTarget(id, plugins.map { it.id })
+            requestFocusWhenReady(target?.let { cardFocus[it] } ?: entryFocus)
             returnFocusTo = null
         }
     }
@@ -648,6 +653,16 @@ internal fun cardHasNothingToTheRight(index: Int, lastIndex: Int, columns: Int):
  * ([wasShown] and no longer [shown]), and never otherwise.
  */
 internal fun focusReturnsToAdd(wasShown: Boolean, shown: Boolean): Boolean = wasShown && !shown
+
+/**
+ * Which plugin's card focus should return to once the actions dialog for [returnId] closes, among
+ * [remainingIds] (the installed list right after -- an uninstall from inside that dialog may have removed
+ * [returnId] itself): [returnId] when it is still installed, the first of [remainingIds] otherwise, or null
+ * with nothing left installed at all. [InstalledTab] falls back to [entryFocus] on a null answer, which by
+ * then already carries the first remaining card or, with none left, "Ver recomendados".
+ */
+internal fun installedFocusReturnTarget(returnId: String, remainingIds: List<String>): String? =
+    if (returnId in remainingIds) returnId else remainingIds.firstOrNull()
 
 /**
  * Puts focus on [requester] as soon as it can take it. The node may not exist yet (a tab that has just been

@@ -6,7 +6,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -61,10 +63,14 @@ internal fun TvInstalledActionsDialog(plugin: InstalledPlugin, art: CatalogArt?,
 
     Dialog(onDismissRequest = onDismiss) {
         Column(
+            // Scrolls: at a larger TV text size the header's three lines plus five 52 dp actions can run
+            // taller than the screen, and "Cerrar" must never be pushed off it (the sibling dialogs,
+            // TvAddCustomPluginDialog and PluginConsentDialog, scroll for this same reason).
             modifier = Modifier
                 .width(480.dp)
                 .clip(RoundedCornerShape(16.dp))
                 .background(ArkivSurface)
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp, vertical = 24.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
