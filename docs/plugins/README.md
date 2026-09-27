@@ -1201,28 +1201,44 @@ kino.error("not_found"); }` is enough when only search pages.
 
 ### The person's own server
 
-A media server at home: the person types its address, user and password. The address becomes an
-allowed host, `http` included; streams and posters may point at it.
+A media server at home (Jellyfin, Emby, a NAS…): the person types its address, user and password.
+The address becomes an allowed host for that install, `http` and a LAN address included; streams,
+posters and stills may point at it. This is the published demo plugin **Tu servidor**
+([kinotvapp/kino-plugin-own-server](https://github.com/kinotvapp/kino-plugin-own-server), with a
+reference server to run it against), which uses every apiVersion 2 feature a server of your own
+can: seasons, `download`, `audioTracks`, a `live` channel, a `kino.storage` TTL, `kino.rank` and
+`ids.tmdb`.
 
 ```json
 {
-  "id": "mi-servidor", "name": "Mi servidor", "version": "1.0.0", "apiVersion": 1, "entry": "plugin.js",
-  "hosts": ["example.org"],
-  "capabilities": ["search", "home", "browse", "resolve"],
+  "id": "own-server", "name": "Tu servidor", "version": "1.1.1", "apiVersion": 2, "entry": "plugin.js",
+  "hosts": [],
+  "capabilities": ["search", "home", "browse", "episodes", "resolve", "download"],
   "settings": [
     { "key": "server", "label": "Servidor", "type": "url", "required": true, "hint": "http://192.168.1.10:8096" },
     { "key": "user", "label": "Usuario", "type": "text", "required": true },
-    { "key": "password", "label": "Contraseña", "type": "password", "required": true }
+    { "key": "password", "label": "Contraseña", "type": "password", "required": true },
+    { "key": "hd", "label": "Solo HD", "type": "toggle" }
   ]
 }
 ```
 
-`hosts` still needs one entry; use your project's own site. Then:
+`hosts` is empty: the plugin reaches only the server the person types (apiVersion 2 with a `url`
+setting, see [The person's own servers](#the-persons-own-servers)). Kino builds from before that
+rule refuse an empty list, so the published demo still declares the placeholder
+`"tu-servidor.invalid"` for them: a reserved name that never resolves and that Kino never lists.
+Then:
 
 ```js
 const base = () => String(kino.config.get("server")).replace(/\/+$/, "");
-// The token belongs to one user on one server: changing either in Configurar ignores the old one.
-const tokenKey = () => "token:" + kino.config.get("user") + "@" + base();
+
+// Everything cached in kino.storage belongs to one user on one server: storage survives a change
+// in Configurar, so a key without them would hand the old server's answers to the new one.
+const scope = () => kino.config.get("user") + "@" + base();
+
+// The token does NOT change when only the password changes for the same user@server -- a
+// still-valid token keeps working, exactly like a real session would, until the server rejects it.
+const tokenKey = () => "token:" + scope();
 
 async function token() {
   await null;
@@ -1239,41 +1255,120 @@ async function token() {
   return t;
 }
 
+// Every request goes through here, so a token invalidated server-side (expired, revoked, or a
+// stale one from before a real password change) is forgotten and asked for again on the next call.
 async function api(path) {
   const r = await kino.fetch(base() + path, { headers: { "X-Token": await token() } });
   if (r.status === 401) { kino.storage.remove(tokenKey()); throw kino.error("auth_required", "la sesión venció"); }
   if (r.status === 404) throw kino.error("not_found");
+  if (r.status === 429) throw kino.error("rate_limited");
+  if (r.status === 451) throw kino.error("geo_blocked");
   if (!r.ok) throw kino.error("unavailable", "el servidor respondió " + r.status);
   return r.json();
 }
 
+// Artwork lives on the same typed server, so `http` and a LAN address are fine here too. Posters
+// are 2:3 (the cards), backdrops 16:9 (the info page's background, and each episode's still).
+const art = (shape, id) => base() + "/img/" + shape + "/" + encodeURIComponent(id) + ".png";
+const poster = (id) => art("poster", id);
+const backdrop = (id) => art("backdrop", id);
+
+// `kind` comes from the server: "movie", "series" (one season of a show) or "live" (apiVersion 2).
+// `ids.tmdb` only when the server knows it: Kino then matches the title with TMDB and fills in its
+// info page (cast, director, tagline...).
 const item = (x) => ({
-  id: x.id, ref: x.id, title: x.title, kind: "movie", year: x.year,
-  poster: base() + "/img/" + encodeURIComponent(x.id),
+  id: x.id,
+  ref: x.id,
+  title: x.title,
+  kind: x.kind,
+  year: x.year,
+  poster: poster(x.id),
+  backdrop: backdrop(x.id),
+  ids: x.tmdb ? { tmdb: x.tmdb } : undefined,
 });
 
+// Home rows, one per kind; each row's ref is the kind, which browse() pages through.
+const ROWS = [
+  { id: "novedades", title: "Novedades", kind: "movie" },
+  { id: "series", title: "Series", kind: "series" },
+  { id: "en-vivo", title: "En vivo", kind: "live" },
+];
+
+// Home asks the server three times; the answer is kept for 15 minutes with a storage TTL, so
+// opening Kino again right away costs no request. An expired entry reads as null by itself.
+const HOME_TTL_MS = 15 * 60 * 1000;
+
 export async function home() {
-  const p = await api("/items?limit=10");
-  return [{ id: "all", title: "En tu servidor", ref: "all", items: p.items.map(item) }];
+  const key = "home:" + scope();
+  const cached = kino.storage.get(key);
+  if (cached) return JSON.parse(cached);
+  const rows = [];
+  for (const row of ROWS) {
+    const p = await api("/items?limit=10&kind=" + row.kind);
+    if (p.items.length) rows.push({ id: row.id, title: row.title, ref: row.kind, items: p.items.map(item) });
+  }
+  kino.storage.set(key, JSON.stringify(rows), { ttlMs: HOME_TTL_MS });
+  return rows;
 }
 
 export async function browse(ref, cursor) {
-  const p = await api("/items?limit=10" + (cursor ? "&cursor=" + encodeURIComponent(cursor) : ""));
+  const p = await api("/items?limit=10&kind=" + encodeURIComponent(ref) + (cursor ? "&cursor=" + encodeURIComponent(cursor) : ""));
   return { items: p.items.map(item), next: p.next || undefined };
 }
 
+// The server matches ANY word of the query, so "Serie de prueba" also brings "Video de prueba 1".
+// kino.rank turns that into a title search: ask with the title's head, drop the stray-word hits,
+// best match first -- trying every form of the title Kino knows.
 export async function search(query) {
-  return (await api("/items?q=" + encodeURIComponent(query.q))).items.map(item);
+  if (!query.q.trim()) return [];
+  const titles = [query.q, query.originalTitle, ...(query.altTitles || [])].filter(Boolean);
+  const found = (await api("/items?limit=50&q=" + encodeURIComponent(kino.rank.shortQuery(query.q)))).items;
+  const relevant = kino.rank.filterRelevant(found, titles);
+  return kino.rank.sortBySimilarity(relevant, titles).map(item);
 }
 
+// Each season is its own title on this server, so the answer lists every season of the show in
+// `seasons` (the one being answered marked `current`): Kino shows them as chips and calls
+// episodes() again with the chosen season's ref.
+export async function episodes(ref) {
+  const x = await api("/items/" + encodeURIComponent(ref));
+  if (x.kind !== "series") throw kino.error("not_found");
+  return {
+    series: { title: x.show.title, overview: x.show.overview, poster: poster(x.id), backdrop: backdrop(x.id) },
+    episodes: x.episodes.map((e) => ({ season: x.season, number: e.number, ref: e.id, title: e.title, still: backdrop(e.id) })),
+    seasons: x.seasons.map((s) => ({
+      id: s.id,
+      ref: s.id,
+      title: "Temporada " + s.number,
+      number: s.number,
+      current: s.id === x.id,
+    })),
+  };
+}
+
+// Movies and episodes are progressive mp4 files, so with `download` declared Kino can save them;
+// the live channel is HLS and plays as live (never downloadable). A movie with a separate audio
+// file gets it as an `audioTracks` entry, merged by the player and picked in its audio menu.
 export async function resolve(ref) {
   const x = await api("/items/" + encodeURIComponent(ref));
-  return { url: base() + x.stream, mime: "video/mp4", expiresInSeconds: 600 };
+  if (x.kind === "live") return { url: base() + x.stream, mime: "application/vnd.apple.mpegurl" };
+  const hd = kino.config.get("hd");
+  const stream = {
+    url: base() + x.stream + (hd ? "?quality=hd" : ""),
+    mime: "video/mp4",
+    // The stream URL is short-lived on the reference server: resolve again once it is stale.
+    expiresInSeconds: 600,
+  };
+  if (x.audio && x.audio.length) {
+    stream.audioTracks = x.audio.map((a) => ({ lang: a.lang, label: a.label, url: base() + a.stream }));
+  }
+  return stream;
 }
 ```
 
 Try it under Node with `--config server=http://192.168.1.10:8096 --config user=ana --config
-password=…` (or `sdk/config.json`, kept out of git).
+password=…` (or `sdk/config.json`, kept out of git), from your computer's LAN address, not
+`127.0.0.1`: a loopback address is refused even as the person's own server.
 
 ### A Widevine-protected stream (apiVersion 2)
 
