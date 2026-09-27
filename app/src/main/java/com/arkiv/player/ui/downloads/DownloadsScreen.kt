@@ -49,10 +49,12 @@ import coil.compose.AsyncImage
 import com.arkiv.player.data.db.DownloadRow
 import com.arkiv.player.data.local.DownloadGroup
 import com.arkiv.player.data.local.DownloadGroupPolicy
+import com.arkiv.player.data.local.DownloadSource
 import com.arkiv.player.data.local.EpisodeDownloadStatus
 import com.arkiv.player.data.local.LocalDownloadState
 import com.arkiv.player.data.local.FileSizeFormat
 import com.arkiv.player.data.model.Episode
+import com.arkiv.player.data.plugin.PluginIds
 import com.arkiv.player.ui.components.EmptyState
 import com.arkiv.player.ui.readingWidth
 import com.arkiv.player.ui.rememberGraph
@@ -117,7 +119,12 @@ fun DownloadsScreen(
                     onRetry = vm::retry,
                     onCancel = vm::cancel,
                     onRemove = vm::remove,
-                    onDownload = { episodeId -> vm.download(episodeId, group.source) },
+                    // group.source is the item's `items.source` ("plugin:<id>" for a plugin title),
+                    // not a strategy key: route it the way every other download button does, or a
+                    // plugin chapter queued from here fails with "Fuente no soportada".
+                    onDownload = { episodeId ->
+                        vm.download(episodeId, DownloadSource.sourceForItem(group.source, graph::isXuperPlugin, graph::pluginDownloads))
+                    },
                     onCancelAll = { vm.cancelGroup(group) },
                     onRemoveAll = { vm.removeGroup(group) },
                     onRetryFailed = { vm.retryFailedGroup(group) },
@@ -464,21 +471,28 @@ private fun stateLabel(row: DownloadRow): String = when (row.state) {
 }
 
 /**
- * File-origin badge. "torrent" and "web" are legacy `source` values from rows saved before this
- * branch's pruning. "magis" and "xuper" (the Xuper plugin's chapters) are today's real values
- * (`DownloadSource.sourceFor`), and so is `DownloadSource.PLUGIN_DOWNLOAD` (any other plugin that
- * declared `download`), badged "PLUGIN"; any other value falls through to "ARCHIVE".
+ * File-origin badge. It is fed two columns: a download row's `downloads.source` (the strategy key)
+ * and a group header's `items.source` (the library's). "torrent" and "web" are legacy values from
+ * rows saved before this branch's pruning. Today's real values: "magis" and "xuper" (the Xuper
+ * plugin's chapters, `DownloadSource.sourceFor`) are "XUPER"; `DownloadSource.PLUGIN_DOWNLOAD` (any
+ * other plugin that declared `download`) is "PLUGIN"; and an item's `plugin:<id>` is "XUPER" when
+ * [isXuperPlugin] recognizes that install (`AppGraph.isXuperPlugin`, never the id alone), else
+ * "PLUGIN". Any other value falls through to "ARCHIVE".
  */
-internal fun sourceBadge(source: String): String = when (source) {
-    "torrent" -> "TORRENT"
-    "web" -> "WEB"
-    "magis", com.arkiv.player.data.local.DownloadSource.XUPER -> "XUPER"
-    com.arkiv.player.data.local.DownloadSource.PLUGIN_DOWNLOAD -> "PLUGIN"
-    else -> "ARCHIVE"
+internal fun sourceBadge(source: String, isXuperPlugin: (pluginId: String) -> Boolean): String {
+    PluginIds.pluginIdOfSource(source)?.let { pluginId -> return if (isXuperPlugin(pluginId)) "XUPER" else "PLUGIN" }
+    return when (source) {
+        "torrent" -> "TORRENT"
+        "web" -> "WEB"
+        "magis", DownloadSource.XUPER -> "XUPER"
+        DownloadSource.PLUGIN_DOWNLOAD -> "PLUGIN"
+        else -> "ARCHIVE"
+    }
 }
 
 @Composable
 private fun SourceBadge(source: String) {
+    val graph = rememberGraph()
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(4.dp))
@@ -486,7 +500,7 @@ private fun SourceBadge(source: String) {
             .padding(horizontal = 6.dp, vertical = 2.dp),
     ) {
         Text(
-            sourceBadge(source),
+            sourceBadge(source, graph::isXuperPlugin),
             style = MaterialTheme.typography.labelSmall,
             color = ArkivTextSecondary,
         )
