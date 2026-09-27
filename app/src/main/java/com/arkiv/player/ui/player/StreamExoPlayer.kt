@@ -18,6 +18,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -72,6 +73,38 @@ private const val TAG = "StreamExo"
  * 0.2 s to 20 s per range. A whole number of packets, for the same reason the default is.
  */
 internal const val STREAM_TS_SEARCH_BYTES = (TsDurationProbe.PROBE_BYTES / MpegTs.PACKET) * MpegTs.PACKET
+
+/**
+ * What a [StreamExoPlayer] built for one stream, kept around ([remember]ed) so a later audio-track
+ * fallback (see [fallbackAudioTracks]) can rebuild the merged source on the SAME player -- without
+ * this, retrying would need the whole `httpFactory`/`mediaSourceFactory` construction repeated.
+ */
+private class PreparedSource(val player: ExoPlayer, val mediaItem: MediaItem, val mediaSourceFactory: DefaultMediaSourceFactory)
+
+/**
+ * Sets [tracks] on [prepared]'s player: merged into the video via [MergingMediaSource] when there
+ * are any, the plain [PreparedSource.mediaItem] otherwise -- unchanged from before audio tracks
+ * existed, no merge at all. Used both for the stream's initial setup and, with a shorter [tracks],
+ * for [fallbackAudioTracks]'s retry after a merged track turns out unusable.
+ */
+@androidx.annotation.OptIn(UnstableApi::class)
+private fun applyAudioTracks(prepared: PreparedSource, tracks: List<ResolvedAudioTrack>, startPositionMs: Long) {
+    val player = prepared.player
+    if (tracks.isEmpty()) {
+        player.setMediaItem(prepared.mediaItem)
+    } else {
+        val audioSources = tracks.map { track ->
+            prepared.mediaSourceFactory.createMediaSource(MediaItem.Builder().setUri(Uri.parse(track.url)).build())
+        }
+        player.setMediaSource(
+            MergingMediaSource(prepared.mediaSourceFactory.createMediaSource(prepared.mediaItem), *audioSources.toTypedArray()),
+        )
+    }
+    player.prepare()
+    if (startPositionMs > 0L) player.seekTo(startPositionMs)
+    player.playWhenReady = true
+    Log.i(TAG, "ExoPlayer prepared · seekTo=$startPositionMs audioTracks=${tracks.size}")
+}
 
 /**
  * Plays a Magis VOD stream or a plugin stream using ExoPlayer.
@@ -140,7 +173,7 @@ internal fun StreamExoPlayer(
     val graph = rememberGraph()
     val subtitleStyle by graph.subtitlePrefs.prefs.collectAsStateWithLifecycle()
 
-    val exoPlayer = remember(mediaUrl, subtitleConfigs, requestHeaders, mimeType, http, audioTracks) {
+    val prepared = remember(mediaUrl, subtitleConfigs, requestHeaders, mimeType, http, audioTracks) {
         Log.i(TAG, "Creating ExoPlayer · url=${mediaUrl.take(80)} startMs=$startPositionMs subs=${subtitleConfigs.size} audioTracks=${audioTracks.size}")
         val httpFactory: DataSource.Factory = when (http) {
             StreamHttp.Default -> DefaultHttpDataSource.Factory()
@@ -197,28 +230,21 @@ internal fun StreamExoPlayer(
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
 
-        ExoPlayer.Builder(context, fallbackRenderers(context))
+        val player = ExoPlayer.Builder(context, fallbackRenderers(context))
             .setMediaSourceFactory(mediaSourceFactory)
             .setLoadControl(loadControl)
             .build()
-            .also { player ->
-                if (audioTracks.isEmpty()) {
-                    // Unchanged from before this field existed: no merge, no extra source at all.
-                    player.setMediaItem(mediaItem)
-                } else {
-                    val audioSources = audioTracks.map { track ->
-                        mediaSourceFactory.createMediaSource(MediaItem.Builder().setUri(Uri.parse(track.url)).build())
-                    }
-                    player.setMediaSource(
-                        MergingMediaSource(mediaSourceFactory.createMediaSource(mediaItem), *audioSources.toTypedArray()),
-                    )
-                }
-                player.prepare()
-                if (startPositionMs > 0L) player.seekTo(startPositionMs)
-                player.playWhenReady = true
-                Log.i(TAG, "ExoPlayer prepared · seekTo=$startPositionMs")
-            }
+        val built = PreparedSource(player, mediaItem, mediaSourceFactory)
+        // Unchanged from before audio tracks existed when [audioTracks] is empty: same mediaItem,
+        // same setMediaItem call, no merge at all (see [applyAudioTracks]).
+        applyAudioTracks(built, audioTracks, startPositionMs)
+        built
     }
+    val exoPlayer = prepared.player
+    // The tracks actually still merged in for THIS player: starts as [audioTracks] and only ever
+    // shrinks, when [fallbackAudioTracks] blames one (or all) of them for a player error -- never
+    // restored within the same playback, so a track already found unusable is not retried.
+    var activeAudioTracks by remember(prepared) { mutableStateOf(audioTracks) }
 
     var videoAspectRatio by remember(exoPlayer) { mutableFloatStateOf(0f) }
     // Read inside the layout listener below, which is built once (`remember`) and outlives every
@@ -333,6 +359,20 @@ internal fun StreamExoPlayer(
             }
 
             override fun onPlayerError(error: PlaybackException) {
+                // A MergingMediaSource is all-or-nothing (MergingMediaPeriod.maybeThrowPrepareError
+                // propagates the first child's failure and never prepares the rest), so while any of
+                // the stream's own audio tracks are still merged in, ANY error here is presumed
+                // attributable to one of them first: a plugin's audio URL must never take a perfectly
+                // fine video down. Only once there is nothing left to blame (activeAudioTracks empty,
+                // the exact same state a stream with none ever had) does the error reach the person.
+                if (activeAudioTracks.isNotEmpty()) {
+                    val failureText = playbackFailureText(error)
+                    val next = fallbackAudioTracks(activeAudioTracks, failureText)
+                    Log.w(TAG, "audio track(s) unusable, retrying without them · ${activeAudioTracks.size} -> ${next.size} · $failureText")
+                    activeAudioTracks = next
+                    applyAudioTracks(prepared, next, exoPlayer.currentPosition.coerceAtLeast(0L))
+                    return
+                }
                 val msg = error.message ?: "Error de reproducción (${error.errorCode})"
                 Log.e(TAG, "onPlayerError errorCode=${error.errorCode} msg=$msg", error)
                 // Also to Sentry: VOD playback failures (codec init, source, decoder) used to vanish
@@ -591,3 +631,25 @@ internal fun List<ResolvedSub>.toExoSubtitleConfigs(): List<MediaItem.SubtitleCo
             .setLanguage(sub.lang)
             .build()
     }
+
+/**
+ * Which of [tracks] to retry with after a player error while all of them were still merged into
+ * the video source ([MergingMediaSource] is all-or-nothing: `MergingMediaPeriod.maybeThrowPrepareError`
+ * propagates the FIRST child's failure and never prepares the rest, so one bad audio URL -- a 404,
+ * a timeout, an unreachable host -- would otherwise fail the whole playback even though the video
+ * itself is fine). Looks for exactly one track whose own [ResolvedAudioTrack.url] appears in
+ * [failureText] (the failed error's own text, walked through its cause chain -- see
+ * `playbackFailureText`) and drops only that one; when none or more than one match -- the failure
+ * doesn't name a URL Kino recognizes, or the match is ambiguous -- it drops ALL of them, since a
+ * plain video is always safer than guessing wrong and failing again. [tracks] empty is returned
+ * unchanged: the caller only retries while there is something left to drop.
+ */
+internal fun fallbackAudioTracks(tracks: List<ResolvedAudioTrack>, failureText: String): List<ResolvedAudioTrack> {
+    if (tracks.isEmpty()) return tracks
+    val blamed = tracks.filter { failureText.contains(it.url) }
+    return if (blamed.size == 1) tracks - blamed[0] else emptyList()
+}
+
+/** [error]'s message, and every cause behind it: where [fallbackAudioTracks] looks for a URL. */
+internal fun playbackFailureText(error: Throwable): String =
+    generateSequence(error) { it.cause }.joinToString(" | ") { it.toString() }
