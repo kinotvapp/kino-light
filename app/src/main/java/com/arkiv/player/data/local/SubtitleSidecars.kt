@@ -13,7 +13,17 @@ import java.io.File
  * Already-present sidecars are kept (a re-run doesn't re-fetch them).
  */
 object SubtitleSidecars {
-    suspend fun save(http: HttpRangeDownloader, episodeId: String, subtitles: List<GatewaySubtitle>, targetDir: File) {
+    /**
+     * Best-effort: a subtitle that fails is skipped. [headers] go on every subtitle request -- a
+     * plugin's Stream headers, which the player also sends with its subtitles online; Magis passes none.
+     */
+    suspend fun save(
+        http: HttpRangeDownloader,
+        episodeId: String,
+        subtitles: List<GatewaySubtitle>,
+        targetDir: File,
+        headers: Map<String, String> = emptyMap(),
+    ) {
         if (subtitles.isEmpty()) return
         val saved = mutableListOf<OfflineSubtitleFiles.Saved>()
         subtitles.forEachIndexed { index, sub ->
@@ -22,7 +32,7 @@ object SubtitleSidecars {
             val ok = target.exists() && target.length() > 0 || runCatching {
                 // No headers (same as the online SubtitleConfiguration, which loads the URL bare)
                 // and a stable resumeKey so a retry doesn't discard the tiny partial.
-                http.download(sub.url, target, resumeKey = "$episodeId.sub.$index", onProgress = { _, _ -> })
+                http.download(sub.url, target, headers, resumeKey = "$episodeId.sub.$index", onProgress = { _, _ -> })
                     .getOrThrow()
                 true
             }.getOrElse {

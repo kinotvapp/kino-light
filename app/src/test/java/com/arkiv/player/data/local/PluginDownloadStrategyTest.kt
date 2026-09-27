@@ -125,6 +125,23 @@ class PluginDownloadStrategyTest {
         assertEquals(1, OfflineSubtitleFiles.read(tmp.root, episodeId).size)
     }
 
+    /** Online the player sends the Stream's headers with its subtitles; offline must match. */
+    @Test fun `the subtitle sidecars are fetched with the stream's headers`() = runBlocking {
+        server.enqueue(MockResponse().setBody("VIDEO"))
+        server.enqueue(MockResponse().setBody("WEBVTT"))
+        val subs = listOf(GatewaySubtitle("es", server.url("/s.vtt").toString(), "vtt"))
+        val headers = mapOf("Referer" to "https://site.example/", "X-Token" to "abc")
+
+        val outcome = strategy(FakeSource { playable("/v.mp4", headers = headers, subtitles = subs) }).run()
+
+        assertTrue(outcome is DownloadOutcome.Done)
+        server.takeRequest()
+        val sub = server.takeRequest()
+        assertEquals("/s.vtt", sub.path)
+        assertEquals("https://site.example/", sub.getHeader("Referer"))
+        assertEquals("abc", sub.getHeader("X-Token"))
+    }
+
     @Test fun `the mime names the extension, then the url, then mp4`() = runBlocking {
         server.enqueue(MockResponse().setBody("x"))
         server.enqueue(MockResponse().setBody("x"))

@@ -66,7 +66,7 @@ class PluginDownloadStrategy(
         // extensionless URL with no mime) is caught from the response itself, same refusal.
         return http.download(playable.url, target, playable.headers, resumeKey = episodeId, refuseManifests = true, onProgress = onProgress).fold(
             onSuccess = { file ->
-                SubtitleSidecars.save(http, episodeId, playable.subtitles, targetDir)
+                SubtitleSidecars.save(http, episodeId, playable.subtitles, targetDir, playable.headers)
                 DownloadOutcome.Done(file)
             },
             onFailure = {
