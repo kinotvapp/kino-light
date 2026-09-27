@@ -33,6 +33,7 @@ class CatalogArtRepositoryTest {
     private lateinit var dir: File
     private var now = 10_000_000_000L
     private val ttl = PluginInstaller.DAY_MS
+    private val retryAfter = 2 * 60 * 1000L
 
     private val png = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A) + ByteArray(40) { it.toByte() }
     private val otherPng = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A) + ByteArray(20) { (it + 100).toByte() }
@@ -75,7 +76,7 @@ class CatalogArtRepositoryTest {
     }
 
     private fun repository(concurrency: Int = 3) =
-        CatalogArtRepository(fetcher, dir, clock = { now }, ttlMs = ttl, concurrency = concurrency)
+        CatalogArtRepository(fetcher, dir, clock = { now }, ttlMs = ttl, retryAfterMs = retryAfter, concurrency = concurrency)
 
     private fun manifestJson(color: String? = "#112233", icon: String? = "icon.png", id: String = "demo-plugin") =
         buildString {
@@ -346,22 +347,214 @@ class CatalogArtRepositoryTest {
         assertEquals(1_000L, artJson.lastModified())
     }
 
-    @Test fun a_failed_repo_is_not_retried_in_the_same_process_until_the_ttl() = inTest {
+    // A manifest that is 404 or Invalid is a verdict about the repo, not about the network: it keeps the
+    // full TTL as its negative window. Anything else (offline, timeout, 5xx, a failed write) is transient
+    // and only holds off the next attempt for retryAfterMs.
+
+    @Test fun a_missing_manifest_is_not_retried_in_the_same_process_until_the_ttl() = inTest {
+        val repo = repository()
+
+        assertNull(repo.refresh("o/r"))
+        assertEquals(1, fetcher.count())
+        assertNull(repo.refresh("o/r"))
+        // Well past the short window a transient failure would have: a 404 does not come back within a day.
+        now += retryAfter * 10
+        assertNull(repo.refresh("o/r"))
+        now += ttl - retryAfter * 10 - 1
+        assertNull(repo.refresh("o/r"))
+        assertEquals(1, fetcher.count())
+
+        serve("o/r")
+        now += 1
+        assertEquals("#112233", repo.refresh("o/r")!!.colorHex)
+        assertEquals(3, fetcher.count())
+    }
+
+    @Test fun an_invalid_manifest_is_not_retried_in_the_same_process_until_the_ttl() = inTest {
+        serve("o/r", manifest = manifestJson(id = "Not A Valid Id"))
+        val repo = repository()
+
+        assertNull(repo.refresh("o/r"))
+        assertEquals(1, fetcher.count())
+        now += retryAfter * 10
+        assertNull(repo.refresh("o/r"))
+        now += ttl - retryAfter * 10 - 1
+        assertNull(repo.refresh("o/r"))
+        assertEquals(1, fetcher.count())
+
+        serve("o/r")
+        now += 1
+        assertEquals("#112233", repo.refresh("o/r")!!.colorHex)
+        assertEquals(3, fetcher.count())
+    }
+
+    @Test fun an_io_error_is_retried_once_retryAfterMs_has_passed_and_not_before() = inTest {
         fetcher.failures[manifestUrl("o/r")] = IOException("offline")
         val repo = repository()
 
         assertNull(repo.refresh("o/r"))
         assertEquals(1, fetcher.count())
         assertNull(repo.refresh("o/r"))
-        now += ttl - 1
+        now += retryAfter - 1
         assertNull(repo.refresh("o/r"))
         assertEquals(1, fetcher.count())
 
         fetcher.failures.clear()
         serve("o/r")
         now += 1
+        val art = repo.refresh("o/r")
+        assertEquals("#112233", art!!.colorHex)
+        assertArrayEquals(png, art.iconFile!!.readBytes())
+        assertEquals(3, fetcher.count())
+    }
+
+    @Test fun a_transient_failure_that_persists_waits_another_window_each_time() = inTest {
+        fetcher.failures[manifestUrl("o/r")] = IOException("GitHub respondió 503")
+        val repo = repository()
+
+        assertNull(repo.refresh("o/r"))
+        now += retryAfter
+        assertNull(repo.refresh("o/r"))
+        assertEquals(2, fetcher.count())
+        now += retryAfter - 1
+        assertNull(repo.refresh("o/r"))
+        assertEquals(2, fetcher.count())
+        now += 1
+        assertNull(repo.refresh("o/r"))
+        assertEquals(3, fetcher.count())
+    }
+
+    @Test fun the_default_retry_window_is_two_minutes() = inTest {
+        fetcher.failures[manifestUrl("o/r")] = IOException("offline")
+        val repo = CatalogArtRepository(fetcher, dir, clock = { now }, ttlMs = ttl)
+
+        assertNull(repo.refresh("o/r"))
+        now += 2 * 60 * 1000L - 1
+        assertNull(repo.refresh("o/r"))
+        assertEquals(1, fetcher.count())
+        fetcher.failures.clear()
+        serve("o/r")
+        now += 1
+        assertNotNull(repo.refresh("o/r"))
+    }
+
+    @Test fun a_failed_disk_write_is_a_transient_failure() = inTest {
+        serve("o/r")
+        dir.mkdirs()
+        // A file where the repo's folder must go: creating the folder and writing into it both fail.
+        val blocker = File(dir, "o__r").also { it.writeText("in the way") }
+        val repo = repository()
+
+        assertNull(repo.refresh("o/r"))
+        assertEquals(2, fetcher.count())
+        assertNull(repo.refresh("o/r"))
+        assertEquals(2, fetcher.count())
+
+        assertTrue(blocker.delete())
+        now += retryAfter
+        assertEquals("#112233", repo.refresh("o/r")!!.colorHex)
+        assertEquals(4, fetcher.count())
+    }
+
+    @Test fun a_stale_copy_is_still_returned_during_a_transient_failure_and_replaced_once_the_window_passes() = inTest {
+        serve("o/r")
+        val repo = repository()
+        repo.refresh("o/r")
+        assertEquals(2, fetcher.count())
+
+        now += ttl
+        fetcher.failures[manifestUrl("o/r")] = IOException("offline")
         assertEquals("#112233", repo.refresh("o/r")!!.colorHex)
         assertEquals(3, fetcher.count())
+        // Inside the window: no new attempt, the copy keeps being answered.
+        now += retryAfter - 1
+        val during = repo.refresh("o/r")
+        assertEquals("#112233", during!!.colorHex)
+        assertArrayEquals(png, during.iconFile!!.readBytes())
+        assertEquals(3, fetcher.count())
+
+        // After it: a new attempt, and the network's answer replaces the copy.
+        fetcher.failures.clear()
+        serve("o/r", manifest = manifestJson(color = "#445566"), icon = otherPng)
+        now += 1
+        val after = repo.refresh("o/r")
+        assertEquals("#445566", after!!.colorHex)
+        assertArrayEquals(otherPng, after.iconFile!!.readBytes())
+        assertEquals(5, fetcher.count())
+    }
+
+    @Test fun retryFailed_makes_the_next_refresh_download_at_once_after_a_transient_failure() = inTest {
+        fetcher.failures[manifestUrl("o/r")] = IOException("offline")
+        val repo = repository()
+        assertNull(repo.refresh("o/r"))
+        assertEquals(1, fetcher.count())
+
+        fetcher.failures.clear()
+        serve("o/r")
+        repo.retryFailed()
+
+        assertEquals("#112233", repo.refresh("o/r")!!.colorHex)
+        assertEquals(3, fetcher.count())
+    }
+
+    @Test fun retryFailed_makes_the_next_refresh_download_at_once_after_a_404() = inTest {
+        val repo = repository()
+        assertNull(repo.refresh("o/r"))
+        assertEquals(1, fetcher.count())
+        serve("o/r")
+        assertNull(repo.refresh("o/r"))
+        assertEquals(1, fetcher.count())
+
+        repo.retryFailed()
+
+        assertEquals("#112233", repo.refresh("o/r")!!.colorHex)
+        assertEquals(3, fetcher.count())
+    }
+
+    @Test fun retryFailed_makes_the_next_refresh_download_at_once_after_an_invalid_manifest() = inTest {
+        serve("o/r", manifest = manifestJson(id = "Not A Valid Id"))
+        val repo = repository()
+        assertNull(repo.refresh("o/r"))
+        assertEquals(1, fetcher.count())
+
+        serve("o/r")
+        repo.retryFailed()
+
+        assertEquals("#112233", repo.refresh("o/r")!!.colorHex)
+        assertEquals(3, fetcher.count())
+    }
+
+    @Test fun retryFailed_forgets_every_repo_not_just_one() = inTest {
+        fetcher.failures[manifestUrl("a/one")] = IOException("offline")
+        val repo = repository()
+        assertNull(repo.refresh("a/one"))
+        assertNull(repo.refresh("b/two"))
+        assertEquals(2, fetcher.count())
+
+        fetcher.failures.clear()
+        serve("a/one")
+        serve("b/two")
+        repo.retryFailed()
+
+        assertNotNull(repo.refresh("a/one"))
+        assertNotNull(repo.refresh("b/two"))
+    }
+
+    @Test fun retryFailed_does_not_make_a_fresh_copy_download_again() = inTest {
+        serve("o/r")
+        val repo = repository()
+        repo.refresh("o/r")
+
+        repo.retryFailed()
+        repo.refresh("o/r")
+
+        assertEquals(2, fetcher.count())
+    }
+
+    @Test fun retryFailed_with_nothing_failed_does_nothing() = inTest {
+        repository().retryFailed()
+        assertEquals(0, fetcher.count())
+        assertFalse(dir.exists())
     }
 
     @Test fun a_failed_repo_with_a_stale_copy_is_not_retried_either_and_keeps_returning_the_copy() = inTest {

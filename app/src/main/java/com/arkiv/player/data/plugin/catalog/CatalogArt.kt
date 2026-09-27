@@ -33,6 +33,9 @@ interface CatalogArtProvider {
 
     /** The art for [repo]: the disk copy while it is younger than the TTL, else a download. Null when there is none. */
     suspend fun refresh(repo: String): CatalogArt?
+
+    /** Forgets every recent failure, so the next [refresh] of any repo goes to the network. In memory only: it never blocks. */
+    fun retryFailed()
 }
 
 /**
@@ -44,8 +47,13 @@ interface CatalogArtProvider {
  *
  * Nothing here may block or crash the list it decorates: every failure (offline, 404, invalid
  * manifest, not a PNG, a hostile repo string, a full disk) is a null or the stale copy, never an
- * exception; only [CancellationException] propagates. A repo that failed is not tried again in this
- * process until [ttlMs] passes.
+ * exception; only [CancellationException] propagates.
+ *
+ * A repo that failed is not tried again in this process for a while, and how long depends on why. A
+ * verdict about the repo (its manifest is 404 or Invalid, or the fetcher refused the address) holds for
+ * [ttlMs]: asking again would get the same answer. Anything else (offline, a timeout, an HTTP 5xx or 429,
+ * a disk write that failed) says nothing about the repo, so it holds only [retryAfterMs]; and
+ * [retryFailed] forgets both at once, for the person's own "try again".
  *
  * Disk layout under [dir]: `<owner>__<repo>/art.json` (`{"fetchedAt": ms, "color": "#RRGGBB"|null,
  * "icon": true|false}`, written last so it is the commit point) and `<owner>__<repo>/icon.png`, both via
@@ -57,6 +65,7 @@ class CatalogArtRepository(
     private val dir: File,
     private val clock: () -> Long = System::currentTimeMillis,
     private val ttlMs: Long = PluginInstaller.DAY_MS,
+    private val retryAfterMs: Long = 2 * 60 * 1000L,
     concurrency: Int = 3,
 ) : CatalogArtProvider {
     private val downloads = Semaphore(concurrency)
@@ -65,7 +74,16 @@ class CatalogArtRepository(
     // downloading again. Keyed by folder name; only repos that passed validation get one, so the maps
     // are bounded by the size of the catalog.
     private val locks = ConcurrentHashMap<String, Mutex>()
-    private val failedAt = ConcurrentHashMap<String, Long>()
+    private val failures = ConcurrentHashMap<String, Failure>()
+
+    /** When a repo last failed and for how long, in ms, that keeps the next attempt away ([ttlMs] or [retryAfterMs]). */
+    private class Failure(val at: Long, val windowMs: Long)
+
+    /** How one attempt ended: [Stored], or [Failed] with the negative window it earns. */
+    private sealed interface Attempt {
+        class Stored(val art: CatalogArt) : Attempt
+        class Failed(val windowMs: Long) : Attempt
+    }
 
     private class Target(val address: PluginAddress, val folder: File)
 
@@ -89,23 +107,43 @@ class CatalogArtRepository(
             val previous = withContext(Dispatchers.IO) { readRecord(target.folder) }
             val now = clock()
             if (previous != null && isFresh(previous, now)) return@withLock previous.art
-            val failed = failedAt[key]
-            if (failed != null && now - failed in 0L until ttlMs) return@withLock previous?.art
-            val downloaded = try {
-                downloads.withPermit { download(target.address, previous) }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                null
+            val failure = failures[key]
+            if (failure != null && now - failure.at in 0L until failure.windowMs) return@withLock previous?.art
+            when (val attempt = attempt(target, previous)) {
+                is Attempt.Stored -> {
+                    failures.remove(key)
+                    attempt.art
+                }
+                is Attempt.Failed -> {
+                    failures[key] = Failure(clock(), attempt.windowMs)
+                    previous?.art
+                }
             }
-            val stored = downloaded?.let { store(target, previous, it) }
-            if (stored == null) {
-                failedAt[key] = clock()
-                return@withLock previous?.art
-            }
-            failedAt.remove(key)
-            stored
         }
+    }
+
+    override fun retryFailed() = failures.clear()
+
+    /**
+     * One download and store of [target]'s art. A failure is classified here: a manifest that is 404 or not
+     * usable (Invalid, over the size limit), or any exception that is not an [IOException] (the fetcher
+     * refusing the address), is a verdict and earns [ttlMs]; every other [IOException], and a store the
+     * disk refused, earns [retryAfterMs].
+     */
+    private suspend fun attempt(target: Target, previous: Record?): Attempt {
+        val downloaded = try {
+            downloads.withPermit { download(target.address, previous) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: FileNotFoundException) {
+            return Attempt.Failed(ttlMs)
+        } catch (e: IOException) {
+            return Attempt.Failed(retryAfterMs)
+        } catch (e: Exception) {
+            return Attempt.Failed(ttlMs)
+        } ?: return Attempt.Failed(ttlMs)
+        val stored = store(target, previous, downloaded) ?: return Attempt.Failed(retryAfterMs)
+        return Attempt.Stored(stored)
     }
 
     /** The one entry point that turns a catalog string into a path: nothing reaches [dir] before both checks pass. */

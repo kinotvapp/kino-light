@@ -110,6 +110,7 @@ private val EMPTY_SEED = CatalogResult(PluginCatalog(emptyList()), CatalogOrigin
 internal object NoCatalogArt : CatalogArtProvider {
     override fun cached(repo: String): CatalogArt? = null
     override suspend fun refresh(repo: String): CatalogArt? = null
+    override fun retryFailed() = Unit
 }
 
 /**
@@ -191,10 +192,12 @@ class PluginsViewModel(
      */
     val art: StateFlow<Map<String, CatalogArt>> = _art.asStateFlow()
 
-    // Every repo is requested at most once per view-model lifetime, whatever it answers: the repository
-    // keeps its own negative cache, and asking again on every keystroke of the search would not help.
-    // Only touched from the collector below, which runs on Main.
-    private val artRequested = HashSet<String>()
+    // Every repo is requested once per view-model lifetime, whatever it answers: the repository keeps its own
+    // negative cache, and asking again on every keystroke of the search would not help. The one thing that
+    // asks again is [reloadCatalog] ("Reintentar"), and only for a repo whose request has ended without art
+    // ([retryArt]). The value is that repo's latest request, so "still in flight" is its [Job.isActive].
+    // Only touched from Main.
+    private val artRequests = HashMap<String, Job>()
 
     init {
         loadCatalog(force = false)
@@ -210,8 +213,14 @@ class PluginsViewModel(
         _state.update { it.copy(query = value) }
     }
 
-    /** Asks the provider for a fresh download instead of the cached copy. */
-    fun reloadCatalog() = loadCatalog(force = true)
+    /**
+     * "Reintentar": asks the provider for a fresh download instead of the cached copy, and asks again for the
+     * art the last attempt did not get (see [retryArt]).
+     */
+    fun reloadCatalog() {
+        retryArt()
+        loadCatalog(force = true)
+    }
 
     /**
      * What is on the device (see [CatalogProvider.cachedOrSeed]), read on the calling thread: two small
@@ -248,8 +257,8 @@ class PluginsViewModel(
      */
     private fun requestArt(repos: List<String>) {
         for (repo in repos) {
-            if (!artRequested.add(repo)) continue
-            viewModelScope.launch(io) {
+            if (repo in artRequests) continue
+            artRequests[repo] = viewModelScope.launch(io) {
                 val refreshed = try {
                     artProvider.refresh(repo)
                 } catch (e: CancellationException) {
@@ -260,6 +269,25 @@ class PluginsViewModel(
                 if (refreshed != null) _art.update { it + (repo to refreshed) }
             }
         }
+    }
+
+    /**
+     * Gives the art another try after "Reintentar", the person's own signal that the network may be back. The
+     * provider first forgets its recent failures (in memory, it never blocks, so it is called right here and
+     * is done before any request below), then every repo whose request has ended and left it without art is
+     * forgotten too, and the rows listed now are requested again. A repo that has art (its disk copy, or
+     * a refresh that landed) is left alone, and so is one whose request is still running: never twice at once.
+     * A repo the search hides is forgotten as well, so it is requested when it is listed again.
+     */
+    private fun retryArt() {
+        try {
+            artProvider.retryFailed()
+        } catch (e: Exception) {
+            // The provider then keeps its failures; the requests below still run.
+        }
+        val withArt = _art.value
+        artRequests.entries.removeAll { (repo, request) -> !request.isActive && repo !in withArt }
+        requestArt(catalog.value.rows.map { it.entry.repo })
     }
 
     /**

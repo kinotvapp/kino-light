@@ -722,6 +722,11 @@ class PluginsViewModelTest {
         val refreshCalls = mutableListOf<String>()
         val cancelled = mutableListOf<String>()
         var cachedFailure: Exception? = null
+        var retryFailedCalls = 0
+        var retryFailedFailure: Exception? = null
+
+        /** "refresh:<repo>" and "retryFailed", in the order they were called. */
+        val events = mutableListOf<String>()
 
         /** What [refresh] does for a repo; the default answers null at once. */
         var onRefresh: suspend (repo: String) -> CatalogArt? = { null }
@@ -734,12 +739,19 @@ class PluginsViewModelTest {
 
         override suspend fun refresh(repo: String): CatalogArt? {
             refreshCalls += repo
+            events += "refresh:$repo"
             try {
                 return onRefresh(repo)
             } catch (e: CancellationException) {
                 cancelled += repo
                 throw e
             }
+        }
+
+        override fun retryFailed() {
+            retryFailedCalls++
+            events += "retryFailed"
+            retryFailedFailure?.let { throw it }
         }
     }
 
@@ -820,9 +832,9 @@ class PluginsViewModelTest {
         assertEquals(listOf("o/beta", "o/alfa", "o/gamma"), provider.refreshCalls)
     }
 
-    @Test fun `Reintentar requests only the rows it adds`() {
+    @Test fun `Reintentar requests the rows it adds and none of the ones that already have art`() {
         var loads = 0
-        val provider = FakeArtProvider()
+        val provider = FakeArtProvider().apply { onRefresh = { repo -> if (repo == "o/gamma") null else alfaArt } }
         val catalog = ScriptedCatalog(result(CatalogOrigin.SEED, "alfa")) {
             if (loads++ == 0) result(CatalogOrigin.FRESH, "alfa", "beta") else result(CatalogOrigin.FRESH, "alfa", "beta", "gamma")
         }
@@ -837,8 +849,108 @@ class PluginsViewModelTest {
         val vm = vmWithArt(FakeCatalog(entry("alfa", "o/alfa")), provider)
         vm.onQueryChange("nothing matches this")
         vm.onQueryChange("")
-        vm.reloadCatalog()
         assertEquals(listOf("o/alfa"), provider.refreshCalls)
+    }
+
+    // ---- Reintentar also retries the art ----
+
+    /** A provider that is offline for the first answer of each repo and online after that. */
+    private fun offlineThenOnline() = FakeArtProvider().apply {
+        val answered = HashMap<String, Int>()
+        onRefresh = { repo -> if (answered.merge(repo, 1, Int::plus) == 1) null else CatalogArt("#112233", null) }
+    }
+
+    @Test fun `offline at first and online at Reintentar, the art of the listed rows arrives`() {
+        val provider = offlineThenOnline()
+        val vm = vmWithArt(FakeCatalog(entry("alfa", "o/alfa"), entry("beta", "o/beta")), provider)
+        assertTrue(vm.art.value.isEmpty())
+
+        vm.reloadCatalog()
+
+        assertEquals(setOf("o/alfa", "o/beta"), vm.art.value.keys)
+        assertEquals(listOf("o/alfa", "o/beta", "o/alfa", "o/beta"), provider.refreshCalls)
+    }
+
+    @Test fun `Reintentar tells the provider to forget its failures before it asks again`() {
+        val provider = offlineThenOnline()
+        val vm = vmWithArt(FakeCatalog(entry("alfa", "o/alfa")), provider)
+        assertEquals(0, provider.retryFailedCalls)
+
+        vm.reloadCatalog()
+
+        assertEquals(1, provider.retryFailedCalls)
+        assertEquals(listOf("refresh:o/alfa", "retryFailed", "refresh:o/alfa"), provider.events)
+    }
+
+    @Test fun `Reintentar does not request again a repo that already has art, from the disk or from a refresh`() {
+        val provider = FakeArtProvider(mapOf("o/alfa" to alfaArt)).apply {
+            onRefresh = { repo -> if (repo == "o/beta") betaArt else null }
+        }
+        val vm = vmWithArt(FakeCatalog(*threeEntries()), provider)
+        assertEquals(listOf("o/alfa", "o/beta", "o/gamma"), provider.refreshCalls)
+
+        vm.reloadCatalog()
+
+        // Only gamma has no art: alfa (disk copy) and beta (refreshed) are left alone.
+        assertEquals(listOf("o/alfa", "o/beta", "o/gamma", "o/gamma"), provider.refreshCalls)
+        assertEquals(mapOf("o/alfa" to alfaArt, "o/beta" to betaArt), vm.art.value)
+    }
+
+    @Test fun `Reintentar does not request twice a repo whose request is still in flight, but does retry the others`() {
+        val gate = CompletableDeferred<CatalogArt?>()
+        val provider = FakeArtProvider().apply { onRefresh = { repo -> if (repo == "o/alfa") gate.await() else null } }
+        val vm = vmWithArt(FakeCatalog(entry("alfa", "o/alfa"), entry("beta", "o/beta")), provider)
+        assertEquals(listOf("o/alfa", "o/beta"), provider.refreshCalls)
+
+        vm.reloadCatalog()
+        vm.reloadCatalog()
+
+        // Alfa is still being asked: never twice at the same time. Beta ended with nothing: once per Reintentar.
+        assertEquals(listOf("o/alfa", "o/beta", "o/beta", "o/beta"), provider.refreshCalls)
+        gate.complete(alfaArt)
+        assertEquals(mapOf("o/alfa" to alfaArt), vm.art.value)
+        assertEquals(listOf("o/alfa", "o/beta", "o/beta", "o/beta"), provider.refreshCalls)
+    }
+
+    @Test fun `a repo that answered null is asked again by Reintentar and by nothing else`() {
+        val provider = FakeArtProvider()
+        val vm = vmWithArt(FakeCatalog(entry("alfa", "o/alfa")), provider)
+        vm.onQueryChange("nothing matches this")
+        vm.onQueryChange("")
+        assertEquals(1, provider.refreshCalls.size)
+
+        vm.reloadCatalog()
+        assertEquals(2, provider.refreshCalls.size)
+        vm.onQueryChange("nothing matches this")
+        vm.onQueryChange("")
+        assertEquals(2, provider.refreshCalls.size)
+
+        vm.reloadCatalog()
+        assertEquals(3, provider.refreshCalls.size)
+    }
+
+    @Test fun `Reintentar forgets the rows the search hides too, and they are requested when they come back`() {
+        val provider = FakeArtProvider()
+        val vm = vmWithArt(FakeCatalog(entry("alfa", "o/alfa"), entry("beta", "o/beta")), provider)
+        vm.onQueryChange("alfa")
+
+        vm.reloadCatalog()
+        // Only the listed row is requested now.
+        assertEquals(listOf("o/alfa", "o/beta", "o/alfa"), provider.refreshCalls)
+
+        vm.onQueryChange("")
+        assertEquals(listOf("o/alfa", "o/beta", "o/alfa", "o/beta"), provider.refreshCalls)
+    }
+
+    @Test fun `a provider whose retryFailed throws does not stop Reintentar from reloading the list and the art`() {
+        val provider = offlineThenOnline().apply { retryFailedFailure = IllegalStateException("boom") }
+        val catalog = FakeCatalog(entry("alfa", "o/alfa"))
+        val vm = vmWithArt(catalog, provider)
+
+        vm.reloadCatalog()
+
+        assertEquals(listOf(false, true), catalog.forceFlags)
+        assertEquals(setOf("o/alfa"), vm.art.value.keys)
     }
 
     @Test fun `a repo still being refreshed is not requested again when its row comes back`() {
@@ -938,6 +1050,7 @@ class PluginsViewModelTest {
         assertTrue(vm.art.value.isEmpty())
         assertNull(NoCatalogArt.cached("o/alfa"))
         assertNull(runBlocking { NoCatalogArt.refresh("o/alfa") })
+        NoCatalogArt.retryFailed()
         // The Plugins tab and Configurar pass neither provider: no rows are listed, so nothing is ever asked.
         val plain = PluginsViewModel(FakeAdmin(), io = dispatcher)
         assertTrue(plain.catalog.value.rows.isEmpty())
