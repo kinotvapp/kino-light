@@ -39,7 +39,7 @@ class ManifestParserTest {
     @Test fun `version must be semver`() = assertEquals("version", invalidField(base().put("version", "1.0")))
 
     @Test fun `apiVersion above the supported one says Kino must be updated`() {
-        val r = ManifestParser.parse(base().put("apiVersion", 2).toString()) as ManifestResult.Invalid
+        val r = ManifestParser.parse(base().put("apiVersion", 3).toString()) as ManifestResult.Invalid
         assertEquals("apiVersion", r.field)
         assertEquals("Este plugin necesita una versión más nueva de Kino", r.message)
         assertEquals("apiVersion", invalidField(base().put("apiVersion", "1")))
@@ -65,6 +65,43 @@ class ManifestParserTest {
         assertEquals("capabilities", invalidField(base().put("capabilities", JSONArray(listOf("resolve", "episodes")))))
         assertEquals("capabilities", invalidField(base().put("capabilities", JSONArray(listOf("resolve", "search", "download")))))
         assertTrue(ManifestParser.parse(base().put("capabilities", JSONArray(listOf("home", "resolve"))).toString()) is ManifestResult.Valid)
+    }
+
+    @Test fun `download and drm need apiVersion 2`() {
+        val downloadV1 = ManifestParser.parse(base().put("capabilities", JSONArray(listOf("search", "resolve", "download"))).toString()) as ManifestResult.Invalid
+        assertEquals("capabilities", downloadV1.field)
+        assertEquals("Esta capacidad necesita apiVersion 2", downloadV1.message)
+        val drmV1 = ManifestParser.parse(base().put("capabilities", JSONArray(listOf("search", "resolve", "drm"))).toString()) as ManifestResult.Invalid
+        assertEquals("Esta capacidad necesita apiVersion 2", drmV1.message)
+
+        val m = (
+            ManifestParser.parse(
+                base().put("apiVersion", 2).put("capabilities", JSONArray(listOf("search", "resolve", "download", "drm"))).toString(),
+            ) as ManifestResult.Valid
+        ).manifest
+        assertEquals(setOf("search", "resolve", "download", "drm"), m.capabilities)
+        assertEquals(2, m.apiVersion)
+    }
+
+    @Test fun `an insecureHttp host object needs apiVersion 2, and never a wildcard or a private-LAN suffix`() {
+        val insecure = JSONObject().put("host", "x.example.com").put("insecureHttp", true)
+
+        val v1 = ManifestParser.parse(base().put("hosts", JSONArray(listOf(insecure))).toString()) as ManifestResult.Invalid
+        assertEquals("hosts", v1.field)
+
+        val wildcard = JSONObject().put("host", "*.example.com").put("insecureHttp", true)
+        val wc = ManifestParser.parse(base().put("apiVersion", 2).put("hosts", JSONArray(listOf(wildcard))).toString()) as ManifestResult.Invalid
+        assertEquals("hosts", wc.field)
+
+        val lan = JSONObject().put("host", "nas.local").put("insecureHttp", true)
+        val laninv = ManifestParser.parse(base().put("apiVersion", 2).put("hosts", JSONArray(listOf(lan))).toString()) as ManifestResult.Invalid
+        assertEquals("hosts", laninv.field)
+
+        val m = (
+            ManifestParser.parse(base().put("apiVersion", 2).put("hosts", JSONArray(listOf("archive.org", insecure))).toString()) as ManifestResult.Valid
+        ).manifest
+        assertEquals(listOf("archive.org", "x.example.com"), m.hosts)
+        assertEquals(setOf("x.example.com"), m.insecureHosts)
     }
 
     @Test fun `a single placeholder host with all five capabilities validates (Xuper's shape)`() {

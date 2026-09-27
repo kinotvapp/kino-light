@@ -23,8 +23,9 @@ const manifest = (extra = {}) => JSON.stringify({
 });
 
 test("contract.json is the one the app pins", () => {
-  assert.equal(contract.apiVersion, 1);
-  assert.deepEqual(contract.capabilities.names, ["search", "home", "browse", "episodes", "resolve"]);
+  assert.equal(contract.apiVersion, 2);
+  assert.deepEqual(contract.capabilities.names, ["search", "home", "browse", "episodes", "resolve", "download", "drm"]);
+  assert.deepEqual(contract.capabilities.declarative, ["download", "drm"]);
   assert.deepEqual(contract.permissions, []);
 });
 
@@ -39,7 +40,12 @@ test("manifest rules and Spanish messages match the app", () => {
     [{ settings: [{ key: "k", label: "x", type: "url", default: "http://192.168.1.1" }] }, "settings", 'El ajuste "k" de tipo url no puede tener valor por defecto: usa "hint"'],
     [{ settings: [{ key: "k", label: "x", type: "url", default: "" }] }, "settings", 'El ajuste "k" de tipo url no puede tener valor por defecto: usa "hint"'],
     [{ capabilities: ["search"] }, "capabilities", 'El plugin debe declarar "resolve"'],
+    [{ capabilities: ["search", "resolve", "download"] }, "capabilities", "Esta capacidad necesita apiVersion 2"],
+    [{ capabilities: ["search", "resolve", "drm"] }, "capabilities", "Esta capacidad necesita apiVersion 2"],
     [{ hosts: ["192.168.1.1"] }, "hosts", 'El dominio "192.168.1.1" no está permitido'],
+    [{ hosts: [{ host: "x.example.com", insecureHttp: true }] }, "hosts", 'Un host con "insecureHttp" necesita apiVersion 2'],
+    [{ apiVersion: 2, hosts: [{ host: "*.example.com", insecureHttp: true }] }, "hosts", 'Un host con "insecureHttp" no puede tener comodín ("*.")'],
+    [{ apiVersion: 2, hosts: [{ host: "nas.local", insecureHttp: true }] }, "hosts", 'El dominio "nas.local" no está permitido'],
     [{ id: "magis" }, "id", 'El id "magis" está reservado por Kino'],
     // The app's version regex bounds each segment to 6 digits (Regex("^(0|[1-9]\\d{0,5})...")); a
     // hand-typed unbounded copy would wrongly accept this.
@@ -49,6 +55,30 @@ test("manifest rules and Spanish messages match the app", () => {
     assert.deepEqual(validateManifest(manifest(extra)), { ok: false, field, message }, JSON.stringify(extra));
   }
   assert.equal(validateManifest(manifest({ permissions: ["x"] }), { knownPermissions: ["x"] }).ok, true);
+});
+
+test("apiVersion 2: download/drm and an insecureHttp host validate and are exposed on the manifest", () => {
+  const r = validateManifest(manifest({
+    apiVersion: 2,
+    hosts: ["archive.org", { host: "x.example.com", insecureHttp: true }],
+    capabilities: ["search", "resolve", "download", "drm"],
+  }));
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.manifest.hosts, ["archive.org", "x.example.com"]);
+  assert.deepEqual(r.manifest.insecureHosts, ["x.example.com"]);
+  assert.deepEqual(r.manifest.capabilities, ["search", "resolve", "download", "drm"]);
+});
+
+test("validate() does not require download/drm to be exported functions", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "kino-declarative-"));
+  try {
+    writeFileSync(join(dir, "kino-plugin.json"), manifest({ apiVersion: 2, capabilities: ["search", "resolve", "download", "drm"] }));
+    writeFileSync(join(dir, "plugin.js"), "export async function search(){ return [] }\nexport async function resolve(){ return { url: 'https://example.com/a' } }");
+    const r = await validate(dir);
+    assert.deepEqual(r.problems, []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("the archive-org plugin passes the kit's checks", async () => {

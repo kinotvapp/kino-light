@@ -42,7 +42,8 @@ export async function validate(dirArg, { run = null, args = [], config = {}, rep
     const copy = join(scratch, "plugin.mjs");
     writeFileSync(copy, readFileSync(entry));
     const plugin = await import(pathToFileURL(copy).href);
-    const missing = m.capabilities.filter((c) => typeof plugin[c] !== "function");
+    // download/drm are flags the app itself acts on, never exported functions.
+    const missing = m.capabilities.filter((c) => !contract.capabilities.declarative.includes(c) && typeof plugin[c] !== "function");
     if (missing.length) problems.push(`the plugin doesn't export ${missing.join(", ")}: Kino refuses the install ("le falta ${missing.sort().join(", ")}")`);
     if (run && !problems.length) {
       if (!m.capabilities.includes(run)) problems.push(`"${run}" isn't in the manifest's capabilities`);

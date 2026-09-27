@@ -23,6 +23,7 @@ class PluginContractParityTest {
         assertEquals(ManifestParser.CAPABILITIES, obj("capabilities").strings("names").toSet())
         assertEquals(ManifestParser.REQUIRED_CAPABILITIES, obj("capabilities").strings("required"))
         assertEquals(ManifestParser.AT_LEAST_ONE_OF_CAPABILITIES, obj("capabilities").strings("atLeastOneOf"))
+        assertEquals(ManifestParser.DECLARATIVE_CAPABILITIES, obj("capabilities").strings("declarative").toSet())
     }
 
     @Test fun `manifest rules`() {

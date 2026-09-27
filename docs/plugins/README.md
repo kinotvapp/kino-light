@@ -149,10 +149,10 @@ names the field.
 | `id` | Required. `^[a-z0-9][a-z0-9-]{1,39}$` (2 to 40 lowercase letters, digits or hyphens, not starting with a hyphen). Not one of `magis`, `ditu`, `live`, `local`, `unknown`, `plugin`. It is the plugin's identity: never change it once people have installed it. |
 | `name` | Required. 1 to 40 characters. |
 | `version` | Required. `MAJOR.MINOR.PATCH` and nothing else (no `-beta`, no `+build`), each number up to 6 digits and without leading zeros. |
-| `apiVersion` | Required. An integer, `1` today. A higher number is refused with "Este plugin necesita una versión más nueva de Kino". |
+| `apiVersion` | Required. `1` or `2`. A higher number than Kino supports is refused with "Este plugin necesita una versión más nueva de Kino". Declare `2` only if you use something that needs it (below); otherwise stay on `1` so your plugin also runs on older Kino builds. |
 | `entry` | Required. Relative path of the JavaScript file: letters, digits, `.`, `_`, `-` and `/` only, no `..`, at most 200 characters, ends in `.js`. The file is at most 1 MB. |
-| `hosts` | Required. 1 to 20 entries; each a lowercase DNS name (`archive.org`) or `*.` plus a DNS name (`*.archive.org`). Host names only: no scheme, port or path. No bare `*`, no IP addresses, no `localhost`, nothing ending in `.local`, `.lan`, `.internal`, `.localhost` or `.home.arpa`, and at least one dot. **`*.x` covers subdomains only, not `x` itself**: if you need both, list both. |
-| `capabilities` | Required. A subset of `search`, `home`, `browse`, `episodes`, `resolve`. Must include `resolve` and at least one of `search` or `home`. Every capability you declare must be an exported function of the entry file, or the install fails with "El plugin no carga: le falta ...". |
+| `hosts` | Required. 1 to 20 entries; each a lowercase DNS name (`archive.org`), `*.` plus a DNS name (`*.archive.org`), or (apiVersion 2 only) an object `{ "host": "…", "insecureHttp": true }` (below). Host names only: no scheme, port or path. No bare `*`, no IP addresses, no `localhost`, nothing ending in `.local`, `.lan`, `.internal`, `.localhost` or `.home.arpa`, and at least one dot. **`*.x` covers subdomains only, not `x` itself**: if you need both, list both. |
+| `capabilities` | Required. A subset of `search`, `home`, `browse`, `episodes`, `resolve`, `download`, `drm`. Must include `resolve` and at least one of `search` or `home`. `search`, `home`, `browse`, `episodes` and `resolve` must each be an exported function of the entry file, or the install fails with "El plugin no carga: le falta ...". `download` and `drm` need `apiVersion: 2` and are declarative flags instead — the app would act on them, not your code, so nothing extra to export; declaring one shows its consent line ("Puede descargar videos para verlos sin conexión" / "Reproduce video protegido (DRM)") and needs approval again on an update that adds it, but neither the download button nor DRM playback exist yet in this version. |
 | `settings` | Optional. What the person fills in on your plugin's "Configurar" screen: see below. |
 | `permissions` | Optional. A list of names from the closed list in `contract.json`. **The list is empty in this version**: any name is refused with "permiso desconocido: …". It exists so a later version can add permissions (each one shown on the consent screen) without a new `apiVersion`. |
 | `color` | Optional `#RRGGBB`: the accent of your plugin's tab and chips. A neutral color by default. |
@@ -222,7 +222,23 @@ that is not an `http`/`https` URL, or whose host is `localhost`, a loopback addr
 `::1`), a link-local one (`169.254.x.x`, `fe80::`) or `0.0.0.0`. Addresses in the person's own network (`192.168.x.x`,
 `10.x.x.x`, a `.local` name) are allowed: that is the point.
 
-## 4. The contract (apiVersion 1)
+### Declaring an insecure host (apiVersion 2)
+
+A `hosts` entry can also be an object, for a site of yours that has no certificate:
+
+```json
+"hosts": ["archive.org", { "host": "cdn.example.org", "insecureHttp": true }]
+```
+
+This needs `"apiVersion": 2`. `insecureHttp: true` is the only thing it can carry beyond `host`, and
+it marks the only *declared* hosts (not the person's own server, above) allowed over plain `http`;
+every other declared host stays https-only. The same rules as a plain string still apply (public DNS
+name, no `*`, no IP, nothing private/LAN) plus one more: **no `*.` wildcard** — an insecure host is
+named exactly. The consent screen shows it in red, "Conexión sin cifrar con cdn.example.org", and an
+update that newly marks a host this way waits for approval like a brand new host would. **Declared
+and reviewable today; `kino.fetch` itself still refuses plain `http` on every host in this version.**
+
+## 4. The contract (apiVersion 1 and 2)
 
 Your entry file is one ES module that exports one `async` function for each capability you
 declared, and nothing is called that you did not declare:
@@ -385,7 +401,7 @@ unknown code becomes a plain error.
 `kino` is a global object, frozen, always there. Nothing else from the outside world is.
 
 ```js
-kino.apiVersion   // 1
+kino.apiVersion   // 2 -- the highest apiVersion this build of Kino understands, not your manifest's
 kino.appVersion   // the version of Kino, for example "1.42.0"
 kino.lang         // "es-CO"
 ```
@@ -735,9 +751,10 @@ differences:
    lower number is treated as "already up to date", so a fix without a version bump never reaches
    anyone). Kino checks for updates at most once a day per plugin, and when the person taps
    "Buscar actualización".
-   - If the new version does not add anything to `hosts` or `permissions` and needs a supported
-     `apiVersion`, it is installed silently.
-   - If `hosts` or `permissions` grow, Kino does **not** apply it: the plugin shows "Actualización
+   - If the new version does not add anything to `hosts`, `permissions`, `download`, `drm` or an
+     `insecureHttp` host, and needs a supported `apiVersion`, it is installed silently.
+   - If `hosts` or `permissions` grow, or the manifest newly declares `download`, `drm`, or marks an
+     already-approved host `insecureHttp`, Kino does **not** apply it: the plugin shows "Actualización
      disponible — requiere tu aprobación" and the person sees the new ones (marked "nuevo") before
      accepting. Removing them needs no approval.
    - A new **required** setting does not block the update: it installs and the plugin shows "Falta
@@ -766,8 +783,10 @@ Before you publish, check that:
   and author, the description, the list of hosts under "Se va a conectar con:", and the warning
   "Plugin no verificado: solo instálalo si confías en quien lo hizo." with "Instalar" and "Cancelar".
   If your manifest has a `password` setting it adds "Este plugin usa tu usuario y contraseña"; a `url`
-  setting adds "Se conectará a los servidores que escribas en su configuración". Nothing of yours
-  runs before they accept.
+  setting adds "Se conectará a los servidores que escribas en su configuración". Declaring `download`
+  adds "Puede descargar videos para verlos sin conexión", `drm` adds "Reproduce video protegido (DRM)",
+  and each `insecureHttp` host adds, in red, "Conexión sin cifrar con <host>". Nothing of yours runs
+  before they accept.
 - **Configurar.** A plugin with `settings` has a "Configurar" button in Ajustes ▸ Plugins. Until
   every required setting has a value its status is "Falta configurar" and nothing of it runs.
 - **Ver más.** A Home row with a `ref` ends in a "Ver más" card, and a search page with a `next`

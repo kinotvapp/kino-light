@@ -21,6 +21,8 @@ data class PluginManifest(
     val permissions: List<String> = emptyList(),
     /** What the plugin asks the person to configure (Ajustes ▸ Plugins ▸ Configurar). */
     val settings: List<PluginSetting> = emptyList(),
+    /** The subset of [hosts] the manifest marked `{ "host", "insecureHttp": true }` (apiVersion 2 only). */
+    val insecureHosts: Set<String> = emptySet(),
 )
 
 sealed interface ManifestResult {
@@ -34,7 +36,14 @@ sealed interface ManifestResult {
  * installer refuses on the first failure and shows [ManifestResult.Invalid.message].
  */
 object ManifestParser {
-    const val SUPPORTED_API = 1
+    /**
+     * The highest `apiVersion` a manifest may declare, and the value this build reports at runtime
+     * as `kino.apiVersion`. Round 2 of the SDK (the `download`/`drm` capabilities, and a `hosts`
+     * entry with `insecureHttp`) is gated behind exactly this number everywhere in this file: if a
+     * future apiVersion 3 ever needs its own, later gate, split that check out instead of reusing
+     * this constant for it.
+     */
+    const val SUPPORTED_API = 2
     const val MAX_BYTES = 16 * 1024
     const val MIN_HOSTS = 1
     const val MAX_HOSTS = 20
@@ -43,9 +52,15 @@ object ManifestParser {
     const val MAX_AUTHOR_CHARS = 60
     const val MAX_HOMEPAGE_CHARS = 200
     val RESERVED_IDS = setOf("magis", "ditu", "live", "local", "unknown", "plugin")
-    val CAPABILITIES = setOf("search", "home", "browse", "episodes", "resolve")
+    val CAPABILITIES = setOf("search", "home", "browse", "episodes", "resolve", "download", "drm")
     val REQUIRED_CAPABILITIES = listOf("resolve")
     val AT_LEAST_ONE_OF_CAPABILITIES = listOf("search", "home")
+    /**
+     * Capabilities the app itself acts on (a download button, DRM playback) rather than functions
+     * the plugin exports: [PluginInstaller] never requires them among the entry file's exports, and
+     * [parse] never accepts them below apiVersion 2.
+     */
+    val DECLARATIVE_CAPABILITIES = setOf("download", "drm")
     const val MAX_PATH_CHARS = 200
 
     /** `internal`, not public API of [PluginManifest]: exposed only so tests can pin `contract.json`'s `idPattern` to it. */
@@ -85,15 +100,39 @@ object ManifestParser {
         }
 
         val hostsJson = o.optJSONArray("hosts") ?: return invalid("hosts", "Falta el campo \"hosts\"")
-        val hosts = (0 until hostsJson.length()).map { hostsJson.opt(it) as? String ?: "" }
-        if (hosts.size < MIN_HOSTS || hosts.size > MAX_HOSTS) return invalid("hosts", "El campo \"hosts\" debe tener de $MIN_HOSTS a $MAX_HOSTS dominios")
-        hosts.firstOrNull { !HostRules.isValidPattern(it) }?.let {
-            return invalid("hosts", "El dominio \"$it\" no está permitido")
+        if (hostsJson.length() < MIN_HOSTS || hostsJson.length() > MAX_HOSTS) {
+            return invalid("hosts", "El campo \"hosts\" debe tener de $MIN_HOSTS a $MAX_HOSTS dominios")
         }
+        val hostEntries = ArrayList<HostEntry>(hostsJson.length())
+        for (i in 0 until hostsJson.length()) {
+            when (val raw = hostsJson.opt(i)) {
+                is String -> hostEntries += HostEntry(raw, insecure = false)
+                is JSONObject -> {
+                    // The object shape itself -- {host, insecureHttp} -- is apiVersion 2, whatever
+                    // insecureHttp's value: a v1 manifest gets the same clear refusal either way.
+                    if (api < SUPPORTED_API) return invalid("hosts", "Un host con \"insecureHttp\" necesita apiVersion $SUPPORTED_API")
+                    hostEntries += HostEntry(raw.optString("host"), insecure = raw.optBoolean("insecureHttp"))
+                }
+                else -> hostEntries += HostEntry("", insecure = false)
+            }
+        }
+        hostEntries.firstOrNull { !HostRules.isValidPattern(it.host) }?.let {
+            return invalid("hosts", "El dominio \"${it.host}\" no está permitido")
+        }
+        // A comodín widens which servers accept plain http far more than one named host: not allowed
+        // on an insecureHttp entry even though it is fine on an https-only one.
+        hostEntries.firstOrNull { it.insecure && it.host.startsWith("*.") }?.let {
+            return invalid("hosts", "Un host con \"insecureHttp\" no puede tener comodín (\"*.\")")
+        }
+        val hosts = hostEntries.map { it.host }.distinct()
+        val insecureHosts = hostEntries.filter { it.insecure }.map { it.host }.toSet()
 
         val capsJson = o.optJSONArray("capabilities") ?: return invalid("capabilities", "Falta el campo \"capabilities\"")
         val caps = (0 until capsJson.length()).map { capsJson.opt(it) as? String ?: "" }.toSet()
         caps.firstOrNull { it !in CAPABILITIES }?.let { return invalid("capabilities", "Capacidad desconocida: \"$it\"") }
+        if (api < SUPPORTED_API) {
+            caps.firstOrNull { it in DECLARATIVE_CAPABILITIES }?.let { return invalid("capabilities", "Esta capacidad necesita apiVersion 2") }
+        }
         REQUIRED_CAPABILITIES.firstOrNull { it !in caps }?.let { return invalid("capabilities", "El plugin debe declarar \"$it\"") }
         if (AT_LEAST_ONE_OF_CAPABILITIES.none { it in caps }) {
             return invalid("capabilities", "El plugin debe declarar \"" + AT_LEAST_ONE_OF_CAPABILITIES.joinToString("\" o \"") + "\"")
@@ -126,11 +165,15 @@ object ManifestParser {
             PluginManifest(
                 id = id, name = name, version = version, apiVersion = api, entry = entry,
                 description = text(o, "description", MAX_DESCRIPTION_CHARS), author = text(o, "author", MAX_AUTHOR_CHARS),
-                homepage = text(o, "homepage", MAX_HOMEPAGE_CHARS), hosts = hosts.distinct(), capabilities = caps,
+                homepage = text(o, "homepage", MAX_HOMEPAGE_CHARS), hosts = hosts, capabilities = caps,
                 color = color?.uppercase(), icon = icon, permissions = permissions, settings = settings,
+                insecureHosts = insecureHosts,
             ),
         )
     }
+
+    /** One parsed `hosts` entry: a plain string, or an apiVersion 2 `{host, insecureHttp}` object. */
+    private data class HostEntry(val host: String, val insecure: Boolean)
 
     /** A path inside the plugin's repo folder: no absolute paths, no `..`, no backslashes. */
     fun isSafeRelativePath(p: String): Boolean =

@@ -1,4 +1,4 @@
-// TypeScript declarations for Kino plugins (apiVersion 1, SDK v1). Reference them from plugin.js
+// TypeScript declarations for Kino plugins (apiVersion 1 and 2). Reference them from plugin.js
 // with `/// <reference path="./kino.d.ts" />` for editor help; Kino itself runs plain JavaScript.
 // The numbers in the comments come from contract.json, which is authoritative. The app checks that
 // every `kino` member declared here exists in its runtime and nothing else does (KinoDtsTest).

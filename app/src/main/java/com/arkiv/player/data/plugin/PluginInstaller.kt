@@ -20,6 +20,10 @@ data class InstallPreview(
     val newHosts: List<String>,
     /** Permissions not yet approved (all of them on a first install); each gets its own consent line. */
     val newPermissions: List<String> = emptyList(),
+    /** `download`/`drm` not yet approved (all of them on a first install); each needs its own consent. */
+    val newCapabilities: List<String> = emptyList(),
+    /** Hosts newly marked `insecureHttp` (all insecure ones on a first install), even when the host itself was already approved as https-only. */
+    val newInsecureHosts: List<String> = emptyList(),
 )
 
 sealed interface UpdateOutcome {
@@ -96,14 +100,16 @@ class PluginInstaller(
         } catch (e: PluginException) {
             throw InstallException("El plugin no carga: ${e.message}")
         }
-        val missing = m.capabilities - exports
+        // download/drm are flags the app itself acts on, never exported functions: only the
+        // function-shaped capabilities are checked against what the sandbox probe found.
+        val missing = (m.capabilities - ManifestParser.DECLARATIVE_CAPABILITIES) - exports
         if (missing.isNotEmpty()) throw InstallException("El plugin no carga: le falta ${missing.sorted().joinToString(", ")}")
         val sha = sha256Hex(script)
         val installedAt = clock()
         fun buildRecord(enabled: Boolean) = InstalledRecord(
             address = preview.address.canonical, version = m.version, sha256 = sha,
             hosts = m.hosts, installedAt = installedAt, enabled = enabled, lastUpdateCheckAt = installedAt,
-            permissions = m.permissions,
+            permissions = m.permissions, capabilities = m.capabilities.toList(), insecureHosts = m.insecureHosts.toList(),
         )
         val staging = store.newStaging(m.id)
         try {
@@ -135,13 +141,26 @@ class PluginInstaller(
         val preview = try { previewFor(address) } catch (e: InstallException) { return fail(e.message.orEmpty()) }
         if (preview.manifest.id != id) return fail("El repositorio ahora publica otro plugin (${preview.manifest.id})")
         if (SemVer.compare(preview.manifest.version, current.record.version) <= 0) {
-            touch { it.copy(pendingVersion = null, pendingHosts = emptyList(), pendingPermissions = emptyList()) }
+            touch {
+                it.copy(
+                    pendingVersion = null, pendingHosts = emptyList(), pendingPermissions = emptyList(),
+                    pendingCapabilities = emptyList(), pendingInsecureHosts = emptyList(),
+                )
+            }
             return UpdateOutcome.UpToDate
         }
-        // More reach than the person approved -- a host or a permission -- waits for them. A new
-        // REQUIRED setting doesn't: the update applies and the plugin shows "Falta configurar".
-        if (preview.newHosts.isNotEmpty() || preview.newPermissions.isNotEmpty()) {
-            touch { it.copy(pendingVersion = preview.manifest.version, pendingHosts = preview.newHosts, pendingPermissions = preview.newPermissions) }
+        // More reach than the person approved -- a host, a permission, a download/drm capability or
+        // a host newly marked insecureHttp -- waits for them. A new REQUIRED setting doesn't: the
+        // update applies and the plugin shows "Falta configurar".
+        if (preview.newHosts.isNotEmpty() || preview.newPermissions.isNotEmpty() ||
+            preview.newCapabilities.isNotEmpty() || preview.newInsecureHosts.isNotEmpty()
+        ) {
+            touch {
+                it.copy(
+                    pendingVersion = preview.manifest.version, pendingHosts = preview.newHosts, pendingPermissions = preview.newPermissions,
+                    pendingCapabilities = preview.newCapabilities, pendingInsecureHosts = preview.newInsecureHosts,
+                )
+            }
             return UpdateOutcome.NeedsApproval(preview)
         }
         return try {
@@ -177,10 +196,14 @@ class PluginInstaller(
         }
         val approved = existing?.record?.hosts.orEmpty().toSet()
         val approvedPermissions = existing?.record?.permissions.orEmpty().toSet()
+        val approvedCapabilities = existing?.record?.capabilities.orEmpty().toSet()
+        val approvedInsecureHosts = existing?.record?.insecureHosts.orEmpty().toSet()
         return InstallPreview(
             address, manifest, json, existing != null,
             newHosts = manifest.hosts.filterNot { it in approved },
             newPermissions = manifest.permissions.filterNot { it in approvedPermissions },
+            newCapabilities = manifest.capabilities.filter { it in ManifestParser.DECLARATIVE_CAPABILITIES }.filterNot { it in approvedCapabilities },
+            newInsecureHosts = manifest.insecureHosts.filterNot { it in approvedInsecureHosts },
         )
     }
 

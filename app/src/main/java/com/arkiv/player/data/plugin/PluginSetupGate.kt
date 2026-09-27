@@ -26,10 +26,13 @@ data class PluginStreamExpiry(val resolvedAtMs: Long, val expiresInSeconds: Int,
         expiresInSeconds > 0 && !retried && nowMs - resolvedAtMs >= expiresInSeconds * 1000L
 }
 
-/** One extra line of the consent sheet; [warning] ones get the warning icon, [isNew] the "nuevo" chip. */
-data class ConsentLine(val text: String, val warning: Boolean = false, val isNew: Boolean = false)
+/**
+ * One extra line of the consent sheet; [warning] ones get the warning icon, [isNew] the "nuevo"
+ * chip, [danger] draws the text itself in red (an insecure connection, never combined with [warning]).
+ */
+data class ConsentLine(val text: String, val warning: Boolean = false, val isNew: Boolean = false, val danger: Boolean = false)
 
-/** The consent sheet's lines beyond the host list (spec §1.2, §1.3). Pure. */
+/** The consent sheet's lines beyond the host list (spec §1.2, §1.3, and round 2's §"Security"). Pure. */
 object PluginConsent {
     fun extraLines(preview: InstallPreview): List<ConsentLine> {
         val m = preview.manifest
@@ -37,6 +40,15 @@ object PluginConsent {
         m.permissions.forEach { p -> out += ConsentLine("Permiso: $p", warning = true, isNew = preview.isUpdate && p in preview.newPermissions) }
         if (m.settings.any { it.type == SettingType.PASSWORD }) out += ConsentLine("Este plugin usa tu usuario y contraseña")
         if (m.settings.any { it.type == SettingType.URL }) out += ConsentLine("Se conectará a los servidores que escribas en su configuración")
+        if ("download" in m.capabilities) {
+            out += ConsentLine("Puede descargar videos para verlos sin conexión", isNew = preview.isUpdate && "download" in preview.newCapabilities)
+        }
+        if ("drm" in m.capabilities) {
+            out += ConsentLine("Reproduce video protegido (DRM)", isNew = preview.isUpdate && "drm" in preview.newCapabilities)
+        }
+        m.insecureHosts.forEach { host ->
+            out += ConsentLine("Conexión sin cifrar con $host", danger = true, isNew = preview.isUpdate && host in preview.newInsecureHosts)
+        }
         return out
     }
 }

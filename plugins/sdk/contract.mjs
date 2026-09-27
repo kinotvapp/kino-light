@@ -69,14 +69,35 @@ export function validateManifest(text, { knownPermissions = contract.permissions
   if (o.apiVersion < 1) return bad("apiVersion", 'El campo "apiVersion" debe ser 1 o mayor');
   if (!isSafeRelativePath(o.entry) || !o.entry.endsWith(".js")) return bad("entry", 'El campo "entry" debe ser una ruta relativa a un archivo .js');
   if (!Array.isArray(o.hosts)) return bad("hosts", 'Falta el campo "hosts"');
-  const hosts = o.hosts.map((h) => (typeof h === "string" ? h : ""));
-  if (hosts.length < m.minHosts || hosts.length > m.maxHosts) return bad("hosts", `El campo "hosts" debe tener de 1 a ${m.maxHosts} dominios`);
-  const badHost = hosts.find((h) => !isValidHostPattern(h));
-  if (badHost !== undefined) return bad("hosts", `El dominio "${badHost}" no está permitido`);
+  if (o.hosts.length < m.minHosts || o.hosts.length > m.maxHosts) return bad("hosts", `El campo "hosts" debe tener de 1 a ${m.maxHosts} dominios`);
+  const hostEntries = [];
+  for (const raw of o.hosts) {
+    if (typeof raw === "string") { hostEntries.push({ host: raw, insecure: false }); continue; }
+    if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
+      // The object shape itself -- {host, insecureHttp} -- is apiVersion 2, whatever insecureHttp's
+      // value: a v1 manifest gets the same clear refusal either way.
+      if (o.apiVersion < contract.maxApiVersion) return bad("hosts", `Un host con "insecureHttp" necesita apiVersion ${contract.maxApiVersion}`);
+      hostEntries.push({ host: typeof raw.host === "string" ? raw.host : "", insecure: raw.insecureHttp === true });
+      continue;
+    }
+    hostEntries.push({ host: "", insecure: false });
+  }
+  const badHost = hostEntries.find((e) => !isValidHostPattern(e.host));
+  if (badHost !== undefined) return bad("hosts", `El dominio "${badHost.host}" no está permitido`);
+  // A comodín widens which servers accept plain http far more than one named host: not allowed on
+  // an insecureHttp entry even though it is fine on an https-only one.
+  const wildcardInsecure = hostEntries.find((e) => e.insecure && e.host.startsWith("*."));
+  if (wildcardInsecure !== undefined) return bad("hosts", 'Un host con "insecureHttp" no puede tener comodín ("*.")');
+  const hosts = hostEntries.map((e) => e.host);
+  const insecureHosts = [...new Set(hostEntries.filter((e) => e.insecure).map((e) => e.host))];
   if (!Array.isArray(o.capabilities)) return bad("capabilities", 'Falta el campo "capabilities"');
   const caps = [...new Set(o.capabilities.map((c) => (typeof c === "string" ? c : "")))];
   const unknownCap = caps.find((c) => !contract.capabilities.names.includes(c));
   if (unknownCap !== undefined) return bad("capabilities", `Capacidad desconocida: "${unknownCap}"`);
+  if (o.apiVersion < contract.maxApiVersion) {
+    const tooNewCap = caps.find((c) => contract.capabilities.declarative.includes(c));
+    if (tooNewCap !== undefined) return bad("capabilities", "Esta capacidad necesita apiVersion 2");
+  }
   const missingRequiredCap = contract.capabilities.required.find((c) => !caps.includes(c));
   if (missingRequiredCap !== undefined) return bad("capabilities", `El plugin debe declarar "${missingRequiredCap}"`);
   if (!contract.capabilities.atLeastOneOf.some((c) => caps.includes(c))) {
@@ -92,7 +113,7 @@ export function validateManifest(text, { knownPermissions = contract.permissions
   if (o.settings !== undefined && !Array.isArray(o.settings)) return bad("settings", 'El campo "settings" debe ser una lista');
   const settingsError = validateSettings(o.settings || []);
   if (settingsError) return bad("settings", settingsError);
-  return { ok: true, manifest: { ...o, hosts: [...new Set(hosts)], capabilities: caps, permissions: o.permissions || [], settings: o.settings || [] } };
+  return { ok: true, manifest: { ...o, hosts: [...new Set(hosts)], capabilities: caps, permissions: o.permissions || [], settings: o.settings || [], insecureHosts } };
 }
 
 function validateSettings(list) {

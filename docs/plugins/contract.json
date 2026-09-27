@@ -1,11 +1,12 @@
 {
-  "$comment": "Kino plugin contract, apiVersion 1. The single source of truth for every number and rule a plugin meets. The app checks each value against its own code, and a test in the app pins this file to it; sdk/validate.mjs, sdk/run.mjs and the guide's tables read this file.",
-  "apiVersion": 1,
-  "maxApiVersion": 1,
+  "$comment": "Kino plugin contract, apiVersion 1 and 2. The single source of truth for every number and rule a plugin meets. The app checks each value against its own code, and a test in the app pins this file to it; sdk/validate.mjs, sdk/run.mjs and the guide's tables read this file.",
+  "apiVersion": 2,
+  "maxApiVersion": 2,
   "capabilities": {
-    "names": ["search", "home", "browse", "episodes", "resolve"],
+    "names": ["search", "home", "browse", "episodes", "resolve", "download", "drm"],
     "required": ["resolve"],
-    "atLeastOneOf": ["search", "home"]
+    "atLeastOneOf": ["search", "home"],
+    "declarative": ["download", "drm"]
   },
   "manifest": {
     "maxBytes": 16384,

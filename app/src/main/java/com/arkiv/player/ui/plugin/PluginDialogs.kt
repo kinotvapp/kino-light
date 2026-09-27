@@ -84,7 +84,7 @@ fun PluginConsentDialog(preview: InstallPreview, onInstall: () -> Unit, onCancel
                         if (line.warning) {
                             Icon(Icons.Filled.Warning, contentDescription = "Advertencia", tint = ArkivRed)
                         }
-                        Text(line.text, style = MaterialTheme.typography.bodyMedium, color = Color.White)
+                        Text(line.text, style = MaterialTheme.typography.bodyMedium, color = if (line.danger) ArkivRed else Color.White)
                         if (line.isNew) MetaChip("nuevo", ArkivRed, strong = true)
                     }
                 }

@@ -38,7 +38,8 @@ class PluginInstallerTest {
 
     private fun publish(
         version: String = "1.0.0",
-        hosts: List<String> = listOf("example.com"),
+        hosts: List<Any> = listOf("example.com"),
+        capabilities: List<String> = listOf("search", "resolve"),
         script: String = "export async function search(){}\nexport async function resolve(){}",
         prefix: String = base,
         api: Int = 1,
@@ -46,9 +47,11 @@ class PluginInstallerTest {
         files[prefix + "kino-plugin.json"] = JSONObject()
             .put("id", "demo").put("name", "Demo").put("version", version).put("apiVersion", api)
             .put("entry", "plugin.js").put("hosts", JSONArray(hosts))
-            .put("capabilities", JSONArray(listOf("search", "resolve"))).toString().toByteArray()
+            .put("capabilities", JSONArray(capabilities)).toString().toByteArray()
         files[prefix + "plugin.js"] = script.toByteArray()
     }
+
+    private fun insecureHost(host: String) = JSONObject().put("host", host).put("insecureHttp", true)
 
     private fun installFresh() = runBlocking { installer.install(installer.preview("o/r")) }
 
@@ -133,10 +136,40 @@ class PluginInstallerTest {
 
     @Test fun `an update needing a newer Kino is reported, not applied`() = runBlocking {
         publish("1.0.0"); installFresh()
-        publish("2.0.0", api = 2)
+        publish("2.0.0", api = 3)
         val o = installer.checkUpdate("demo") as UpdateOutcome.Failed
         assertEquals("Este plugin necesita una versión más nueva de Kino", o.message)
         assertEquals("1.0.0", store.get("demo")!!.record.version)
+    }
+
+    @Test fun `an update that adds download or drm waits for approval and does not require their export`() = runBlocking {
+        publish("1.0.0", api = 2, capabilities = listOf("search", "resolve")); installFresh()
+        publish("2.0.0", api = 2, capabilities = listOf("search", "resolve", "download", "drm"))
+        val outcome = installer.checkUpdate("demo") as UpdateOutcome.NeedsApproval
+        assertEquals(listOf("download", "drm"), outcome.preview.newCapabilities)
+        assertEquals("1.0.0", store.get("demo")!!.record.version)
+        assertEquals("2.0.0", store.get("demo")!!.record.pendingVersion)
+        assertEquals(listOf("download", "drm"), store.get("demo")!!.record.pendingCapabilities)
+        // exports is still just search/resolve: download/drm are declarative, never exported functions.
+        installer.install(outcome.preview)
+        val after = store.get("demo")!!.record
+        assertEquals("2.0.0", after.version)
+        assertNull(after.pendingVersion)
+        assertEquals(emptyList<String>(), after.pendingCapabilities)
+        assertEquals(listOf("search", "resolve", "download", "drm"), after.capabilities)
+    }
+
+    @Test fun `an update that marks an already-approved host insecureHttp waits for approval`() = runBlocking {
+        publish("1.0.0", api = 2, hosts = listOf("example.com")); installFresh()
+        publish("2.0.0", api = 2, hosts = listOf(insecureHost("example.com")))
+        val outcome = installer.checkUpdate("demo") as UpdateOutcome.NeedsApproval
+        assertEquals(emptyList<String>(), outcome.preview.newHosts) // same host string: already approved
+        assertEquals(listOf("example.com"), outcome.preview.newInsecureHosts)
+        assertEquals(listOf("example.com"), store.get("demo")!!.record.pendingInsecureHosts)
+        installer.install(outcome.preview)
+        val after = store.get("demo")!!.record
+        assertEquals(listOf("example.com"), after.insecureHosts)
+        assertEquals(emptyList<String>(), after.pendingInsecureHosts)
     }
 
     @Test fun `a change made while checkUpdate is still fetching is not lost (no stale write-back)`() = runBlocking {

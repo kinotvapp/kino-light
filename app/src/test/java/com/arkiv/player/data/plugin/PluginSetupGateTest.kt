@@ -63,4 +63,41 @@ class PluginSetupGateTest {
         val plain = m.copy(permissions = emptyList(), settings = emptyList())
         assertEquals(emptyList<ConsentLine>(), PluginConsent.extraLines(InstallPreview(PluginAddress("o", "r"), plain, "{}", false, emptyList())))
     }
+
+    @Test fun `download, drm and an insecure host each get their own consent line`() {
+        val m = PluginManifest(
+            "demo", "Demo", "1.0.0", 2, "plugin.js", "", "", "",
+            listOf("example.com"), setOf("search", "resolve", "download", "drm"), null, null,
+            insecureHosts = setOf("example.com"),
+        )
+        val preview = InstallPreview(PluginAddress("o", "r"), m, "{}", isUpdate = false, newHosts = listOf("example.com"))
+        assertEquals(
+            listOf(
+                ConsentLine("Puede descargar videos para verlos sin conexión"),
+                ConsentLine("Reproduce video protegido (DRM)"),
+                ConsentLine("Conexión sin cifrar con example.com", danger = true),
+            ),
+            PluginConsent.extraLines(preview),
+        )
+    }
+
+    @Test fun `an update that newly adds download, drm or an insecure host marks those lines nuevo`() {
+        val m = PluginManifest(
+            "demo", "Demo", "2.0.0", 2, "plugin.js", "", "", "",
+            listOf("example.com"), setOf("search", "resolve", "download", "drm"), null, null,
+            insecureHosts = setOf("example.com"),
+        )
+        val preview = InstallPreview(
+            PluginAddress("o", "r"), m, "{}", isUpdate = true, newHosts = emptyList(),
+            newCapabilities = listOf("download", "drm"), newInsecureHosts = listOf("example.com"),
+        )
+        assertEquals(
+            listOf(
+                ConsentLine("Puede descargar videos para verlos sin conexión", isNew = true),
+                ConsentLine("Reproduce video protegido (DRM)", isNew = true),
+                ConsentLine("Conexión sin cifrar con example.com", danger = true, isNew = true),
+            ),
+            PluginConsent.extraLines(preview),
+        )
+    }
 }
