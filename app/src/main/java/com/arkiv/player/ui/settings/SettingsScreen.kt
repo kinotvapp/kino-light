@@ -8,8 +8,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
@@ -101,11 +101,15 @@ fun SettingsScreen(contentPadding: PaddingValues, onOpenDownloads: () -> Unit = 
                 .fillMaxSize()
                 .padding(top = contentPadding.calculateTopPadding()),
         ) {
-            Text(
-                "Ajustes",
-                style = MaterialTheme.typography.headlineMedium,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
-            )
+            // Hidden while Plugins is the selected tab: its own content has very little height to spare
+            // (see PluginsContent's KDoc), and the chip row already says which tab is open.
+            if (tab != SettingsTab.PLUGINS) {
+                Text(
+                    "Ajustes",
+                    style = MaterialTheme.typography.headlineMedium,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
+                )
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -150,7 +154,9 @@ fun SettingsScreen(contentPadding: PaddingValues, onOpenDownloads: () -> Unit = 
                         )
                         SettingsTab.APP -> AppTab(onOpenDownloads = onOpenDownloads)
                         SettingsTab.CONNECT -> CompanionSettings()
-                        SettingsTab.PLUGINS -> Unit // Above: it needs a bounded height, not a scroll.
+                        // Never reached: Plugins has its own branch above, since it needs a bounded height,
+                        // not a scroll. The compiler still requires this `when` to be exhaustive.
+                        SettingsTab.PLUGINS -> Unit
                     }
                     // The bottom shell adds the air below: the tabs don't need to know there's a
                     // navigation bar under them.

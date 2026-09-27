@@ -84,7 +84,7 @@ private val INSTALLED_CONTAINER = Color.White.copy(alpha = 0.08f)
  * Configurar or Instalar again); [reserveStatusLine] leaves room for it in a card that has none, so the
  * line ends at the same height (see [com.arkiv.player.ui.tv.gridLinesWithStatus]).
  *
- * [enabled] is false while the window is busy with another install or check: the button is then dimmed
+ * [enabled] is false while the screen is busy with another install or check: the button is then dimmed
  * and ignores taps, as the row it replaces did. [modifier] is applied to the card.
  */
 @Composable

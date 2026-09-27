@@ -73,12 +73,12 @@ data class CatalogUiState(
     /**
      * Why the sources behind [rows] failed, as [CatalogResult.failures] reports it (the keys "cache" and
      * "seed" are local labels), so a later phase can report which one broke. Empty when nothing failed.
-     * The windows do not read it.
+     * The screens do not read it.
      */
     val failures: Map<String, String> = emptyMap(),
 )
 
-/** What the seed line of the window says and does; the phone and the TV window both draw it. */
+/** What the seed line of the screen says and does; the phone and the TV screen both draw it. */
 data class CatalogRefreshLine(
     /** The notice, or null while a refresh is running (nothing to apologise for yet). */
     val notice: String?,

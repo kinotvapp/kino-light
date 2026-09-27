@@ -475,7 +475,8 @@ class PluginsViewModelTest {
     }
 
     @Test fun `a view model built without a catalog provider settles on an empty seed catalog`() {
-        // Ajustes ▸ Plugins and Configurar build it this way so visiting them never downloads the catalog.
+        // Only Configurar builds it this way: Ajustes ▸ Plugins passes both providers (see below) and
+        // downloads the catalog and art on first open.
         val vm = PluginsViewModel(FakeAdmin(), io = dispatcher)
         with(vm.catalog.value) {
             assertFalse(loading)
@@ -1101,7 +1102,8 @@ class PluginsViewModelTest {
         assertNull(NoCatalogArt.cached("o/alfa"))
         assertNull(runBlocking { NoCatalogArt.refresh("o/alfa") })
         NoCatalogArt.retryFailed()
-        // The Plugins tab and Configurar pass neither provider: no rows are listed, so nothing is ever asked.
+        // Only Configurar passes neither provider (Ajustes ▸ Plugins passes both): no rows are listed, so
+        // nothing is ever asked.
         val plain = PluginsViewModel(FakeAdmin(), io = dispatcher)
         assertTrue(plain.catalog.value.rows.isEmpty())
         assertTrue(plain.art.value.isEmpty())

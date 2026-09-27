@@ -6,15 +6,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
@@ -30,16 +27,16 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.PrimaryScrollableTabRow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
@@ -156,15 +153,20 @@ fun PluginsScreen(mode: AddPluginMode, onClose: () -> Unit) {
  * What the Plugins screen shows on the phone: no title, no back arrow and no Back handling of its own (the
  * host adds them: [PluginsScreen], or Ajustes ▸ Plugins under its own header) and no insets (the host
  * pads the top and the keyboard; [bottomInset] is the system bar it leaves at the bottom, which the lists
- * keep clear). From top to bottom: what an action answers (the progress bar and its message), the
- * **Agregar** button, the two tabs **Recomendados** and **Instalados (n)**, and the selected tab's body.
- * **Recomendados**: search the recommended plugins (cards in a two-column grid) and install one.
- * **Instalados**: manage what is installed. **Agregar** opens a modal to add one by `usuario/repositorio`
- * ([AddCustomPluginModal]). Installing always goes through the consent sheet, whichever tab or modal it
- * starts from.
+ * keep clear). From top to bottom: what an action answers (the progress bar and, on its own line, the
+ * message), ONE row with the two tabs **Recomendados** and **Instalados (n)** and, at its end, the
+ * **Agregar** button, and the selected tab's body. **Recomendados**: search the recommended plugins (cards
+ * in a two-column grid) and install one. **Instalados**: manage what is installed. **Agregar** opens a modal
+ * to add one by `usuario/repositorio` ([AddCustomPluginModal]). Installing always goes through the consent
+ * sheet, whichever tab or modal it starts from.
  *
- * The button has a line of its own (with the message beside it) instead of sharing the tabs' line: two
- * tabs and a "+ Agregar" do not fit side by side at a phone's width, and less so at a large font.
+ * "Agregar" is icon-only (a plus, no label): hosted in Ajustes ▸ Plugins this content has very little
+ * height to spare (Ajustes' own chip row sits above it), so every dp the header can give back to the lists
+ * matters. The tab row scrolls ([PrimaryScrollableTabRow]) rather than splitting the width evenly, so
+ * "Recomendados" and "Instalados (n)" never wrap or clip at a large font, whatever `n` is.
+ *
+ * The message sits on its own line, full width, ONLY while there is one: no space is reserved for it when
+ * there is none, which is the common case.
  *
  * Each tab is its own scrolling list, so either can grow: the body takes the height its host leaves (the
  * host must bound it). What must be seen wherever the person is stays above the tabs. The dialogs (consent,
@@ -195,27 +197,28 @@ internal fun PluginsContent(mode: AddPluginMode, bottomInset: Dp, modifier: Modi
     Column(modifier) {
         // Above the tabs, not inside them: what an install or an add answers must be seen on either tab,
         // wherever its list is scrolled to. A message about one installed plugin shows on its own row, and
-        // while the modal is up its message is drawn inside it.
+        // while the modal is up its message is drawn inside it. No space is reserved when there is none.
         if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth(), color = ArkivRed)
-        Row(Modifier.fillMaxWidth().padding(horizontal = SIDE_GUTTER), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.weight(1f).padding(end = 12.dp)) {
-                if (rowMessageId == null && !modalVisible) {
-                    state.message?.let {
-                        Text(it, style = MaterialTheme.typography.bodySmall, color = Color.White, modifier = Modifier.padding(vertical = 8.dp))
-                    }
-                }
+        if (rowMessageId == null && !modalVisible) {
+            state.message?.let {
+                Text(
+                    it, style = MaterialTheme.typography.bodySmall, color = Color.White,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = SIDE_GUTTER, vertical = 8.dp),
+                )
             }
-            AddPluginButton(
-                enabled = !state.busy,
-                onClick = {
-                    // The modal opens empty: what an earlier action said is not its news, and neither is an address
-                    // a confirmed install left behind when it failed. (Changing the address also drops the message.)
-                    vm.onAddressChange("")
-                    addRequested = true
-                },
-            )
         }
-        PluginsTabRow(selected = tab, installedCount = plugins.size, onSelect = { tab = it })
+        PluginsTabRow(
+            selected = tab,
+            installedCount = plugins.size,
+            addEnabled = !state.busy,
+            onSelect = { tab = it },
+            onAdd = {
+                // The modal opens empty: what an earlier action said is not its news, and neither is an address
+                // a confirmed install left behind when it failed. (Changing the address also drops the message.)
+                vm.onAddressChange("")
+                addRequested = true
+            },
+        )
         when (tab) {
             PluginsTab.RECOMMENDED -> RecommendedTab(
                 vm = vm, query = state.query, busy = state.busy, catalog = catalog, art = art,
@@ -263,41 +266,64 @@ internal fun PluginsContent(mode: AddPluginMode, bottomInset: Dp, modifier: Modi
     state.configuring?.let { PluginConfigDialog(it, isTv = false, vm = vm) }
 }
 
-/** The "Agregar" button: a plus and the word, at least [MIN_TARGET] tall, off while an action runs. */
+/**
+ * The "Agregar" button: icon-only, [MIN_TARGET] square, dimmed and inert while an action runs. It used to
+ * carry the word "Agregar" on a line of its own above the tabs; both cost more height than Ajustes ▸ Plugins
+ * can spare, so it moved into the tab row and dropped its label (the plus is enough, and the content
+ * description keeps it named for accessibility).
+ */
 @Composable
-private fun AddPluginButton(enabled: Boolean, onClick: () -> Unit) {
-    FilledTonalButton(
+private fun AddPluginIconButton(enabled: Boolean, onClick: () -> Unit) {
+    FilledIconButton(
         onClick = onClick,
         enabled = enabled,
-        modifier = Modifier.heightIn(min = MIN_TARGET),
-        colors = ButtonDefaults.filledTonalButtonColors(containerColor = ADD_CONTAINER, contentColor = Color.White),
+        modifier = Modifier.size(MIN_TARGET),
+        colors = IconButtonDefaults.filledIconButtonColors(containerColor = ADD_CONTAINER, contentColor = Color.White),
     ) {
-        Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
-        Spacer(Modifier.width(ButtonDefaults.IconSpacing))
-        Text("Agregar", maxLines = 1)
+        Icon(Icons.Filled.Add, contentDescription = "Agregar plugin")
     }
 }
 
-/** The two tabs; the Instalados one carries how many plugins are installed. */
+/**
+ * The two tabs and, at the row's end, the "Agregar" button. The Instalados tab carries how many plugins are
+ * installed. The tabs scroll ([PrimaryScrollableTabRow], `edgePadding = 0.dp`) instead of splitting the
+ * remaining width evenly: at a phone's width, split evenly with a large font, "Instalados (n)" could wrap or
+ * clip; a tab sized to its own text never does, whatever `n` is.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PluginsTabRow(selected: PluginsTab, installedCount: Int, onSelect: (PluginsTab) -> Unit) {
-    PrimaryTabRow(selectedTabIndex = selected.ordinal, containerColor = ArkivBlack, contentColor = Color.White) {
-        PluginsTab.entries.forEach { tab ->
-            Tab(
-                selected = tab == selected,
-                onClick = { onSelect(tab) },
-                selectedContentColor = Color.White,
-                unselectedContentColor = ArkivTextSecondary,
-                text = {
-                    val label = when (tab) {
-                        PluginsTab.RECOMMENDED -> "Recomendados"
-                        PluginsTab.INSTALLED -> installedTabLabel(installedCount)
-                    }
-                    Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                },
-            )
+private fun PluginsTabRow(
+    selected: PluginsTab,
+    installedCount: Int,
+    addEnabled: Boolean,
+    onSelect: (PluginsTab) -> Unit,
+    onAdd: () -> Unit,
+) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = SIDE_GUTTER), verticalAlignment = Alignment.CenterVertically) {
+        PrimaryScrollableTabRow(
+            selectedTabIndex = selected.ordinal,
+            modifier = Modifier.weight(1f),
+            containerColor = ArkivBlack,
+            contentColor = Color.White,
+            edgePadding = 0.dp,
+        ) {
+            PluginsTab.entries.forEach { tab ->
+                Tab(
+                    selected = tab == selected,
+                    onClick = { onSelect(tab) },
+                    selectedContentColor = Color.White,
+                    unselectedContentColor = ArkivTextSecondary,
+                    text = {
+                        val label = when (tab) {
+                            PluginsTab.RECOMMENDED -> "Recomendados"
+                            PluginsTab.INSTALLED -> installedTabLabel(installedCount)
+                        }
+                        Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    },
+                )
+            }
         }
+        AddPluginIconButton(enabled = addEnabled, onClick = onAdd)
     }
 }
 
