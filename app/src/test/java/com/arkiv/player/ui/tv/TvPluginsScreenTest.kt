@@ -13,11 +13,13 @@ import com.arkiv.player.ui.plugin.CatalogRow
 import com.arkiv.player.ui.plugin.CatalogUiState
 import com.arkiv.player.ui.plugin.catalogRefreshLine
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
-class TvAddPluginScreenTest {
+class TvPluginsScreenTest {
     @Test fun `each catalog action reads as a sentence with the plugin name`() {
         assertEquals("Instalar Internet Archive", catalogRowLabel(CatalogAction.INSTALL, "Internet Archive"))
         assertEquals("Configurar Mi servidor", catalogRowLabel(CatalogAction.CONFIGURE, "Mi servidor"))
@@ -39,6 +41,32 @@ class TvAddPluginScreenTest {
         assertNull(fieldExitDirection(Key.DirectionLeft))
         assertNull(fieldExitDirection(Key.DirectionRight))
         assertNull(fieldExitDirection(Key.A))
+    }
+
+    // The header row (tabs and "Agregar") sits above the grid, and its button at the far right is right above
+    // the last column: a Right key on a card of that column would find the button, which is up and to the
+    // side. Nothing is meant to be to the right of a card of the last column, nor of the very last card.
+    @Test fun `a card of the last column has nothing to its right`() {
+        assertFalse(cardHasNothingToTheRight(index = 0, lastIndex = 8, columns = 3))
+        assertFalse(cardHasNothingToTheRight(index = 1, lastIndex = 8, columns = 3))
+        assertTrue(cardHasNothingToTheRight(index = 2, lastIndex = 8, columns = 3))
+        assertFalse(cardHasNothingToTheRight(index = 3, lastIndex = 8, columns = 3))
+        assertTrue(cardHasNothingToTheRight(index = 5, lastIndex = 8, columns = 3))
+    }
+
+    @Test fun `the very last card has nothing to its right, whichever column it is in`() {
+        assertTrue(cardHasNothingToTheRight(index = 7, lastIndex = 7, columns = 3))
+        assertTrue(cardHasNothingToTheRight(index = 3, lastIndex = 3, columns = 3))
+        assertTrue(cardHasNothingToTheRight(index = 0, lastIndex = 0, columns = 3))
+    }
+
+    // The dialog is a window of its own: when it goes away the person must find the button that opened it
+    // focused again, and only then (a consent that never came from the dialog leaves focus where it is).
+    @Test fun `focus goes back to the Agregar button only when the dialog has just gone away`() {
+        assertTrue(focusReturnsToAdd(wasShown = true, shown = false))
+        assertFalse(focusReturnsToAdd(wasShown = false, shown = false))
+        assertFalse(focusReturnsToAdd(wasShown = false, shown = true))
+        assertFalse(focusReturnsToAdd(wasShown = true, shown = true))
     }
 
     private val manifest = PluginManifest("demo", "Demo", "1.0.0", 1, "plugin.js", "", "lordmacu", "", listOf("example.com"), setOf("search", "resolve"), null, null)

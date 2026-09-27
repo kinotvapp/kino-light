@@ -21,7 +21,8 @@ import androidx.tv.material3.Text
 import com.arkiv.player.ui.theme.ArkivRed
 import com.arkiv.player.ui.theme.ArkivSurface
 
-private val TAB_HEIGHT = 52.dp
+/** The height of a tab, and of the compact buttons ([TvCompactAction]) that sit in a row with tabs. */
+internal val TAB_HEIGHT = 52.dp
 
 /**
  * Tab in a TV horizontal row: the "switch big section" gesture with the remote.

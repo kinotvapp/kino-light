@@ -66,7 +66,7 @@ private val ICON_SIZE = 96.dp
 private val INITIAL_SIZE = 56.dp
 
 /**
- * One recommended plugin as a card of the "Agregar plugin" grid: a 16:9 tile in the plugin's own colour
+ * One recommended plugin as a card of the Plugins screen's Recomendados grid: a 16:9 tile in the plugin's own colour
  * with its icon (or, while it has none, the first letter of its name), then its name, what it does and
  * the one thing OK will do ([cardActionLabel]). The whole card is the focus target; an installed plugin
  * that needs nothing is still focusable, so the grid is walked one card at a time, and its click does

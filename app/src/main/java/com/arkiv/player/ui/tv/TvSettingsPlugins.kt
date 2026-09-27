@@ -8,6 +8,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -63,11 +64,20 @@ internal fun TvSettingsPlugins(onOpenAddPlugin: () -> Unit = {}) {
 /**
  * One installed plugin's rows: name and status, the sites it talks to, [message] (the line for THIS
  * plugin, see [rowMessagePluginId]) and its actions. It emits several children, so the caller gives
- * them one column: Ajustes ▸ Plugins spaces them in its own, the "Agregar plugin" window wraps each
+ * them one column: Ajustes ▸ Plugins spaces them in its own, the Plugins screen's Instalados tab wraps each
  * plugin in one. The icon is the plugin's own, or [art]'s when the plugin has none ([installedIconFile]).
+ *
+ * [firstActionModifier] goes on the first action the plugin shows (the on/off switch, or the next one when
+ * a damaged plugin has none), so the caller can send focus to it or say where Up from it leads.
  */
 @Composable
-internal fun TvInstalledPluginRows(p: InstalledPlugin, message: String?, vm: PluginsViewModel, art: CatalogArt? = null) {
+internal fun TvInstalledPluginRows(
+    p: InstalledPlugin,
+    message: String?,
+    vm: PluginsViewModel,
+    art: CatalogArt? = null,
+    firstActionModifier: Modifier = Modifier,
+) {
     val heading = "${p.manifest.name} · ${p.record.version} — ${pluginStatusText(p.status)}"
     val iconFile = installedIconFile(p.iconFile, art)
     if (iconFile == null) {
@@ -83,12 +93,18 @@ internal fun TvInstalledPluginRows(p: InstalledPlugin, message: String?, vm: Plu
     if (message != null) {
         Text(message, style = MaterialTheme.typography.bodyMedium, color = Color.White)
     }
-    if (p.status != PluginStatus.DAMAGED) {
-        TvActionOption(label = "${p.manifest.name}: ${if (p.isUsable) "activado" else "desactivado"}") { vm.setEnabled(p.id, !p.isUsable) }
+    val hasSwitch = p.status != PluginStatus.DAMAGED
+    val hasSettings = p.manifest.settings.isNotEmpty()
+    if (hasSwitch) {
+        TvActionOption(label = "${p.manifest.name}: ${if (p.isUsable) "activado" else "desactivado"}", modifier = firstActionModifier) { vm.setEnabled(p.id, !p.isUsable) }
     }
-    if (p.manifest.settings.isNotEmpty()) {
-        TvActionOption(label = "Configurar ${p.manifest.name}") { vm.openSettings(p.id) }
+    if (hasSettings) {
+        TvActionOption(label = "Configurar ${p.manifest.name}", modifier = if (hasSwitch) Modifier else firstActionModifier) { vm.openSettings(p.id) }
     }
-    TvActionOption(label = if (p.status == PluginStatus.UPDATE_PENDING) "Revisar actualización de ${p.manifest.name}" else "Buscar actualización de ${p.manifest.name}") { vm.checkUpdate(p.id) }
+    // The update check is always there: it is the first action of a damaged plugin with no settings.
+    TvActionOption(
+        label = if (p.status == PluginStatus.UPDATE_PENDING) "Revisar actualización de ${p.manifest.name}" else "Buscar actualización de ${p.manifest.name}",
+        modifier = if (hasSwitch || hasSettings) Modifier else firstActionModifier,
+    ) { vm.checkUpdate(p.id) }
     TvActionOption(label = "Desinstalar ${p.manifest.name}") { vm.askUninstall(p) }
 }
