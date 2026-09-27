@@ -27,6 +27,16 @@ internal fun addModalVisible(requested: Boolean, state: PluginsUiState): Boolean
     requested && state.consent == null && state.configuring == null && state.confirmUninstall == null
 
 /**
+ * Whether the person's "Agregar" request ([requested]) outlives their answer to the consent sheet. Cancelling
+ * keeps it: the sheet only took the screen over, so the modal reopens with the address still typed.
+ * Confirming ends it: the install carries on behind the progress bar and the message of the main screen, and
+ * the modal must not come back over it (the address is still in the field until the install completes, so
+ * [addModalVisible] alone would raise it again). A sheet that did not come from the modal ([requested] is
+ * false: an update check, a card) never raises it.
+ */
+internal fun addRequestAfterConsent(requested: Boolean, confirmed: Boolean): Boolean = requested && !confirmed
+
+/**
  * Whether "Agregar" does anything with the field: not while another action runs (the view model would
  * ignore it) and not for an empty or whitespace-only address ([PluginsViewModel.add] trims it too).
  */

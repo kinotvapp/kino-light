@@ -44,6 +44,19 @@ class PluginsScreenStateTest {
         assertFalse(addModalVisible(requested = true, state = PluginsUiState(confirmUninstall = installed)))
     }
 
+    @Test fun `cancelling the consent sheet keeps the Agregar request so the modal reopens with its text`() {
+        assertTrue(addRequestAfterConsent(requested = true, confirmed = false))
+    }
+
+    @Test fun `confirming the consent sheet ends the Agregar request so the modal does not come back over the install`() {
+        assertFalse(addRequestAfterConsent(requested = true, confirmed = true))
+    }
+
+    @Test fun `a consent sheet that did not come from the modal never raises the modal`() {
+        assertFalse(addRequestAfterConsent(requested = false, confirmed = false))
+        assertFalse(addRequestAfterConsent(requested = false, confirmed = true))
+    }
+
     @Test fun `a blank address cannot be submitted`() {
         assertFalse(canSubmitCustom("", busy = false))
         assertFalse(canSubmitCustom("  ", busy = false))
