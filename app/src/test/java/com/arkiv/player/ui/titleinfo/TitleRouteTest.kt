@@ -103,6 +103,35 @@ class TitleRouteTest {
         assertTrue(titleRoute(pluginResult(extra = mapOf("overview" to accents)))!!.length < 6000)
     }
 
+    // --- titleTap: what tapping a plugin card does ---
+
+    @Test
+    fun `a movie or series card opens its info page`() {
+        val tap = titleTap(pluginResult(kind = "movie"))
+        assertTrue(tap is TitleTap.InfoPage)
+        assertEquals(titleRoute(pluginResult(kind = "movie")), (tap as TitleTap.InfoPage).route)
+        assertTrue(titleTap(pluginResult(kind = "series")) is TitleTap.InfoPage)
+    }
+
+    @Test
+    fun `a live card goes straight to the player, never to an info page`() {
+        val live = pluginResult(kind = "live", itemId = "c1", ref = PluginRef("demo", "c1", PluginRef.LIVE, "ch-1").encode())
+        val tap = titleTap(live)
+        assertTrue(tap.toString(), tap is TitleTap.PlayLive)
+        val channel = (tap as TitleTap.PlayLive).channel
+        assertEquals(com.arkiv.player.data.plugin.PluginIds.liveEpisodeId("demo", "c1"), channel.episodeId)
+        assertEquals(live.ref, channel.ref)
+        assertEquals(live.title, channel.title)
+    }
+
+    @Test
+    fun `a card that cannot be opened says so, live included`() {
+        assertEquals(TitleTap.CannotOpen, titleTap(pluginResult(kind = "movie", extra = mapOf("pluginItemId" to ""))))
+        // A live card whose ref belongs to another plugin has nowhere to go.
+        val foreign = pluginResult(kind = "live", itemId = "c1", ref = PluginRef("other", "c1", PluginRef.LIVE, "ch-1").encode())
+        assertEquals(TitleTap.CannotOpen, titleTap(foreign))
+    }
+
     @Test
     fun `a route with no id cannot be rebuilt`() {
         assertNull(titleItemFrom { null })

@@ -272,6 +272,49 @@ What downloads, and what does not:
 Declaring `download` shows "Puede descargar videos para verlos sin conexión" on the consent sheet,
 and an update that newly declares it waits for the person's approval ([section 8](#8-publishing-your-plugin)).
 
+### Live channels (apiVersion 2)
+
+With `"apiVersion": 2` an item may be a live channel: `kind: "live"`, in any `home` row, `browse`
+page or `search` result, next to your movies and series. Nothing to declare beyond the version.
+
+```js
+export async function home() {
+  return [{
+    id: "en-vivo", title: "En vivo",
+    items: [
+      { id: "canal-1", ref: "live:1", title: "Canal Uno", kind: "live", poster: "https://cdn.example.org/canal-1.png" },
+    ],
+  }];
+}
+
+export async function resolve(ref) {
+  if (ref.startsWith("live:")) {
+    const url = await freshPlaylistUrlFor(ref); // look the live link up here, never in home()
+    return { url, mime: "application/vnd.apple.mpegurl" };
+  }
+  // ...movies and episodes as before
+}
+```
+
+What Kino does with a `live` item:
+
+- Its card wears an "EN VIVO" badge (Home, "Ver más", search, phone and TV), and tapping it goes
+  **straight to the player**: no info page, nothing to read or pick. `resolve(ref)` gets the item's
+  `ref`, exactly as for a movie.
+- The `Stream` plays as live: an HLS or DASH live manifest (`.m3u8`/`.mpd`) is what the player
+  expects; a progressive file plays too but reads as a channel (no seek bar, no length). `headers`,
+  `subtitles`, `audioTracks` and `expiresInSeconds` work as for any stream; `durationMs` is ignored.
+- The player shows the live overlay (no progress bar, no seeking, no "next"), starts at the live
+  edge, and when the stream cuts or the URL expires it calls `resolve` again with the same `ref`.
+- A channel is never saved: no library row, no resume position, never in "Continuar viendo", and
+  never downloadable (a plugin that declares `download` gets "Este video no se puede descargar"
+  for it). `runtimeMinutes` on the item is ignored; a channel has no `episodes`.
+
+Limits: a `live` item from a plugin on `"apiVersion": 1` is dropped silently, like any invalid
+item (and a row left with no items disappears), so declare `2` before you return one. A channel
+still counts against the same row and page sizes as any item. Kino's own "Canales en vivo" row is
+native and separate: your channels appear in your rows, with your plugin's name.
+
 ## 4. The contract (apiVersion 1 and 2)
 
 Your entry file is one ES module that exports one `async` function for each capability you
@@ -309,12 +352,13 @@ return plain data: strings, numbers, booleans, arrays and objects.
 - `browse(ref, cursor)` gets the `ref` of one of your Home rows (or a `ref` a previous page gave),
   and `cursor` `null` for the first page or the `next` of the page before.
 - `episodes(ref)` gets the `ref` of a `series` item, as you returned it.
-- `resolve(ref)` gets the `ref` of a `movie` item, or the `ref` of an episode.
+- `resolve(ref)` gets the `ref` of a `movie` item, the `ref` of an episode, or (apiVersion 2) the
+  `ref` of a `live` item.
 
 ### What you return
 
 ```ts
-Item       = { id: string, ref: string, title: string, kind: "movie" | "series",
+Item       = { id: string, ref: string, title: string, kind: "movie" | "series" | "live",
                year?: string, poster?: string, backdrop?: string, overview?: string,
                lang?: string, quality?: string, originalTitle?: string,
                genres?: string[], rating?: number, runtimeMinutes?: number,
@@ -333,8 +377,9 @@ Stream     = { url: string, mime?: string, headers?: Record<string, string>,
 ```
 
 **How the pieces connect.** A `movie` item's `ref` goes to `resolve`. A `series` item's `ref` goes to
-`episodes`, and each episode's `ref` goes to `resolve`. A row's `ref` goes to `browse`, and so does
-each page's `next`.
+`episodes`, and each episode's `ref` goes to `resolve`. A `live` item's `ref` (apiVersion 2, see
+[Live channels](#live-channels-apiversion-2)) goes to `resolve` too, and its Stream plays as live. A
+row's `ref` goes to `browse`, and so does each page's `next`.
 
 **Seasons.** Two shapes, and your `episodes` answer says which. When every season of a show is in
 one list, give each episode its `season` and leave `seasons` out: Kino reads the seasons from the
@@ -945,7 +990,9 @@ Before you publish, check that:
   `color`), next to the app's own sources; your `home` rows appear on Home after the app's own; your
   titles play in Kino's player and appear in "Continuar viendo" and the library. Titles of a plugin
   that declares `download` can be saved for offline viewing ([section 3](#downloads-apiversion-2));
-  Chromecast and DLNA are not available for plugin titles in this version.
+  Chromecast and DLNA are not available for plugin titles in this version. A `live` item's card
+  says "EN VIVO" and plays on tap, with no info page; a channel never enters "Continuar viendo" or
+  the library ([Live channels](#live-channels-apiversion-2)).
 - **Status of each plugin** in Ajustes > Plugins: "Activo", "Desactivado", "Falta configurar", "No
   responde — actívalo para volver a intentar" (three timeouts in a row; the person can re-enable it),
   "Actualización

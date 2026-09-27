@@ -48,5 +48,7 @@ class PluginHeroTest {
         assertEquals("Xuper  ·  Película  ·  ★ 7.7", movie.meta())
         val series = pluginHeroPick(listOf(row("x", "r", item("B", kind = "series"), name = "Xuper")))!!
         assertEquals("Xuper  ·  Serie", series.meta())
+        val live = pluginHeroPick(listOf(row("x", "r", item("Canal", kind = "live"), name = "Xuper")))!!
+        assertEquals("Xuper  ·  En vivo", live.meta())
     }
 }

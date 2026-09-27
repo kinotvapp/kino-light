@@ -121,6 +121,24 @@ object PluginOutput {
     /** `internal`, not public API: exposed only so a test can pin `contract.json`'s `output.maxEpisodeNumber` to it. */
     internal const val MAX_EPISODE_NUMBER = 99_999
 
+    /**
+     * The item kind of a live channel (apiVersion 2): it has no duration and no episodes, its `ref`
+     * goes to `resolve` and plays as live, straight from its card. See [allowsLive].
+     */
+    const val KIND_LIVE = "live"
+    /**
+     * The apiVersion that brought [KIND_LIVE]. Its own constant, not `ManifestParser.SUPPORTED_API`:
+     * that one is the app's ceiling and moves with every round; this one names when live arrived
+     * and never moves. `internal`, not public API: exposed so a test can pin `contract.json`'s
+     * `output.liveKindApiVersion` to it.
+     */
+    internal const val LIVE_API_VERSION = 2
+    /** `internal`, not public API: exposed only so a test can pin `contract.json`'s `output.itemKinds` to it. */
+    internal val ITEM_KINDS = listOf("movie", "series", KIND_LIVE)
+
+    /** Whether a plugin declaring [apiVersion] may answer [KIND_LIVE] items; below it they are dropped like any invalid kind. */
+    fun allowsLive(apiVersion: Int): Boolean = apiVersion >= LIVE_API_VERSION
+
     val ID = Regex("^[A-Za-z0-9._~-]{1,128}$")
     val IMDB = Regex("^tt\\d{5,10}$")
     val AIR_DATE = Regex("^\\d{4}-\\d{2}-\\d{2}$")
@@ -133,7 +151,9 @@ object PluginOutput {
     /**
      * `search` (≤ [MAX_SEARCH_ITEMS]) or `browse` (≤ [MAX_BROWSE_ITEMS]): an `Item[]` or a
      * `{ items, next }` page. [allowNext] is whether the plugin declares `browse`: without it a
-     * `next` is dropped (logged), since nothing could ask for it.
+     * `next` is dropped (logged), since nothing could ask for it. [allowLive] is [allowsLive] of
+     * the plugin's apiVersion; off by default, so a caller that never heard of live channels keeps
+     * dropping them exactly as before.
      */
     fun page(
         json: String,
@@ -141,6 +161,7 @@ object PluginOutput {
         allowSeries: Boolean,
         allowNext: Boolean,
         hosts: EffectiveHosts = EffectiveHosts(emptyList()),
+        allowLive: Boolean = false,
         log: (String) -> Unit = {},
     ): PluginPage {
         val value = runCatching { org.json.JSONTokener(json).nextValue() }.getOrNull()
@@ -154,7 +175,7 @@ object PluginOutput {
             }
             else -> return PluginPage(emptyList(), null).also { log("the answer is not a list or a page") }
         }
-        return PluginPage(itemsOf(array, max, allowSeries, hosts, log), next)
+        return PluginPage(itemsOf(array, max, allowSeries, allowLive, hosts, log), next)
     }
 
     fun rows(
@@ -162,6 +183,7 @@ object PluginOutput {
         allowSeries: Boolean,
         allowBrowse: Boolean,
         hosts: EffectiveHosts = EffectiveHosts(emptyList()),
+        allowLive: Boolean = false,
         log: (String) -> Unit = {},
     ): List<PluginRow> {
         val array = runCatching { JSONArray(json) }.getOrNull()
@@ -175,7 +197,7 @@ object PluginOutput {
             if (!ID.matches(id)) { log("home: row $i has an invalid id"); continue }
             val title = text(o, "title", MAX_TITLE_CHARS)
             if (title.isBlank()) { log("home: row $id has no title"); continue }
-            val items = itemsOf(o.optJSONArray("items") ?: JSONArray(), MAX_ROW_ITEMS, allowSeries, hosts, log)
+            val items = itemsOf(o.optJSONArray("items") ?: JSONArray(), MAX_ROW_ITEMS, allowSeries, allowLive, hosts, log)
             if (items.isEmpty()) continue
             // Home keys its Lazy rows by this id: a repeat would crash the whole screen.
             if (!seen.add(id)) { log("home: duplicate row $id dropped"); continue }
@@ -323,7 +345,7 @@ object PluginOutput {
         return next
     }
 
-    private fun itemsOf(array: JSONArray, max: Int, allowSeries: Boolean, hosts: EffectiveHosts, log: (String) -> Unit): List<PluginItem> {
+    private fun itemsOf(array: JSONArray, max: Int, allowSeries: Boolean, allowLive: Boolean, hosts: EffectiveHosts, log: (String) -> Unit): List<PluginItem> {
         val seen = HashSet<String>()
         val out = ArrayList<PluginItem>()
         for (i in 0 until array.length()) {
@@ -336,8 +358,10 @@ object PluginOutput {
             val title = text(o, "title", MAX_TITLE_CHARS)
             if (title.isBlank()) { log("item $id: no title"); continue }
             val kind = o.optString("kind")
-            if (kind != "movie" && kind != "series") { log("item $id: invalid kind '${kind.take(20)}'"); continue }
+            if (kind !in ITEM_KINDS) { log("item $id: invalid kind '${kind.take(20)}'"); continue }
             if (kind == "series" && !allowSeries) { log("item $id: series without the episodes capability"); continue }
+            // Silently, like any invalid item: an apiVersion 1 plugin never declared it could go live.
+            if (kind == KIND_LIVE && !allowLive) { log("item $id: live needs apiVersion $LIVE_API_VERSION"); continue }
             // Adult titles never reach a screen: no plugin section exists behind the 18+ lock yet.
             if (o.opt("adult") == true) { log("item $id: adult, dropped"); continue }
             if (!seen.add(id)) continue
@@ -350,7 +374,8 @@ object PluginOutput {
                 originalTitle = text(o, "originalTitle", MAX_TITLE_CHARS),
                 genres = strings(o, "genres", MAX_GENRES, MAX_GENRE_CHARS),
                 rating = (o.opt("rating") as? Number)?.toDouble()?.takeIf { it.isFinite() && it in 0.0..10.0 },
-                runtimeMinutes = runtime(o),
+                // A channel has no length: whatever the plugin put there is ignored, never shown.
+                runtimeMinutes = if (kind == KIND_LIVE) 0 else runtime(o),
                 tmdbId = ids?.let(::tmdb) ?: 0,
                 imdbId = ids?.let(::imdb).orEmpty(),
                 badges = strings(o, "badges", MAX_BADGES, MAX_BADGE_CHARS),

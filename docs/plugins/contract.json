@@ -77,7 +77,9 @@
     "maxEpisodeNumber": 99999,
     "maxSubtitles": 30,
     "maxAudioTracks": 8,
-    "drmKeys": ["drm", "license", "licenseUrl", "drmLicenseUrl", "keySystem", "widevine"]
+    "drmKeys": ["drm", "license", "licenseUrl", "drmLicenseUrl", "keySystem", "widevine"],
+    "itemKinds": ["movie", "series", "live"],
+    "liveKindApiVersion": 2
   },
   "search": {
     "types": ["movie", "series", "any"],

@@ -18,6 +18,23 @@ class PluginRefTest {
         assertEquals(r, PluginRef.decode(r.encode()))
     }
 
+    @Test fun `live ref round-trips as its own kind`() {
+        val r = PluginRef("p1", "canal-1", PluginRef.LIVE, "ch:1")
+        assertEquals(r, PluginRef.decode(r.encode()))
+        assertEquals("live", PluginRef.LIVE)
+    }
+
+    @Test fun `a live channel's player id is the item's id with a live suffix, and only that is live`() {
+        val id = PluginIds.liveEpisodeId("demo", "canal-1")
+        assertEquals("plugin:demo:canal-1::live", id)
+        assertTrue(PluginIds.isLiveEpisode(id))
+        assertEquals("demo", PluginIds.pluginIdOfEpisode(id))
+        // A movie, a chapter, and even an item whose own id is "live" are never live channels.
+        listOf("plugin:demo:canal-1::0", "plugin:demo:canal-1::e1", "plugin:demo:live::0", "plugin:demo:live", "live:caracoltv", "ditu:vivo:5").forEach {
+            assertEquals(it, false, PluginIds.isLiveEpisode(it))
+        }
+    }
+
     @Test fun `foreign or broken refs decode to null`() {
         listOf("ditu1:VOD:1", "plg1:", "plg1:p1", "plg1:p1:%%%", "plg1:p1:e30", "magis:x").forEach {
             assertNull(it, PluginRef.decode(it))

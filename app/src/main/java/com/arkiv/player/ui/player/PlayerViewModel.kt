@@ -101,27 +101,37 @@ data class PlayerData(
  * isn't there yet. Reading that as "it's adult" would silently stop logging normal content's
  * progress.
  *
- * A Caracol live channel ([DituLive]) is never logged: it has no library row and nothing to
- * resume. `PlayerScreen` no longer saves its position (its `enVivo` comes from
- * `PlayerSource.isLiveChannel`, which includes it), but its capture-on-pause doesn't check
- * `enVivo`, and `saveProgress`/`captureFrame` don't go through the `_magisItem` branch for it:
- * this remains the guard that stops it in both.
+ * A live channel ([PlayerSource.isLiveChannel]: Caracol's, a plugin's) is never logged: it has no
+ * library row and nothing to resume. `PlayerScreen` no longer saves its position (its `enVivo`
+ * comes from the same rule), but its capture-on-pause doesn't check `enVivo`, and
+ * `saveProgress`/`captureFrame` don't go through the `_magisItem` branch for Caracol: this remains
+ * the guard that stops it in both. A plugin's channel plays through `_magisItem`, so its branch has
+ * [savesProgress], the same rule.
  */
 internal fun PlaylistData?.shouldLogHistory(episodeId: String): Boolean =
-    !DituLive.isLive(episodeId) &&
+    !PlayerSource.isLiveChannel(episodeId) &&
         AdultContent.shouldLog(this?.items?.firstOrNull { it.episodeId == episodeId }?.adult)
+
+/**
+ * `saveProgress`/`captureFrame`'s decision for the item in `_magisItem` (Magis VOD, a plugin's
+ * title or channel): adult content is not written, and neither is a live channel, which has no
+ * "where you were" and no library row for a frame to hang off. Out here so it can be pinned down
+ * with tests, like [shouldLogHistory].
+ */
+internal fun savesProgress(episodeId: String, adult: Boolean?): Boolean =
+    !PlayerSource.isLiveChannel(episodeId) && AdultContent.shouldLog(adult)
 
 /**
  * Should [episodeId] be marked "in progress" on opening (`ArkivRepository.markInProgress`)?
  *
  * `PlayerViewModel.load`'s decision, out here so it can be pinned down with tests. [adult] is the
  * ephemeral pending item's ([MagisEphemeral]), the only thing known before the source resolves,
- * and what isn't known gets logged, same as in [AdultContent.shouldLog]. A Caracol live channel is
- * never marked: `markInProgress` would write a `playback` row with its id even though there's no
- * episode.
+ * and what isn't known gets logged, same as in [AdultContent.shouldLog]. A live channel (Caracol's,
+ * a plugin's) is never marked: `markInProgress` would write a `playback` row with its id even
+ * though there's no episode.
  */
 internal fun shouldMarkInProgress(episodeId: String, adult: Boolean?): Boolean =
-    !DituLive.isLive(episodeId) && AdultContent.shouldLog(adult)
+    !PlayerSource.isLiveChannel(episodeId) && AdultContent.shouldLog(adult)
 
 /**
  * The section as a playlist: every episode + where/how to start. archive.org (removed in this
@@ -1274,9 +1284,14 @@ class PlayerViewModel internal constructor(
         // The registry decides this from the installed record (XuperPrivilege.grants), not from
         // `pluginId`, which is only the manifest id any repo could claim.
         val xuper = ready?.xuper == true
-        val ref = repo.magisRefForEpisode(episodeId)
-        Log.w(PLAY, "loadPlugin() episodeId=$episodeId plugin=$pluginId ref=${ref?.take(16)}…")
-        if (ref.isNullOrBlank()) { _error.value = "No se encontró la fuente de $name"; return }
+        // A live channel (apiVersion 2) has no library row: its ref comes from the card's handoff
+        // ([PluginLive]), like Caracol's channels. A reload after a cut or an expired URL comes
+        // back through here with the same id and finds it again (`take` doesn't clear it).
+        val live = com.arkiv.player.data.plugin.PluginIds.isLiveEpisode(episodeId)
+        val channel = if (live) com.arkiv.player.playback.PluginLive.take(episodeId) else null
+        val ref = if (live) channel?.ref else repo.magisRefForEpisode(episodeId)
+        Log.w(PLAY, "loadPlugin() episodeId=$episodeId plugin=$pluginId live=$live ref=${ref?.take(16)}…")
+        if (ref.isNullOrBlank()) { _error.value = if (live) "No se encontró el canal de $name" else "No se encontró la fuente de $name"; return }
 
         _playlist.value = null
         _webExtras.value = null
@@ -1300,18 +1315,20 @@ class PlayerViewModel internal constructor(
         // extra "only the very first stream of this title" restriction -- a long movie whose URL
         // keeps expiring gets a retry every time, not just once ever (spec §3.5).
         pluginExpiry = com.arkiv.player.data.plugin.PluginStreamExpiry(System.currentTimeMillis(), play.expiresInSeconds)
-        val header = repo.headerInfo(episodeId)
+        val header = if (live) null else repo.headerInfo(episodeId)
         _webExtras.value = WebExtras(episodeId, play.headers, pluginSubtitles(play.subtitles), pluginAudioTracks(play.audioTracks))
-        val startPos = safeStartPosition(episodeId, SourceKind.PLUGIN)
+        // A live stream has no "where you were": it starts at the player's default position (the
+        // live edge), and with 0 `StreamExoPlayer` doesn't seek.
+        val startPos = if (live) 0L else safeStartPosition(episodeId, SourceKind.PLUGIN)
         _magisItem.value = PlayerData(
             episodeId = episodeId,
             itemId = episodeId.substringBefore("::"),
-            title = header?.itemTitle ?: name,
+            title = channel?.title ?: header?.itemTitle ?: name,
             subtitle = header?.episodeLabel.orEmpty(),
             mediaUrl = play.url,
             // No cast for plugin titles in v1: without a cast URL no cast path has anything to send.
             castUrl = null,
-            artworkUrl = "",
+            artworkUrl = channel?.logo.orEmpty(),
             openingStartMs = null, openingEndMs = null, endingStartMs = null,
             kind = SourceKind.PLUGIN,
             requestHeaders = play.headers,
@@ -1401,13 +1418,14 @@ class PlayerViewModel internal constructor(
         // here doesn't stay hidden, even though (unlike until Task 5) it no longer travels through
         // cloud sync to any OTHER device. See [shouldLogHistory], where the decision and its edge
         // cases live.
-        // Magis ExoPlayer: the item is in _magisItem, not in _playlist.
+        // Magis ExoPlayer: the item is in _magisItem, not in _playlist -- and so is a plugin's
+        // title or live channel, which [savesProgress] refuses (no "where you were" to save).
         // Caracol falls into the branch below: `loadDitu` leaves `_playlist` at null, and with that
         // [shouldLogHistory] logs it. Except a live channel, which isn't logged (see its KDoc):
         // `repo.savePlayback` would write the row even with no episode in the library.
         val currentMagisItem = _magisItem.value?.takeIf { it.episodeId == episodeId }
         if (currentMagisItem != null) {
-            if (!AdultContent.shouldLog(currentMagisItem.adult)) return
+            if (!savesProgress(episodeId, currentMagisItem.adult)) return
         } else {
             if (!_playlist.value.shouldLogHistory(episodeId)) return
         }
@@ -1430,7 +1448,7 @@ class PlayerViewModel internal constructor(
         // locally-saved frame of adult content is still exactly the leak this guard exists to stop.)
         val currentMagisItem = _magisItem.value?.takeIf { it.episodeId == episodeId }
         if (currentMagisItem != null) {
-            if (!AdultContent.shouldLog(currentMagisItem.adult)) return
+            if (!savesProgress(episodeId, currentMagisItem.adult)) return
         } else {
             if (!_playlist.value.shouldLogHistory(episodeId)) return
         }

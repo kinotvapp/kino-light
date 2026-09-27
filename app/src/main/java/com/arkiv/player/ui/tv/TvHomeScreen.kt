@@ -108,6 +108,7 @@ import com.arkiv.player.ui.live.countryChannelsForHome
 import com.arkiv.player.ui.live.recentChannelsForHome
 import com.arkiv.player.ui.live.homeChannelsRow
 import com.arkiv.player.ui.rememberGraph
+import com.arkiv.player.ui.catalog.isLiveChannel
 import com.arkiv.player.ui.theme.ArkivBlack
 import com.arkiv.player.ui.theme.ArkivRed
 import com.arkiv.player.ui.theme.ArkivSurfaceHigh
@@ -217,7 +218,8 @@ internal fun recommendationFeatured(rec: RecommendationEntity): Featured = Featu
  */
 internal fun pluginCardFeatured(row: PluginHomeRow, item: GatewayResult) = Featured(
     title = item.title,
-    subtitle = row.pluginName,
+    // A live channel says so, the way the native row's cards do ("Canal en vivo"), then whose it is.
+    subtitle = if (item.isLiveChannel()) "Canal en vivo · ${row.pluginName}" else row.pluginName,
     imageUrl = item.extra["backdrop"].orEmpty().ifBlank { item.extra["poster"].orEmpty() }.ifBlank { null },
     meta = item.extra["overview"].orEmpty(),
 )
@@ -466,7 +468,7 @@ fun TvHomeScreen(
     }
 
     // A plugin card (Xuper's among them) opens its info page; the page plays or lists chapters.
-    val openPluginItem = com.arkiv.player.ui.titleinfo.rememberTitleOpener(onOpenRoute = onOpenTitleRoute)
+    val openPluginItem = com.arkiv.player.ui.titleinfo.rememberTitleOpener(onOpenRoute = onOpenTitleRoute, onPlay = onPlayEpisode)
 
     // The first card gets focus on opening, so the hero/background reflect something right away.
     // The key is that card's IDENTITY, not "is there data yet?": "continue watching" and the
@@ -938,13 +940,16 @@ fun TvHomeScreen(
                                     items(row.items, key = { "${row.pluginId}-${row.id}-${it.extra["pluginItemId"]}" }) { item ->
                                         val art = item.extra["backdrop"].orEmpty().ifBlank { item.extra["poster"].orEmpty() }.ifBlank { null }
                                         val cardKey = pluginCardKey(row.pluginId, row.id, item.extra["pluginItemId"])
+                                        // A live channel wears "EN VIVO" in red instead of the plugin's
+                                        // name (one badge slot); the hero still names the plugin on focus.
+                                        val live = com.arkiv.player.ui.catalog.liveBadge(item)
                                         TvLandscapeCard(
                                             title = item.title,
                                             imageUrl = art,
                                             cardHeight = cardHeight,
                                             modifier = if (cardKey == cardToRestore) Modifier.focusRequester(returnFocus) else Modifier,
-                                            badge = row.pluginName,
-                                            badgeColor = androidx.compose.ui.graphics.Color(row.color),
+                                            badge = live ?: row.pluginName,
+                                            badgeColor = if (live != null) ArkivRed else androidx.compose.ui.graphics.Color(row.color),
                                             onFocus = {
                                                 navSound()
                                                 featured = pluginCardFeatured(row, item)

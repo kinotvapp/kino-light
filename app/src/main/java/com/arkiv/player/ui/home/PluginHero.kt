@@ -2,6 +2,7 @@ package com.arkiv.player.ui.home
 
 import com.arkiv.player.data.gateway.GatewayResult
 import com.arkiv.player.data.plugin.PluginHomeRow
+import com.arkiv.player.data.plugin.PluginOutput
 
 /**
  * What both homes' hero shows when "Continuar viendo" has nothing: the first item of the first
@@ -24,6 +25,10 @@ fun pluginHeroPick(rows: List<PluginHomeRow>): PluginHeroPick? =
  */
 fun PluginHeroPick.meta(): String = listOfNotNull(
     row.pluginName.ifBlank { null },
-    if (item.kind == "series") "Serie" else "Película",
+    when (item.kind) {
+        "series" -> "Serie"
+        PluginOutput.KIND_LIVE -> "En vivo"
+        else -> "Película"
+    },
     item.extra["rating"]?.ifBlank { null }?.let { "★ $it" },
 ).joinToString("  ·  ")

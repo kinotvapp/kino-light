@@ -134,7 +134,7 @@ fun HomeScreen(
     val artwork by vm.artwork.collectAsStateWithLifecycle()
     val pluginRows by vm.pluginRows.collectAsStateWithLifecycle()
     val seedsExhausted by graph.seedsExhausted.collectAsStateWithLifecycle()
-    val openPlugin = rememberTitleOpener(onOpenRoute = onOpenTitleRoute)
+    val openPlugin = rememberTitleOpener(onOpenRoute = onOpenTitleRoute, onPlay = onPlayEpisode)
     val scope = rememberCoroutineScope()
     // The hero's fallback when nothing is in progress (see pluginHeroPick).
     val heroPick = remember(pluginRows) { pluginHeroPick(pluginRows) }
@@ -605,6 +605,8 @@ private fun PluginRow(
                     title = item.title,
                     imageUrl = item.extra["poster"]?.ifBlank { null },
                     modifier = Modifier.width(sizes.posterWidth),
+                    // A live channel says so on its card (red, like the native live row); a title wears nothing here.
+                    badge = com.arkiv.player.ui.catalog.liveBadge(item),
                     onClick = { onOpen(item) },
                     onLongClick = { onOpen(item) },
                 )

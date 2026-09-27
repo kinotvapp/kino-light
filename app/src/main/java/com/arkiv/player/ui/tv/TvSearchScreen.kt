@@ -89,8 +89,10 @@ import com.arkiv.player.ui.theme.ArkivRed
 import com.arkiv.player.ui.theme.ArkivSurfaceHigh
 import com.arkiv.player.ui.theme.ArkivTextPrimary
 import com.arkiv.player.ui.theme.ArkivTextSecondary
+import com.arkiv.player.playback.PluginLive
 import com.arkiv.player.ui.titleinfo.TITLE_OPEN_ERROR
-import com.arkiv.player.ui.titleinfo.titleRoute
+import com.arkiv.player.ui.titleinfo.TitleTap
+import com.arkiv.player.ui.titleinfo.titleTap
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -178,9 +180,12 @@ fun TvSearchScreen(
     }
 
     fun openTitle(r: com.arkiv.player.data.gateway.GatewayResult) {
-        // Movie or series, a plugin title (Xuper's among them) opens its info page.
-        val route = titleRoute(r)
-        if (route != null) onOpenTitle(route) else playError = TITLE_OPEN_ERROR
+        // Movie or series, a plugin title (Xuper's among them) opens its info page; a live channel plays straight away.
+        when (val tap = titleTap(r)) {
+            is TitleTap.InfoPage -> onOpenTitle(tap.route)
+            is TitleTap.PlayLive -> onPlay(PluginLive.leave(tap.channel))
+            TitleTap.CannotOpen -> playError = TITLE_OPEN_ERROR
+        }
     }
 
     fun playDituResult(r: com.arkiv.player.data.gateway.GatewayResult) {

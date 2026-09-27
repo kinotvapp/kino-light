@@ -16,13 +16,20 @@ import java.io.File
 class PluginHomeRowsTest {
     @get:Rule val tmp = TemporaryFolder()
 
-    private fun plugin(id: String, caps: Set<String> = setOf("home", "resolve")) = InstalledPlugin(
-        PluginManifest(id, id.uppercase(), "1.0.0", 1, "plugin.js", "", "", "", listOf("example.com"), caps, null, null),
+    private fun plugin(id: String, caps: Set<String> = setOf("home", "resolve"), apiVersion: Int = 1) = InstalledPlugin(
+        PluginManifest(id, id.uppercase(), "1.0.0", apiVersion, "plugin.js", "", "", "", listOf("example.com"), caps, null, null),
         InstalledRecord("o/$id", "1.0.0", "x", listOf("example.com"), 0L),
         null,
     )
 
     private val rowJson = """[{"id":"top","title":"Lo más visto","items":[{"id":"m1","ref":"R1","title":"Uno","kind":"movie"}]}]"""
+
+    @Test fun `a live row reaches Home only from an apiVersion 2 plugin`() = runTest {
+        val liveRow = """[{"id":"vivo","title":"En vivo","items":[{"id":"c1","ref":"ch-1","title":"Canal Uno","kind":"live"},{"id":"m1","ref":"R1","title":"Uno","kind":"movie"}]}]"""
+        val rows = home(listOf(plugin("v1"), plugin("v2", apiVersion = 2)), CountingCaller { liveRow }).rows().toList().last()
+        assertEquals(listOf("v1" to listOf("movie"), "v2" to listOf("live", "movie")), rows.map { r -> r.pluginId to r.items.map { it.kind } })
+        assertEquals(PluginRef.LIVE, PluginRef.decode(rows[1].items[0].ref)!!.kind)
+    }
 
     private class CountingCaller(val answer: (String) -> String) : PluginCaller {
         var calls = 0

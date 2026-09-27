@@ -13,12 +13,51 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PluginContentSourceTest {
-    private fun plugin(caps: Set<String> = setOf("search", "episodes", "resolve"), hosts: List<String> = listOf("example.com")) =
+    private fun plugin(caps: Set<String> = setOf("search", "episodes", "resolve"), hosts: List<String> = listOf("example.com"), apiVersion: Int = 1) =
         InstalledPlugin(
-            PluginManifest("demo", "Demo", "1.0.0", 1, "plugin.js", "", "", "", hosts, caps, "#E0A030", null),
+            PluginManifest("demo", "Demo", "1.0.0", apiVersion, "plugin.js", "", "", "", hosts, caps, "#E0A030", null),
             InstalledRecord("o/r", "1.0.0", "x", hosts, 0L),
             null,
         )
+
+    // --- live channels (apiVersion 2) ---
+
+    private val liveSearch = """[{"id":"c1","ref":"ch-1","title":"Canal Uno","kind":"live","poster":"https://example.com/c1.png","runtimeMinutes":120},{"id":"m1","ref":"R1","title":"Uno","kind":"movie"}]"""
+
+    @Test fun `a v2 plugin's search may carry live channels, wrapped as live refs`() = runTest {
+        val results = source(FakeCaller(mapOf("search" to liveSearch)), plugin(apiVersion = 2)).search(GatewaySearchQuery(q = "canal")).toList()
+            .filterIsInstance<SearchEvent.ResultEvent>().map { it.item }
+        assertEquals(listOf("live", "movie"), results.map { it.kind })
+        with(results[0]) {
+            assertEquals(PluginRef("demo", "c1", PluginRef.LIVE, "ch-1"), PluginRef.decode(ref))
+            assertEquals("c1", extra["pluginItemId"])
+            assertEquals("https://example.com/c1.png", extra["poster"])
+            // No duration travels with a channel, whatever the plugin said.
+            assertEquals(null, extra["runtimeMinutes"])
+        }
+    }
+
+    @Test fun `a v1 plugin's live channel is dropped from search, browse and paging`() = runTest {
+        val caller = FakeCaller(mapOf("search" to liveSearch, "browse" to liveSearch))
+        val v1 = source(caller, plugin(caps = setOf("search", "browse", "resolve")))
+        assertEquals(listOf("movie"), v1.search(GatewaySearchQuery(q = "canal")).toList().filterIsInstance<SearchEvent.ResultEvent>().map { it.item.kind })
+        assertEquals(listOf("movie"), v1.browse("row", null).items.map { it.kind })
+        assertEquals(listOf("movie"), v1.searchPage("""{"q":"canal"}""", "2").items.map { it.kind })
+        val v2 = source(caller, plugin(caps = setOf("search", "browse", "resolve"), apiVersion = 2))
+        assertEquals(listOf("live", "movie"), v2.browse("row", null).items.map { it.kind })
+        assertEquals(listOf("live", "movie"), v2.searchPage("""{"q":"canal"}""", "2").items.map { it.kind })
+    }
+
+    @Test fun `resolving a live ref plays its stream with no duration, and it never lists episodes`() = runTest {
+        val caller = FakeCaller(mapOf("resolve" to """{"url":"https://example.com/live.m3u8","mime":"application/x-mpegURL","durationMs":7200000}"""))
+        val live = PluginRef("demo", "c1", PluginRef.LIVE, "ch-1").encode()
+        val play = source(caller, plugin(apiVersion = 2)).resolve(live)
+        assertEquals("https://example.com/live.m3u8", play.url)
+        assertEquals(0L, play.durationMs)
+        assertEquals("\"ch-1\"", caller.calls.single().second)
+        val e = runCatching { source(caller, plugin(apiVersion = 2)).seriesListing(live) }.exceptionOrNull()
+        assertEquals("Esto no tiene capítulos", e?.message)
+    }
 
     private class FakeCaller(val answers: Map<String, String>) : PluginCaller {
         val calls = mutableListOf<Pair<String, String>>()

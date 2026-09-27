@@ -3,6 +3,7 @@ package com.arkiv.player.data.local
 import com.arkiv.player.data.gateway.ContentSource
 import com.arkiv.player.data.gateway.GatewayPlayable
 import com.arkiv.player.data.plugin.PluginIds
+import com.arkiv.player.data.plugin.PluginRef
 import com.arkiv.player.playback.Container
 import com.arkiv.player.playback.VideoContainer
 import java.io.File
@@ -53,7 +54,9 @@ class PluginDownloadStrategy(
             )
         }
         // Permanent: the stream's shape will not change, so the row ends `refused` (no retry, no report).
-        PluginDownloadEligibility.refusal(playable)?.let { return DownloadOutcome.Failed(it, permanent = true) }
+        // A live channel is read off the ref's kind: it has no end to save, whatever its stream looks like.
+        val live = PluginRef.decode(ref)?.kind == PluginRef.LIVE
+        PluginDownloadEligibility.refusal(playable, live = live)?.let { return DownloadOutcome.Failed(it, permanent = true) }
 
         val http = downloaderFor(pluginId)
         val target = File(targetDir, LocalFilePaths.fileNameFor(episodeId, "plugin.${extensionOf(playable)}"))

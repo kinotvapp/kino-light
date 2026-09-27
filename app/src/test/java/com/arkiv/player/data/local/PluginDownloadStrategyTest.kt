@@ -86,6 +86,19 @@ class PluginDownloadStrategyTest {
         assertEquals(listOf("demo"), downloaders)
     }
 
+    /** A live channel's ref refuses even when its stream is a plain file: it has no end to save. */
+    @Test fun `a live channel is refused for good, whatever its stream looks like`() = runBlocking {
+        server.enqueue(MockResponse().setBody("VIDEO-BYTES"))
+        val liveRef = com.arkiv.player.data.plugin.PluginRef("demo", "c1", com.arkiv.player.data.plugin.PluginRef.LIVE, "ch-1").encode()
+
+        val outcome = strategy(FakeSource { playable("/live.mp4") }, refFor = { liveRef }).run(com.arkiv.player.data.plugin.PluginIds.liveEpisodeId("demo", "c1"))
+
+        val failed = outcome as DownloadOutcome.Failed
+        assertEquals(PluginDownloadEligibility.NOT_DOWNLOADABLE, failed.reason)
+        assertTrue(failed.permanent)
+        assertEquals(0, server.requestCount)
+    }
+
     @Test fun `the partial resumes under the episode id, not the changing url`() = runBlocking {
         val target = File(tmp.root, LocalFilePaths.fileNameFor(episodeId, "plugin.mp4"))
         LocalFilePaths.partOf(target).writeText("AAAA")

@@ -153,6 +153,8 @@ class PluginContractParityTest {
         assertEquals(PluginOutput.MAX_SUBTITLES, o.getInt("maxSubtitles"))
         assertEquals(PluginOutput.MAX_AUDIO_TRACKS, o.getInt("maxAudioTracks"))
         assertEquals(PluginOutput.DRM_KEYS, o.strings("drmKeys").toSet())
+        assertEquals(PluginOutput.ITEM_KINDS, o.strings("itemKinds"))
+        assertEquals(PluginOutput.LIVE_API_VERSION, o.getInt("liveKindApiVersion"))
         val s = obj("search")
         assertEquals(PluginContentSource.MAX_ALT_TITLES, s.getInt("maxAltTitles"))
         assertEquals(PluginContentSource.MAX_ALT_TITLE_CHARS, s.getInt("maxAltTitleChars"))

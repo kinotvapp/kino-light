@@ -93,6 +93,14 @@ class TvHomeScreenForYouTest {
         assertEquals("https://i/bd.jpg", f.imageUrl)
     }
 
+    @Test fun `a live channel's card says so next to the plugin's name`() {
+        val live = pluginItem("Canal Uno", mapOf("overview" to "Señal en directo.")).copy(kind = "live")
+        val f = pluginCardFeatured(row, live)
+        assertEquals("Canal Uno", f.title)
+        assertEquals("Canal en vivo · Xuper", f.subtitle)
+        assertEquals("Señal en directo.", f.meta)
+    }
+
     @Test fun `with no backdrop the poster is the image, and with neither there's none`() {
         assertEquals("https://i/p.jpg", pluginCardFeatured(row, pluginItem("A", mapOf("backdrop" to "", "poster" to "https://i/p.jpg"))).imageUrl)
         assertNull(pluginCardFeatured(row, pluginItem("A", emptyMap())).imageUrl)

@@ -133,6 +133,7 @@ class PluginHomeRows(
             allowSeries = "episodes" in p.manifest.capabilities,
             allowBrowse = "browse" in p.manifest.capabilities,
             hosts = p.hosts,
+            allowLive = PluginOutput.allowsLive(p.manifest.apiVersion),
         ) { log("[${p.id}] $it") }
 
     private fun assemble(targets: List<InstalledPlugin>, rowsOf: (InstalledPlugin) -> List<PluginRow>): List<PluginHomeRow> =

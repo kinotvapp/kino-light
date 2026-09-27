@@ -51,6 +51,51 @@ class PluginOutputTest {
         assertEquals(listOf("m"), items(json, allowSeries = false).map { it.id })
     }
 
+    // --- live channels (apiVersion 2) ---
+
+    private val liveJson = """[
+      {"id":"c1","ref":"ch-1","title":"Canal Uno","kind":"live","poster":"https://x/c1.png","runtimeMinutes":120},
+      {"id":"m","ref":"r","title":"t","kind":"movie","runtimeMinutes":90}
+    ]"""
+
+    @Test fun `a live item is kept only when the plugin may offer live channels`() {
+        val kept = PluginOutput.page(liveJson, 100, allowSeries = true, allowNext = false, allowLive = true, log = log).items
+        assertEquals(listOf("c1", "m"), kept.map { it.id })
+        with(kept.first()) {
+            assertEquals(PluginOutput.KIND_LIVE, kind)
+            assertEquals("ch-1", ref)
+            assertEquals("https://x/c1.png", poster)
+        }
+    }
+
+    @Test fun `a v1 plugin's live item is dropped silently like any invalid item, with a log line`() {
+        // The default is off: every caller that never heard of live keeps dropping it.
+        assertEquals(listOf("m"), items(liveJson).map { it.id })
+        assertTrue(logs.any { "c1" in it && "live" in it })
+    }
+
+    @Test fun `a live item carries no duration even if the plugin sent one`() {
+        val kept = PluginOutput.page(liveJson, 100, allowSeries = true, allowNext = false, allowLive = true, log = log).items
+        assertEquals(0, kept.first { it.kind == PluginOutput.KIND_LIVE }.runtimeMinutes)
+        assertEquals(90, kept.first { it.kind == "movie" }.runtimeMinutes)
+    }
+
+    @Test fun `home rows gate live items the same way`() {
+        val rows = """[{"id":"vivo","title":"En vivo","items":$liveJson}]"""
+        assertEquals(listOf("c1", "m"), PluginOutput.rows(rows, allowSeries = true, allowBrowse = false, allowLive = true, log = log).single().items.map { it.id })
+        assertEquals(listOf("m"), PluginOutput.rows(rows, allowSeries = true, allowBrowse = false, log = log).single().items.map { it.id })
+        // A row of live channels alone vanishes for a v1 plugin, like any row left without items.
+        val onlyLive = """[{"id":"vivo","title":"En vivo","items":[{"id":"c1","ref":"ch-1","title":"Canal","kind":"live"}]}]"""
+        assertEquals(emptyList<PluginRow>(), PluginOutput.rows(onlyLive, allowSeries = true, allowBrowse = false, log = log))
+    }
+
+    @Test fun `the live gate is apiVersion 2 and the kinds are pinned`() {
+        assertTrue(PluginOutput.allowsLive(2))
+        assertTrue(PluginOutput.allowsLive(3))
+        assertEquals(false, PluginOutput.allowsLive(1))
+        assertEquals(listOf("movie", "series", "live"), PluginOutput.ITEM_KINDS)
+    }
+
     @Test fun `a page carries its cursor only when the plugin declares browse`() {
         val json = """{"items":[{"id":"a","ref":"r","title":"A","kind":"movie"}],"next":"page=2"}"""
         with(PluginOutput.page(json, 100, allowSeries = true, allowNext = true, log = log)) {

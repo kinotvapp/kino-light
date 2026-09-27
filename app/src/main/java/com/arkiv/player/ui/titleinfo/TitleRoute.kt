@@ -5,6 +5,8 @@ import com.arkiv.player.data.gateway.GatewayResult
 import com.arkiv.player.data.plugin.PluginIds
 import com.arkiv.player.data.plugin.PluginOutput
 import com.arkiv.player.data.plugin.PluginRef
+import com.arkiv.player.playback.PluginLive
+import com.arkiv.player.playback.PluginLiveChannel
 import java.net.URLEncoder
 
 /** How many characters of a synopsis travel in the route. See [clipSynopsis]. */
@@ -85,6 +87,25 @@ fun GatewayResult.toPluginCatalogItem(): CatalogItem? {
         backdrop = url("backdrop"),
         description = extra["overview"].orEmpty(),
     )
+}
+
+/**
+ * What tapping a plugin card does. A movie or series opens its info page; a live channel (apiVersion
+ * 2) goes straight to the player, no page in between: a channel has nothing to read, pick or resume.
+ * [CannotOpen] is the toast: a blank id, or a ref that is not the plugin's own.
+ */
+sealed interface TitleTap {
+    data class InfoPage(val route: String) : TitleTap
+    data class PlayLive(val channel: PluginLiveChannel) : TitleTap
+    data object CannotOpen : TitleTap
+}
+
+/** The decision behind `rememberTitleOpener`, pure: see [TitleTap]. */
+fun titleTap(result: GatewayResult): TitleTap {
+    if (result.kind == PluginOutput.KIND_LIVE) {
+        return PluginLive.channelOf(result)?.let { TitleTap.PlayLive(it) } ?: TitleTap.CannotOpen
+    }
+    return titleRoute(result)?.let { TitleTap.InfoPage(it) } ?: TitleTap.CannotOpen
 }
 
 /** The route for a plugin result, or null when it is not one (or cannot be opened). */

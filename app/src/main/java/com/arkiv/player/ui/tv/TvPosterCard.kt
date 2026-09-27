@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
@@ -26,6 +27,7 @@ import androidx.tv.material3.Text
 import coil.compose.AsyncImage
 import com.arkiv.player.ui.LocalReducedEffects
 import com.arkiv.player.ui.cardFocusScale
+import com.arkiv.player.ui.theme.ArkivRed
 import com.arkiv.player.ui.theme.ArkivSurfaceHigh
 import com.arkiv.player.ui.theme.ArkivTextPrimary
 import com.arkiv.player.ui.theme.ArkivTextSecondary
@@ -44,6 +46,8 @@ fun TvPosterCard(
     showTitle: Boolean = true,
     /** Second line under the title ("24 ep.", "12 capítulos vistos"). Null = not drawn. */
     subtitle: String? = null,
+    /** Over the cover's top-left corner, in red ("EN VIVO"), like [TvLandscapeCard]'s. Null = not drawn. */
+    badge: String? = null,
     onFocus: () -> Unit = {},
     /** Long press. Null = the card offers no context menu. */
     onLongClick: (() -> Unit)? = null,
@@ -64,23 +68,39 @@ fun TvPosterCard(
                 focusedBorder = Border(androidx.compose.foundation.BorderStroke(3.dp, Color.White)),
             ),
         ) {
-            if (posterUrl.isNullOrBlank()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(2f / 3f)
-                        .background(ArkivSurfaceHigh),
-                )
-            } else {
-                AsyncImage(
-                    model = posterUrl,
-                    contentDescription = title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(2f / 3f)
-                        .clip(RoundedCornerShape(4.dp)),
-                )
+            Box {
+                if (posterUrl.isNullOrBlank()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(2f / 3f)
+                            .background(ArkivSurfaceHigh),
+                    )
+                } else {
+                    AsyncImage(
+                        model = posterUrl,
+                        contentDescription = title,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(2f / 3f)
+                            .clip(RoundedCornerShape(4.dp)),
+                    )
+                }
+                if (badge != null) {
+                    Text(
+                        text = badge,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White,
+                        maxLines = 1,
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(6.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(ArkivRed)
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                    )
+                }
             }
         }
         if (showTitle) {

@@ -303,6 +303,7 @@ fun ArkivTvRoot(
                 TvPluginMoreScreen(
                     target = target,
                     onOpenTitleRoute = { route -> navController.navigate(route) { launchSingleTop = true } },
+                    onPlay = { goToPlayer(it) },
                     onOpenPluginSettings = { id ->
                         if (shouldOfferPluginConfigurar(graph.pluginRegistry.find(id)?.record?.address)) {
                             navController.navigate("plugin_config/${Uri.encode(id)}")

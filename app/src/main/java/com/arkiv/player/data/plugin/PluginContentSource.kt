@@ -58,6 +58,8 @@ class PluginContentSource(
     private val caps = plugin.manifest.capabilities
     private val allowSeries = "episodes" in caps
     private val allowNext = "browse" in caps
+    /** Live channels are apiVersion 2: a v1 plugin's live item is dropped like any invalid one. */
+    private val allowLive = PluginOutput.allowsLive(plugin.manifest.apiVersion)
 
     /** [XuperStreams], only for the one plugin [XuperPrivilege.grants]: null for every other one. */
     private val xuper: XuperStreams? = xuperStreams?.takeIf { XuperPrivilege.grants(plugin.record) }
@@ -100,7 +102,7 @@ class PluginContentSource(
                 emit(SearchEvent.SourceError(source, error, System.currentTimeMillis() - t0, 0, cause = e))
                 return@flow
             }
-            val page = PluginOutput.page(out, PluginOutput.MAX_SEARCH_ITEMS, allowSeries, allowNext, hosts) { log("[$id] $it") }
+            val page = PluginOutput.page(out, PluginOutput.MAX_SEARCH_ITEMS, allowSeries, allowNext, hosts, allowLive) { log("[$id] $it") }
             page.items.forEach { emit(SearchEvent.ResultEvent(source, resultFrom(plugin, it))) }
             emit(SearchEvent.SourceDone(source, page.items.size, System.currentTimeMillis() - t0, more = page.next))
         }
@@ -110,14 +112,14 @@ class PluginContentSource(
     suspend fun searchPage(queryJson: String, cursor: String): GatewayPage {
         val arg = runCatching { JSONObject(queryJson) }.getOrElse { JSONObject() }.put("cursor", cursor.take(PluginOutput.MAX_CURSOR_CHARS))
         val out = callOrThrow("search", arg.toString(), SEARCH_TIMEOUT_MS)
-        return pageOf(PluginOutput.page(out, PluginOutput.MAX_SEARCH_ITEMS, allowSeries, allowNext, hosts) { log("[$id] $it") })
+        return pageOf(PluginOutput.page(out, PluginOutput.MAX_SEARCH_ITEMS, allowSeries, allowNext, hosts, allowLive) { log("[$id] $it") })
     }
 
     override suspend fun browse(ref: String, cursor: String?): GatewayPage {
         if (!allowNext) throw GatewayException("$name no tiene más para mostrar")
         val arg = JSONObject().put("ref", ref.take(PluginOutput.MAX_REF_CHARS)).put("cursor", cursor?.take(PluginOutput.MAX_CURSOR_CHARS) ?: JSONObject.NULL)
         val out = callOrThrow("browse", arg.toString(), BROWSE_TIMEOUT_MS)
-        return pageOf(PluginOutput.page(out, PluginOutput.MAX_BROWSE_ITEMS, allowSeries, allowNext = true, hosts) { log("[$id] $it") })
+        return pageOf(PluginOutput.page(out, PluginOutput.MAX_BROWSE_ITEMS, allowSeries, allowNext = true, hosts, allowLive) { log("[$id] $it") })
     }
 
     private fun pageOf(page: PluginPage) = GatewayPage(page.items.map { resultFrom(plugin, it) }, page.next)
@@ -137,7 +139,8 @@ class PluginContentSource(
             headers = stream.headers,
             mime = stream.mime,
             subtitles = stream.subtitles.map { GatewaySubtitle(it.lang, it.url, it.format) },
-            durationMs = stream.durationMs,
+            // A live channel has no length, whatever the plugin's Stream said: 0 = the player probes nothing.
+            durationMs = if (own.kind == PluginRef.LIVE) 0L else stream.durationMs,
             expiresInSeconds = stream.expiresInSeconds,
             audioTracks = stream.audioTracks.map { GatewayAudioTrack(it.lang, it.url, it.label) },
         )
@@ -242,7 +245,11 @@ class PluginContentSource(
 
         /** Shared by search, Home rows and "Ver más", so a title reaches `SearchPlayback` the same way from all. */
         fun resultFrom(plugin: InstalledPlugin, item: PluginItem): GatewayResult {
-            val kind = if (item.kind == "series") PluginRef.SERIES else PluginRef.MOVIE
+            val kind = when (item.kind) {
+                "series" -> PluginRef.SERIES
+                PluginOutput.KIND_LIVE -> PluginRef.LIVE
+                else -> PluginRef.MOVIE
+            }
             return GatewayResult(
                 source = PluginIds.sourceFor(plugin.manifest.id),
                 title = item.title,

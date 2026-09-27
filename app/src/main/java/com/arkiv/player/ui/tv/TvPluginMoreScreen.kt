@@ -55,6 +55,8 @@ import com.arkiv.player.ui.theme.ArkivTextSecondary
 fun TvPluginMoreScreen(
     target: PluginMoreTarget,
     onOpenTitleRoute: (String) -> Unit,
+    /** Plays a live channel's card straight away (its player id), the same funnel as every playback. */
+    onPlay: (String) -> Unit,
     onOpenPluginSettings: (pluginId: String) -> Unit,
     onBack: () -> Unit,
 ) {
@@ -68,7 +70,7 @@ fun TvPluginMoreScreen(
     androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
         if (vm.state.value.setupPluginId != null) vm.loadMore()
     }
-    val open = com.arkiv.player.ui.titleinfo.rememberTitleOpener(onOpenRoute = onOpenTitleRoute)
+    val open = com.arkiv.player.ui.titleinfo.rememberTitleOpener(onOpenRoute = onOpenTitleRoute, onPlay = onPlay)
     val navSound = rememberNavSound()
     val firstFocus = remember { FocusRequester() }
     val actionFocus = remember { FocusRequester() }
@@ -104,6 +106,7 @@ fun TvPluginMoreScreen(
                                     imageUrl = art,
                                     cardHeight = 110.dp,
                                     modifier = if (index == 0) Modifier.focusRequester(firstFocus) else Modifier,
+                                    badge = com.arkiv.player.ui.catalog.liveBadge(item),
                                     onFocus = {
                                         navSound()
                                         // Focus in the last row asks for the next page.

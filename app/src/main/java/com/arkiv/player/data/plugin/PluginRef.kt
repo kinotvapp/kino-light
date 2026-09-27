@@ -38,7 +38,9 @@ data class PluginRef(
         const val MOVIE = "movie"
         const val SERIES = "series"
         const val EPISODE = "episode"
-        private val KINDS = setOf(MOVIE, SERIES, EPISODE)
+        /** A live channel (apiVersion 2): its ref goes to `resolve` like a movie's, but it is never saved to the library. */
+        const val LIVE = "live"
+        private val KINDS = setOf(MOVIE, SERIES, EPISODE, LIVE)
 
         fun prefixFor(pluginId: String): String = "$PREFIX:$pluginId:"
 
@@ -74,6 +76,24 @@ object PluginIds {
 
     fun pluginIdOfEpisode(episodeId: String): String? =
         episodeId.takeIf { it.startsWith(PREFIX) }?.removePrefix(PREFIX)?.substringBefore(':', "")?.takeIf { it.isNotEmpty() }
+
+    /**
+     * The `::` suffix of a live channel's player id, next to a movie's `::0` and a chapter's `::e3`
+     * (`PluginEntities`). A channel has no library row: its id exists only to reach the player, where
+     * `PlayerSource.isLiveChannel` reads it and `PluginLive` hands over the ref.
+     */
+    const val LIVE_SUFFIX = "::live"
+
+    /** `plugin:<pluginId>:<itemId>::live`: still a plugin id for `PlayerSource.kindFor`, and a live one. */
+    fun liveEpisodeId(pluginId: String, itemId: String): String = itemIdFor(pluginId, itemId) + LIVE_SUFFIX
+
+    /**
+     * Only an id built by [liveEpisodeId]: a plugin item whose own id happens to be `live` is a
+     * movie (`plugin:p:live::0`) or a series (`plugin:p:live::e1`), never a channel.
+     */
+    fun isLiveEpisode(episodeId: String): Boolean =
+        episodeId.startsWith(PREFIX) && episodeId.endsWith(LIVE_SUFFIX) &&
+            episodeId.removeSuffix(LIVE_SUFFIX).removePrefix(PREFIX).substringAfter(':', "").let { it.isNotEmpty() && ':' !in it }
 }
 
 /** A manifest `#RRGGBB` as opaque ARGB, for `androidx.compose.ui.graphics.Color(Long)`. */

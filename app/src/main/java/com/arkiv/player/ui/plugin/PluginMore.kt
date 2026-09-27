@@ -121,6 +121,8 @@ class PluginMoreViewModel(
 fun PluginMoreScreen(
     target: PluginMoreTarget,
     onOpenTitleRoute: (String) -> Unit,
+    /** Plays a live channel's card straight away (its player id), the same funnel as every playback. */
+    onPlay: (String) -> Unit,
     onOpenPluginSettings: (pluginId: String) -> Unit,
     onBack: () -> Unit,
 ) {
@@ -130,7 +132,7 @@ fun PluginMoreScreen(
         factory = viewModelFactory { initializer { PluginMoreViewModel(target, graph) } },
     )
     val state by vm.state.collectAsStateWithLifecycle()
-    val open = com.arkiv.player.ui.titleinfo.rememberTitleOpener(onOpenRoute = onOpenTitleRoute)
+    val open = com.arkiv.player.ui.titleinfo.rememberTitleOpener(onOpenRoute = onOpenTitleRoute, onPlay = onPlay)
     // Back from Configurar: ask again, with the new settings.
     androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
         if (vm.state.value.setupPluginId != null) vm.loadMore()
@@ -171,7 +173,12 @@ fun PluginMoreScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             items(state.items, key = { it.extra["pluginItemId"] ?: it.ref }) { item ->
-                PosterCard(title = item.title, imageUrl = item.extra["poster"]?.ifBlank { null }, onClick = { open(item) })
+                PosterCard(
+                    title = item.title,
+                    imageUrl = item.extra["poster"]?.ifBlank { null },
+                    badge = com.arkiv.player.ui.catalog.liveBadge(item),
+                    onClick = { open(item) },
+                )
             }
             item(key = "more", span = { GridItemSpan(maxLineSpan) }) {
                 Box(Modifier.fillMaxWidth().padding(vertical = 16.dp), contentAlignment = Alignment.Center) {

@@ -1,6 +1,7 @@
 package com.arkiv.player.playback
 
 import androidx.media3.common.MediaItem
+import com.arkiv.player.data.plugin.PluginIds
 
 enum class SourceKind { UNKNOWN, MAGIS, LOCAL, LIVE, DITU, PLUGIN }
 
@@ -52,15 +53,15 @@ object PlayerSource {
     const val LIVE_PREFIX = "live:"
 
     /**
-     * Is [episodeId] a live channel, from any source? Magis's (`live:`, see [LIVE_PREFIX])
-     * or Caracol's ([DituLive]).
+     * Is [episodeId] a live channel, from any source? Magis's (`live:`, see [LIVE_PREFIX]),
+     * Caracol's ([DituLive]) or a plugin's ([PluginIds.isLiveEpisode], handed over by [PluginLive]).
      *
      * `PlayerScreen` hangs off this whatever is common to any live stream: no progress bar or
      * seek, no position to save, no "next episode" on finish. What's specific to Magis's live
      * (zapping, drawer and channel sheet, reopening on cuts) still asks for [SourceKind.LIVE].
      */
     fun isLiveChannel(episodeId: String): Boolean =
-        kindFor(episodeId) == SourceKind.LIVE || DituLive.isLive(episodeId)
+        kindFor(episodeId) == SourceKind.LIVE || DituLive.isLive(episodeId) || PluginIds.isLiveEpisode(episodeId)
 
     fun kindFor(episodeId: String): SourceKind = when {
         episodeId.startsWith("magis:") -> SourceKind.MAGIS

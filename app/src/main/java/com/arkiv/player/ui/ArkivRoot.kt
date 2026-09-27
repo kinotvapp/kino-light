@@ -517,6 +517,7 @@ fun ArkivRoot(
                     com.arkiv.player.ui.plugin.PluginMoreScreen(
                         target = target,
                         onOpenTitleRoute = { route -> navController.navigate(route) { launchSingleTop = true } },
+                        onPlay = { playEpisode(it) },
                         onOpenPluginSettings = { id ->
                             if (shouldOfferPluginConfigurar(graph.pluginRegistry.find(id)?.record?.address)) {
                                 navController.navigate("plugin_config/${Uri.encode(id)}")

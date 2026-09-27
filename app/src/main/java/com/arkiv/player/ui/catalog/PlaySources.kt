@@ -39,6 +39,7 @@ import coil.compose.AsyncImage
 import com.arkiv.player.ui.components.DownloadControl
 import com.arkiv.player.ui.components.RowDownload
 import com.arkiv.player.ui.components.DownloadStatusLine
+import com.arkiv.player.ui.theme.ArkivRed
 import com.arkiv.player.ui.theme.ArkivSurfaceHigh
 import com.arkiv.player.ui.theme.ArkivTextSecondary
 
@@ -207,7 +208,7 @@ fun SourceRow(
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         MetaChip(source.pluginName, source.accent)
-                        if (source.isSeries()) MetaChip("Serie")
+                        if (r.isLiveChannel()) MetaChip(LIVE_BADGE, ArkivRed, strong = true) else if (source.isSeries()) MetaChip("Serie")
                         if (r.year.isNotBlank()) MetaChip(r.year)
                         if (r.lang.isNotBlank()) MetaChip(r.lang)
                         if (r.quality.isNotBlank()) MetaChip(r.quality)
@@ -275,7 +276,7 @@ fun SourceCard(source: PlaySource, enabled: Boolean, onClick: () -> Unit) {
                 }
                 is PlaySource.Plugin -> {
                     MetaChip(source.pluginName, source.accent)
-                    if (source.isSeries()) MetaChip("Serie")
+                    if (source.result.isLiveChannel()) MetaChip(LIVE_BADGE, ArkivRed, strong = true) else if (source.isSeries()) MetaChip("Serie")
                     if (source.result.year.isNotBlank()) MetaChip(source.result.year)
                 }
             }

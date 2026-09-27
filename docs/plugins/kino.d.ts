@@ -26,7 +26,13 @@ interface KinoItem {
   /** Your own opaque reference, at most 4096 characters. */
   ref: string;
   title: string;
-  kind: "movie" | "series";
+  /**
+   * `"live"` needs `"apiVersion": 2` (a v1 plugin's live item is dropped): a live channel, whose
+   * `ref` goes to `resolve` and plays as live straight from its card, with an "EN VIVO" badge; it
+   * has no `runtimeMinutes` (ignored) and no episodes, is never saved to the library, never resumed
+   * and never downloaded.
+   */
+  kind: "movie" | "series" | "live";
   year?: string | number;
   /** https, at most 2048 characters; never an IP or a local name (except the person's own server). */
   poster?: string;
@@ -37,7 +43,7 @@ interface KinoItem {
   genres?: string[];
   /** 0..10 */
   rating?: number;
-  /** 1..1000 */
+  /** 1..1000; ignored on a `live` item. */
   runtimeMinutes?: number;
   ids?: { tmdb?: number; /** ^tt\d{5,10}$ */ imdb?: string };
   lang?: string;
@@ -131,6 +137,7 @@ interface KinoStream {
    * host, or the person's own server exactly as typed; a bad entry is dropped and the rest survive.
    */
   audioTracks?: { lang: string; url: string; label?: string }[];
+  /** Ignored for a `live` item's stream: a channel has no length. */
   durationMs?: number;
   /** 30..86400: after that long, a failed playback calls resolve() once more. */
   expiresInSeconds?: number;

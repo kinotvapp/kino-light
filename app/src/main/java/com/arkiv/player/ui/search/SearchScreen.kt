@@ -90,8 +90,10 @@ import com.arkiv.player.ui.theme.ArkivBlack
 import com.arkiv.player.ui.theme.ArkivRed
 import com.arkiv.player.ui.theme.ArkivSurfaceHigh
 import com.arkiv.player.ui.theme.ArkivTextSecondary
+import com.arkiv.player.playback.PluginLive
 import com.arkiv.player.ui.titleinfo.TITLE_OPEN_ERROR
-import com.arkiv.player.ui.titleinfo.titleRoute
+import com.arkiv.player.ui.titleinfo.TitleTap
+import com.arkiv.player.ui.titleinfo.titleTap
 import kotlinx.coroutines.launch
 
 /**
@@ -185,9 +187,12 @@ fun SearchScreen(
 
     fun openTitleResult(r: com.arkiv.player.data.gateway.GatewayResult) {
         // Every plugin title (Xuper's among them), movie or series, opens its info page: from there
-        // the person plays or picks a chapter.
-        val route = titleRoute(r)
-        if (route != null) onOpenDetail(route) else playError = TITLE_OPEN_ERROR
+        // the person plays or picks a chapter. A live channel plays straight away.
+        when (val tap = titleTap(r)) {
+            is TitleTap.InfoPage -> onOpenDetail(tap.route)
+            is TitleTap.PlayLive -> onPlay(PluginLive.leave(tap.channel))
+            TitleTap.CannotOpen -> playError = TITLE_OPEN_ERROR
+        }
     }
 
     fun playDituResult(source: PlaySource.Ditu) {

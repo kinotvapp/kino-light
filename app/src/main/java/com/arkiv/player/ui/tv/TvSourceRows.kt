@@ -17,6 +17,7 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.arkiv.player.ui.catalog.PlaySource
+import com.arkiv.player.ui.catalog.liveBadge
 import com.arkiv.player.ui.search.SourceTab
 import com.arkiv.player.ui.theme.ArkivTextPrimary
 import com.arkiv.player.ui.theme.ArkivTextSecondary
@@ -87,6 +88,8 @@ fun LazyListScope.tvSourceRow(
                     posterUrl = poster,
                     cardHeight = CARD_HEIGHT,
                     modifier = mod,
+                    // A plugin's live channel says so on its cover; the rest wear nothing.
+                    badge = (s as? PlaySource.Plugin)?.let { liveBadge(it.result) },
                 ) { onPlay(s) }
             }
         }

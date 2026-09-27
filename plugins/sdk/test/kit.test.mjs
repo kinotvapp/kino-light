@@ -449,6 +449,22 @@ test("checkOutput drops what the app drops", () => {
   assert.equal(lan.value.expiresInSeconds, 0);
 });
 
+test("checkOutput keeps a live item only for an apiVersion 2 plugin, and never its duration", () => {
+  const items = [
+    { id: "c1", ref: "ch-1", title: "Canal Uno", kind: "live", runtimeMinutes: 120 },
+    { id: "m", ref: "r", title: "M", kind: "movie", runtimeMinutes: 90 },
+  ];
+  const v1 = checkOutput("search", items, { ...JSON.parse(manifest()), capabilities: ["search", "resolve"] });
+  assert.deepEqual(v1.value.items.map((i) => i.id), ["m"]);
+  assert.ok(v1.drops.some((d) => d.includes("c1") && d.includes("live")));
+  const v2 = checkOutput("search", items, { ...JSON.parse(manifest({ apiVersion: 2 })), capabilities: ["search", "resolve"] });
+  assert.deepEqual(v2.value.items.map((i) => [i.id, i.kind, i.runtimeMinutes]), [["c1", "live", 0], ["m", "movie", 90]]);
+  const home = checkOutput("home", [{ id: "vivo", title: "En vivo", items }], { ...JSON.parse(manifest({ apiVersion: 2 })), capabilities: ["home", "resolve"] });
+  assert.deepEqual(home.value[0].items.map((i) => i.kind), ["live", "movie"]);
+  assert.deepEqual(contract.output.itemKinds, ["movie", "series", "live"]);
+  assert.equal(contract.output.liveKindApiVersion, 2);
+});
+
 test("checkOutput validates a stream's audioTracks like its subtitles", () => {
   const m = JSON.parse(manifest());
   const r = checkOutput("resolve", {

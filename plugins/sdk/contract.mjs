@@ -209,7 +209,7 @@ function strings(v, max, maxChars) {
   return out;
 }
 
-function items(list, max, { allowSeries, servers }, drop) {
+function items(list, max, { allowSeries, allowLive, servers }, drop) {
   const out = [];
   const seen = new Set();
   (Array.isArray(list) ? list : []).forEach((x, i) => {
@@ -220,8 +220,10 @@ function items(list, max, { allowSeries, servers }, drop) {
     if (typeof x.ref !== "string" || !x.ref || x.ref.length > o().maxRefChars) return drop(`item ${id}: invalid ref`);
     const title = text(x.title, o().maxTitleChars);
     if (!title) return drop(`item ${id}: no title`);
-    if (x.kind !== "movie" && x.kind !== "series") return drop(`item ${id}: invalid kind '${String(x.kind).slice(0, 20)}'`);
+    if (!o().itemKinds.includes(x.kind)) return drop(`item ${id}: invalid kind '${String(x.kind).slice(0, 20)}'`);
     if (x.kind === "series" && !allowSeries) return drop(`item ${id}: series without the episodes capability`);
+    // Silently, like any invalid item: an apiVersion 1 plugin never declared it could go live.
+    if (x.kind === "live" && !allowLive) return drop(`item ${id}: live needs apiVersion ${o().liveKindApiVersion}`);
     if (x.adult === true) return drop(`item ${id}: adult, dropped`);
     if (seen.has(id)) return;
     seen.add(id);
@@ -233,7 +235,8 @@ function items(list, max, { allowSeries, servers }, drop) {
       originalTitle: text(x.originalTitle, o().maxTitleChars),
       genres: strings(x.genres, o().maxGenres, o().maxGenreChars),
       rating: typeof x.rating === "number" && x.rating >= o().minRating && x.rating <= o().maxRating ? x.rating : null,
-      runtimeMinutes: Number.isInteger(x.runtimeMinutes) && x.runtimeMinutes >= o().minRuntimeMinutes && x.runtimeMinutes <= o().maxRuntimeMinutes ? x.runtimeMinutes : 0,
+      // A channel has no length: whatever the plugin put there is ignored, never shown.
+      runtimeMinutes: x.kind !== "live" && Number.isInteger(x.runtimeMinutes) && x.runtimeMinutes >= o().minRuntimeMinutes && x.runtimeMinutes <= o().maxRuntimeMinutes ? x.runtimeMinutes : 0,
       tmdb: Number.isInteger(ids.tmdb) && ids.tmdb > 0 ? ids.tmdb : 0,
       imdb: typeof ids.imdb === "string" && re(o().imdbPattern).test(ids.imdb) ? ids.imdb : "",
       badges: strings(x.badges, o().maxBadges, o().maxBadgeChars),
@@ -347,7 +350,13 @@ function stream(value, { hosts, servers }) {
 export function checkOutput(fn, value, manifest, servers = []) {
   const drops = [];
   const drop = (m) => { drops.push(m); };
-  const ctx = { allowSeries: manifest.capabilities.includes("episodes"), allowNext: manifest.capabilities.includes("browse"), servers };
+  const ctx = {
+    allowSeries: manifest.capabilities.includes("episodes"),
+    allowNext: manifest.capabilities.includes("browse"),
+    // Live channels are apiVersion 2: a v1 plugin's live item is dropped like any invalid one.
+    allowLive: Number.isInteger(manifest.apiVersion) && manifest.apiVersion >= o().liveKindApiVersion,
+    servers,
+  };
   const json = JSON.stringify(value === undefined ? null : value);
   if (json.length > o().maxResultChars) throw new Error("respuesta del plugin demasiado grande (más de 2 millones de caracteres)");
   const parsed = JSON.parse(json);
