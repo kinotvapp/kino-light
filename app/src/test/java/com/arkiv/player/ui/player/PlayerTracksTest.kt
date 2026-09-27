@@ -1,7 +1,9 @@
 package com.arkiv.player.ui.player
 
+import com.arkiv.player.playback.TrackSelector
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -85,4 +87,80 @@ class PlayerTracksTest {
         assertFalse(tracksBelongToEpisode(null, "magis::ep1"))
     }
 
+    // ---- audioTrackLabel ----
+
+    @Test
+    fun `a plugin's own audio track is labeled from its declared language, not the raw fallback`() {
+        val label = audioTrackLabel(
+            id = 1, embeddedCount = 1,
+            pluginTracks = listOf(ResolvedAudioTrack(lang = "es-419", url = "https://x/a.aac")),
+            embeddedLabel = "A2",
+        )
+        assertEquals("Español latino", label)
+    }
+
+    @Test
+    fun `an explicit label always wins over the language`() {
+        val label = audioTrackLabel(
+            id = 1, embeddedCount = 1,
+            pluginTracks = listOf(ResolvedAudioTrack(lang = "en", url = "https://x/a.aac", label = "English (5.1)")),
+            embeddedLabel = "A2",
+        )
+        assertEquals("English (5.1)", label)
+    }
+
+    @Test
+    fun `an index inside the container's own tracks keeps the embedded label untouched`() {
+        val label = audioTrackLabel(
+            id = 0, embeddedCount = 1,
+            pluginTracks = listOf(ResolvedAudioTrack(lang = "es-419", url = "https://x/a.aac")),
+            embeddedLabel = "Pista original",
+        )
+        assertEquals("Pista original", label)
+    }
+
+    @Test
+    fun `a blank or und language keeps the embedded fallback name`() {
+        listOf("", "und", "UND").forEach { lang ->
+            val label = audioTrackLabel(
+                id = 0, embeddedCount = 0,
+                pluginTracks = listOf(ResolvedAudioTrack(lang = lang, url = "https://x/a.aac")),
+                embeddedLabel = "A1",
+            )
+            assertEquals(lang, "A1", label)
+        }
+    }
+
+    @Test
+    fun `an unrecognized language code is shown uppercased, not guessed`() {
+        val label = audioTrackLabel(
+            id = 0, embeddedCount = 0,
+            pluginTracks = listOf(ResolvedAudioTrack(lang = "fr", url = "https://x/a.aac")),
+            embeddedLabel = "A1",
+        )
+        assertEquals("FR", label)
+    }
+
+    @Test
+    fun `with no plugin tracks at that position nothing changes`() {
+        val label = audioTrackLabel(id = 5, embeddedCount = 1, pluginTracks = emptyList(), embeddedLabel = "A6")
+        assertEquals("A6", label)
+    }
+
+    // ---- reusing the preferred-language picker over a menu that mixes embedded and plugin tracks ----
+
+    @Test
+    fun `the existing preferred-language picker chooses a plugin's own audio track by its declared language`() {
+        val menu = listOf(
+            0 to "Pista original",
+            1 to audioTrackLabel(1, 1, listOf(ResolvedAudioTrack(lang = "es-419", url = "https://x/a.aac")), "A2"),
+        )
+        assertEquals(1, TrackSelector.select(menu, TrackSelector.DEFAULT_AUDIO, requireChoice = true))
+    }
+
+    @Test
+    fun `with only one real track the picker leaves the player's default alone`() {
+        val menu = listOf(0 to audioTrackLabel(0, 0, listOf(ResolvedAudioTrack(lang = "es-419", url = "https://x/a.aac")), "A1"))
+        assertNull(TrackSelector.select(menu, TrackSelector.DEFAULT_AUDIO, requireChoice = true))
+    }
 }

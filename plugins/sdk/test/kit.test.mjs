@@ -260,6 +260,23 @@ test("checkOutput drops what the app drops", () => {
   assert.equal(lan.value.expiresInSeconds, 0);
 });
 
+test("checkOutput validates a stream's audioTracks like its subtitles", () => {
+  const m = JSON.parse(manifest());
+  const r = checkOutput("resolve", {
+    url: "https://example.com/v.mp4",
+    audioTracks: [
+      { lang: "en", url: "https://example.com/a-en.aac", label: "English" },
+      { lang: "es", url: "https://evil.example/a-es.aac" },
+    ],
+  }, m);
+  assert.deepEqual(r.value.audioTracks.map((a) => a.lang), ["en"]);
+  const many = checkOutput("resolve", {
+    url: "https://example.com/v.mp4",
+    audioTracks: Array.from({ length: 10 }, (_, i) => ({ lang: "en", url: `https://example.com/a${i}.aac` })),
+  }, m);
+  assert.equal(many.value.audioTracks.length, contract.output.maxAudioTracks);
+});
+
 test("checkOutput reads an episodes answer's sibling seasons as the app does", () => {
   const m = JSON.parse(manifest({ capabilities: ["search", "episodes", "resolve"] }));
   const none = checkOutput("episodes", { episodes: [{ number: 1, ref: "e1" }] }, m);

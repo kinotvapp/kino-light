@@ -294,6 +294,7 @@ Episode    = { season: number, number: number, ref: string, title?: string,
 Season     = { id: string, ref: string, title: string, number?: number, current?: boolean }
 Stream     = { url: string, mime?: string, headers?: Record<string, string>,
                subtitles?: { lang: string, url: string, format?: "vtt" | "srt" }[],
+               audioTracks?: { lang: string, url: string, label?: string }[],
                durationMs?: number, expiresInSeconds?: number }
 ```
 
@@ -367,6 +368,23 @@ all or nothing.
   `Transfer-Encoding` and `Connection` are ignored.
 - `subtitles`: at most 30, each `{ lang, url, format? }`. `lang` is a short language code such as
   `"es"` (up to 20 characters; blank becomes `"und"`), `format` is `"vtt"` or `"srt"`.
+- `audioTracks`: at most 8, each `{ lang, url, label? }` -- a dub or an alternate mix your source
+  serves as its own file, separate from the video. Checked exactly like a subtitle: `url` must be
+  `https` on a declared host, or the person's own server exactly as typed; a bad entry is dropped and
+  the rest of the stream still plays. `lang` up to 16 characters (blank becomes `"und"`); `label`, up
+  to 40 characters, is shown in the audio menu verbatim when given, instead of a name guessed from
+  `lang`. Kino merges each one into the video and offers it, auto-picked by the person's audio
+  preference, in the same menu as the container's own embedded tracks. A stream with no `audioTracks`
+  plays exactly as it always has. Example, a source that dubs into two languages:
+  ```js
+  return {
+    url: videoUrl,
+    audioTracks: [
+      { lang: "es-419", url: dubUrl("es"), label: "Español (Latinoamérica)" },
+      { lang: "en", url: dubUrl("en") },
+    ],
+  };
+  ```
 - `durationMs` is optional, in milliseconds.
 - `expiresInSeconds` (30 to 86400) says when your URL may stop working. If playback fails after that
   long, Kino calls `resolve` once more and continues where the person was.

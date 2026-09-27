@@ -2785,6 +2785,7 @@ private fun PlayerContent(
                 mirror = mirror,
                 startPositionMs = mItem.startPositionMs,
                 subtitleConfigs = (webExtras?.subtitles ?: emptyList()).toExoSubtitleConfigs(),
+                audioTracks = webExtras?.audioTracks ?: emptyList(),
                 requestHeaders = mItem.requestHeaders,
                 http = streamHttpFor(mItem.kind, mItem.pluginHosts, mItem.pluginXuper),
                 mimeType = mItem.mime.ifBlank { null },
@@ -2800,7 +2801,7 @@ private fun PlayerContent(
                 // quiet while an ExoPlayer is active, on the grounds that its STATE_ENDED belongs
                 // to a local player holding nothing. True, but it left the end unhandled entirely.
                 onChapterEnd = { onEndOfChapter() },
-                onTracksChanged = { tracks -> tracksState.updateExoTracks(tracks) },
+                onTracksChanged = { tracks -> tracksState.updateExoTracks(tracks, webExtras?.audioTracks ?: emptyList()) },
                 onFirstFrame = { got -> exoRenderedSomething = got },
                 zoom = gestures.zoomForExo,
                 isTv = isTv,

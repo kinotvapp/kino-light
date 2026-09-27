@@ -243,6 +243,57 @@ class PluginOutputTest {
         ).forEach { json -> assertThrows(json, PluginContractException::class.java) { PluginOutput.stream(json, hosts) } }
     }
 
+    @Test fun `a stream with no audioTracks field has none, exactly as before this feature`() {
+        val s = PluginOutput.stream("""{"url":"https://archive.org/x.mp4"}""", hosts)
+        assertTrue(s.audioTracks.isEmpty())
+    }
+
+    @Test fun `audioTracks are validated like subtitles, host and https checked, invalid ones dropped`() {
+        val ok = PluginOutput.stream(
+            """{"url":"https://archive.org/download/x/y.mp4",
+               "audioTracks":[{"lang":"en","url":"https://ia8.us.archive.org/a-en.aac","label":"English"},
+                              {"lang":"es-419","url":"https://evil.example/a-es.aac"},
+                              {"lang":"fr","url":"http://archive.org/a-fr.aac"},
+                              {"lang":"ja","url":"not a url"}]}""",
+            hosts,
+        )
+        assertEquals(listOf("en"), ok.audioTracks.map { it.lang })
+        assertEquals("English", ok.audioTracks.single().label)
+        assertEquals("https://ia8.us.archive.org/a-en.aac", ok.audioTracks.single().url)
+    }
+
+    @Test fun `audioTracks are capped at 8, lang defaults to und and long fields are cut`() {
+        val many = (1..10).joinToString(",") { """{"lang":"en","url":"https://archive.org/a$it.aac"}""" }
+        val s = PluginOutput.stream("""{"url":"https://archive.org/x.mp4","audioTracks":[$many]}""", hosts)
+        assertEquals(PluginOutput.MAX_AUDIO_TRACKS, s.audioTracks.size)
+
+        val cut = PluginOutput.stream(
+            """{"url":"https://archive.org/x.mp4",
+               "audioTracks":[{"lang":"${"x".repeat(50)}","url":"https://archive.org/a.aac","label":"${"y".repeat(80)}"}]}""",
+            hosts,
+        ).audioTracks.single()
+        assertEquals(16, cut.lang.length)
+        assertEquals(40, cut.label.length)
+
+        val blank = PluginOutput.stream(
+            """{"url":"https://archive.org/x.mp4","audioTracks":[{"lang":"","url":"https://archive.org/a.aac"}]}""",
+            hosts,
+        ).audioTracks.single()
+        assertEquals("und", blank.lang)
+        assertEquals("", blank.label)
+    }
+
+    @Test fun `an audio track may be on a server the person typed, exactly that server only`() {
+        val lan = EffectiveHosts(listOf("api.example.com"), listOf(UserHost("http", "192.168.1.10", 8096)))
+        val s = PluginOutput.stream(
+            """{"url":"http://192.168.1.10:8096/v.mp4",
+               "audioTracks":[{"lang":"es","url":"http://192.168.1.10:8096/a-es.aac"},
+                              {"lang":"en","url":"http://192.168.1.10:8097/a-en.aac"}]}""",
+            lan,
+        )
+        assertEquals(listOf("es"), s.audioTracks.map { it.lang })
+    }
+
     @Test fun `expiresInSeconds outside 30 to 86400 is ignored`() {
         listOf(29, 86_401, -1).forEach { v ->
             assertEquals(0, PluginOutput.stream("""{"url":"https://archive.org/x.mp4","expiresInSeconds":$v}""", hosts).expiresInSeconds)

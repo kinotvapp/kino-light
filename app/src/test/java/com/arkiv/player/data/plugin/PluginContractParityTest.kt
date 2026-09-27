@@ -150,6 +150,7 @@ class PluginContractParityTest {
         assertEquals(PluginOutput.MAX_SEASON, o.getInt("maxSeasonNumber"))
         assertEquals(PluginOutput.MAX_EPISODE_NUMBER, o.getInt("maxEpisodeNumber"))
         assertEquals(PluginOutput.MAX_SUBTITLES, o.getInt("maxSubtitles"))
+        assertEquals(PluginOutput.MAX_AUDIO_TRACKS, o.getInt("maxAudioTracks"))
         assertEquals(PluginOutput.DRM_KEYS, o.strings("drmKeys").toSet())
         val s = obj("search")
         assertEquals(PluginContentSource.MAX_ALT_TITLES, s.getInt("maxAltTitles"))

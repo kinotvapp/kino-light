@@ -100,12 +100,17 @@ data class GatewayPlayable(
      * playback failure past it resolves once more (`PluginStreamExpiry`). Magis and Caracol leave it 0.
      */
     val expiresInSeconds: Int = 0,
+    /** Plugins only (apiVersion 1, optional): separately-hosted audio tracks (dubs, alternate mixes). */
+    val audioTracks: List<GatewayAudioTrack> = emptyList(),
 )
 
 /** One page of [ContentSource.browse] (or a plugin search continued with its cursor); [next] null = the end. */
 data class GatewayPage(val items: List<GatewayResult>, val next: String?)
 
 data class GatewaySubtitle(val lang: String, val url: String, val format: String = "")
+
+/** One of a plugin stream's own separately-hosted audio tracks; see `PluginOutput.PluginAudioTrack`. */
+data class GatewayAudioTrack(val lang: String, val url: String, val label: String = "")
 
 /**
  * A season's chapter (Magis's or Caracol's).

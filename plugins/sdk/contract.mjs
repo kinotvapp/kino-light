@@ -333,7 +333,10 @@ function stream(value, { hosts, servers }) {
   const subtitles = (Array.isArray(value.subtitles) ? value.subtitles : []).slice(0, o().maxSubtitles).filter((s) => {
     try { check(s && s.url, "El subtítulo"); return true; } catch { return false; }
   });
-  return { ...value, subtitles, expiresInSeconds: expires };
+  const audioTracks = (Array.isArray(value.audioTracks) ? value.audioTracks : []).slice(0, o().maxAudioTracks).filter((a) => {
+    try { check(a && a.url, "El audio"); return true; } catch { return false; }
+  });
+  return { ...value, subtitles, audioTracks, expiresInSeconds: expires };
 }
 
 /**

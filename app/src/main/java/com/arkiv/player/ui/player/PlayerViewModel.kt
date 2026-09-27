@@ -7,6 +7,7 @@ import com.arkiv.player.data.ArkivRepository
 import com.arkiv.player.data.db.LiveRecentDao
 import com.arkiv.player.data.db.LiveRecentEntity
 import com.arkiv.player.data.ditu.CaracolFailure
+import com.arkiv.player.data.gateway.GatewayAudioTrack
 import com.arkiv.player.data.gateway.GatewayBlockedException
 import com.arkiv.player.data.gateway.GatewaySubtitle
 import com.arkiv.player.data.gateway.LiveChannel
@@ -167,12 +168,29 @@ data class ResolvedSub(
 internal fun pluginSubtitles(subs: List<GatewaySubtitle>): List<ResolvedSub> =
     subs.map { ResolvedSub(lang = it.lang, url = it.url, format = it.format) }
 
+/**
+ * One of a plugin stream's own separately-hosted audio tracks (a dub, an alternate mix), to merge
+ * into the video source as an external track -- see `StreamExoPlayer` and `TracksState`. [label], if
+ * the plugin gave one, is shown in the menu verbatim; otherwise the menu names it from [lang].
+ */
+data class ResolvedAudioTrack(
+    val lang: String,
+    val url: String,
+    val label: String = "",
+)
+
+/** A plugin's own audio tracks, unchanged (Magis never sends any -- it has none of its own to add). */
+internal fun pluginAudioTracks(tracks: List<GatewayAudioTrack>): List<ResolvedAudioTrack> =
+    tracks.map { ResolvedAudioTrack(lang = it.lang, url = it.url, label = it.label) }
+
 /** Extras of a resolved source (subtitles + sniffed headers) to attach in the UI. Despite the
  *  "web" name, [PlayerViewModel.loadMagis] also uses it for the subtitles the portal brings. */
 data class WebExtras(
     val episodeId: String,
     val headers: Map<String, String>,
     val subtitles: List<ResolvedSub>,
+    /** Plugins only (apiVersion 1, optional); empty for Magis and every other source. */
+    val audioTracks: List<ResolvedAudioTrack> = emptyList(),
 )
 
 /**
@@ -1283,7 +1301,7 @@ class PlayerViewModel internal constructor(
         // keeps expiring gets a retry every time, not just once ever (spec §3.5).
         pluginExpiry = com.arkiv.player.data.plugin.PluginStreamExpiry(System.currentTimeMillis(), play.expiresInSeconds)
         val header = repo.headerInfo(episodeId)
-        _webExtras.value = WebExtras(episodeId, play.headers, pluginSubtitles(play.subtitles))
+        _webExtras.value = WebExtras(episodeId, play.headers, pluginSubtitles(play.subtitles), pluginAudioTracks(play.audioTracks))
         val startPos = safeStartPosition(episodeId, SourceKind.PLUGIN)
         _magisItem.value = PlayerData(
             episodeId = episodeId,

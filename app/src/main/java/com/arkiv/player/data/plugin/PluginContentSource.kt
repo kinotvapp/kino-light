@@ -1,6 +1,7 @@
 package com.arkiv.player.data.plugin
 
 import com.arkiv.player.data.gateway.ContentSource
+import com.arkiv.player.data.gateway.GatewayAudioTrack
 import com.arkiv.player.data.gateway.GatewayBlockedException
 import com.arkiv.player.data.gateway.GatewayEpisode
 import com.arkiv.player.data.gateway.GatewayException
@@ -138,6 +139,7 @@ class PluginContentSource(
             subtitles = stream.subtitles.map { GatewaySubtitle(it.lang, it.url, it.format) },
             durationMs = stream.durationMs,
             expiresInSeconds = stream.expiresInSeconds,
+            audioTracks = stream.audioTracks.map { GatewayAudioTrack(it.lang, it.url, it.label) },
         )
     }
 

@@ -76,6 +76,7 @@
     "maxSeasonNumber": 999,
     "maxEpisodeNumber": 99999,
     "maxSubtitles": 30,
+    "maxAudioTracks": 8,
     "drmKeys": ["drm", "license", "licenseUrl", "drmLicenseUrl", "keySystem", "widevine"]
   },
   "search": {

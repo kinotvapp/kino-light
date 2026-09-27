@@ -159,16 +159,24 @@ internal class TracksState(
     /**
      * Populates audio and subtitle from the tracks ExoPlayer reports via onTracksChanged.
      * Called from StreamExoPlayer's onTracksChanged callback.
+     *
+     * [pluginAudioTracks] is the stream's own separate audio tracks (see [ResolvedAudioTrack]),
+     * merged into the video source in the same order right after its embedded ones -- see
+     * [StreamExoPlayer]. `MergingMediaSource` reports one flat list, so [audioTrackLabel] is what
+     * tells them apart by position and, for the plugin's own, labels them from its `lang`/`label`
+     * instead of whatever (usually nothing) a raw audio file's own `Format` carries.
      */
-    fun updateExoTracks(tracks: Tracks) {
+    fun updateExoTracks(tracks: Tracks, pluginAudioTracks: List<ResolvedAudioTrack> = emptyList()) {
         val audioGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
         val subGroups   = tracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }
         exoAudioGroups = audioGroups.map { it.mediaTrackGroup }
         exoSubGroups   = subGroups.map { it.mediaTrackGroup }
 
         // Use the index as the id (for setOverrideForType).
+        val embeddedCount = (audioGroups.size - pluginAudioTracks.size).coerceAtLeast(0)
         audioTracks = audioGroups.mapIndexed { i, group ->
-            i to exoTrackLabel(group.getTrackFormat(0), "A${i + 1}")
+            val fallback = exoTrackLabel(group.getTrackFormat(0), "A${i + 1}")
+            i to audioTrackLabel(i, embeddedCount, pluginAudioTracks, fallback)
         }
         spuTracks = subGroups.mapIndexed { i, group ->
             i to exoTrackLabel(group.getTrackFormat(0), "S${i + 1}")
@@ -374,6 +382,25 @@ internal fun rememberTracksState(local: Player?, graph: AppGraph, episodeId: Str
  */
 internal fun tracksBelongToEpisode(mediaIdOnThePlayer: String?, episodeId: String): Boolean =
     mediaIdOnThePlayer != null && mediaIdOnThePlayer == episodeId
+
+/**
+ * Display name for the audio menu entry at index [id], when [pluginTracks] is a stream's own
+ * separately-hosted audio tracks (see [ResolvedAudioTrack]), merged into the video source right
+ * after the container's own [embeddedCount] ones -- `MergingMediaSource` reports one flat list of
+ * groups, so [TracksState.updateExoTracks] doesn't know the split any other way, only their count
+ * and order. An index below [embeddedCount] keeps [embeddedLabel] untouched (the container's own
+ * `Format`, see `TracksState.exoTrackLabel`); at or past it, the plugin's own `label` wins, then its
+ * `lang` classified the same way [LangTokens] reads any other track. Unlike the embedded case, an
+ * unrecognized `lang` is shown uppercased rather than guessed from `Locale`: a plugin that wants a
+ * precise name should send `label`.
+ */
+internal fun audioTrackLabel(id: Int, embeddedCount: Int, pluginTracks: List<ResolvedAudioTrack>, embeddedLabel: String): String {
+    val extra = pluginTracks.getOrNull(id - embeddedCount) ?: return embeddedLabel
+    extra.label.takeIf { it.isNotBlank() }?.let { return it }
+    if (extra.lang.isBlank() || extra.lang.equals("und", ignoreCase = true)) return embeddedLabel
+    LangTokens.classifyCode(extra.lang).takeIf { it != TrackLang.UNKNOWN }?.label()?.let { return it }
+    return extra.lang.uppercase()
+}
 
 /** The container's real tracks: negative ids are the menu's synthetic entries. */
 internal fun List<Pair<Int, String>>.realTracks(): List<Pair<Int, String>> = filter { it.first >= 0 }

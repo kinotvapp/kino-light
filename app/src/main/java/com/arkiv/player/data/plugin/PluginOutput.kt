@@ -58,11 +58,20 @@ data class PluginEpisodes(val series: PluginSeriesInfo?, val episodes: List<Plug
 
 data class PluginSubtitle(val lang: String, val url: String, val format: String = "")
 
+/**
+ * One separately-hosted audio track (apiVersion 1, optional): a dub or an alternate mix the plugin
+ * serves as its own file, next to (not inside) the video. [lang] is a short code like `subtitles`'
+ * ("es-419"; blank becomes `"und"`), [label] an optional name the player shows verbatim when given.
+ */
+data class PluginAudioTrack(val lang: String, val url: String, val label: String = "")
+
 data class PluginStream(
     val url: String, val mime: String = "", val headers: Map<String, String> = emptyMap(),
     val subtitles: List<PluginSubtitle> = emptyList(), val durationMs: Long = 0,
     /** 30..86 400, or 0: after that long a failed playback resolves again once. */
     val expiresInSeconds: Int = 0,
+    /** At most [MAX_AUDIO_TRACKS]; empty plays exactly as before this field existed. */
+    val audioTracks: List<PluginAudioTrack> = emptyList(),
 )
 
 /** A plugin answered something the contract doesn't allow; [message] is Spanish, shown to the person. */
@@ -103,6 +112,10 @@ object PluginOutput {
     private const val MAX_HEADERS = 20
     /** `internal`, not public API: exposed only so a test can pin `contract.json`'s `output.maxSubtitles` to it. */
     internal const val MAX_SUBTITLES = 30
+    /** `internal`, not public API: exposed only so a test can pin `contract.json`'s `output.maxAudioTracks` to it. */
+    internal const val MAX_AUDIO_TRACKS = 8
+    private const val MAX_AUDIO_LANG_CHARS = 16
+    private const val MAX_AUDIO_LABEL_CHARS = 40
     /** `internal`, not public API: exposed only so a test can pin `contract.json`'s `output.maxSeasonNumber` to it. */
     internal const val MAX_SEASON = 999
     /** `internal`, not public API: exposed only so a test can pin `contract.json`'s `output.maxEpisodeNumber` to it. */
@@ -279,8 +292,20 @@ object PluginOutput {
                 subtitles += PluginSubtitle(text(s, "lang", 20).ifBlank { "und" }, su, format)
             }
         }
+        val audioTracks = ArrayList<PluginAudioTrack>()
+        o.optJSONArray("audioTracks")?.let { arr ->
+            for (i in 0 until minOf(arr.length(), MAX_AUDIO_TRACKS)) {
+                val a = arr.optJSONObject(i) ?: continue
+                val au = a.optString("url")
+                if (xuper?.headersFor(au) == null && runCatching { checkUrl(au, hosts, "El audio") }.isFailure) continue
+                audioTracks += PluginAudioTrack(
+                    text(a, "lang", MAX_AUDIO_LANG_CHARS).ifBlank { "und" }, au,
+                    text(a, "label", MAX_AUDIO_LABEL_CHARS),
+                )
+            }
+        }
         val expires = o.optInt("expiresInSeconds", 0).takeIf { it in MIN_EXPIRES_IN_SECONDS..MAX_EXPIRES_IN_SECONDS } ?: 0
-        return PluginStream(url, mime, headers, subtitles, o.optLong("durationMs", 0L).coerceAtLeast(0L), expires)
+        return PluginStream(url, mime, headers, subtitles, o.optLong("durationMs", 0L).coerceAtLeast(0L), expires, audioTracks)
     }
 
     /** A stream or subtitle URL: https on a declared host, or exactly a server the person typed. */

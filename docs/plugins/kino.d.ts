@@ -118,6 +118,15 @@ interface KinoStream {
   mime?: string;
   headers?: Record<string, string>;
   subtitles?: { lang: string; url: string; format?: "vtt" | "srt" }[];
+  /**
+   * Separately-hosted audio tracks (a dub, an alternate mix), at most 8: Kino plays your video with
+   * each merged in as its own track, offered and auto-picked by the person's audio-language
+   * preference exactly like the container's own. `lang` is a short code like `subtitles`' (up to 16
+   * characters; blank becomes `"und"`); `label`, if given (up to 40 characters), is shown verbatim
+   * instead of a name guessed from `lang`. Checked the same way as `subtitles`: https on a declared
+   * host, or the person's own server exactly as typed; a bad entry is dropped and the rest survive.
+   */
+  audioTracks?: { lang: string; url: string; label?: string }[];
   durationMs?: number;
   /** 30..86400: after that long, a failed playback calls resolve() once more. */
   expiresInSeconds?: number;

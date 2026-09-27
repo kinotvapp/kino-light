@@ -44,6 +44,7 @@ import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.ui.SubtitleView
 import com.arkiv.player.playback.MpegTs
@@ -97,6 +98,14 @@ internal fun StreamExoPlayer(
     startPositionMs: Long = 0L,
     subtitleConfigs: List<MediaItem.SubtitleConfiguration> = emptyList(),
     /**
+     * The stream's own separately-hosted audio tracks (apiVersion 1, optional plugin field): each
+     * is merged into the video source as its own [MergingMediaSource] child, so the container's
+     * embedded audio (if any) and these appear together in [onTracksChanged] and the existing
+     * audio menu ([TracksState]) offers and auto-selects them exactly like any other track. Empty
+     * plays exactly as before this field existed: the plain media item is set directly, no merge.
+     */
+    audioTracks: List<ResolvedAudioTrack> = emptyList(),
+    /**
      * Headers for every request of this stream (plugins). Empty for Magis, whose headers travel
      * inside the local proxy's URL. Set on the data source, not through `archiveCacheProxy`: that
      * proxy serves ONE URL's bytes, and an HLS/DASH manifest's relative segments would resolve
@@ -131,8 +140,8 @@ internal fun StreamExoPlayer(
     val graph = rememberGraph()
     val subtitleStyle by graph.subtitlePrefs.prefs.collectAsStateWithLifecycle()
 
-    val exoPlayer = remember(mediaUrl, subtitleConfigs, requestHeaders, mimeType, http) {
-        Log.i(TAG, "Creating ExoPlayer · url=${mediaUrl.take(80)} startMs=$startPositionMs subs=${subtitleConfigs.size}")
+    val exoPlayer = remember(mediaUrl, subtitleConfigs, requestHeaders, mimeType, http, audioTracks) {
+        Log.i(TAG, "Creating ExoPlayer · url=${mediaUrl.take(80)} startMs=$startPositionMs subs=${subtitleConfigs.size} audioTracks=${audioTracks.size}")
         val httpFactory: DataSource.Factory = when (http) {
             StreamHttp.Default -> DefaultHttpDataSource.Factory()
                 .setUserAgent(requestHeaders.entries.firstOrNull { it.key.equals("User-Agent", true) }?.value ?: "okhttp/4.12.0")
@@ -151,6 +160,14 @@ internal fun StreamExoPlayer(
             .setSubtitleConfigurations(subtitleConfigs)
             .apply { mimeType?.let { setMimeType(it) } }
             .build()
+
+        // Built once and reused for the video AND every audio track below: the same [httpFactory]
+        // backs all of them, so the stream's headers reach the audio requests too, exactly as they
+        // reach the video's and the subtitles'.
+        val mediaSourceFactory = DefaultMediaSourceFactory(
+            httpFactory,
+            DefaultExtractorsFactory().setTsExtractorTimestampSearchBytes(STREAM_TS_SEARCH_BYTES),
+        )
 
         // Magis's CDN delivers at 70–230 KB/s and its files carry 8 badly interleaved audio
         // tracks: the video lives in one zone and the audio 13 MB away, so the player jumps
@@ -181,16 +198,21 @@ internal fun StreamExoPlayer(
             .build()
 
         ExoPlayer.Builder(context, fallbackRenderers(context))
-            .setMediaSourceFactory(
-                DefaultMediaSourceFactory(
-                    httpFactory,
-                    DefaultExtractorsFactory().setTsExtractorTimestampSearchBytes(STREAM_TS_SEARCH_BYTES),
-                ),
-            )
+            .setMediaSourceFactory(mediaSourceFactory)
             .setLoadControl(loadControl)
             .build()
             .also { player ->
-                player.setMediaItem(mediaItem)
+                if (audioTracks.isEmpty()) {
+                    // Unchanged from before this field existed: no merge, no extra source at all.
+                    player.setMediaItem(mediaItem)
+                } else {
+                    val audioSources = audioTracks.map { track ->
+                        mediaSourceFactory.createMediaSource(MediaItem.Builder().setUri(Uri.parse(track.url)).build())
+                    }
+                    player.setMediaSource(
+                        MergingMediaSource(mediaSourceFactory.createMediaSource(mediaItem), *audioSources.toTypedArray()),
+                    )
+                }
                 player.prepare()
                 if (startPositionMs > 0L) player.seekTo(startPositionMs)
                 player.playWhenReady = true
