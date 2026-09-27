@@ -1,5 +1,6 @@
 package com.arkiv.player.ui.live
 
+import com.arkiv.player.data.gateway.GatewayBlockedException
 import com.arkiv.player.data.gateway.LiveSession
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -15,11 +16,17 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * Dependencies come in as functions (not as `LiveApi`/`LiveHlsProxy`) so this can be tested
  * without network or sockets; the real wiring lives in `AppGraph`.
+ *
+ * [gate] is the hard stop behind every live surface (`XuperLiveGate.blockedMessage` in `AppGraph`):
+ * non-null means the channels are off, and [open] throws [GatewayBlockedException] with that
+ * message -- before the session cache and before [resolver], so no portal call is made and no
+ * session cached while it was on is handed out. [preheat] just does nothing then.
  */
 class LiveController(
     private val resolver: suspend (String) -> LiveSession,
     private val urlFor: (LiveSession) -> String,
     private val now: () -> Long = { System.currentTimeMillis() / 1000 },
+    private val gate: () -> String? = { null },
 ) {
     // ConcurrentHashMap and not a mutableMapOf wrapped in a coroutine Mutex: close() is `fun`,
     // not `suspend` (it can be called from any thread, e.g. on leaving the live screen), so it
@@ -73,6 +80,7 @@ class LiveController(
         sessions[code]?.takeIf { it.expiresAt == 0L || it.expiresAt > now() }
 
     suspend fun open(code: String): String {
+        gate()?.let { throw GatewayBlockedException(it) }
         val s = valid(code) ?: lockFor(code).withLock {
             // Recheck now that the lock is held: it may have been resolved already (by a
             // preheat() of the SAME channel running in parallel) while we were waiting.
@@ -88,7 +96,7 @@ class LiveController(
      * partial state.
      */
     suspend fun preheat(code: String) {
-        if (valid(code) != null) return
+        if (gate() != null || valid(code) != null) return
         runCatching {
             lockFor(code).withLock {
                 if (valid(code) == null) sessions[code] = resolver(code)
