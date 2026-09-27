@@ -12,14 +12,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridItemSpanScope
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -80,6 +78,7 @@ import com.arkiv.player.ui.plugin.catalogActionOf
 import com.arkiv.player.ui.plugin.catalogRefreshLine
 import com.arkiv.player.ui.plugin.handleAddPluginBack
 import com.arkiv.player.ui.plugin.initialPluginsTab
+import com.arkiv.player.ui.plugin.installedGridLinesWithMessage
 import com.arkiv.player.ui.plugin.installedTabLabel
 import com.arkiv.player.ui.plugin.legacyFirst
 import com.arkiv.player.ui.plugin.rowMessagePluginId
@@ -132,16 +131,17 @@ fun TvPluginsScreen(mode: AddPluginMode, onClose: () -> Unit) {
  * - **Recomendados**: the search field, the notice while the list is only the copy shipped in the APK (with
  *   "Reintentar"), and the recommended plugins as cards ([TvPluginCard]) in [CATALOG_COLUMNS] columns of one
  *   lazy grid.
- * - **Instalados**: what is installed as one lazy column of [TvInstalledPluginRows], or, with nothing
- *   installed, a line saying so and "Ver recomendados".
+ * - **Instalados**: the installed plugins as cards ([TvInstalledPluginCard]) in one lazy grid, the same
+ *   [CATALOG_COLUMNS] columns as Recomendados; OK on a card opens its actions dialog
+ *   ([TvInstalledActionsDialog]). With nothing installed, a line saying so and "Ver recomendados".
  * - **Agregar** opens [TvAddCustomPluginDialog] for the custom `usuario/repositorio`. Installing always goes
  *   through the consent sheet, and that sheet replaces the dialog while it is up (see [addModalVisible]).
  *
  * The header row is never inside a scrolling list (a scroll would drag it away as focus went down and
  * getting back would be a fumble). D-pad: Left and Right move among the tabs and the button, OK on a tab
  * selects it. Down enters the selected tab's body: the first card, NOT the search field (a text field that
- * takes focus opens the keyboard by itself, and going down should not), or the first installed action.
- * Up from the search field and from the first installed action returns to the SELECTED tab.
+ * takes focus opens the keyboard by itself, and going down should not), or the first installed card.
+ * Up from the search field and from the first installed card returns to the SELECTED tab.
  *
  * Initial focus is the first recommended card and no keyboard when the screen is the whole screen
  * ([requestInitialFocus], see the comment on [initialFocusPlaced] below). Hosted inside another screen's
@@ -149,7 +149,7 @@ fun TvPluginsScreen(mode: AddPluginMode, onClose: () -> Unit) {
  * a card that took focus when the tab opened would steal it. The host then links the two levels itself:
  * [entryFocus] is put on the selected tab chip so the host can send Down from its own tab row there, and
  * Up from the header row leads to [upFocus] (the host's tab row) when there is one. Up from the search field
- * and from the first installed action still leads to the selected tab chip, one level down.
+ * and from the first installed card still leads to the selected tab chip, one level down.
  *
  * The selected tab and whether the person asked for the dialog survive recreation ([rememberSaveable]); the
  * search text and the typed address live in the view model, so they survive switching tabs and the consent.
@@ -183,7 +183,7 @@ internal fun TvPluginsContent(
     // The places focus is sent to. Each tab chip has ITS OWN requester ([tabFocus], for good: one that moved
     // between chips as the selection changed could reach the stale chip while the row recomposed), and
     // [selectedTabFocus] is just the one of the tab that is selected now, where Up from a body leads. [addFocus] is
-    // on the "Agregar" button and [installedEntryFocus] on the first action of the Instalados body (or on its "Ver
+    // on the "Agregar" button and [installedEntryFocus] on the first card of the Instalados body (or on its "Ver
     // recomendados" when nothing is installed). [firstRowFocus] (below) is on the first recommended card.
     // [entryFocus], the host's way in, is put on the selected chip only (see [PluginsHeader]).
     val tabFocus = remember { PluginsTab.entries.associateWith { FocusRequester() } }
@@ -510,10 +510,19 @@ private fun RecommendedTab(
 }
 
 /**
- * Instalados: one [TvInstalledPluginRows] per plugin, in a list that scrolls. With none installed it says so
- * and offers "Ver recomendados" ([onBrowseRecommended]). [message] goes to the row it is about, if any.
- * The first action (or "Ver recomendados") carries [entryFocus], where Down from the header row leads,
- * and Up from it leads back to the selected tab ([selectedTabFocus]).
+ * Instalados: the installed plugins as cards, one [TvInstalledPluginCard] per plugin in a lazy grid of
+ * [CATALOG_COLUMNS] columns (the same [RecommendedTab] draws). With none installed it says so and offers
+ * "Ver recomendados" ([onBrowseRecommended]). [message] goes to the card it is about, if any (see
+ * [rowMessagePluginId]); every card of the message's own grid line reserves the room for it
+ * ([installedGridLinesWithMessage]), as [RecommendedTab] does for a card's status.
+ *
+ * The first card (or "Ver recomendados") carries [entryFocus], where Down from the header row leads, and Up
+ * from it leads back to the selected tab ([selectedTabFocus]); nothing lies to the right of the last card of a
+ * line or of the very last card ([cardHasNothingToTheRight]), the same rule [RecommendedTab] follows, so
+ * Right never reaches the "Agregar" button above the last column.
+ *
+ * OK on a card opens [TvInstalledActionsDialog] with its management actions; Back, or "Cerrar" inside it,
+ * closes the dialog and sends focus back to that same card ([cardFocus]).
  */
 @Composable
 private fun InstalledTab(
@@ -527,34 +536,66 @@ private fun InstalledTab(
     onBrowseRecommended: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val entryModifier = Modifier
-        .focusRequester(entryFocus)
-        .focusProperties { up = selectedTabFocus }
     if (plugins.isEmpty()) {
         Column(modifier.padding(top = 16.dp).noFocusToTheRight(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Todavía no tienes plugins.", style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary)
-            TvActionOption(label = "Ver recomendados", modifier = entryModifier, onClick = onBrowseRecommended)
+            TvActionOption(
+                label = "Ver recomendados",
+                modifier = Modifier.focusRequester(entryFocus).focusProperties { up = selectedTabFocus },
+                onClick = onBrowseRecommended,
+            )
         }
         return
     }
-    LazyColumn(
+
+    // One requester per plugin, so the dialog's caller (whichever card was OK'd) gets focus back precisely;
+    // rebuilt only when the installed list itself changes (an uninstall, an install), never on every
+    // recomposition, or a request already in flight would chase a requester that just got replaced.
+    val cardFocus = remember(plugins.map { it.id }) { plugins.associate { it.id to FocusRequester() } }
+    var actionsPluginId by remember { mutableStateOf<String?>(null) }
+    var returnFocusTo by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(returnFocusTo) {
+        returnFocusTo?.let { id ->
+            cardFocus[id]?.let { requestFocusWhenReady(it) }
+            returnFocusTo = null
+        }
+    }
+
+    val messageIndex = rowMessageId?.let { id -> plugins.indexOfFirst { it.id == id } }?.takeIf { it >= 0 }
+    val messageLines = remember(plugins, messageIndex) { installedGridLinesWithMessage(plugins.size, messageIndex, CATALOG_COLUMNS) }
+
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(CATALOG_COLUMNS),
         modifier = modifier,
         contentPadding = PaddingValues(top = 16.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        items(plugins, key = { "installed-${it.id}" }) { p ->
-            // One item per plugin: a lazy item stacks several roots on top of each other. Nothing lies to the
-            // right of the actions: Compose would take Right up to the "Agregar" button of the header row.
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.noFocusToTheRight()) {
-                TvInstalledPluginRows(
-                    p,
-                    message = message.takeIf { rowMessageId == p.id },
-                    vm = vm,
-                    art = artForInstalled(art, p.record.address),
-                    firstActionModifier = if (p.id == plugins.first().id) entryModifier else Modifier,
-                )
-            }
+        itemsIndexed(plugins, key = { _, p -> "installed-${p.id}" }) { index, p ->
+            TvInstalledPluginCard(
+                plugin = p,
+                art = artForInstalled(art, p.record.address),
+                message = message.takeIf { rowMessageId == p.id },
+                reserveMessageLines = messageLines.getOrElse(index) { false },
+                modifier = Modifier
+                    .focusRequester(cardFocus.getValue(p.id))
+                    .then(if (index == 0) Modifier.focusRequester(entryFocus).focusProperties { up = selectedTabFocus } else Modifier)
+                    .then(if (cardHasNothingToTheRight(index, plugins.lastIndex, CATALOG_COLUMNS)) Modifier.noFocusToTheRight() else Modifier),
+                onClick = { actionsPluginId = p.id },
+            )
         }
+    }
+
+    val dialogPlugin = plugins.firstOrNull { it.id == actionsPluginId }
+    if (dialogPlugin != null) {
+        TvInstalledActionsDialog(
+            plugin = dialogPlugin,
+            vm = vm,
+            onDismiss = {
+                returnFocusTo = actionsPluginId
+                actionsPluginId = null
+            },
+        )
     }
 }
 

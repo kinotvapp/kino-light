@@ -125,9 +125,12 @@ fun TvPluginCard(
  * is centred in what is left, shrunk to fit it ([tileArtSize]) instead of running under the pill. Without
  * the pill the art has the whole tile. The pill is one line with an ellipsis, so a big font shortens it
  * instead of growing the tile out of 16:9.
+ *
+ * Internal, not private: [TvInstalledPluginCard] (the Instalados tab) draws the very same tile for an
+ * installed plugin, never with [legacyDefault] (that pill is a Recomendados-only thing).
  */
 @Composable
-private fun CardTile(name: String, art: CatalogArt?, legacyDefault: Boolean) {
+internal fun CardTile(name: String, art: CatalogArt?, legacyDefault: Boolean) {
     val tile = tileColor(art)
     val iconFile = art?.iconFile
     var iconFailed by remember(iconFile) { mutableStateOf(false) }
