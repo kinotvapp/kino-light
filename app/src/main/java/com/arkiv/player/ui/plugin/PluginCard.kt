@@ -163,9 +163,12 @@ fun PluginCard(
  *
  * Deferred cleanup: this is the TV card's tile ([com.arkiv.player.ui.tv.TvPluginCard]) with the phone's
  * sizes; once the TV pass is done both can share one composable.
+ *
+ * Internal, not private: [InstalledPluginCard] (the Instalados tab) draws the very same tile for an
+ * installed plugin, never with [legacyDefault] (that pill is a Recomendados-only thing).
  */
 @Composable
-private fun CardTile(name: String, art: CatalogArt?, legacyDefault: Boolean) {
+internal fun CardTile(name: String, art: CatalogArt?, legacyDefault: Boolean) {
     val tile = tileColor(art)
     val iconFile = art?.iconFile
     var iconFailed by remember(iconFile) { mutableStateOf(false) }

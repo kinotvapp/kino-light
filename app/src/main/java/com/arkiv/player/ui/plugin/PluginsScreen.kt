@@ -12,9 +12,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
@@ -22,7 +19,6 @@ import androidx.compose.foundation.lazy.grid.LazyGridItemSpanScope
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -191,7 +187,7 @@ internal fun PluginsContent(mode: AddPluginMode, bottomInset: Dp, modifier: Modi
     var tab by rememberSaveable { mutableStateOf(initialPluginsTab(mode)) }
     var addRequested by rememberSaveable { mutableStateOf(false) }
     val recommendedGrid = rememberLazyGridState()
-    val installedList = rememberLazyListState()
+    val installedGrid = rememberLazyGridState()
     val modalVisible = addModalVisible(addRequested, state)
 
     Column(modifier) {
@@ -228,7 +224,7 @@ internal fun PluginsContent(mode: AddPluginMode, bottomInset: Dp, modifier: Modi
             PluginsTab.INSTALLED -> InstalledTab(
                 vm = vm, plugins = plugins, art = art, busy = state.busy,
                 message = state.message, rowMessageId = rowMessageId,
-                listState = installedList, bottomInset = bottomInset,
+                gridState = installedGrid, bottomInset = bottomInset,
                 onBrowseRecommended = { tab = PluginsTab.RECOMMENDED },
                 modifier = Modifier.weight(1f),
             )
@@ -406,8 +402,11 @@ private fun RecommendedTab(
 }
 
 /**
- * Instalados: one [InstalledPluginRow] per plugin, in a list that scrolls. With none installed it says so and
- * offers the way to the recommended ones ([onBrowseRecommended]). [message] goes to the row it is about, if any.
+ * Instalados: the installed plugins as cards, the same 2-column grid [RecommendedTab] draws (one
+ * [InstalledPluginCard] per plugin), with none installed it says so and offers the way to the recommended
+ * ones ([onBrowseRecommended]). [message] goes to the card it is about, if any (see [rowMessagePluginId]);
+ * every card of the message's own grid line reserves the room for it so the line ends at one height
+ * (see [installedGridLinesWithMessage]).
  */
 @Composable
 private fun InstalledTab(
@@ -417,7 +416,7 @@ private fun InstalledTab(
     busy: Boolean,
     message: String?,
     rowMessageId: String?,
-    listState: LazyListState,
+    gridState: LazyGridState,
     bottomInset: Dp,
     onBrowseRecommended: () -> Unit,
     modifier: Modifier = Modifier,
@@ -429,15 +428,24 @@ private fun InstalledTab(
         }
         return
     }
-    LazyColumn(
+    val messageIndex = rowMessageId?.let { id -> plugins.indexOfFirst { it.id == id } }?.takeIf { it >= 0 }
+    val messageLines = remember(plugins, messageIndex) { installedGridLinesWithMessage(plugins.size, messageIndex, CATALOG_COLUMNS) }
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(CATALOG_COLUMNS),
         modifier = modifier,
-        state = listState,
+        state = gridState,
         contentPadding = PaddingValues(start = SIDE_GUTTER, end = SIDE_GUTTER, top = 8.dp, bottom = bottomInset + 24.dp),
+        horizontalArrangement = Arrangement.spacedBy(GRID_SPACING),
+        verticalArrangement = Arrangement.spacedBy(GRID_SPACING),
     ) {
-        items(plugins, key = { "installed-${it.id}" }) { p ->
-            InstalledPluginRow(
-                p, busy = busy, message = message.takeIf { rowMessageId == p.id }, vm = vm,
+        itemsIndexed(plugins, key = { _, p -> "installed-${p.id}" }) { index, p ->
+            InstalledPluginCard(
+                plugin = p,
                 art = artForInstalled(art, p.record.address),
+                busy = busy,
+                message = message.takeIf { rowMessageId == p.id },
+                reserveMessageLines = messageLines.getOrElse(index) { false },
+                vm = vm,
             )
         }
     }
