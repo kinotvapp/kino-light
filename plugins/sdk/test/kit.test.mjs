@@ -573,6 +573,29 @@ test("kino.fetch reaches a host declared insecureHttp over http, and no other de
   }
 });
 
+test("checkOutput keeps an episode's still, overview and runtimeMinutes as the app does", () => {
+  const m = JSON.parse(manifest({ capabilities: ["search", "episodes", "resolve"] }));
+  const r = checkOutput("episodes", {
+    episodes: [
+      { number: 1, ref: "e1", title: "Uno", still: "https://example.com/e1.png", overview: "  Primero  ", runtimeMinutes: 42 },
+      { number: 2, ref: "e2", still: "http://example.com/e2.png", runtimeMinutes: 0 },
+      { number: 3, ref: "e3", still: "https://192.168.1.5/e3.png", runtimeMinutes: 99999 },
+    ],
+  }, m);
+  const [one, two, three] = r.value.episodes;
+  assert.equal(one.still, "https://example.com/e1.png");
+  assert.equal(one.overview, "Primero");
+  assert.equal(one.runtimeMinutes, 42);
+  // The image rule of an item's poster: https only, never the home network; a bad length is 0.
+  assert.equal(two.still, "");
+  assert.equal(two.runtimeMinutes, 0);
+  assert.equal(three.still, "");
+  assert.equal(three.runtimeMinutes, 0);
+  // The person's own server (a url setting) may serve the still, over http too.
+  const own = checkOutput("episodes", { episodes: [{ number: 1, ref: "e1", still: "http://192.168.1.5:8096/e1.png" }] }, m, ["http://192.168.1.5:8096"]);
+  assert.equal(own.value.episodes[0].still, "http://192.168.1.5:8096/e1.png");
+});
+
 test("checkOutput reads an episodes answer's sibling seasons as the app does", () => {
   const m = JSON.parse(manifest({ capabilities: ["search", "episodes", "resolve"] }));
   const none = checkOutput("episodes", { episodes: [{ number: 1, ref: "e1" }] }, m);

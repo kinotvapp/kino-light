@@ -292,7 +292,7 @@ function rows(value, ctx, drop) {
   return out;
 }
 
-function episodes(value, drop) {
+function episodes(value, drop, servers) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("La lista de capítulos no es válida");
   if (!Array.isArray(value.episodes)) throw new Error("El plugin no devolvió capítulos");
   const seen = new Set();
@@ -306,7 +306,13 @@ function episodes(value, drop) {
     const key = season + "x" + e.number;
     if (seen.has(key)) return drop(`episodes: duplicate S${season}E${e.number} dropped`);
     seen.add(key);
-    eps.push({ season, number: e.number, ref: e.ref, title: text(e.title, o().maxTitleChars), airDate: re(o().airDatePattern).test(text(e.airDate, 10)) ? text(e.airDate, 10) : "" });
+    eps.push({
+      season, number: e.number, ref: e.ref, title: text(e.title, o().maxTitleChars),
+      // The same image and length rules as an item's poster and runtimeMinutes (PluginOutput.episodes).
+      still: image(e.still, servers), overview: text(e.overview, o().maxTextChars),
+      airDate: re(o().airDatePattern).test(text(e.airDate, 10)) ? text(e.airDate, 10) : "",
+      runtimeMinutes: Number.isInteger(e.runtimeMinutes) && e.runtimeMinutes >= o().minRuntimeMinutes && e.runtimeMinutes <= o().maxRuntimeMinutes ? e.runtimeMinutes : 0,
+    });
   });
   return { series: value.series && typeof value.series === "object" ? value.series : null, episodes: eps, seasons: seasons(value, drop) };
 }
@@ -413,7 +419,7 @@ export function checkOutput(fn, value, manifest, servers = []) {
     case "search": return { value: page(parsed, o().maxSearchItems, ctx, drop), drops };
     case "browse": return { value: page(parsed, o().maxBrowseItems, { ...ctx, allowNext: true }, drop), drops };
     case "home": return { value: rows(parsed, ctx, drop), drops };
-    case "episodes": return { value: episodes(parsed, drop), drops };
+    case "episodes": return { value: episodes(parsed, drop, servers), drops };
     // Widevine is the `drm` capability (apiVersion 2 by the manifest rules): without it every DRM-shaped key refuses the stream.
     case "resolve": return { value: stream(parsed, { manifest, servers, allowDrm: manifest.capabilities.includes("drm") }), drops };
     default: throw new Error(`unknown function ${fn}`);
