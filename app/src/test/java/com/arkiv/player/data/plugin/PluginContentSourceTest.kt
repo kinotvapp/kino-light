@@ -59,6 +59,19 @@ class PluginContentSourceTest {
         assertEquals("Esto no tiene capítulos", e?.message)
     }
 
+    /**
+     * A side audio file merged into a live window has nothing to align with (it ends, or drifts):
+     * a channel's alternate audio lives inside its manifest. A movie keeps its audioTracks.
+     */
+    @Test fun `a live channel's audioTracks are ignored, a movie's are kept`() = runTest {
+        val caller = FakeCaller(mapOf("resolve" to """{"url":"https://example.com/live.m3u8","mime":"application/x-mpegURL",
+            "audioTracks":[{"lang":"en","url":"https://example.com/a-en.aac"}]}"""))
+        val live = source(caller, plugin(apiVersion = 2)).resolve(PluginRef("demo", "c1", PluginRef.LIVE, "ch-1").encode())
+        assertTrue(live.audioTracks.isEmpty())
+        val movie = source(caller, plugin(apiVersion = 2)).resolve(PluginRef("demo", "m1", PluginRef.MOVIE, "m-1").encode())
+        assertEquals(listOf("en"), movie.audioTracks.map { it.lang })
+    }
+
     // --- Widevine (apiVersion 2, the `drm` capability) ---
 
     private val widevine = """{"url":"https://example.com/x.mpd","mime":"application/dash+xml",

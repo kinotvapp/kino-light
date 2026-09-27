@@ -307,7 +307,9 @@ What Kino does with a `live` item:
   `ref`, exactly as for a movie.
 - The `Stream` plays as live: an HLS or DASH live manifest (`.m3u8`/`.mpd`) is what the player
   expects; a progressive file plays too but reads as a channel (no seek bar, no length). `headers`,
-  `subtitles`, `audioTracks` and `expiresInSeconds` work as for any stream; `durationMs` is ignored.
+  `subtitles` and `expiresInSeconds` work as for any stream; `durationMs` and `audioTracks` are
+  ignored (a separate audio file cannot follow a live window: put a channel's other languages inside
+  its manifest, e.g. HLS `EXT-X-MEDIA` renditions, and the player's audio menu offers them).
 - The player shows the live overlay (no progress bar, no seeking, no "next") and starts at the live
   edge. If it falls behind the live window, or the playlist resets or stalls, it re-joins the live
   edge in place without calling you (a few times a minute). On any other cut, or when your URL

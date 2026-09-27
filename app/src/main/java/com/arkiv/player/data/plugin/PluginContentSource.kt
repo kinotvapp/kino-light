@@ -152,7 +152,9 @@ class PluginContentSource(
             drmLicenseUrl = stream.drm?.licenseUrl.orEmpty(),
             drmLicenseHeaders = stream.drm?.licenseHeaders.orEmpty(),
             expiresInSeconds = stream.expiresInSeconds,
-            audioTracks = stream.audioTracks.map { GatewayAudioTrack(it.lang, it.url, it.label) },
+            // Not for a channel: a side file merged into a moving live window has nothing to stay
+            // aligned with. A channel's alternate audio belongs inside its own manifest.
+            audioTracks = if (own.kind == PluginRef.LIVE) emptyList() else stream.audioTracks.map { GatewayAudioTrack(it.lang, it.url, it.label) },
         )
     }
 
