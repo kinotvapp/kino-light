@@ -195,6 +195,21 @@ data class ResolvedAudioTrack(
 internal fun pluginAudioTracks(tracks: List<GatewayAudioTrack>): List<ResolvedAudioTrack> =
     tracks.map { ResolvedAudioTrack(lang = it.lang, url = it.url, label = it.label) }
 
+/**
+ * A plugin's Widevine-protected stream (apiVersion 2, the `drm` capability): where the player asks
+ * for the license and what it sends along. Both came through `PluginOutput.stream` -- the license
+ * URL checked exactly like the stream's own, the headers filtered like its `headers` -- never
+ * straight from the plugin. See [PluginWidevine] for what the player does with it.
+ */
+data class ResolvedDrm(
+    val licenseUrl: String,
+    val licenseHeaders: Map<String, String> = emptyMap(),
+)
+
+/** A plugin stream's DRM, or null for a clear one (Magis and every v1 plugin leave the license blank). */
+internal fun pluginDrm(playable: com.arkiv.player.data.gateway.GatewayPlayable): ResolvedDrm? =
+    playable.drmLicenseUrl.takeIf { it.isNotBlank() }?.let { ResolvedDrm(it, playable.drmLicenseHeaders) }
+
 /** Extras of a resolved source (subtitles + sniffed headers) to attach in the UI. Despite the
  *  "web" name, [PlayerViewModel.loadMagis] also uses it for the subtitles the portal brings. */
 data class WebExtras(
@@ -203,6 +218,8 @@ data class WebExtras(
     val subtitles: List<ResolvedSub>,
     /** Plugins only (apiVersion 1, optional); empty for Magis and every other source. */
     val audioTracks: List<ResolvedAudioTrack> = emptyList(),
+    /** Plugins only (apiVersion 2, the `drm` capability); null for Magis and every clear stream. */
+    val drm: ResolvedDrm? = null,
 )
 
 /**
@@ -1376,7 +1393,7 @@ class PlayerViewModel internal constructor(
         // keeps expiring gets a retry every time, not just once ever (spec §3.5).
         pluginExpiry = com.arkiv.player.data.plugin.PluginStreamExpiry(System.currentTimeMillis(), play.expiresInSeconds)
         val header = if (live) null else repo.headerInfo(episodeId)
-        _webExtras.value = WebExtras(episodeId, play.headers, pluginSubtitles(play.subtitles), pluginAudioTracks(play.audioTracks))
+        _webExtras.value = WebExtras(episodeId, play.headers, pluginSubtitles(play.subtitles), pluginAudioTracks(play.audioTracks), drm = pluginDrm(play))
         // A live stream has no "where you were": it starts at the player's default position (the
         // live edge), and with 0 `StreamExoPlayer` doesn't seek.
         val startPos = if (live) 0L else safeStartPosition(episodeId, SourceKind.PLUGIN)
@@ -1397,7 +1414,7 @@ class PlayerViewModel internal constructor(
             mime = play.mime,
             startPositionMs = startPos,
         )
-        Log.w(PLAY, "loadPlugin() published · mime=${play.mime.ifBlank { "sniff" }} subs=${play.subtitles.size} startPos=$startPos")
+        Log.w(PLAY, "loadPlugin() published · mime=${play.mime.ifBlank { "sniff" }} subs=${play.subtitles.size} drm=${play.drmLicenseUrl.isNotBlank()} startPos=$startPos")
     }
 
     /**

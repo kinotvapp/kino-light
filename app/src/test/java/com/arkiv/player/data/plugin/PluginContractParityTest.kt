@@ -3,6 +3,7 @@ package com.arkiv.player.data.plugin
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
@@ -152,7 +153,12 @@ class PluginContractParityTest {
         assertEquals(PluginOutput.MAX_EPISODE_NUMBER, o.getInt("maxEpisodeNumber"))
         assertEquals(PluginOutput.MAX_SUBTITLES, o.getInt("maxSubtitles"))
         assertEquals(PluginOutput.MAX_AUDIO_TRACKS, o.getInt("maxAudioTracks"))
+        assertEquals(PluginOutput.MAX_HEADERS, o.getInt("maxHeaders"))
         assertEquals(PluginOutput.DRM_KEYS, o.strings("drmKeys").toSet())
+        val drm = o.getJSONObject("drm")
+        assertEquals(PluginOutput.DRM_FIELD, drm.getString("field"))
+        assertEquals(PluginOutput.DRM_TYPES, drm.strings("types"))
+        assertTrue(PluginOutput.DRM_FIELD in PluginOutput.DRM_KEYS)
         assertEquals(PluginOutput.ITEM_KINDS, o.strings("itemKinds"))
         assertEquals(PluginOutput.LIVE_API_VERSION, o.getInt("liveKindApiVersion"))
         val s = obj("search")

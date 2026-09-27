@@ -321,9 +321,40 @@ function seasons(value, drop) {
   return out;
 }
 
-function stream(value, { hosts, servers }) {
+/** Up to `maxHeaders` request headers as the app keeps them: a token name, none of the forbidden ones, a string value with no line break. */
+const HEADER_NAME = /^[A-Za-z0-9-]{1,64}$/;
+const FORBIDDEN_HEADERS = ["host", "content-length", "transfer-encoding", "connection"];
+function headersOf(h) {
+  const out = {};
+  if (h === null || typeof h !== "object" || Array.isArray(h)) return out;
+  for (const k of Object.keys(h)) {
+    if (Object.keys(out).length >= o().maxHeaders) break;
+    const v = h[k];
+    if (typeof v !== "string" || !HEADER_NAME.test(k) || FORBIDDEN_HEADERS.includes(k.toLowerCase())) continue;
+    if (v.length > 4096 || v.includes("\n") || v.includes("\r")) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
+/**
+ * The optional `drm` block, read ONLY for a plugin that declares the capability (`allowDrm`) and
+ * when it is the only DRM-shaped key present; any other of `drmKeys` refuses the stream as it
+ * always did. Mirrors the app's PluginOutput.drmOf, message for message.
+ */
+function drmOf(value, check, allowDrm) {
+  const present = o().drmKeys.filter((k) => k in value);
+  if (present.length === 0) return null;
+  if (!allowDrm || present.length !== 1 || present[0] !== o().drm.field) throw new Error("El video tiene DRM y los plugins no lo soportan");
+  const d = value[o().drm.field];
+  if (d === null || typeof d !== "object" || Array.isArray(d)) throw new Error("El DRM del video no es válido");
+  if (!o().drm.types.includes(d.type)) throw new Error("El video usa un DRM que Kino no soporta");
+  check(d.licenseUrl, "La licencia del video");
+  return { type: d.type, licenseUrl: d.licenseUrl, licenseHeaders: headersOf(d.licenseHeaders) };
+}
+
+function stream(value, { hosts, servers, allowDrm }) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("El plugin no devolvió un video");
-  if (o().drmKeys.some((k) => k in value)) throw new Error("El video tiene DRM y los plugins no lo soportan");
   const check = (url, what) => {
     let u;
     try { u = new URL(String(url)); } catch { throw new Error(`${what} tiene una dirección inválida`); }
@@ -331,6 +362,7 @@ function stream(value, { hosts, servers }) {
     if (u.protocol !== "https:") throw new Error(`${what} debe usar https`);
     if (!hostMatches(u.hostname, hosts)) throw new Error(`${what} apunta a ${u.hostname}, que el plugin no declaró`);
   };
+  const drm = drmOf(value, check, allowDrm);
   check(value.url, "El video");
   const expires = Number.isInteger(value.expiresInSeconds) && value.expiresInSeconds >= o().minExpiresInSeconds && value.expiresInSeconds <= o().maxExpiresInSeconds ? value.expiresInSeconds : 0;
   const subtitles = (Array.isArray(value.subtitles) ? value.subtitles : []).slice(0, o().maxSubtitles).filter((s) => {
@@ -339,7 +371,7 @@ function stream(value, { hosts, servers }) {
   const audioTracks = (Array.isArray(value.audioTracks) ? value.audioTracks : []).slice(0, o().maxAudioTracks).filter((a) => {
     try { check(a && a.url, "El audio"); return true; } catch { return false; }
   });
-  return { ...value, subtitles, audioTracks, expiresInSeconds: expires };
+  return { ...value, headers: headersOf(value.headers), subtitles, audioTracks, expiresInSeconds: expires, drm };
 }
 
 /**
@@ -365,7 +397,8 @@ export function checkOutput(fn, value, manifest, servers = []) {
     case "browse": return { value: page(parsed, o().maxBrowseItems, { ...ctx, allowNext: true }, drop), drops };
     case "home": return { value: rows(parsed, ctx, drop), drops };
     case "episodes": return { value: episodes(parsed, drop), drops };
-    case "resolve": return { value: stream(parsed, { hosts: manifest.hosts, servers }), drops };
+    // Widevine is the `drm` capability (apiVersion 2 by the manifest rules): without it every DRM-shaped key refuses the stream.
+    case "resolve": return { value: stream(parsed, { hosts: manifest.hosts, servers, allowDrm: manifest.capabilities.includes("drm") }), drops };
     default: throw new Error(`unknown function ${fn}`);
   }
 }

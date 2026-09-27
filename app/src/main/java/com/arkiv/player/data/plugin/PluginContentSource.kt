@@ -60,6 +60,12 @@ class PluginContentSource(
     private val allowNext = "browse" in caps
     /** Live channels are apiVersion 2: a v1 plugin's live item is dropped like any invalid one. */
     private val allowLive = PluginOutput.allowsLive(plugin.manifest.apiVersion)
+    /**
+     * Widevine is the `drm` capability (apiVersion 2; the parser never lets a v1 manifest declare
+     * it). The manifest on disk is the one the person approved -- an update that adds `drm` waits
+     * for approval -- so this is the same source `allowSeries` and `offersDownloads` read.
+     */
+    private val allowDrm = "drm" in caps
 
     /** [XuperStreams], only for the one plugin [XuperPrivilege.grants]: null for every other one. */
     private val xuper: XuperStreams? = xuperStreams?.takeIf { XuperPrivilege.grants(plugin.record) }
@@ -129,7 +135,7 @@ class PluginContentSource(
         if (own.kind == PluginRef.SERIES) throw GatewayException("Elige un capítulo primero")
         val out = callOrThrow("resolve", JSONObject.quote(own.ref), RESOLVE_TIMEOUT_MS)
         val stream = try {
-            PluginOutput.stream(out, hosts, xuper)
+            PluginOutput.stream(out, hosts, xuper, allowDrm)
         } catch (e: PluginContractException) {
             throw GatewayException("$name: ${e.message}", e)
         }
@@ -141,6 +147,10 @@ class PluginContentSource(
             subtitles = stream.subtitles.map { GatewaySubtitle(it.lang, it.url, it.format) },
             // A live channel has no length, whatever the plugin's Stream said: 0 = the player probes nothing.
             durationMs = if (own.kind == PluginRef.LIVE) 0L else stream.durationMs,
+            // The same two fields Caracol's Widevine travels in: the player negotiates the license
+            // from them, and `PluginDownloadEligibility` refuses to save anything that has one.
+            drmLicenseUrl = stream.drm?.licenseUrl.orEmpty(),
+            drmLicenseHeaders = stream.drm?.licenseHeaders.orEmpty(),
             expiresInSeconds = stream.expiresInSeconds,
             audioTracks = stream.audioTracks.map { GatewayAudioTrack(it.lang, it.url, it.label) },
         )

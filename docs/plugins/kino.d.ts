@@ -141,6 +141,14 @@ interface KinoStream {
   durationMs?: number;
   /** 30..86400: after that long, a failed playback calls resolve() once more. */
   expiresInSeconds?: number;
+  /**
+   * apiVersion 2, and only with the `drm` capability declared: the stream is Widevine-protected and
+   * Kino fetches its license from `licenseUrl` (checked exactly like `url`: https on a declared host)
+   * sending `licenseHeaders` (filtered like `headers`, at most 20) with the license request only.
+   * Without the capability any DRM-shaped key refuses the stream. A protected title never downloads.
+   * Kino negotiates Widevine at security level L3 (software): the license server must allow it.
+   */
+  drm?: { type: "widevine"; licenseUrl: string; licenseHeaders?: Record<string, string> };
 }
 
 /** Your module's exports. `resolve` is required, and at least one of `search`/`home`. */

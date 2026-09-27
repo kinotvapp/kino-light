@@ -152,7 +152,7 @@ names the field.
 | `apiVersion` | Required. `1` or `2`. A higher number than Kino supports is refused with "Este plugin necesita una versión más nueva de Kino". Declare `2` only if you use something that needs it (below); otherwise stay on `1` so your plugin also runs on older Kino builds. |
 | `entry` | Required. Relative path of the JavaScript file: letters, digits, `.`, `_`, `-` and `/` only, no `..`, at most 200 characters, ends in `.js`. The file is at most 1 MB. |
 | `hosts` | Required. 1 to 20 entries; each a lowercase DNS name (`archive.org`), `*.` plus a DNS name (`*.archive.org`), or (apiVersion 2 only) an object `{ "host": "…", "insecureHttp": true }` (below). Host names only: no scheme, port or path. No bare `*`, no IP addresses, no `localhost`, nothing ending in `.local`, `.lan`, `.internal`, `.localhost` or `.home.arpa`, and at least one dot. **`*.x` covers subdomains only, not `x` itself**: if you need both, list both. |
-| `capabilities` | Required. A subset of `search`, `home`, `browse`, `episodes`, `resolve`, `download`, `drm`. Must include `resolve` and at least one of `search` or `home`. `search`, `home`, `browse`, `episodes` and `resolve` must each be an exported function of the entry file, or the install fails with "El plugin no carga: le falta ...". `download` and `drm` need `apiVersion: 2` and are declarative flags instead — the app acts on them, not your code, so nothing extra to export; declaring one shows its consent line ("Puede descargar videos para verlos sin conexión" / "Reproduce video protegido (DRM)") and needs approval again on an update that adds it. `download` gives your titles offline downloads (see [Downloads](#downloads-apiversion-2)); DRM playback does not exist yet in this version. |
+| `capabilities` | Required. A subset of `search`, `home`, `browse`, `episodes`, `resolve`, `download`, `drm`. Must include `resolve` and at least one of `search` or `home`. `search`, `home`, `browse`, `episodes` and `resolve` must each be an exported function of the entry file, or the install fails with "El plugin no carga: le falta ...". `download` and `drm` need `apiVersion: 2` and are declarative flags instead — the app acts on them, not your code, so nothing extra to export; declaring one shows its consent line ("Puede descargar videos para verlos sin conexión" / "Reproduce video protegido (DRM)") and needs approval again on an update that adds it. `download` gives your titles offline downloads (see [Downloads](#downloads-apiversion-2)); `drm` lets a `Stream` carry a Widevine license (see [A Widevine-protected stream](#a-widevine-protected-stream-apiversion-2)). |
 | `settings` | Optional. What the person fills in on your plugin's "Configurar" screen: see below. |
 | `permissions` | Optional. A list of names from the closed list in `contract.json`. **The list is empty in this version**: any name is refused with "permiso desconocido: …". It exists so a later version can add permissions (each one shown on the consent screen) without a new `apiVersion`. |
 | `color` | Optional `#RRGGBB`: the accent of your plugin's tab and chips. A neutral color by default. |
@@ -378,7 +378,8 @@ Season     = { id: string, ref: string, title: string, number?: number, current?
 Stream     = { url: string, mime?: string, headers?: Record<string, string>,
                subtitles?: { lang: string, url: string, format?: "vtt" | "srt" }[],
                audioTracks?: { lang: string, url: string, label?: string }[],
-               durationMs?: number, expiresInSeconds?: number }
+               durationMs?: number, expiresInSeconds?: number,
+               drm?: { type: "widevine", licenseUrl: string, licenseHeaders?: Record<string, string> } }
 ```
 
 **How the pieces connect.** A `movie` item's `ref` goes to `resolve`. A `series` item's `ref` goes to
@@ -490,8 +491,14 @@ It does **not** add a poster, a backdrop or seasons from TMDB -- those stay exac
 - `durationMs` is optional, in milliseconds.
 - `expiresInSeconds` (30 to 86400) says when your URL may stop working. If playback fails after that
   long, Kino calls `resolve` once more and continues where the person was.
-- **No DRM.** A stream carrying any of `drm`, `license`, `licenseUrl`, `drmLicenseUrl`, `keySystem` or
-  `widevine` is refused.
+- **DRM only when declared.** A stream carrying any of `drm`, `license`, `licenseUrl`, `drmLicenseUrl`,
+  `keySystem` or `widevine` is refused ("El video tiene DRM y los plugins no lo soportan") -- unless
+  your manifest declares the `drm` capability (apiVersion 2) and the only such key is a `drm` block
+  `{ type: "widevine", licenseUrl, licenseHeaders? }`: then Kino plays it as Widevine. `licenseUrl`
+  is checked exactly like `url` (https on one of your `hosts`, or the person's own server), and
+  `licenseHeaders` are filtered like `headers` (at most 20) and sent with the license request only.
+  The other five keys are refused even next to a valid `drm` block. See
+  [A Widevine-protected stream](#a-widevine-protected-stream-apiversion-2).
 
 ### Errors people understand
 
@@ -1041,7 +1048,8 @@ episodes numbered 0 are dropped), so do not copy those as intended behavior.
 
 ## 11. Cookbook
 
-Three complete shapes. The first and the third are, nearly line for line, the two reference plugins
+Three complete shapes, then two short recipes for the apiVersion 2 powers that need a line on the
+consent sheet. The first and the third shapes are, nearly line for line, the two reference plugins
 Kino's own tests run end to end against a fake server.
 
 ### An HTML site with a login and hidden links
@@ -1244,3 +1252,58 @@ export async function resolve(ref) {
 
 Try it under Node with `--config server=http://192.168.1.10:8096 --config user=ana --config
 password=…` (or `sdk/config.json`, kept out of git).
+
+### A Widevine-protected stream (apiVersion 2)
+
+Your source serves DASH or HLS encrypted with Widevine and hands out a license from its own server.
+Declare `"apiVersion": 2` and `"drm"` in `capabilities`, list the license server in `hosts`, and
+return a `drm` block with the `Stream`:
+
+```json
+{
+  "id": "mi-servicio", "name": "Mi servicio", "version": "1.0.0", "apiVersion": 2, "entry": "plugin.js",
+  "hosts": ["api.example.com", "cdn.example.com", "license.example.com"],
+  "capabilities": ["search", "resolve", "drm"]
+}
+```
+
+```js
+export async function resolve(ref) {
+  const s = await api("/play/" + encodeURIComponent(ref)); // { mpd, licenseToken }
+  return {
+    url: s.mpd, // https://cdn.example.com/…/manifest.mpd
+    mime: "application/dash+xml",
+    drm: {
+      type: "widevine",
+      licenseUrl: "https://license.example.com/widevine",
+      licenseHeaders: { Authorization: "Bearer " + s.licenseToken },
+    },
+    expiresInSeconds: 3600,
+  };
+}
+```
+
+What Kino does with it, and what it does not:
+
+- `licenseUrl` must pass the same check as `url`: `https` on one of your `hosts` (or the person's own
+  server as typed), never an IP or a local name; the license request itself goes through the same
+  host gate as the segments, with `licenseHeaders` (filtered like `headers`, at most 20) on it and
+  nothing else. `headers` are not sent to the license server, and `licenseHeaders` are not sent to
+  the CDN.
+- `type` must be `"widevine"`: PlayReady, FairPlay and ClearKey are not offered. Without the `drm`
+  capability, or with any other DRM-shaped key (`license`, `licenseUrl`, `drmLicenseUrl`, `keySystem`,
+  `widevine`) in the `Stream`, the stream is refused as it always was.
+- Kino asks Widevine for security level **L3** (software) so the same player, surface and decoder
+  as a clear stream are used. A license server that refuses L3, or grants it only SD, gives the
+  person SD or the message below: check your server's policy before you ship.
+- When the license is refused, unreachable or expired, or the device has no Widevine, the person
+  reads "No se pudo abrir este video protegido" (after one more `resolve` if `expiresInSeconds` had
+  passed, like any stream). A protected title is **never downloadable** ("Este video no se puede
+  descargar"), even with `download` declared, and cannot be sent to a Chromecast (no plugin title can).
+- The consent sheet adds "Reproduce video protegido (DRM)" when `drm` is declared, and an update that
+  newly declares it waits for the person's approval ([section 8](#8-publishing-your-plugin)).
+
+To test without a real service, a public Widevine test stream works: the manifest at
+`https://storage.googleapis.com/wvmedia/cenc/h264/tears/tears.mpd` with the license server
+`https://proxy.uat.widevine.com/proxy?provider=widevine_test` (declare `storage.googleapis.com` and
+`proxy.uat.widevine.com` in `hosts`; no `licenseHeaders` needed).

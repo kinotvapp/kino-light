@@ -2791,6 +2791,7 @@ private fun PlayerContent(
                 startPositionMs = mItem.startPositionMs,
                 subtitleConfigs = (webExtras?.subtitles ?: emptyList()).toExoSubtitleConfigs(),
                 audioTracks = webExtras?.audioTracks ?: emptyList(),
+                drm = webExtras?.drm,
                 requestHeaders = mItem.requestHeaders,
                 http = streamHttpFor(mItem.kind, mItem.pluginHosts, mItem.pluginXuper),
                 mimeType = mItem.mime.ifBlank { null },

@@ -482,6 +482,32 @@ test("checkOutput validates a stream's audioTracks like its subtitles", () => {
   assert.equal(many.value.audioTracks.length, contract.output.maxAudioTracks);
 });
 
+test("checkOutput accepts a widevine drm block only for a plugin that declares drm, and checks its license like the url", () => {
+  const stream = {
+    url: "https://example.com/v.mpd",
+    drm: { type: "widevine", licenseUrl: "https://example.com/lic", licenseHeaders: { Authorization: "Bearer t", Host: "evil", "X-Bad": "a\nb" } },
+  };
+  const plain = { ...JSON.parse(manifest({ apiVersion: 2 })), capabilities: ["search", "resolve"] };
+  assert.throws(() => checkOutput("resolve", stream, plain), /El video tiene DRM y los plugins no lo soportan/);
+  assert.throws(() => checkOutput("resolve", stream, JSON.parse(manifest())), /El video tiene DRM y los plugins no lo soportan/);
+  const withDrm = { ...plain, capabilities: ["search", "resolve", "drm"] };
+  const r = checkOutput("resolve", stream, withDrm).value;
+  assert.deepEqual(r.drm, { type: "widevine", licenseUrl: "https://example.com/lic", licenseHeaders: { Authorization: "Bearer t" } });
+  assert.equal(checkOutput("resolve", { url: "https://example.com/v.mp4" }, withDrm).value.drm, null);
+  const bad = (drm) => () => checkOutput("resolve", { url: "https://example.com/v.mpd", drm }, withDrm);
+  assert.throws(bad({ type: "widevine", licenseUrl: "http://example.com/lic" }), /La licencia del video debe usar https/);
+  assert.throws(bad({ type: "widevine", licenseUrl: "https://evil.example/lic" }), /La licencia del video apunta a evil.example, que el plugin no declaró/);
+  assert.throws(bad({ type: "widevine" }), /La licencia del video tiene una dirección inválida/);
+  assert.throws(bad({ type: "playready", licenseUrl: "https://example.com/lic" }), /El video usa un DRM que Kino no soporta/);
+  assert.throws(bad("widevine"), /El DRM del video no es válido/);
+  for (const k of ["license", "licenseUrl", "drmLicenseUrl", "keySystem", "widevine"]) {
+    assert.throws(() => checkOutput("resolve", { url: "https://example.com/v.mpd", [k]: "x" }, withDrm), /El video tiene DRM/);
+    assert.throws(() => checkOutput("resolve", { ...stream, [k]: "x" }, withDrm), /El video tiene DRM/);
+  }
+  assert.deepEqual(contract.output.drm, { field: "drm", types: ["widevine"] });
+  assert.equal(contract.output.maxHeaders, 20);
+});
+
 test("checkOutput reads an episodes answer's sibling seasons as the app does", () => {
   const m = JSON.parse(manifest({ capabilities: ["search", "episodes", "resolve"] }));
   const none = checkOutput("episodes", { episodes: [{ number: 1, ref: "e1" }] }, m);

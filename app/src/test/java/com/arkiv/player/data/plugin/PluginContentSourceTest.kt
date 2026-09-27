@@ -59,6 +59,28 @@ class PluginContentSourceTest {
         assertEquals("Esto no tiene capítulos", e?.message)
     }
 
+    // --- Widevine (apiVersion 2, the `drm` capability) ---
+
+    private val widevine = """{"url":"https://example.com/x.mpd","mime":"application/dash+xml",
+        "drm":{"type":"widevine","licenseUrl":"https://example.com/lic","licenseHeaders":{"Authorization":"Bearer t"}}}"""
+    private val movie = PluginRef("demo", "m1", PluginRef.MOVIE, "R1").encode()
+
+    @Test fun `a plugin that declares drm resolves a protected stream, which is never downloadable`() = runTest {
+        val play = source(FakeCaller(mapOf("resolve" to widevine)), plugin(caps = setOf("search", "resolve", "drm"), apiVersion = 2)).resolve(movie)
+        assertEquals("https://example.com/x.mpd", play.url)
+        assertEquals("https://example.com/lic", play.drmLicenseUrl)
+        assertEquals(mapOf("Authorization" to "Bearer t"), play.drmLicenseHeaders)
+        assertEquals("Este video no se puede descargar", com.arkiv.player.data.local.PluginDownloadEligibility.refusal(play))
+    }
+
+    @Test fun `without the drm capability a protected stream is refused as before, and a clear one carries no license`() = runTest {
+        val e = runCatching { source(FakeCaller(mapOf("resolve" to widevine)), plugin(apiVersion = 2)).resolve(movie) }.exceptionOrNull()
+        assertEquals("Demo: El video tiene DRM y los plugins no lo soportan", e?.message)
+        val clear = source(FakeCaller(mapOf("resolve" to """{"url":"https://example.com/x.mp4"}""")), plugin(caps = setOf("search", "resolve", "drm"), apiVersion = 2)).resolve(movie)
+        assertEquals("", clear.drmLicenseUrl)
+        assertEquals(emptyMap<String, String>(), clear.drmLicenseHeaders)
+    }
+
     private class FakeCaller(val answers: Map<String, String>) : PluginCaller {
         val calls = mutableListOf<Pair<String, String>>()
         override suspend fun call(pluginId: String, function: String, argJson: String, timeoutMs: Long): String {

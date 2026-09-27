@@ -288,6 +288,71 @@ class PluginOutputTest {
         ).forEach { json -> assertThrows(json, PluginContractException::class.java) { PluginOutput.stream(json, hosts) } }
     }
 
+    // --- Widevine (apiVersion 2, the `drm` capability) ---
+
+    private val widevine = """{"url":"https://archive.org/x.mpd","mime":"application/dash+xml",
+        "drm":{"type":"widevine","licenseUrl":"https://ia8.us.archive.org/lic",
+               "licenseHeaders":{"Authorization":"Bearer t","Host":"evil","X-Bad":"a\nb","N":5}}}"""
+
+    @Test fun `a drm block is refused exactly as before unless the plugin declares drm`() {
+        val e = assertThrows(PluginContractException::class.java) { PluginOutput.stream(widevine, hosts) }
+        assertEquals("El video tiene DRM y los plugins no lo soportan", e.message)
+        assertThrows(PluginContractException::class.java) { PluginOutput.stream(widevine, hosts, allowDrm = false) }
+    }
+
+    @Test fun `a plugin that declares drm gets the widevine stream with its license url and headers`() {
+        val s = PluginOutput.stream(widevine, hosts, allowDrm = true)
+        assertEquals("https://archive.org/x.mpd", s.url)
+        assertEquals(PluginDrm("https://ia8.us.archive.org/lic", mapOf("Authorization" to "Bearer t")), s.drm)
+    }
+
+    @Test fun `a stream without a drm block has none, capability or not`() {
+        assertNull(PluginOutput.stream("""{"url":"https://archive.org/x.mp4"}""", hosts, allowDrm = true).drm)
+        assertNull(PluginOutput.stream("""{"url":"https://archive.org/x.mp4"}""", hosts).drm)
+    }
+
+    @Test fun `the license url is checked exactly like the stream url`() {
+        listOf(
+            """{"type":"widevine","licenseUrl":"http://archive.org/lic"}""" to "La licencia del video debe usar https",
+            """{"type":"widevine","licenseUrl":"https://evil.example/lic"}""" to "La licencia del video apunta a evil.example, que el plugin no declaró",
+            """{"type":"widevine","licenseUrl":"not a url"}""" to "La licencia del video tiene una dirección inválida",
+            """{"type":"widevine"}""" to "La licencia del video tiene una dirección inválida",
+        ).forEach { (drm, message) ->
+            val e = assertThrows(drm, PluginContractException::class.java) {
+                PluginOutput.stream("""{"url":"https://archive.org/x.mpd","drm":$drm}""", hosts, allowDrm = true)
+            }
+            assertEquals(message, e.message)
+        }
+    }
+
+    @Test fun `only a widevine object is a drm block`() {
+        listOf(""""drm":{"type":"playready","licenseUrl":"https://archive.org/lic"}""", """"drm":"widevine"""", """"drm":{"licenseUrl":"https://archive.org/lic"}""", """"drm":null""", """"drm":[]""")
+            .forEach { drm -> assertThrows(drm, PluginContractException::class.java) { PluginOutput.stream("""{"url":"https://archive.org/x.mpd",$drm}""", hosts, allowDrm = true) } }
+    }
+
+    @Test fun `every other DRM-shaped key is still refused, with or without the capability, even next to a valid drm block`() {
+        listOf("license", "licenseUrl", "drmLicenseUrl", "keySystem", "widevine").forEach { key ->
+            val bare = """{"url":"https://archive.org/x.mpd","$key":"https://archive.org/lic"}"""
+            assertThrows(key, PluginContractException::class.java) { PluginOutput.stream(bare, hosts, allowDrm = true) }
+            assertThrows(key, PluginContractException::class.java) { PluginOutput.stream(bare, hosts) }
+            val both = """{"url":"https://archive.org/x.mpd","$key":"x","drm":{"type":"widevine","licenseUrl":"https://archive.org/lic"}}"""
+            val e = assertThrows(key, PluginContractException::class.java) { PluginOutput.stream(both, hosts, allowDrm = true) }
+            assertEquals("El video tiene DRM y los plugins no lo soportan", e.message)
+        }
+    }
+
+    @Test fun `license headers are capped and filtered like the stream headers`() {
+        val many = (1..25).joinToString(",") { """"H$it":"v"""" }
+        val s = PluginOutput.stream(
+            """{"url":"https://archive.org/x.mpd","drm":{"type":"widevine","licenseUrl":"https://archive.org/lic","licenseHeaders":{$many}}}""",
+            hosts, allowDrm = true,
+        )
+        assertEquals(PluginOutput.MAX_HEADERS, s.drm!!.licenseHeaders.size)
+        assertEquals(20, PluginOutput.MAX_HEADERS)
+        val none = PluginOutput.stream("""{"url":"https://archive.org/x.mpd","drm":{"type":"widevine","licenseUrl":"https://archive.org/lic"}}""", hosts, allowDrm = true)
+        assertEquals(emptyMap<String, String>(), none.drm!!.licenseHeaders)
+    }
+
     @Test fun `a stream with no audioTracks field has none, exactly as before this feature`() {
         val s = PluginOutput.stream("""{"url":"https://archive.org/x.mp4"}""", hosts)
         assertTrue(s.audioTracks.isEmpty())

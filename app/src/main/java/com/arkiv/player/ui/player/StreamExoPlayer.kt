@@ -130,6 +130,9 @@ private fun applyAudioTracks(
  * The portal's or plugin's external subtitles are passed as [subtitleConfigs] and ExoPlayer loads
  * them automatically; the overlaid [SubtitleView] renders them on screen. Detected audio and
  * subtitle tracks are reported via [onTracksChanged] so [TracksState] can expose them in the menu.
+ *
+ * A plugin's Widevine stream ([drm]) plays on this same [TextureView], at security level L3 so no
+ * secure decoder is ever asked for: see [PluginWidevine] for why, and for where the license goes.
  */
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
@@ -146,6 +149,13 @@ internal fun StreamExoPlayer(
      * plays exactly as before this field existed: the plain media item is set directly, no merge.
      */
     audioTracks: List<ResolvedAudioTrack> = emptyList(),
+    /**
+     * A plugin's Widevine license (apiVersion 2, the `drm` capability), or null for a clear stream
+     * -- Magis, and every stream before the capability existed. Goes on the media item as its
+     * [MediaItem.DrmConfiguration], and the license request travels through [http] like every other
+     * request of the stream (see [PluginWidevine]). Null leaves the player byte-for-byte as it was.
+     */
+    drm: ResolvedDrm? = null,
     /**
      * Headers for every request of this stream (plugins). Empty for Magis, whose headers travel
      * inside the local proxy's URL. Set on the data source, not through `archiveCacheProxy`: that
@@ -189,8 +199,8 @@ internal fun StreamExoPlayer(
     val graph = rememberGraph()
     val subtitleStyle by graph.subtitlePrefs.prefs.collectAsStateWithLifecycle()
 
-    val prepared = remember(mediaUrl, subtitleConfigs, requestHeaders, mimeType, http, audioTracks) {
-        Log.i(TAG, "Creating ExoPlayer · url=${mediaUrl.take(80)} startMs=$startPositionMs subs=${subtitleConfigs.size} audioTracks=${audioTracks.size}")
+    val prepared = remember(mediaUrl, subtitleConfigs, requestHeaders, mimeType, http, audioTracks, drm) {
+        Log.i(TAG, "Creating ExoPlayer · url=${mediaUrl.take(80)} startMs=$startPositionMs subs=${subtitleConfigs.size} audioTracks=${audioTracks.size} drm=${drm != null}")
         val httpFactory: DataSource.Factory = when (http) {
             StreamHttp.Default -> DefaultHttpDataSource.Factory()
                 .setUserAgent(requestHeaders.entries.firstOrNull { it.key.equals("User-Agent", true) }?.value ?: "okhttp/4.12.0")
@@ -208,6 +218,7 @@ internal fun StreamExoPlayer(
             .setUri(Uri.parse(mediaUrl))
             .setSubtitleConfigurations(subtitleConfigs)
             .apply { mimeType?.let { setMimeType(it) } }
+            .apply { drm?.let { setDrmConfiguration(PluginWidevine.drmConfiguration(it)) } }
             .build()
 
         // Built once and reused for the video AND every audio track below: the same [httpFactory]
@@ -217,6 +228,10 @@ internal fun StreamExoPlayer(
             httpFactory,
             DefaultExtractorsFactory().setTsExtractorTimestampSearchBytes(STREAM_TS_SEARCH_BYTES),
         )
+        // Only with a license to fetch: the factory's default provider would request it through its
+        // own plain DefaultHttpDataSource, outside the host gate. With [httpFactory] instead, the
+        // license request meets the same gate and carries the same headers as every segment.
+        if (drm != null) mediaSourceFactory.setDrmSessionManagerProvider(PluginWidevine.sessionManagerProvider(httpFactory))
 
         // Magis's CDN delivers at 70–230 KB/s and its files carry 8 badly interleaved audio
         // tracks: the video lives in one zone and the audio 13 MB away, so the player jumps
@@ -402,6 +417,16 @@ internal fun StreamExoPlayer(
                 // never an audio track's fault: it is fixed in place before anything is blamed.
                 val liveKind = if (onLiveError != null) liveErrorKind(error) else null
                 if (liveKind != null && liveKind.recoverableInPlace) { recoverLive(liveKind, msg, error); return }
+                // A DRM session's failure (license refused or unreachable, no Widevine on the device,
+                // key expired) is never an audio track's fault, so it is never retried without them:
+                // for a VOD it is final and said in Spanish. A live channel's goes through its reopen
+                // budget below like any other cut (a fresh resolve may bring a fresh license).
+                if (onLiveError == null && PluginWidevine.isDrmError(error.errorCode)) {
+                    Log.e(TAG, "onPlayerError DRM errorCode=${error.errorCode} msg=$msg", error)
+                    com.arkiv.player.crash.Crash.report(error, "$crashTag-drm-${androidx.media3.common.PlaybackException.getErrorCodeName(error.errorCode)}")
+                    onError(PluginWidevine.ERROR_MESSAGE)
+                    return
+                }
                 // A MergingMediaSource is all-or-nothing (MergingMediaPeriod.maybeThrowPrepareError
                 // propagates the first child's failure and never prepares the rest), so while any of
                 // the stream's own audio tracks are still merged in, ANY error here is presumed
