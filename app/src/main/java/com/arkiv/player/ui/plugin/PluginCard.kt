@@ -64,9 +64,6 @@ private val INITIAL_SIZE = 44.dp
 /** The tile's height is 9/16 of its width, the same 16:9 as the TV card. */
 private const val TILE_ASPECT = 16f / 9f
 
-/** Room the status keeps under the description: the longest ("No responde — actívalo para volver a intentar") needs two lines of a half-width card. */
-private const val STATUS_LINES = 2
-
 /** The tonal button's container: the brand red at low strength, so it reads as this card's action without shouting. */
 private val ACTION_CONTAINER = ArkivRed.copy(alpha = 0.30f)
 
@@ -81,7 +78,7 @@ private val INSTALLED_CONTAINER = Color.White.copy(alpha = 0.08f)
  *
  * Every card in a line of the grid ends at the same height, whatever its text and however large the
  * person's font: the name is one line, the description exactly [cardDescriptionLines], the tags one line
- * and the status [STATUS_LINES], all cut with an ellipsis, and the button sits under all of that in the
+ * and the status [cardStatusLines], all cut with an ellipsis, and the button sits under all of that in the
  * normal flow, so a long text or a big font makes the card taller for everyone instead of pushing the
  * button out of it. The one block that is not always there is the status (why the button says Activar,
  * Configurar or Instalar again); [reserveStatusLine] leaves room for it in a card that has none, so the
@@ -136,17 +133,15 @@ fun PluginCard(
                     pluginStatusText(status),
                     style = MaterialTheme.typography.bodySmall,
                     color = ArkivRed,
-                    minLines = STATUS_LINES,
-                    maxLines = STATUS_LINES,
+                    maxLines = cardStatusLines(),
                     overflow = TextOverflow.Ellipsis,
                 )
             } else if (reserveStatusLine) {
-                // Blank space only: a screen reader must not stop on it.
+                // Blank space only: a screen reader must not stop on it. As tall as the status it stands in for.
                 Text(
                     " ",
                     style = MaterialTheme.typography.bodySmall,
-                    minLines = STATUS_LINES,
-                    maxLines = STATUS_LINES,
+                    maxLines = cardStatusLines(),
                     modifier = Modifier.clearAndSetSemantics { },
                 )
             }

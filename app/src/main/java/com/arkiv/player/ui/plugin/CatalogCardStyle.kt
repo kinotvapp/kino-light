@@ -90,6 +90,13 @@ internal fun cardActionLabel(action: CatalogAction): String = when (action) {
 /** How many lines of description a card shows before it ends with an ellipsis. */
 internal fun cardDescriptionLines(): Int = 2
 
+/**
+ * How many lines a card's status takes, and how many a card without one reserves when its neighbour in
+ * the grid line has one. The statuses a card can show ([pluginStatusText] of a plugin whose button is not
+ * "Instalado") are short, so one line is enough and a card with none is left with a one-line gap, not two.
+ */
+internal fun cardStatusLines(): Int = 1
+
 /** Room kept free above and below a tile's icon or initial, so it never touches the pill above it or the tile's edge. */
 private const val TILE_ART_MARGIN = 3f
 

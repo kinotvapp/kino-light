@@ -96,6 +96,13 @@ class CatalogCardStyleTest {
         assertEquals(2, cardDescriptionLines())
     }
 
+    // Every status a card can show is short ("Desactivado", "Falta configurar", ...; the longest is "No responde —
+    // actívalo para volver a intentar"), and a card that writes none keeps room for exactly this much when its
+    // neighbour does. Two lines left a visible gap under the tags of the card without one.
+    @Test fun `a status takes one line on a card`() {
+        assertEquals(1, cardStatusLines())
+    }
+
     @Test fun `a card shows the first two tags in the catalog's order`() {
         assertEquals(listOf("Películas", "Series"), cardTags(listOf("Películas", "Series", "Anime", "Documentales")))
     }
