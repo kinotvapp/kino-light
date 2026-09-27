@@ -48,6 +48,33 @@ class PluginWidevineTest {
         }
     }
 
+    /** A MediaDrm stand-in answering [level] for the security level; its release() does [onRelease]. */
+    private fun fakeDrm(level: String?, onRelease: () -> Unit = {}): androidx.media3.exoplayer.drm.ExoMediaDrm =
+        java.lang.reflect.Proxy.newProxyInstance(
+            javaClass.classLoader, arrayOf(androidx.media3.exoplayer.drm.ExoMediaDrm::class.java),
+        ) { _, method, _ ->
+            when (method.name) {
+                "getPropertyString" -> level ?: throw IllegalStateException("no such property")
+                "release" -> { onRelease(); null }
+                else -> null
+            }
+        } as androidx.media3.exoplayer.drm.ExoMediaDrm
+
+    @Test fun `a device confirming L3 keeps its own instance, nothing is refused`() {
+        var refused = false
+        val drm = fakeDrm("L3")
+        assertSame(drm, PluginWidevine.confirmSoftwareLevel(drm) { refused = true })
+        assertFalse(refused)
+    }
+
+    /** An OEM CDM throwing from release() must still end as the Spanish DRM message, not escape the provider. */
+    @Test fun `a refused level fails closed even when releasing the instance throws`() {
+        var refused = false
+        val out = PluginWidevine.confirmSoftwareLevel(fakeDrm("L1") { throw IllegalStateException("CDM") }) { refused = true }
+        assertTrue(out is androidx.media3.exoplayer.drm.DummyExoMediaDrm)
+        assertTrue(refused)
+    }
+
     @Test fun `the crash tag names the refused L3 stably, else media3's code name`() {
         assertEquals("plugin-drm-l3-unavailable", PluginWidevine.crashTag("plugin", PlaybackException.ERROR_CODE_DRM_SYSTEM_ERROR, softwareLevelRefused = true))
         assertEquals("plugin-drm-ERROR_CODE_DRM_LICENSE_ACQUISITION_FAILED", PluginWidevine.crashTag("plugin", PlaybackException.ERROR_CODE_DRM_LICENSE_ACQUISITION_FAILED, softwareLevelRefused = false))

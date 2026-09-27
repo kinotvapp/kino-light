@@ -121,13 +121,23 @@ internal object PluginWidevine {
             onSoftwareLevelRefused()
             return DummyExoMediaDrm()
         }
+        return confirmSoftwareLevel(drm, onSoftwareLevelRefused)
+    }
+
+    /**
+     * [drm] asked for [SOFTWARE_LEVEL] and read back: itself when [widevineAllowed], else released
+     * and replaced by a [DummyExoMediaDrm]. The release is best-effort: an OEM CDM that throws from
+     * it must not escape the `ExoMediaDrmProvider` -- the playback still fails closed, as the DRM
+     * error the caller words in Spanish.
+     */
+    internal fun confirmSoftwareLevel(drm: ExoMediaDrm, onSoftwareLevelRefused: () -> Unit): ExoMediaDrm {
         val level = runCatching {
             drm.setPropertyString(SECURITY_LEVEL_PROPERTY, SOFTWARE_LEVEL)
             drm.getPropertyString(SECURITY_LEVEL_PROPERTY)
         }.onFailure { Log.w(TAG, "could not set or read Widevine's $SECURITY_LEVEL_PROPERTY", it) }.getOrNull()
         if (widevineAllowed(level)) return drm
         Log.w(TAG, "Widevine would run at ${level ?: "an unknown level"}, not $SOFTWARE_LEVEL: no session on this player")
-        drm.release()
+        runCatching { drm.release() }.onFailure { Log.w(TAG, "releasing the refused Widevine instance failed", it) }
         onSoftwareLevelRefused()
         return DummyExoMediaDrm()
     }
