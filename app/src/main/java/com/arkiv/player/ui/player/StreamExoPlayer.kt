@@ -99,6 +99,27 @@ private class PreparedSource(
 private fun clearAudioItem(track: ResolvedAudioTrack): MediaItem = MediaItem.Builder().setUri(Uri.parse(track.url)).build()
 
 /**
+ * The container MIME as media3 must receive it, or null to let the player sniff.
+ *
+ * media3 picks HLS/DASH/SmoothStreaming by comparing the MIME with its exact constants
+ * (`application/x-mpegURL`, case included), and any other MIME makes it ignore the URL's
+ * `.m3u8` and play the manifest as a progressive file -- which no extractor reads. The IANA name
+ * `application/vnd.apple.mpegurl`, the one the plugin guide shows, is such a MIME, so every HLS
+ * alias is mapped to media3's spelling here, and DASH/SS are matched case-insensitively.
+ */
+internal fun exoMimeType(mime: String?): String? {
+    val m = mime?.trim().orEmpty()
+    if (m.isEmpty()) return null
+    return when (m.lowercase()) {
+        "application/vnd.apple.mpegurl", "application/x-mpegurl", "application/mpegurl",
+        "audio/mpegurl", "audio/x-mpegurl" -> MimeTypes.APPLICATION_M3U8
+        MimeTypes.APPLICATION_MPD -> MimeTypes.APPLICATION_MPD
+        MimeTypes.APPLICATION_SS -> MimeTypes.APPLICATION_SS
+        else -> m
+    }
+}
+
+/**
  * Sets [tracks] on [prepared]'s player: merged into the video via [MergingMediaSource] when there
  * are any, the plain [PreparedSource.mediaItem] otherwise -- unchanged from before audio tracks
  * existed, no merge at all. Used both for the stream's initial setup and, with a shorter [tracks],
@@ -242,7 +263,7 @@ internal fun StreamExoPlayer(
         val mediaItem = MediaItem.Builder()
             .setUri(Uri.parse(mediaUrl))
             .setSubtitleConfigurations(subtitleConfigs)
-            .apply { mimeType?.let { setMimeType(it) } }
+            .apply { exoMimeType(mimeType)?.let { setMimeType(it) } }
             .apply { drm?.let { setDrmConfiguration(PluginWidevine.drmConfiguration(it)) } }
             .build()
 
