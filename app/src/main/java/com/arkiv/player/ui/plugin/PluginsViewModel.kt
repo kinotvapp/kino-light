@@ -321,6 +321,13 @@ class PluginsViewModel(
 
     fun onAddressChange(value: String) = _state.update { it.copy(address = value, message = null, messagePluginId = null) }
 
+    /**
+     * Drops the message of an earlier action and the row it was about, and nothing else: unlike
+     * [onAddressChange] the typed address stays. The Plugins screens call it when their "Agregar" dialog
+     * opens or closes, so what an earlier action said is not that dialog's news.
+     */
+    fun clearMessage() = _state.update { it.copy(message = null, messagePluginId = null) }
+
     fun add() {
         val input = _state.value.address.trim()
         if (input.isEmpty()) return

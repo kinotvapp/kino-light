@@ -155,7 +155,7 @@ fun PluginsScreen(mode: AddPluginMode, onClose: () -> Unit) {
                         enabled = !state.busy,
                         onClick = {
                             // Whatever an earlier action said is not this modal's news.
-                            clearMessage(vm, state.address)
+                            vm.clearMessage()
                             addRequested = true
                         },
                     )
@@ -215,7 +215,7 @@ fun PluginsScreen(mode: AddPluginMode, onClose: () -> Unit) {
             onSubmit = vm::add,
             onDismiss = {
                 addRequested = false
-                clearMessage(vm, state.address)
+                vm.clearMessage()
             },
         )
     }
@@ -235,13 +235,6 @@ fun PluginsScreen(mode: AddPluginMode, onClose: () -> Unit) {
     state.confirmUninstall?.let { PluginUninstallDialog(it, onConfirm = vm::confirmUninstall, onCancel = vm::cancelUninstall) }
     state.configuring?.let { PluginConfigDialog(it, isTv = false, vm = vm) }
 }
-
-/**
- * Drops the message of an earlier action. The view model has no call for it, but [PluginsViewModel.onAddressChange]
- * clears the message (and which row it was about) with every change, so it is called with the text the field
- * already holds.
- */
-private fun clearMessage(vm: PluginsViewModel, address: String) = vm.onAddressChange(address)
 
 /** The "Agregar" button of the top bar: a plus and the word, at least [MIN_TARGET] tall, off while an action runs. */
 @Composable

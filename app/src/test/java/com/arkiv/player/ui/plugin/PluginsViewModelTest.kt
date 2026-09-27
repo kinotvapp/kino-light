@@ -149,6 +149,39 @@ class PluginsViewModelTest {
         assertFalse(vm.state.value.busy)
     }
 
+    // The Plugins screens clear whatever an earlier action said when their "Agregar" dialog opens or closes;
+    // the text already typed is not theirs to touch.
+    @Test fun `clearing the message drops it and the row it was about, and keeps the typed address`() {
+        val admin = FakeAdmin().apply { update = { UpdateOutcome.UpToDate } }
+        admin.plugins.value = listOf(installedPlugin)
+        val vm = vm(admin)
+        vm.onAddressChange("o/r")
+        vm.checkUpdate("demo")
+        assertEquals("Ya tienes la última versión", vm.state.value.message)
+        assertEquals("demo", vm.state.value.messagePluginId)
+
+        vm.clearMessage()
+
+        with(vm.state.value) {
+            assertNull(message)
+            assertNull(messagePluginId)
+            assertEquals("o/r", address)
+        }
+    }
+
+    @Test fun `clearing the message leaves the rest of the state alone`() {
+        val admin = FakeAdmin().apply { previewResult = { preview } }
+        val vm = vm(admin)
+        vm.onQueryChange("archive")
+        vm.onAddressChange("o/r"); vm.add()
+        val before = vm.state.value
+        assertNotNull(before.consent)
+
+        vm.clearMessage()
+
+        assertEquals(before.copy(message = null, messagePluginId = null), vm.state.value)
+    }
+
     @Test fun `an engine failure is said in Spanish, never with its raw message`() {
         val admin = FakeAdmin().apply {
             previewResult = { preview }
