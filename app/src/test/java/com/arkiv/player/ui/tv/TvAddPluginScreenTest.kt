@@ -7,9 +7,13 @@ import com.arkiv.player.data.plugin.InstalledRecord
 import com.arkiv.player.data.plugin.PluginManifest
 import com.arkiv.player.data.plugin.PluginStatus
 import com.arkiv.player.data.plugin.catalog.CatalogEntry
+import com.arkiv.player.data.plugin.catalog.CatalogOrigin
 import com.arkiv.player.ui.plugin.CatalogAction
 import com.arkiv.player.ui.plugin.CatalogRow
+import com.arkiv.player.ui.plugin.CatalogUiState
+import com.arkiv.player.ui.plugin.catalogRefreshLine
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -109,5 +113,41 @@ class TvAddPluginScreenTest {
     @Test fun `without a margin it is the plain minimal scroll`() {
         assertEquals(0f, scrollDistanceWithMargin(offset = 300f, size = 100f, containerSize = 400f, margin = 0f), 0f)
         assertEquals(1f, scrollDistanceWithMargin(offset = 301f, size = 100f, containerSize = 400f, margin = 0f), 0.001f)
+    }
+
+    private fun seedState(origin: CatalogOrigin?, refreshing: Boolean) = CatalogUiState(loading = false, origin = origin, refreshing = refreshing)
+
+    // The initial focus scrolls the grid against the seed block; a notice line that appeared after that
+    // pushed the cards down (found on the KALLEY TV: the focused first card lost its last line). So the
+    // line is laid out from the start, with the text that will replace it.
+    @Test fun `while the refresh runs the notice line already has the text the failed refresh will show`() {
+        val running = refreshNoticeSlot(seedState(CatalogOrigin.SEED, refreshing = true))
+        val failed = refreshNoticeSlot(seedState(CatalogOrigin.SEED, refreshing = false))
+        assertNotNull(running)
+        assertEquals(failed, running)
+    }
+
+    @Test fun `the slot is the notice itself once the refresh has failed`() {
+        assertEquals(
+            catalogRefreshLine(seedState(CatalogOrigin.SEED, refreshing = false))!!.notice,
+            refreshNoticeSlot(seedState(CatalogOrigin.SEED, refreshing = false)),
+        )
+    }
+
+    @Test fun `there is no slot when the seed block is not shown`() {
+        assertNull(refreshNoticeSlot(seedState(CatalogOrigin.FRESH, refreshing = false)))
+        assertNull(refreshNoticeSlot(seedState(CatalogOrigin.CACHE, refreshing = true)))
+        assertNull(refreshNoticeSlot(seedState(null, refreshing = false)))
+    }
+
+    // Measured on the KALLEY TV (1280x720 px, 1.33 px per dp), in pixels of the grid's own coordinates: the
+    // viewport is 597 px tall, the first card 322 px, the focus margin 12 dp = 16 px. The card starts at 258
+    // with the seed block and no notice line, 37 px lower with the notice line reserved, and 169 px higher
+    // with no seed block at all.
+    @Test fun `the first card is scrolled fully into view by the initial focus in each state of the window`() {
+        val margin = 16f
+        assertEquals(36f, scrollDistanceWithMargin(offset = 295f, size = 322f, containerSize = 597f, margin = margin), 0.001f)
+        assertEquals(0f, scrollDistanceWithMargin(offset = 258f, size = 322f, containerSize = 597f, margin = margin), 0.001f)
+        assertEquals(0f, scrollDistanceWithMargin(offset = 169f, size = 322f, containerSize = 597f, margin = margin), 0.001f)
     }
 }

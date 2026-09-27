@@ -48,6 +48,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -58,6 +59,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.arkiv.player.ui.plugin.AddPluginMode
 import com.arkiv.player.ui.plugin.CatalogAction
 import com.arkiv.player.ui.plugin.CatalogRow
+import com.arkiv.player.ui.plugin.CatalogUiState
 import com.arkiv.player.ui.plugin.FocusWhenReady
 import com.arkiv.player.ui.plugin.PluginConsentDialog
 import com.arkiv.player.ui.plugin.PluginConfigDialog
@@ -182,10 +184,22 @@ fun TvAddPluginScreen(mode: AddPluginMode, onClose: () -> Unit) {
                 // Only while the list is still the copy shipped in the APK. The notice waits for the refresh to end
                 // (it may still succeed); meanwhile the action reads "Actualizando…" and does nothing, but stays
                 // focusable so focus is not thrown out from under the person when the label changes.
+                // The notice's line is laid out from the first frame, invisible until there is a notice to show
+                // (see [refreshNoticeSlot]): the initial focus scrolls the grid against this block, and a line
+                // that appeared afterwards pushed the cards down and cut the focused first card at the bottom.
                 catalogRefreshLine(catalog)?.let { line ->
                     item(key = "seed-notice", span = FULL_WIDTH) {
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.noFocusToTheRight()) {
-                            line.notice?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary) }
+                            refreshNoticeSlot(catalog)?.let { slot ->
+                                val shown = line.notice != null
+                                Text(
+                                    slot,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (shown) ArkivTextSecondary else Color.Transparent,
+                                    // The placeholder is not read out either, and it never takes focus (a Text does not).
+                                    modifier = if (shown) Modifier else Modifier.clearAndSetSemantics { },
+                                )
+                            }
                             TvActionOption(label = line.actionLabel) { if (line.actionEnabled) vm.reloadCatalog() }
                         }
                     }
@@ -274,6 +288,17 @@ private fun runCatalogAction(vm: PluginsViewModel, row: CatalogRow) {
         CatalogAction.ENABLE -> installed?.let { vm.setEnabled(it.id, true) }
         CatalogAction.INSTALLED -> Unit
     }
+}
+
+/**
+ * The text the notice line of the seed block lays out, or null when the block is not shown. It is the
+ * notice itself once the refresh has failed, and while the refresh is still running (no notice yet) the
+ * very text that will replace it, so the line takes the same room, wraps the same way at any font size and
+ * pushes nothing when the notice appears. The window draws it transparent until then.
+ */
+internal fun refreshNoticeSlot(catalog: CatalogUiState): String? {
+    val line = catalogRefreshLine(catalog) ?: return null
+    return line.notice ?: catalogRefreshLine(catalog.copy(refreshing = false))?.notice
 }
 
 /** What the action on a recommended row says, with the plugin's name. */
