@@ -94,6 +94,7 @@ object DownloadGroupPolicy {
         var staging = 0
         var queued = 0
         var failed = 0
+        var cancelled = 0
         var refused = 0
         var needsConfirmation = 0
         for (grouped in episodes) {
@@ -103,7 +104,8 @@ object DownloadGroupPolicy {
                 LocalDownloadState.DOWNLOADING -> downloading++
                 LocalDownloadState.STAGING -> staging++
                 LocalDownloadState.QUEUED -> queued++
-                LocalDownloadState.FAILED -> failed++
+                // The person stopped it (the row reads "Cancelada"): nothing went wrong.
+                LocalDownloadState.FAILED -> if (row.error == LocalDownloadManager.CANCELLED) cancelled++ else failed++
                 LocalDownloadState.REFUSED -> refused++
                 LocalDownloadState.NEEDS_CONFIRMATION -> needsConfirmation++
             }
@@ -113,6 +115,7 @@ object DownloadGroupPolicy {
         if (staging > 0) clauses += "$staging preparando"
         if (queued > 0) clauses += "$queued en cola"
         if (failed > 0) clauses += "$failed con error"
+        if (cancelled > 0) clauses += "$cancelled cancelada" + (if (cancelled > 1) "s" else "")
         // Apart from the errors: "Reintentar lo que falló" never touches these (see [failedEpisodeIds]).
         if (refused > 0) clauses += "$refused no descargable" + (if (refused > 1) "s" else "")
         if (needsConfirmation > 0) clauses += "$needsConfirmation por confirmar"

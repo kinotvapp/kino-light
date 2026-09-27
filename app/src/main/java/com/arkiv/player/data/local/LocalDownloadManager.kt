@@ -169,7 +169,7 @@ class LocalDownloadManager(
         val inFlight = row.state == LocalDownloadState.DOWNLOADING || row.state == LocalDownloadState.STAGING
         // The state is written BEFORE cutting: otherwise the new pass finds the row still in
         // `downloading` and picks it up again immediately (nextToProcess prefers what's already started).
-        downloadDao.updateState(episodeId, LocalDownloadState.FAILED, "Cancelada")
+        downloadDao.updateState(episodeId, LocalDownloadState.FAILED, CANCELLED)
         if (inFlight) restartWorker(appContext)
     }
 
@@ -265,5 +265,10 @@ class LocalDownloadManager(
             DuplicateDownloadPolicy.deletablePaths(candidates, referenced)
                 .forEach { p -> runCatching { File(p).delete() } }
         }
+    }
+
+    companion object {
+        /** The reason a [cancel]led row keeps (state `failed`): the Downloads screen shows it as-is and counts it apart from errors. */
+        const val CANCELLED = "Cancelada"
     }
 }

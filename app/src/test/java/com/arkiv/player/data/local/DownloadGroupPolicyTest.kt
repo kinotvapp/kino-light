@@ -169,6 +169,19 @@ class DownloadGroupPolicyTest {
         assertEquals("0 de 0 guardados", DownloadGroupPolicy.summarize(emptyList()))
     }
 
+    /** The row reads "Cancelada": the person stopped it, nothing went wrong, so it is no error. */
+    @Test
+    fun `cancelled downloads get their own clause, never counted as errors`() {
+        val cancelled = { id: String, i: Int ->
+            GroupedEpisode(episode(id, "s", i), EpisodeDownloadStatus.Tracked(row(id, "s", LocalDownloadState.FAILED).copy(error = LocalDownloadManager.CANCELLED)))
+        }
+        val one = listOf(cancelled("s::1", 0))
+        assertEquals("0 de 1 guardados · 1 cancelada", DownloadGroupPolicy.summarize(one))
+        val mixed = one + cancelled("s::2", 1) +
+            GroupedEpisode(episode("s::3", "s", 2), EpisodeDownloadStatus.Tracked(row("s::3", "s", LocalDownloadState.FAILED).copy(error = "HTTP 500")))
+        assertEquals("0 de 3 guardados · 1 con error · 2 canceladas", DownloadGroupPolicy.summarize(mixed))
+    }
+
     @Test
     fun `refused downloads get their own clause, apart from errors`() {
         val one = listOf(
