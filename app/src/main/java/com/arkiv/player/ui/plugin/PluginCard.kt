@@ -71,7 +71,7 @@ private val ACTION_CONTAINER = ArkivRed.copy(alpha = 0.30f)
 private val INSTALLED_CONTAINER = Color.White.copy(alpha = 0.08f)
 
 /**
- * One recommended plugin as a card of the phone's "Agregar plugin" grid: a 16:9 tile in the plugin's own
+ * One recommended plugin as a card of the phone's Plugins screen (Recomendados tab): a 16:9 tile in the plugin's own
  * colour with its icon (or, while it has none, the first letter of its name), then its name, what it does,
  * up to two tags and one full-width button ([cardActionLabel]). The tap goes to [onAction] only through
  * that button; when the plugin needs nothing the button reads "Instalado" and does nothing.
