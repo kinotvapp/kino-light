@@ -68,7 +68,7 @@ class ArchiveOrgPluginTest {
 
         override fun select(html: String, css: String) = PluginHtml.selectJson(html, css)
         override fun storageGet(key: String): String? = null
-        override fun storageSet(key: String, value: String) = Unit
+        override fun storageSet(key: String, value: String, ttlMs: Long?) = Unit
         override fun storageRemove(key: String) = Unit
         override fun log(level: String, message: String) = println("[archive-org] $level: $message")
     }

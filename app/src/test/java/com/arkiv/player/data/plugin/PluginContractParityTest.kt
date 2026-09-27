@@ -83,6 +83,7 @@ class PluginContractParityTest {
         assertEquals(PluginRuntimePool.DEFAULT_IDLE_MS, r.getLong("idleCloseMs"))
         assertEquals(PluginRuntimePool.DEFAULT_MAX_TIMEOUTS, r.getInt("timeoutsBeforeUnresponsive"))
         assertEquals(PluginStorage.MAX_BYTES, obj("storage").getInt("maxTotalBytes"))
+        assertEquals(PluginStorage.MAX_TTL_MS, obj("storage").getLong("maxTtlMs"))
         assertEquals(PluginRuntime.MAX_SLEEP_MS, obj("sleep").getInt("maxMs"))
         assertEquals(PluginErrors.CODES, obj("errors").strings("codes"))
         assertEquals(PluginErrors.MAX_MESSAGE_CHARS, obj("errors").getInt("maxMessageChars"))

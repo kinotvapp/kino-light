@@ -10,7 +10,7 @@ class PrivilegedXuperHostTest {
         override suspend fun fetch(requestJson: String): String = """{"error":{"code":"unavailable","message":""}}"""
         override fun select(html: String, css: String): String = "[]"
         override fun storageGet(key: String): String? = null
-        override fun storageSet(key: String, value: String) = Unit
+        override fun storageSet(key: String, value: String, ttlMs: Long?) = Unit
         override fun storageRemove(key: String) = Unit
         override fun log(level: String, message: String) = Unit
     }

@@ -31,7 +31,8 @@ interface PluginHost {
     suspend fun fetch(requestJson: String): String
     fun select(html: String, css: String): String
     fun storageGet(key: String): String?
-    fun storageSet(key: String, value: String)
+    /** [ttlMs], when not null, is already checked by the prelude (a finite integer, 1..30 days). */
+    fun storageSet(key: String, value: String, ttlMs: Long?)
     fun storageRemove(key: String)
     /** `kino.storage.keys()` as a JSON array. */
     fun storageKeys(): String = "[]"
@@ -312,7 +313,7 @@ class PluginRuntime private constructor(
                 asyncFunction("fetch") { args -> host.fetch(args[0] as String) }
                 function("select") { args -> host.select(args[0] as String, args[1] as String) }
                 function("storageGet") { args -> host.storageGet(args[0] as String) }
-                function("storageSet") { args -> host.storageSet(args[0] as String, args[1] as String) }
+                function("storageSet") { args -> host.storageSet(args[0] as String, args[1] as String, (args[2] as? Number)?.toLong()) }
                 function("storageRemove") { args -> host.storageRemove(args[0] as String) }
                 function("storageKeys") { _ -> host.storageKeys() }
                 function("log") { args -> host.log(args[0] as String, args[1] as String) }
@@ -359,6 +360,7 @@ class PluginRuntime private constructor(
             .put("maxUrlChars", MAX_URL_CHARS)
             .put("maxCookieNameChars", MAX_COOKIE_NAME_CHARS)
             .put("storageMaxBytes", PluginStorage.MAX_BYTES)
+            .put("storageMaxTtlMs", PluginStorage.MAX_TTL_MS)
             .put("sleepMaxMs", MAX_SLEEP_MS)
             .put("cryptoMaxDataBytes", PluginCrypto.MAX_DATA_BYTES)
             .put("cryptoMaxRequestChars", MAX_CRYPTO_REQUEST_CHARS)

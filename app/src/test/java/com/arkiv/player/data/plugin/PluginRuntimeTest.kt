@@ -11,6 +11,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -20,6 +21,8 @@ class PluginRuntimeTest {
     private class FakeHost : PluginHost {
         val logs = mutableListOf<String>()
         val storage = mutableMapOf<String, String>()
+        /** The `ttlMs` this host saw on each `storageSet`, so a test can check it crossed correctly. */
+        val storageTtlSeen = mutableMapOf<String, Long?>()
         var onFetch: suspend (String) -> String = { req ->
             JSONObject().put("ok", true).put("status", 200).put("url", JSONObject(req).getString("url"))
                 .put("headers", JSONObject()).put("text", "{\"hello\":\"world\"}").toString()
@@ -28,7 +31,7 @@ class PluginRuntimeTest {
         override suspend fun fetch(requestJson: String) = onFetch(requestJson)
         override fun select(html: String, css: String) = onSelect(html, css)
         override fun storageGet(key: String) = storage[key]
-        override fun storageSet(key: String, value: String) { storage[key] = value }
+        override fun storageSet(key: String, value: String, ttlMs: Long?) { storage[key] = value; storageTtlSeen[key] = ttlMs }
         override fun storageRemove(key: String) { storage.remove(key) }
         override fun log(level: String, message: String) { logs += "$level:$message" }
     }
@@ -90,6 +93,39 @@ class PluginRuntimeTest {
         val host = FakeHost()
         val rt = open("export async function home() { kino.storage.set('k', 'v'); const a = kino.storage.get('k'); kino.storage.remove('k'); return [a, kino.storage.get('k')] }", host)
         assertEquals("[\"v\",null]", rt.call("home", "null", 5_000))
+    }
+
+    @Test fun `storage set forwards an optional ttlMs to the host, null when omitted`() = runBlocking {
+        val host = FakeHost()
+        val rt = open(
+            "export async function home() { kino.storage.set('a', '1'); kino.storage.set('b', '2', { ttlMs: 1000 }); return [] }",
+            host,
+        )
+        rt.call("home", "null", 5_000)
+        assertEquals(mapOf("a" to null, "b" to 1000L), host.storageTtlSeen)
+    }
+
+    @Test fun `an invalid ttlMs is refused in JS and never reaches the host`() = runBlocking {
+        val host = FakeHost()
+        val rt = open(
+            "export async function home() {" +
+                "const bad = [0, -1, 1.5, NaN, Infinity, 30 * 24 * 60 * 60 * 1000 + 1];" +
+                "const messages = [];" +
+                "for (const ttlMs of bad) { try { kino.storage.set('k', 'v', { ttlMs }); messages.push(null); } catch (e) { messages.push(e.message.length > 0); } }" +
+                "return messages; }",
+            host,
+        )
+        assertEquals("[true,true,true,true,true,true]", rt.call("home", "null", 5_000))
+        assertEquals(emptyMap<String, Long?>(), host.storageTtlSeen)
+        assertNull(host.storage["k"])
+    }
+
+    @Test fun `a ttlMs at the 30-day cap is accepted and forwarded`() = runBlocking {
+        val host = FakeHost()
+        val cap = 30L * 24 * 60 * 60 * 1000
+        val rt = open("export async function home() { kino.storage.set('k', 'v', { ttlMs: $cap }); return ['ok'] }", host)
+        assertEquals("[\"ok\"]", rt.call("home", "null", 5_000))
+        assertEquals(cap, host.storageTtlSeen["k"])
     }
 
     @Test fun `html select goes through Jsoup`() = runBlocking {

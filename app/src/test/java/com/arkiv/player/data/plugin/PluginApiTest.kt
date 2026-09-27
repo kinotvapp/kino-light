@@ -16,7 +16,7 @@ class PluginApiTest {
         override suspend fun fetch(requestJson: String) = "{}"
         override fun select(html: String, css: String) = "[]"
         override fun storageGet(key: String) = storage[key]
-        override fun storageSet(key: String, value: String) { storage[key] = value }
+        override fun storageSet(key: String, value: String, ttlMs: Long?) { storage[key] = value }
         override fun storageRemove(key: String) { storage.remove(key) }
         override fun storageKeys(): String = JSONArray(storage.keys.toList()).toString()
         override fun log(level: String, message: String) = Unit
@@ -126,6 +126,7 @@ class PluginApiTest {
     @Test fun `limits handed to the prelude come from their Kotlin owners`() {
         val l = JSONObject(PluginRuntime.limits())
         assertEquals(PluginStorage.MAX_BYTES, l.getInt("storageMaxBytes"))
+        assertEquals(PluginStorage.MAX_TTL_MS, l.getLong("storageMaxTtlMs"))
         assertEquals(PluginRuntime.MAX_SLEEP_MS, l.getInt("sleepMaxMs"))
         assertEquals(PluginErrors.MAX_MESSAGE_CHARS, l.getInt("maxErrorMessageChars"))
         assertEquals(PluginRuntime.MAX_LOG_CHARS, l.getInt("maxLogChars"))

@@ -42,6 +42,19 @@ const saveJson = (file, value) => {
 export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", storageFile = null, cookiesFile = null, config = {}, record = null, replay = null, fetchImpl = globalThis.fetch } = {}) {
   const f = contract.fetch;
   const storage = loadJson(storageFile, {});
+  // An entry is a bare string (permanent, the format before ttlMs existed) or { v, e } (expires at
+  // epoch ms `e`). Dropped lazily, on the next read or write that touches this instance -- never a
+  // background timer -- so it stops counting against the cap the moment it is noticed.
+  const storageEntryValue = (raw) => (raw !== null && typeof raw === "object" ? raw.v : raw);
+  const purgeExpiredStorage = () => {
+    const now = Date.now();
+    let changed = false;
+    for (const k of Object.keys(storage)) {
+      const raw = storage[k];
+      if (raw !== null && typeof raw === "object" && typeof raw.e === "number" && raw.e <= now) { delete storage[k]; changed = true; }
+    }
+    if (changed) saveJson(storageFile, storage);
+  };
   const cookieJar = loadJson(cookiesFile, []);
   const tape = replay ? loadJson(replay, null) : record ? [] : null;
   if (replay && !tape) throw new Error(`--replay: ${replay} not found`);
@@ -286,18 +299,32 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", stora
       },
     }),
     storage: Object.freeze({
-      get: (key) => (Object.prototype.hasOwnProperty.call(storage, String(key)) ? storage[String(key)] : null),
-      set: (key, v) => {
-        const previous = storage[String(key)];
-        storage[String(key)] = String(v);
+      get: (key) => {
+        purgeExpiredStorage();
+        const k = String(key);
+        return Object.prototype.hasOwnProperty.call(storage, k) ? storageEntryValue(storage[k]) : null;
+      },
+      set: (key, v, options) => {
+        const k = String(key), value = String(v);
+        let expiresAt;
+        if (options !== null && typeof options === "object" && options.ttlMs !== undefined && options.ttlMs !== null) {
+          const ttlMs = options.ttlMs;
+          if (!Number.isInteger(ttlMs) || ttlMs <= 0 || ttlMs > contract.storage.maxTtlMs) {
+            throw new Error(`kino.storage.set: ttlMs debe ser un entero mayor que 0 y de hasta ${contract.storage.maxTtlMs} ms (30 días)`);
+          }
+          expiresAt = Date.now() + ttlMs;
+        }
+        purgeExpiredStorage();
+        const previous = storage[k];
+        storage[k] = expiresAt === undefined ? value : { v: value, e: expiresAt };
         if (Buffer.byteLength(JSON.stringify(storage)) > contract.storage.maxTotalBytes) {
-          if (previous === undefined) delete storage[String(key)]; else storage[String(key)] = previous;
+          if (previous === undefined) delete storage[k]; else storage[k] = previous;
           throw new Error(`almacenamiento del plugin lleno (${kb(contract.storage.maxTotalBytes)})`);
         }
         saveJson(storageFile, storage);
       },
-      remove: (key) => { delete storage[String(key)]; saveJson(storageFile, storage); },
-      keys: () => Object.keys(storage),
+      remove: (key) => { purgeExpiredStorage(); delete storage[String(key)]; saveJson(storageFile, storage); },
+      keys: () => { purgeExpiredStorage(); return Object.keys(storage); },
     }),
     config: Object.freeze({
       get: (key) => values[String(key)],

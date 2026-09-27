@@ -557,16 +557,35 @@ exists only inside Kino**: the Node kit's version throws, so test anything that 
 ### `kino.storage`
 
 ```js
-kino.storage.get("key")        // the string, or null
-kino.storage.set("key", "v")   // values are converted to strings
+kino.storage.get("key")                          // the string, or null
+kino.storage.set("key", "v")                     // values are converted to strings
+kino.storage.set("key", "v", { ttlMs: 3600000 }) // expires after that many milliseconds
 kino.storage.remove("key")
-kino.storage.keys()            // every key, as an array
+kino.storage.keys()                              // every key, as an array (expired keys are already gone)
 ```
 
 Synchronous, private to your plugin, and it survives restarts of the sandbox and of the app. At most
 256 KB in total (measured as the JSON of all keys and values); going over throws
 `Error("almacenamiento del plugin lleno (256 KB)")`. It is deleted when the person uninstalls the
 plugin, and it is **not** cleared when they change your settings.
+
+`set`'s third argument is optional: leave it out for a permanent entry, exactly as before this option
+existed. Give `{ ttlMs }` to make the entry expire -- after that many milliseconds `get` returns `null`
+and `keys()` no longer lists it, even across a restart of the app. `ttlMs` must be a whole number
+greater than 0 and at most 2,592,000,000 (30 days); anything else throws before your entry is
+touched, the same way an oversized value already does. An expired entry never counts against the
+256 KB cap: it is dropped the next time your plugin reads or writes storage. Example, a Home row
+cached for an hour:
+
+```js
+export async function home() {
+  const cached = kino.storage.get("home-rows");
+  if (cached) return JSON.parse(cached);
+  const rows = await buildHomeRows();
+  kino.storage.set("home-rows", JSON.stringify(rows), { ttlMs: 60 * 60 * 1000 });
+  return rows;
+}
+```
 
 ### `kino.log(...args)`
 
@@ -589,7 +608,7 @@ characters. Under the Node kit they go to stderr.
 | Consecutive timeouts | 3 in a row and Kino disables the plugin ("No responde") |
 | `kino.fetch` | https only (or the person's own server as typed); 15 s default, 30 s maximum; response body at most 5 MB; the request (URL, headers and body) at most 1,048,576 characters; at most 60 requests per call; at most 10 redirects per request |
 | Cookies | 50 per domain, 64 KB in total per plugin |
-| `kino.storage` | 256 KB per plugin |
+| `kino.storage` | 256 KB per plugin; an entry's optional `ttlMs` is 1..2,592,000,000 ms (30 days) |
 | `kino.sleep` | 0 to 5,000 ms per call |
 | `kino.crypto` | data at most 5 MB per call; PBKDF2 at most 100,000 iterations and 64-byte keys; `randomBytes` at most 1,024 |
 | `kino.log` / `console.*` | 2,000 characters per message |

@@ -16,7 +16,7 @@ class PluginEngineErrorNameTest {
         override suspend fun fetch(requestJson: String) = "{}"
         override fun select(html: String, css: String) = "[]"
         override fun storageGet(key: String): String? = null
-        override fun storageSet(key: String, value: String) = Unit
+        override fun storageSet(key: String, value: String, ttlMs: Long?) = Unit
         override fun storageRemove(key: String) = Unit
         override fun log(level: String, message: String) = Unit
     }

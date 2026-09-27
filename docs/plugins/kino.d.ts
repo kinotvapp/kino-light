@@ -231,10 +231,19 @@ declare namespace kino {
   }
 
   namespace storage {
-    /** 256 KB in total for this plugin. */
+    /** 256 KB in total for this plugin. Returns `null` once the entry has expired (see `set`). */
     function get(key: string): string | null;
-    function set(key: string, value: string): void;
+    /**
+     * `options.ttlMs` makes the entry expire: after that many milliseconds, `get` returns `null` and
+     * `keys()` leaves it out, even across a restart of the app. A whole number greater than 0,
+     * at most 2,592,000,000 ms (30 days); anything else throws before the entry is touched. Leave
+     * out `options` (or `ttlMs`) for a permanent entry, exactly as before this option existed. An
+     * expired entry never counts against the 256 KB cap: it is dropped the next time your plugin
+     * reads or writes storage.
+     */
+    function set(key: string, value: string, options?: { ttlMs?: number }): void;
     function remove(key: string): void;
+    /** Expired keys are already gone. */
     function keys(): string[];
   }
 

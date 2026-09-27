@@ -117,7 +117,8 @@
     "maxTotalBytes": 65536
   },
   "storage": {
-    "maxTotalBytes": 262144
+    "maxTotalBytes": 262144,
+    "maxTtlMs": 2592000000
   },
   "crypto": {
     "hashes": ["md5", "sha1", "sha256", "sha512"],

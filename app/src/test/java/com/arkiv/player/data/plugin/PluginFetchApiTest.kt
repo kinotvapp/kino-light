@@ -27,7 +27,7 @@ class PluginFetchApiTest {
         override suspend fun fetch(requestJson: String) = onFetch(requestJson)
         override fun select(html: String, css: String) = "[]"
         override fun storageGet(key: String): String? = null
-        override fun storageSet(key: String, value: String) = Unit
+        override fun storageSet(key: String, value: String, ttlMs: Long?) = Unit
         override fun storageRemove(key: String) = Unit
         override fun log(level: String, message: String) = Unit
         override fun cookieGet(url: String, name: String): String? { cookieCalls += url.length to name.length; return if (name == "sid") "abc" else null }

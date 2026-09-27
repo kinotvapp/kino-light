@@ -22,7 +22,7 @@ export const TABLES = {
     ["Consecutive timeouts", `${c.runtime.timeoutsBeforeUnresponsive} in a row and Kino disables the plugin ("No responde")`],
     ["`kino.fetch`", `https only (or the person's own server as typed); ${c.fetch.defaultTimeoutMs / 1000} s default, ${c.fetch.maxTimeoutMs / 1000} s maximum; response body at most ${kb(c.fetch.maxBodyBytes)}; the request (URL, headers and body) at most ${n(c.fetch.maxRequestChars)} characters; at most ${c.fetch.maxRequestsPerCall} requests per call; at most ${c.fetch.maxRedirects} redirects per request`],
     ["Cookies", `${c.cookies.maxPerHost} per domain, ${kb(c.cookies.maxTotalBytes)} in total per plugin`],
-    ["`kino.storage`", `${kb(c.storage.maxTotalBytes)} per plugin`],
+    ["`kino.storage`", `${kb(c.storage.maxTotalBytes)} per plugin; an entry's optional \`ttlMs\` is 1..${n(c.storage.maxTtlMs)} ms (30 days)`],
     ["`kino.sleep`", `0 to ${n(c.sleep.maxMs)} ms per call`],
     ["`kino.crypto`", `data at most ${kb(c.crypto.maxDataBytes)} per call; PBKDF2 at most ${n(c.crypto.pbkdf2MaxIterations)} iterations and ${c.crypto.pbkdf2MaxKeyBytes}-byte keys; \`randomBytes\` at most ${n(c.crypto.randomMaxBytes)}`],
     ["`kino.log` / `console.*`", `${n(c.runtime.maxLogChars)} characters per message`],

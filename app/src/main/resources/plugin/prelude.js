@@ -283,10 +283,18 @@
   // --- kino.storage ---
   const storage = freeze({
     get: freeze(function get(k) { const key = toStr(k); if (key.length > L.storageMaxBytes) return null; const v = n.storageGet(key); return v == null ? null : v; }),
-    set: freeze(function set(k, v) {
+    set: freeze(function set(k, v, o) {
       const key = toStr(k), value = toStr(v);
       if (key.length + value.length > L.storageMaxBytes) throw new E('almacenamiento del plugin lleno (256 KB)');
-      n.storageSet(key, value);
+      const p = opts(o);
+      let ttlMs = null;
+      if (p.ttlMs !== undefined && p.ttlMs !== null) {
+        if (!isInteger(p.ttlMs) || p.ttlMs <= 0 || p.ttlMs > L.storageMaxTtlMs) {
+          throw new E('kino.storage.set: ttlMs debe ser un entero mayor que 0 y de hasta ' + L.storageMaxTtlMs + ' ms (30 días)');
+        }
+        ttlMs = p.ttlMs;
+      }
+      n.storageSet(key, value, ttlMs);
     }),
     remove: freeze(function remove(k) { const key = toStr(k); if (key.length <= L.storageMaxBytes) n.storageRemove(key); }),
     keys: freeze(function keys() { return parse(n.storageKeys()); }),

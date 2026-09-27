@@ -88,7 +88,7 @@ class DefaultPluginHost(
 
     override fun select(html: String, css: String): String = PluginHtml.selectJson(html, css)
     override fun storageGet(key: String): String? = storage.get(key)
-    override fun storageSet(key: String, value: String) = storage.set(key, value)
+    override fun storageSet(key: String, value: String, ttlMs: Long?) = storage.set(key, value, ttlMs)
     override fun storageRemove(key: String) = storage.remove(key)
     override fun storageKeys(): String = JSONArray(storage.keys()).toString()
     override fun log(level: String, message: String) = logger("[$pluginId] $level: ${message.take(2000)}")

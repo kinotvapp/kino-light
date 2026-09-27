@@ -163,6 +163,44 @@ test("config, storage keys, typed errors and sleep", async () => {
   await assert.rejects(kino.sleep(6000), (err) => err.code === "invalid_request");
 });
 
+test("kino.storage entries with a ttlMs expire, are purged, and old data keeps working", () => {
+  const dir = mkdtempSync(join(tmpdir(), "kino-storage-"));
+  const storageFile = join(dir, "storage.json");
+  try {
+    // Data written before ttlMs existed: a bare string per key, no wrapper at all.
+    writeFileSync(storageFile, JSON.stringify({ legacy: "still here" }));
+    const m = JSON.parse(manifest());
+    const opened = () => createKino(m, { storageFile }).kino;
+
+    let kino = opened();
+    assert.equal(kino.storage.get("legacy"), "still here");
+    kino.storage.set("temp", "v", { ttlMs: 1000 });
+    assert.equal(kino.storage.get("temp"), "v");
+    assert.deepEqual(kino.storage.keys().sort(), ["legacy", "temp"]);
+    kino.storage.set("permanent", "p"); // no options: unaffected, exactly as before.
+
+    // Move "temp" into the past on disk instead of waiting: a fresh instance now sees it expired.
+    const onDisk = JSON.parse(readFileSync(storageFile, "utf8"));
+    onDisk.temp = { v: "v", e: Date.now() - 1 };
+    writeFileSync(storageFile, JSON.stringify(onDisk));
+
+    kino = opened();
+    assert.equal(kino.storage.get("temp"), null);
+    assert.deepEqual(kino.storage.keys().sort(), ["legacy", "permanent"]);
+    // The read purged it: the file no longer carries the expired entry.
+    assert.equal(JSON.parse(readFileSync(storageFile, "utf8")).temp, undefined);
+
+    for (const ttlMs of [0, -1, 1.5, NaN, Infinity, contract.storage.maxTtlMs + 1]) {
+      assert.throws(() => kino.storage.set("bad", "v", { ttlMs }), /ttlMs/, `ttlMs ${ttlMs} must be refused`);
+    }
+    assert.equal(kino.storage.get("bad"), null);
+    kino.storage.set("ok", "v", { ttlMs: contract.storage.maxTtlMs }); // the cap itself is accepted
+    assert.equal(kino.storage.get("ok"), "v");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // Same as the app: a url setting's manifest default is never a server the plugin may reach, even
 // when a manifest skips validation and hands one to the shim directly.
 test("a url setting's manifest default is ignored: only a typed server counts", async () => {
@@ -367,6 +405,7 @@ test("kino.d.ts's documented numbers match contract.json", () => {
     `at most ${c.errors.maxMessageChars} characters`,
     `0..${c.sleep.maxMs} ms`,
     `${c.storage.maxTotalBytes / 1024} KB in total`,
+    `at most ${c.storage.maxTtlMs.toLocaleString("en-US")} ms (30 days)`,
     `Data at most ${kb(c.crypto.maxDataBytes)}`,
     `iterations at most ${c.crypto.pbkdf2MaxIterations}, keyLength at most ${c.crypto.pbkdf2MaxKeyBytes} bytes`,
     `1..${c.crypto.randomMaxBytes} bytes`,
