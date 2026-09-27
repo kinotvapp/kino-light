@@ -590,6 +590,7 @@ private fun InstalledTab(
     if (dialogPlugin != null) {
         TvInstalledActionsDialog(
             plugin = dialogPlugin,
+            art = artForInstalled(art, dialogPlugin.record.address),
             vm = vm,
             onDismiss = {
                 returnFocusTo = actionsPluginId

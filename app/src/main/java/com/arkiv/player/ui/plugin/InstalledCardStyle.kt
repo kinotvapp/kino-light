@@ -86,3 +86,20 @@ internal fun installedGridLinesWithMessage(count: Int, messageIndex: Int?, colum
     val messageLine = messageIndex / columns
     return (0 until count).map { it / columns == messageLine }
 }
+
+/**
+ * How many lines a card's message reserves, as BOTH `minLines` and `maxLines` -- on the card that has one
+ * and on the blank placeholder its line's neighbours show instead ([installedGridLinesWithMessage]). Fixed,
+ * not however many lines the message's own text happens to need: a `maxLines`-only cap still lets a
+ * one-line message (or a blank placeholder) render at one line's height, which is exactly what made a
+ * one-line message's card taller than its line's neighbour before this was pinned.
+ */
+internal fun installedMessageLines(): Int = 2
+
+/**
+ * How many lines the hosts line ("Se conectará a: …") reserves, as BOTH `minLines` and `maxLines`, on every
+ * card: unlike the message it is never absent (every installed plugin has hosts), so it is not reserved per
+ * grid line -- every card always uses this many lines for it, so a plugin with more hosts than its neighbour
+ * never makes its own card, or the line it shares, taller.
+ */
+internal fun installedHostsLines(): Int = 2

@@ -100,14 +100,21 @@ internal fun cardDescriptionLines(): Int = 2
 internal fun cardStatusLines(): Int = 1
 
 /**
- * The status as a card writes it, on one line of a half-width card: the two long statuses get a short wording
- * of their own ("Archivos dañados, reinstálalo" is "Dañado", "No responde — actívalo para volver a intentar" is
- * "No responde"; the card's button already says what to do). Every other status, including one added later,
- * reads as [pluginStatusText] says, which is also what the installed list and Ajustes ▸ Plugins keep using.
+ * The status as a card writes it, on one line of a half-width card: the three long statuses get a short
+ * wording of their own ("Archivos dañados, reinstálalo" is "Dañado", "No responde — actívalo para volver a
+ * intentar" is "No responde", "Actualización disponible — requiere tu aprobación" is "Actualización
+ * pendiente"; the card's own action, or its "Gestionar"/actions dialog, already says what to do). Every other
+ * status, including one added later, reads as [pluginStatusText] says, which is also what the installed list
+ * and Ajustes ▸ Plugins keep using.
+ *
+ * Every [PluginStatus] can reach a card now: the catalog's own cards only show one for a plugin whose action
+ * isn't "Instalado" ([cardStatus]), but an installed plugin's own card (the Instalados tab) shows its status
+ * whatever it is, [PluginStatus.ACTIVE] ("Activo") included.
  */
 internal fun cardStatusLabel(status: PluginStatus): String = when (status) {
     PluginStatus.DAMAGED -> "Dañado"
     PluginStatus.UNRESPONSIVE -> "No responde"
+    PluginStatus.UPDATE_PENDING -> "Actualización pendiente"
     else -> pluginStatusText(status)
 }
 

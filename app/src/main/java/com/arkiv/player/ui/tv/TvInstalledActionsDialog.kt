@@ -16,28 +16,36 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.arkiv.player.data.plugin.InstalledPlugin
 import com.arkiv.player.data.plugin.PluginStatus
+import com.arkiv.player.data.plugin.catalog.CatalogArt
 import com.arkiv.player.ui.plugin.FocusWhenReady
+import com.arkiv.player.ui.plugin.InstalledCardModel
 import com.arkiv.player.ui.plugin.PluginsViewModel
+import com.arkiv.player.ui.plugin.installedCardModel
+import com.arkiv.player.ui.plugin.pluginStatusText
 import com.arkiv.player.ui.theme.ArkivSurface
+import com.arkiv.player.ui.theme.ArkivTextSecondary
 
 /**
  * The TV's actions dialog for one installed plugin: OK on its card ([TvInstalledPluginCard]) opens this
- * instead of walking four rows, as the deleted `TvInstalledPluginRows` used to. Same content, same
- * [PluginsViewModel] calls, same order the old rows picked their first focusable action in (the switch's own
- * action first, else Configurar, else "Buscar actualización", which is always there): "Activar {name}" or "Desactivar {name}"
- * (absent for [PluginStatus.DAMAGED], which cannot be toggled), "Configurar {name}" (only with settings),
- * "Buscar actualización de {name}" (or "Revisar actualización de {name}" once one is pending consent),
- * "Desinstalar {name}" and "Cerrar". Every action closes the dialog after it runs, so whatever it opens (the
- * consent sheet, "¿Desinstalar…?", Configurar) shows alone, not stacked under this one; [onDismiss] is also
- * Back and "Cerrar" -- the caller sends focus back to the card that opened it.
+ * instead of walking four rows, as the deleted `TvInstalledPluginRows` used to. Its header restores what
+ * that row's own heading always showed inline -- the name, version and full status sentence, then the
+ * complete host list, wrapping freely (the card's own lines are capped and may cut either) -- since the
+ * dialog covers the card while it is up. Same content otherwise, same [PluginsViewModel] calls, same order
+ * the old rows picked their first focusable action in (the switch's own action first, else Configurar, else
+ * "Buscar actualización", which is always there): "Activar {name}" or "Desactivar {name}" (absent for a
+ * damaged plugin, which cannot be toggled -- [InstalledCardModel.switchEnabled]), "Configurar {name}" (only
+ * with settings -- [InstalledCardModel.hasSettings]), "Buscar actualización de {name}" (or "Revisar
+ * actualización de {name}" once one is pending consent), "Desinstalar {name}" and "Cerrar". Every action
+ * closes the dialog after it runs, so whatever it opens (the consent sheet, "¿Desinstalar…?", Configurar)
+ * shows alone, not stacked under this one; [onDismiss] is also Back and "Cerrar" -- the caller sends focus
+ * back to the card that opened it.
  */
 @Composable
-internal fun TvInstalledActionsDialog(plugin: InstalledPlugin, vm: PluginsViewModel, onDismiss: () -> Unit) {
+internal fun TvInstalledActionsDialog(plugin: InstalledPlugin, art: CatalogArt?, vm: PluginsViewModel, onDismiss: () -> Unit) {
     val firstFocus = remember { FocusRequester() }
     FocusWhenReady(firstFocus)
     // TvCompactAction, not TvActionOption: the latter is sized to 60% of a wide Ajustes pane, which inside
@@ -45,8 +53,11 @@ internal fun TvInstalledActionsDialog(plugin: InstalledPlugin, vm: PluginsViewMo
     // takes exactly the width it's given (fillMaxWidth here) and keeps its label to one line.
     fun firstModifier() = Modifier.focusRequester(firstFocus).fillMaxWidth()
     val name = plugin.manifest.name
-    val hasSwitch = plugin.status != PluginStatus.DAMAGED
-    val hasSettings = plugin.manifest.settings.isNotEmpty()
+    // The same model the card built (art only feeds the tile/icon, which this dialog never draws, so it
+    // changes nothing here): one rule for "can the switch move" / "does Configurar belong", not a second copy.
+    val model = installedCardModel(plugin, art)
+    val hasSwitch = model.switchEnabled
+    val hasSettings = model.hasSettings
 
     Dialog(onDismissRequest = onDismiss) {
         Column(
@@ -57,7 +68,14 @@ internal fun TvInstalledActionsDialog(plugin: InstalledPlugin, vm: PluginsViewMo
                 .padding(horizontal = 24.dp, vertical = 24.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text(name, style = MaterialTheme.typography.headlineSmall, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            // The old row's own heading, restored: name, version and the full status sentence together.
+            Text("${model.nameLine} — ${pluginStatusText(plugin.status)}", style = MaterialTheme.typography.headlineSmall, color = Color.White)
+            // The full host list, wrapping freely: the card's own line is capped and may cut it.
+            Text(
+                "Se conectará a: ${plugin.hosts.labels.joinToString(", ")}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = ArkivTextSecondary,
+            )
             if (hasSwitch) {
                 TvCompactAction(
                     label = if (plugin.isUsable) "Desactivar $name" else "Activar $name",

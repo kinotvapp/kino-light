@@ -103,23 +103,28 @@ internal fun InstalledPluginCard(
                 "Se conectará a: ${plugin.hosts.labels.joinToString(", ")}",
                 style = MaterialTheme.typography.bodySmall,
                 color = ArkivTextSecondary,
-                maxLines = 1,
+                minLines = installedHostsLines(),
+                maxLines = installedHostsLines(),
                 overflow = TextOverflow.Ellipsis,
             )
             if (message != null) {
+                // minLines as well as maxLines: a one-line message must reserve the same height as a
+                // two-line one, or its line's neighbour (the blank placeholder below) ends up taller.
                 Text(
                     message,
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.White,
-                    maxLines = 2,
+                    minLines = installedMessageLines(),
+                    maxLines = installedMessageLines(),
                     overflow = TextOverflow.Ellipsis,
                 )
             } else if (reserveMessageLines) {
-                // Blank space only: a screen reader must not stop on it. As tall as two lines of the message.
+                // Blank space only: a screen reader must not stop on it. As tall as installedMessageLines().
                 Text(
                     " ",
                     style = MaterialTheme.typography.bodySmall,
-                    maxLines = 2,
+                    minLines = installedMessageLines(),
+                    maxLines = installedMessageLines(),
                     modifier = Modifier.clearAndSetSemantics { },
                 )
             }
@@ -153,11 +158,12 @@ internal fun InstalledPluginCard(
 }
 
 /**
- * "Gestionar"'s sheet: Configurar (only when [InstalledCardModel.hasSettings]), Buscar actualización (its
- * label switches to "Revisar actualización" the same way the row's did, once an update is pending consent)
- * and Desinstalar, each calling the same [PluginsViewModel] function the row's own button did and then
- * closing the sheet, so whatever dialog that call opens (the consent sheet, "¿Desinstalar…?", Configurar)
- * shows over the tab, not stacked under this one.
+ * "Gestionar"'s sheet: the plugin's full host list (the card's own line is capped to
+ * [installedHostsLines] and may cut it), then Configurar (only when [InstalledCardModel.hasSettings]), Buscar
+ * actualización (its label switches to "Revisar actualización" the same way the row's did, once an update is
+ * pending consent) and Desinstalar, each calling the same [PluginsViewModel] function the row's own button
+ * did and then closing the sheet, so whatever dialog that call opens (the consent sheet, "¿Desinstalar…?",
+ * Configurar) shows over the tab, not stacked under this one.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -176,7 +182,14 @@ private fun InstalledActionsSheet(
                 color = Color.White,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 12.dp),
+            )
+            // The full list, wrapping freely: the card's own line is capped and may cut it.
+            Text(
+                "Se conectará a: ${plugin.hosts.labels.joinToString(", ")}",
+                style = MaterialTheme.typography.bodySmall,
+                color = ArkivTextSecondary,
+                modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 12.dp),
             )
             if (model.hasSettings) {
                 SheetAction("Configurar", enabled = !busy) { vm.openSettings(plugin.id); onDismiss() }

@@ -115,4 +115,19 @@ class InstalledCardStyleTest {
     @Test fun `three columns group the same way`() {
         assertEquals(listOf(true, true, true, false, false), installedGridLinesWithMessage(5, messageIndex = 1, columns = 3))
     }
+
+    // Fixed, not "however many lines the actual text takes": a message that fits on one line must reserve the
+    // very same height as one that wraps to two, or its line's neighbour (reserving blank space) ends up
+    // shorter than the card that has a one-line message. Both the real message and the blank placeholder use
+    // this as BOTH minLines and maxLines, so every card of a line -- the one with the message included -- is
+    // pinned to the same height regardless of how long its own text happens to be.
+    @Test fun `a card's message always reserves two lines`() {
+        assertEquals(2, installedMessageLines())
+    }
+
+    // The hosts line is not optional (every installed plugin has one), so unlike the message it is not
+    // reserved per grid line: every card always uses this many lines for it, whether one host or several.
+    @Test fun `the hosts line always reserves two lines`() {
+        assertEquals(2, installedHostsLines())
+    }
 }

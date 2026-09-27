@@ -104,11 +104,14 @@ class CatalogCardStyleTest {
         assertEquals(1, cardStatusLines())
     }
 
-    // The statuses a card can show are those of an installed plugin whose button is not "Instalado". The two long
-    // ones get a short wording of their own so they fit the one line; the rest read as in the installed list.
-    @Test fun `the card shows a short status for the two long ones`() {
+    // The statuses a card can show are those of an installed plugin whose button is not "Instalado" (the
+    // catalog's own cards), plus every status an installed plugin's own card shows (the Instalados tab: any
+    // status at all, ACTIVE included). The three long ones get a short wording of their own so they fit the
+    // one line; the rest read as in the installed list.
+    @Test fun `the card shows a short status for the three long ones`() {
         assertEquals("Dañado", cardStatusLabel(PluginStatus.DAMAGED))
         assertEquals("No responde", cardStatusLabel(PluginStatus.UNRESPONSIVE))
+        assertEquals("Actualización pendiente", cardStatusLabel(PluginStatus.UPDATE_PENDING))
     }
 
     @Test fun `the card keeps the installed list's wording for the short statuses`() {
@@ -117,13 +120,13 @@ class CatalogCardStyleTest {
     }
 
     @Test fun `a status with no card wording of its own falls back to the installed list's text`() {
-        // ACTIVE and UPDATE_PENDING never reach a card today, but a new or reused status must not go without words.
+        // ACTIVE's installed-list wording ("Activo") is already short: it never needed a card word of its
+        // own, on the catalog's cards or on an installed plugin's own (an active plugin's card shows it too).
         assertEquals(pluginStatusText(PluginStatus.ACTIVE), cardStatusLabel(PluginStatus.ACTIVE))
-        assertEquals(pluginStatusText(PluginStatus.UPDATE_PENDING), cardStatusLabel(PluginStatus.UPDATE_PENDING))
     }
 
-    @Test fun `every status has a card label, and only the two long ones differ from the installed list`() {
-        val shortened = setOf(PluginStatus.DAMAGED, PluginStatus.UNRESPONSIVE)
+    @Test fun `every status has a card label, and only the three long ones differ from the installed list`() {
+        val shortened = setOf(PluginStatus.DAMAGED, PluginStatus.UNRESPONSIVE, PluginStatus.UPDATE_PENDING)
         for (status in PluginStatus.values()) {
             val label = cardStatusLabel(status)
             assertTrue("$status has no label", label.isNotBlank())
@@ -135,9 +138,11 @@ class CatalogCardStyleTest {
         }
     }
 
-    @Test fun `no status a card can show is longer than the longest short one`() {
-        val onACard = listOf(PluginStatus.DISABLED, PluginStatus.NEEDS_SETUP, PluginStatus.DAMAGED, PluginStatus.UNRESPONSIVE)
-        assertTrue(onACard.all { cardStatusLabel(it).length <= "Falta configurar".length })
+    // Every status can reach a card now: the catalog's own cards for four of them, and an installed plugin's
+    // own card (the Instalados tab) for all six, ACTIVE included. "Actualización pendiente" (23 chars) is the
+    // longest, so it is the ceiling every status's label must fit under.
+    @Test fun `no status a card can show is longer than 23 characters`() {
+        assertTrue(PluginStatus.values().all { cardStatusLabel(it).length <= 23 })
     }
 
     @Test fun `a card shows the first two tags in the catalog's order`() {

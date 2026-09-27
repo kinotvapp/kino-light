@@ -26,6 +26,8 @@ import com.arkiv.player.ui.LocalReducedEffects
 import com.arkiv.player.ui.cardFocusScale
 import com.arkiv.player.ui.plugin.InstalledCardModel
 import com.arkiv.player.ui.plugin.installedCardModel
+import com.arkiv.player.ui.plugin.installedHostsLines
+import com.arkiv.player.ui.plugin.installedMessageLines
 import com.arkiv.player.ui.theme.ArkivRed
 import com.arkiv.player.ui.theme.ArkivSurfaceHigh
 import com.arkiv.player.ui.theme.ArkivTextSecondary
@@ -87,13 +89,30 @@ private fun CardTexts(plugin: InstalledPlugin, model: InstalledCardModel, messag
             "Se conectará a: ${plugin.hosts.labels.joinToString(", ")}",
             style = MaterialTheme.typography.bodySmall,
             color = ArkivTextSecondary,
-            maxLines = 1,
+            minLines = installedHostsLines(),
+            maxLines = installedHostsLines(),
             overflow = TextOverflow.Ellipsis,
         )
         if (message != null) {
-            Text(message, style = MaterialTheme.typography.bodySmall, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            // minLines as well as maxLines: a one-line message must reserve the same height as a two-line
+            // one, or its line's neighbour (the blank placeholder below) ends up taller.
+            Text(
+                message,
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.White,
+                minLines = installedMessageLines(),
+                maxLines = installedMessageLines(),
+                overflow = TextOverflow.Ellipsis,
+            )
         } else if (reserveMessageLines) {
-            Text(" ", style = MaterialTheme.typography.bodySmall, maxLines = 2)
+            // Blank space only: a screen reader must not stop on it, as the phone's own placeholder.
+            Text(
+                " ",
+                style = MaterialTheme.typography.bodySmall,
+                minLines = installedMessageLines(),
+                maxLines = installedMessageLines(),
+                modifier = Modifier.clearAndSetSemantics { },
+            )
         }
     }
 }
