@@ -47,7 +47,13 @@ class PluginDownloadStrategyTest {
         val resolved = mutableListOf<String>()
         override fun recognizes(ref: String) = true
         override fun search(ctx: GatewaySearchQuery): Flow<SearchEvent> = emptyFlow()
-        override suspend fun resolve(ref: String): GatewayPlayable { resolved += ref; return playable() }
+        /** Whether each resolve ran as a background call (its timeouts never switch the plugin off). */
+        val background = mutableListOf<Boolean>()
+        override suspend fun resolve(ref: String): GatewayPlayable {
+            resolved += ref
+            background += kotlin.coroutines.coroutineContext[com.arkiv.player.data.plugin.BackgroundPluginCall] != null
+            return playable()
+        }
         override suspend fun episodesWithSeries(ref: String): Pair<List<GatewayEpisode>, GatewaySeries?> = emptyList<GatewayEpisode>() to null
     }
 
@@ -84,6 +90,15 @@ class PluginDownloadStrategyTest {
         assertEquals("abc", request.getHeader("X-Token"))
         // The client is the plugin's own (host-gated in the app), asked for by plugin id.
         assertEquals(listOf("demo"), downloaders)
+    }
+
+    @Test fun `the download's resolve is a background call, so its timeouts never count as No responde`() = runBlocking {
+        server.enqueue(MockResponse().setBody("VIDEO"))
+        val source = FakeSource { playable("/v.mp4") }
+
+        strategy(source).run()
+
+        assertEquals(listOf(true), source.background)
     }
 
     /** A live channel's ref refuses even when its stream is a plain file: it has no end to save. */

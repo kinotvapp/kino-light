@@ -267,7 +267,9 @@ What downloads, and what does not:
   those titles play but do not download.
 - The queue downloads one title at a time, so a `ref` may wait a while before `resolve` is called:
   keep something stable in it and look the fresh link up inside `resolve` (as recommended above). A
-  retry resumes the partial file even when your URL changed.
+  retry resumes the partial file even when your URL changed. A `resolve` the queue makes that times
+  out fails that download only: it does not count toward the three timeouts in a row that switch
+  your plugin off ("No responde"), which only calls made for the person on screen do.
 - A plugin that is disabled, waiting for its settings, or uninstalled downloads nothing: its titles
   show no download button, and a title already queued fails with "Este plugin ya no puede descargar
   videos". Files already downloaded keep playing offline and stay removable in Descargas, whatever

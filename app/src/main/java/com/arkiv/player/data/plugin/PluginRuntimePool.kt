@@ -18,6 +18,16 @@ fun interface PluginCaller {
 }
 
 /**
+ * Marks a plugin call made for a background job -- the download queue resolving a title, possibly
+ * dozens in a row overnight -- rather than for the person on screen. Its timeouts still discard the
+ * runtime but never count toward [PluginRuntimePool]'s "No responde": a slow server must not switch
+ * the plugin off for search and Home because of a queue. Set with `withContext(BackgroundPluginCall)`.
+ */
+object BackgroundPluginCall : kotlin.coroutines.CoroutineContext.Element, kotlin.coroutines.CoroutineContext.Key<BackgroundPluginCall> {
+    override val key: kotlin.coroutines.CoroutineContext.Key<*> get() = this
+}
+
+/**
  * One lazily-opened runtime per plugin, calls serialized per plugin, closed after [idleMs] without
  * calls. A timeout discards the runtime (the next call opens a fresh one); [maxConsecutiveTimeouts]
  * in a row call [onUnresponsive] — the registry then disables the plugin as "no responde".
@@ -81,6 +91,7 @@ class PluginRuntimePool(
         // The caller picked this plugin before the recovery switched it off: don't run it a third time.
         if (switchedOff.remove(pluginId)) throw PluginScriptException("El plugin cerró Kino dos veces seguidas y se desactivó")
         val slot = slots.getOrPut(pluginId) { Slot() }
+        val background = kotlin.coroutines.coroutineContext[BackgroundPluginCall] != null
         return slot.mutex.withLock {
             slot.idleJob?.cancel()
             var completedNormally = false
@@ -94,7 +105,7 @@ class PluginRuntimePool(
                 }
             } catch (e: PluginTimeoutException) {
                 slot.runtime = null
-                if (++slot.timeouts >= maxConsecutiveTimeouts) {
+                if (!background && ++slot.timeouts >= maxConsecutiveTimeouts) {
                     slot.timeouts = 0
                     onUnresponsive(pluginId)
                 }

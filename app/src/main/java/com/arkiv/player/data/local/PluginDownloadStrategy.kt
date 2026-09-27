@@ -2,10 +2,12 @@ package com.arkiv.player.data.local
 
 import com.arkiv.player.data.gateway.ContentSource
 import com.arkiv.player.data.gateway.GatewayPlayable
+import com.arkiv.player.data.plugin.BackgroundPluginCall
 import com.arkiv.player.data.plugin.PluginIds
 import com.arkiv.player.data.plugin.PluginRef
 import com.arkiv.player.playback.Container
 import com.arkiv.player.playback.VideoContainer
+import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
@@ -47,7 +49,9 @@ class PluginDownloadStrategy(
         if (!offersDownloads(pluginId)) return DownloadOutcome.Failed(NOT_OFFERED)
 
         val ref = refForEpisode(episodeId) ?: return DownloadOutcome.Failed("No se encontró la fuente del video")
-        val playable = runCatching { source.resolve(ref) }.getOrElse {
+        // A background call: a queue against a slow server must never switch the plugin off
+        // ("No responde") for the person's own search and Home.
+        val playable = runCatching { withContext(BackgroundPluginCall) { source.resolve(ref) } }.getOrElse {
             return DownloadOutcome.Failed(
                 it.message ?: "No se pudo resolver el video",
                 transient = DownloadRetryPolicy.isTransient(it),

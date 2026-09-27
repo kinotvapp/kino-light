@@ -65,6 +65,26 @@ class PluginRuntimePoolTest {
         assertEquals(emptyList<String>(), flagged)
     }
 
+    /** A 30-chapter queue against a slow server must not switch the plugin off for search and Home. */
+    @Test fun `timeouts of background calls never mark the plugin unresponsive`() = runTest {
+        var opened = 0
+        val flagged = mutableListOf<String>()
+        val pool = PluginRuntimePool(
+            open = { opened++; FakeRuntime { throw PluginTimeoutException(it, 10) } },
+            onUnresponsive = { flagged += it },
+            scope = backgroundScope,
+        )
+        kotlinx.coroutines.withContext(BackgroundPluginCall) {
+            repeat(5) { assertTrue(runCatching { pool.call("p", "resolve", "\"r\"", 10) }.exceptionOrNull() is PluginTimeoutException) }
+        }
+        assertEquals(emptyList<String>(), flagged)
+        // Still discarded and reopened each time, like any timeout.
+        assertEquals(5, opened)
+        // And they neither count nor hide the person's own: three on screen still switch it off.
+        repeat(3) { runCatching { pool.call("p", "search", "{}", 10) } }
+        assertEquals(listOf("p"), flagged)
+    }
+
     @Test fun `the runtime closes after five idle minutes`() = runTest {
         val rt = FakeRuntime { "ok" }
         val pool = PluginRuntimePool(open = { rt }, onUnresponsive = {}, scope = backgroundScope)
