@@ -467,42 +467,48 @@ internal fun StreamExoPlayer(
 
             override fun onPlayerError(error: PlaybackException) {
                 val msg = error.message ?: "Error de reproducción (${error.errorCode})"
-                // A live channel's playlist-level error (behind the live window, reset, stuck) is
-                // never an audio track's fault: it is fixed in place before anything is blamed.
                 val liveKind = if (onLiveError != null) liveErrorKind(error) else null
-                if (liveKind != null && liveKind.recoverableInPlace) { recoverLive(liveKind, msg, error); return }
-                // A DRM session's failure (license refused or unreachable, no Widevine or no L3 on the
-                // device, key expired) is never an audio track's fault, so it is never retried without
-                // them: for a VOD it is final and said in Spanish. A live channel's goes through its
-                // reopen budget below like any other cut (a fresh resolve may bring a fresh license).
-                if (onLiveError == null && PluginWidevine.isDrmError(error.errorCode)) {
-                    val tag = PluginWidevine.crashTag(crashTag, error.errorCode, prepared.drmSoftwareLevelRefused.get())
-                    Log.e(TAG, "onPlayerError DRM errorCode=${error.errorCode} tag=$tag msg=$msg", error)
-                    com.arkiv.player.crash.Crash.report(error, tag)
-                    onError(PluginWidevine.ERROR_MESSAGE)
-                    return
+                val route = playerErrorRoute(
+                    live = liveKind != null,
+                    liveInPlace = liveKind?.recoverableInPlace == true,
+                    drmError = PluginWidevine.isDrmError(error.errorCode),
+                    drmSoftwareRefused = prepared.drmSoftwareLevelRefused.get(),
+                    audioTracksActive = activeAudioTracks.isNotEmpty(),
+                )
+                when (route) {
+                    // A live channel's playlist-level error (behind the live window, reset, stuck) is
+                    // never an audio track's fault: it is fixed in place before anything is blamed.
+                    PlayerErrorRoute.LIVE_IN_PLACE, PlayerErrorRoute.LIVE_CUT -> recoverLive(liveKind!!, msg, error)
+                    // A DRM session's failure (license refused or unreachable, no Widevine or no L3 on
+                    // the device, key expired) is never an audio track's fault, so it is never retried
+                    // without them: final, and said in Spanish. See [playerErrorRoute] for live.
+                    PlayerErrorRoute.DRM_FINAL -> {
+                        val tag = PluginWidevine.crashTag(crashTag, error.errorCode, prepared.drmSoftwareLevelRefused.get())
+                        Log.e(TAG, "onPlayerError DRM errorCode=${error.errorCode} tag=$tag msg=$msg", error)
+                        com.arkiv.player.crash.Crash.report(error, tag)
+                        onError(PluginWidevine.ERROR_MESSAGE)
+                    }
+                    // A MergingMediaSource is all-or-nothing (MergingMediaPeriod.maybeThrowPrepareError
+                    // propagates the first child's failure and never prepares the rest), so while any of
+                    // the stream's own audio tracks are still merged in, ANY error here is presumed
+                    // attributable to one of them first: a plugin's audio URL must never take a perfectly
+                    // fine video down. Only once there is nothing left to blame (activeAudioTracks empty,
+                    // the exact same state a stream with none ever had) does the error reach the person.
+                    PlayerErrorRoute.DROP_AUDIO -> {
+                        val failureText = playbackFailureText(error)
+                        val next = fallbackAudioTracks(activeAudioTracks, failureText)
+                        Log.w(TAG, "audio track(s) unusable, retrying without them · ${activeAudioTracks.size} -> ${next.size} · $failureText")
+                        activeAudioTracks = next
+                        applyAudioTracks(prepared, next, exoPlayer.currentPosition.coerceAtLeast(0L), playWhenReady = exoPlayer.playWhenReady)
+                    }
+                    PlayerErrorRoute.FINAL -> {
+                        Log.e(TAG, "onPlayerError errorCode=${error.errorCode} msg=$msg", error)
+                        // Also to Sentry: VOD playback failures (codec init, source, decoder) used to vanish
+                        // into Logcat -- this is proactive signal on which content/devices can't play.
+                        com.arkiv.player.crash.Crash.report(error, "$crashTag-playback-${androidx.media3.common.PlaybackException.getErrorCodeName(error.errorCode)}")
+                        onError(msg)
+                    }
                 }
-                // A MergingMediaSource is all-or-nothing (MergingMediaPeriod.maybeThrowPrepareError
-                // propagates the first child's failure and never prepares the rest), so while any of
-                // the stream's own audio tracks are still merged in, ANY error here is presumed
-                // attributable to one of them first: a plugin's audio URL must never take a perfectly
-                // fine video down. Only once there is nothing left to blame (activeAudioTracks empty,
-                // the exact same state a stream with none ever had) does the error reach the person.
-                if (activeAudioTracks.isNotEmpty()) {
-                    val failureText = playbackFailureText(error)
-                    val next = fallbackAudioTracks(activeAudioTracks, failureText)
-                    Log.w(TAG, "audio track(s) unusable, retrying without them · ${activeAudioTracks.size} -> ${next.size} · $failureText")
-                    activeAudioTracks = next
-                    applyAudioTracks(prepared, next, exoPlayer.currentPosition.coerceAtLeast(0L), playWhenReady = exoPlayer.playWhenReady)
-                    return
-                }
-                // Any other cut of a live channel: the reopen budget decides, never the dialog below.
-                if (liveKind != null) { recoverLive(liveKind, msg, error); return }
-                Log.e(TAG, "onPlayerError errorCode=${error.errorCode} msg=$msg", error)
-                // Also to Sentry: VOD playback failures (codec init, source, decoder) used to vanish
-                // into Logcat -- this is proactive signal on which content/devices can't play.
-                com.arkiv.player.crash.Crash.report(error, "$crashTag-playback-${androidx.media3.common.PlaybackException.getErrorCodeName(error.errorCode)}")
-                onError(msg)
             }
         }
         exoPlayer.addListener(listener)

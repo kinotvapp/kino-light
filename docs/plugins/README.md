@@ -1313,7 +1313,8 @@ What Kino does with it, and what it does not:
   file fails the whole playback with the message below). `subtitles` and `headers` work as always.
 - When the license is refused, unreachable or expired, or the device has no Widevine (or no L3), the
   person reads "No se pudo abrir este video protegido" (after one more `resolve` if `expiresInSeconds`
-  had passed, like any stream). A protected title is **never downloadable** ("Este video no se puede
+  had passed, like any stream). A protected live channel reads the same at once on a device with no
+  L3; its other license failures are cuts, re-resolved like any other (see Live channels). A protected title is **never downloadable** ("Este video no se puede
   descargar"), even with `download` declared, and cannot be sent to a Chromecast (no plugin title can).
 - The consent sheet adds "Reproduce video protegido (DRM)" when `drm` is declared, and an update that
   newly declares it waits for the person's approval ([section 8](#8-publishing-your-plugin)).
