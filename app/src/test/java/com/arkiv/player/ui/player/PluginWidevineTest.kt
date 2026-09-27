@@ -17,7 +17,7 @@ import org.junit.Test
  * A plugin's Widevine stream on its way to the player: what a resolved playable becomes, what the
  * media item's DRM block carries, and which player errors are the DRM session's. (The license
  * request itself goes through the plugin's host-gated client: `PluginStreamHttpTest` covers that
- * gate; the wiring is `StreamExoPlayer`'s, verified on a device.)
+ * gate, and `PluginLicenseHttpTest` what the license request carries on the wire.)
  */
 class PluginWidevineTest {
 

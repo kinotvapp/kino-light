@@ -168,15 +168,18 @@ internal fun StreamExoPlayer(
     /**
      * A plugin's Widevine license (apiVersion 2, the `drm` capability), or null for a clear stream
      * -- Magis, and every stream before the capability existed. Goes on the media item as its
-     * [MediaItem.DrmConfiguration], and the license request travels through [http] like every other
-     * request of the stream (see [PluginWidevine]). Null leaves the player byte-for-byte as it was.
+     * [MediaItem.DrmConfiguration], and the license request goes through [http]'s host gate like
+     * every other request of the stream, but with only its `licenseHeaders` -- never
+     * [requestHeaders] (see [pluginHttpFactories], [PluginWidevine]). Null leaves the player
+     * byte-for-byte as it was.
      */
     drm: ResolvedDrm? = null,
     /**
      * Headers for every request of this stream (plugins). Empty for Magis, whose headers travel
      * inside the local proxy's URL. Set on the data source, not through `archiveCacheProxy`: that
      * proxy serves ONE URL's bytes, and an HLS/DASH manifest's relative segments would resolve
-     * against 127.0.0.1 and 404. Also reaches this stream's subtitle requests.
+     * against 127.0.0.1 and 404. Also reaches this stream's subtitle requests, but never a
+     * plugin's Widevine license request (see [pluginHttpFactories]).
      */
     requestHeaders: Map<String, String> = emptyMap(),
     /** The data source: [StreamHttp.Default] for Magis, host-gated OkHttp for plugins. */
@@ -217,6 +220,9 @@ internal fun StreamExoPlayer(
 
     val prepared = remember(mediaUrl, subtitleConfigs, requestHeaders, mimeType, http, audioTracks, drm) {
         Log.i(TAG, "Creating ExoPlayer · url=${mediaUrl.take(80)} startMs=$startPositionMs subs=${subtitleConfigs.size} audioTracks=${audioTracks.size} drm=${drm != null}")
+        val pluginFactories: PluginHttpFactories? = (http as? StreamHttp.PluginGated)?.let {
+            pluginHttpFactories(graph.pluginStreamClient(it.hosts, it.xuper), requestHeaders, drm?.licenseHeaders.orEmpty())
+        }
         val httpFactory: DataSource.Factory = when (http) {
             StreamHttp.Default -> DefaultHttpDataSource.Factory()
                 .setUserAgent(requestHeaders.entries.firstOrNull { it.key.equals("User-Agent", true) }?.value ?: "okhttp/4.12.0")
@@ -225,9 +231,7 @@ internal fun StreamExoPlayer(
                 .setReadTimeoutMs(30_000)
             // Every request this stream makes — manifest, variants, segments, keys, subtitles and
             // each redirect hop — is gated to the approved hosts before it leaves the device.
-            is StreamHttp.PluginGated -> OkHttpDataSource.Factory(graph.pluginStreamClient(http.hosts, http.xuper))
-                .setUserAgent(requestHeaders.entries.firstOrNull { it.key.equals("User-Agent", true) }?.value ?: "okhttp/4.12.0")
-                .setDefaultRequestProperties(requestHeaders.filterKeys { !it.equals("User-Agent", true) })
+            is StreamHttp.PluginGated -> pluginFactories!!.stream
         }
 
         val mediaItem = MediaItem.Builder()
@@ -245,14 +249,15 @@ internal fun StreamExoPlayer(
             DefaultExtractorsFactory().setTsExtractorTimestampSearchBytes(STREAM_TS_SEARCH_BYTES),
         )
         // Only with a license to fetch: the factory's default provider would request it through its
-        // own plain DefaultHttpDataSource, outside the host gate. With [httpFactory] instead, the
-        // license request meets the same gate and carries the same headers as every segment. The
-        // provider serves the video item's DRM block only; the merged audio items ([clearAudioItem])
-        // have none and get no session.
+        // own plain DefaultHttpDataSource, outside the host gate. With [PluginHttpFactories.license]
+        // instead, the license request meets the same gate as every segment but carries only the
+        // `licenseHeaders`, never the Stream's `headers` (see [pluginHttpFactories]). The provider
+        // serves the video item's DRM block only; the merged audio items ([clearAudioItem]) have
+        // none and get no session.
         val drmSoftwareLevelRefused = java.util.concurrent.atomic.AtomicBoolean(false)
         if (drm != null) {
             mediaSourceFactory.setDrmSessionManagerProvider(
-                PluginWidevine.sessionManagerProvider(httpFactory) { drmSoftwareLevelRefused.set(true) },
+                PluginWidevine.sessionManagerProvider(pluginFactories?.license ?: httpFactory) { drmSoftwareLevelRefused.set(true) },
             )
         }
 
@@ -699,6 +704,39 @@ internal sealed interface StreamHttp {
      */
     data class PluginGated(val hosts: com.arkiv.player.data.plugin.EffectiveHosts, val xuper: Boolean = false) : StreamHttp
 }
+
+/**
+ * The data-source factories of a gated plugin stream, both over the SAME host-gated client (so a
+ * license request can no more reach an undeclared host, plain http or the home network than a
+ * segment can):
+ *  - [stream]: the manifest, segments, keys, side audio, subtitles and redirect hops, with the
+ *    Stream's `headers` on every request.
+ *  - [license]: the Widevine license (and provisioning) request only, bare: none of the Stream's
+ *    `headers` -- not its User-Agent, not a CDN `Cookie`/`Authorization`/`Referer`. The
+ *    `licenseHeaders` travel on the request itself (`HttpMediaDrmCallback` puts them there from the
+ *    media item's DRM block). This is what `docs/plugins/README.md` promises authors: `headers` are
+ *    not sent to the license server, and `licenseHeaders` are not sent to the CDN.
+ */
+internal class PluginHttpFactories(val stream: DataSource.Factory, val license: DataSource.Factory)
+
+/** [PluginHttpFactories] over [client], the plugin's host-gated OkHttp client. */
+@androidx.annotation.OptIn(UnstableApi::class)
+internal fun pluginHttpFactories(
+    client: okhttp3.Call.Factory,
+    requestHeaders: Map<String, String>,
+    licenseHeaders: Map<String, String>,
+): PluginHttpFactories {
+    val stream = OkHttpDataSource.Factory(client)
+        .setUserAgent(userAgentOf(requestHeaders))
+        .setDefaultRequestProperties(requestHeaders.filterKeys { !it.equals("User-Agent", true) })
+    // No default request properties: only what the request itself carries (licenseHeaders).
+    val license = OkHttpDataSource.Factory(client).setUserAgent(userAgentOf(licenseHeaders))
+    return PluginHttpFactories(stream, license)
+}
+
+/** The User-Agent a header set asks for, else the one a plugin stream has always sent. */
+private fun userAgentOf(headers: Map<String, String>): String =
+    headers.entries.firstOrNull { it.key.equals("User-Agent", true) }?.value ?: "okhttp/4.12.0"
 
 /** Only a PLUGIN stream is gated; an empty host list is still gated (it reaches nothing). */
 internal fun streamHttpFor(kind: SourceKind, pluginHosts: com.arkiv.player.data.plugin.EffectiveHosts, xuper: Boolean = false): StreamHttp =

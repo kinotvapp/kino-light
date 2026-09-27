@@ -78,9 +78,10 @@ internal object PluginWidevine {
      * The DRM sessions of every media source a plugin stream's factory builds: read from the item's
      * own [MediaItem.DrmConfiguration] -- none means clear ([DrmSessionManager.DRM_UNSUPPORTED]),
      * which is what the merged audio tracks and the subtitles get -- with the license fetched
-     * through [licenseHttp], the SAME host-gated OkHttp factory the manifest and segments use, so a
-     * license request can no more reach an undeclared host, plain http or the home network than a
-     * segment can. media3's own `DefaultDrmSessionManagerProvider` would open a plain, ungated
+     * through [licenseHttp]: for a plugin, `PluginHttpFactories.license`, a bare factory over the
+     * SAME host-gated OkHttp client the manifest and segments use, so a license request can no more
+     * reach an undeclared host, plain http or the home network than a segment can, yet carries only
+     * the item's `licenseHeaders` and none of the Stream's `headers`. media3's own `DefaultDrmSessionManagerProvider` would open a plain, ungated
      * `DefaultHttpDataSource` for it, and gives no way to ask for L3.
      *
      * [onSoftwareLevelRefused] fires (on the playback thread, at most once per prepare) when the
