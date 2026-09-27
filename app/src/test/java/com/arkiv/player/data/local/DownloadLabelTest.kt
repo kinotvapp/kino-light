@@ -40,6 +40,12 @@ class DownloadLabelTest {
     }
 
     @Test
+    fun `a refusal shows its reason, or the one sentence when the row has none`() {
+        assertEquals("Este video no se puede descargar", DownloadLabel.of(DownloadDisplayState.Refused("Este video no se puede descargar")))
+        assertEquals("Este video no se puede descargar", DownloadLabel.of(DownloadDisplayState.Refused(null)))
+    }
+
+    @Test
     fun `the heavy torrent explains what it is waiting for`() {
         assertEquals(
             "Pesa mucho: confírmala en Descargas",

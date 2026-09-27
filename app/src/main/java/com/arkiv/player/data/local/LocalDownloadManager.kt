@@ -100,7 +100,8 @@ class LocalDownloadManager(
         // Downloads never happen on a TV, whatever screen asked: see [DownloadAvailability].
         if (!DownloadAvailability.allowed(isTelevision())) return@withContext EnqueueOutcome.UNAVAILABLE_ON_TV
         val existing = downloadDao.get(episodeId)
-        if (existing != null && existing.state != LocalDownloadState.FAILED) {
+        // A failed or refused row starts over (see [DownloadQueuePolicy.canRequeue]); any other is kept.
+        if (existing != null && !DownloadQueuePolicy.canRequeue(existing.state)) {
             return@withContext if (existing.state == LocalDownloadState.COMPLETED) {
                 EnqueueOutcome.ALREADY_DOWNLOADED
             } else {

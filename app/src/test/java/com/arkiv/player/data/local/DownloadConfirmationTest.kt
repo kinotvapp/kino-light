@@ -42,6 +42,14 @@ class DownloadConfirmationTest {
     }
 
     @Test
+    fun `what was refused can only be taken off the list, which loses nothing`() {
+        assertEquals(
+            DownloadAction.REMOVE_FROM_QUEUE,
+            DownloadConfirmation.actionFor(DownloadDisplayState.Refused("Este video no se puede descargar")),
+        )
+    }
+
+    @Test
     fun `what nobody queued offers nothing`() {
         assertNull(DownloadConfirmation.actionFor(DownloadDisplayState.NotDownloaded))
         assertNull(DownloadConfirmation.actionFor(DownloadDisplayState.NeedsConfirmation))

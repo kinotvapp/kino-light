@@ -896,7 +896,7 @@ private fun EpisodeRow(
                         label,
                         style = MaterialTheme.typography.bodyMedium,
                         color = when (state) {
-                            is DownloadDisplayState.Failed, DownloadDisplayState.NeedsConfirmation -> ArkivRed
+                            is DownloadDisplayState.Failed, is DownloadDisplayState.Refused, DownloadDisplayState.NeedsConfirmation -> ArkivRed
                             DownloadDisplayState.Done -> NucDownloadedGreen
                             else -> ArkivTextPrimary
                         },

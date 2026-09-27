@@ -94,6 +94,7 @@ object DownloadGroupPolicy {
         var staging = 0
         var queued = 0
         var failed = 0
+        var refused = 0
         var needsConfirmation = 0
         for (grouped in episodes) {
             val row = (grouped.status as? EpisodeDownloadStatus.Tracked)?.row ?: continue
@@ -103,6 +104,7 @@ object DownloadGroupPolicy {
                 LocalDownloadState.STAGING -> staging++
                 LocalDownloadState.QUEUED -> queued++
                 LocalDownloadState.FAILED -> failed++
+                LocalDownloadState.REFUSED -> refused++
                 LocalDownloadState.NEEDS_CONFIRMATION -> needsConfirmation++
             }
         }
@@ -111,6 +113,8 @@ object DownloadGroupPolicy {
         if (staging > 0) clauses += "$staging preparando"
         if (queued > 0) clauses += "$queued en cola"
         if (failed > 0) clauses += "$failed con error"
+        // Apart from the errors: "Reintentar lo que falló" never touches these (see [failedEpisodeIds]).
+        if (refused > 0) clauses += "$refused no descargable" + (if (refused > 1) "s" else "")
         if (needsConfirmation > 0) clauses += "$needsConfirmation por confirmar"
         return clauses.joinToString(" · ")
     }
@@ -132,7 +136,7 @@ object DownloadGroupPolicy {
             }
             .map { it.episodeId }
 
-    /** Episodes "retry failed" has to re-queue. */
+    /** Episodes "retry failed" has to re-queue. Not the refused ones: they would refuse again. */
     fun failedEpisodeIds(group: DownloadGroup): List<String> =
         group.episodes.mapNotNull { (it.status as? EpisodeDownloadStatus.Tracked)?.row }
             .filter { it.state == LocalDownloadState.FAILED }

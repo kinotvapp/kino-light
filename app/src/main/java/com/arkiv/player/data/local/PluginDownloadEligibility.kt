@@ -27,14 +27,15 @@ object PluginDownloadEligibility {
     fun refusal(playable: GatewayPlayable, live: Boolean = false): String? =
         refusal(playable.url, playable.mime, drm = playable.drmLicenseUrl.isNotBlank(), live = live)
 
-    /** HLS, DASH or Smooth Streaming, by the URL's path or by the declared mime. */
+    /**
+     * HLS, DASH or Smooth Streaming, by the URL's path or by the declared mime. What neither shows
+     * (an extensionless URL, no mime) is caught later from the response by [ManifestSniff].
+     */
     private fun isManifest(url: String, mime: String): Boolean {
         val path = url.substringBefore('?').substringBefore('#').lowercase()
         if (MANIFEST_EXTENSIONS.any { path.endsWith(it) } || path.contains(".ism/")) return true
-        val type = mime.substringBefore(';').trim().lowercase()
-        return type.isNotEmpty() && MANIFEST_MIMES.any { type.contains(it) }
+        return ManifestSniff.isManifestMime(mime)
     }
 
     private val MANIFEST_EXTENSIONS = listOf(".m3u8", ".m3u", ".mpd", ".ism", ".isml")
-    private val MANIFEST_MIMES = listOf("mpegurl", "dash+xml", "vnd.ms-sstr")
 }

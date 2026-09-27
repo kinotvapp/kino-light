@@ -17,8 +17,11 @@ import java.io.File
  * already host-checked by `PluginOutput.stream`), asks [PluginDownloadEligibility] whether that
  * Stream is one file the downloader can save, and downloads it with the Stream's headers through
  * [downloaderFor] -- the plugin's own client, gated to its hosts like the player's (redirects and all),
- * built per plugin id by `AppGraph`. Subtitles become sidecars ([SubtitleSidecars]); `audioTracks` are
- * NOT saved: the offline copy has only the audio inside the video file (documented in the SDK guide).
+ * built per plugin id by `AppGraph` -- with the response sniffed for a manifest in disguise
+ * ([ManifestSniff]). Either refusal is a PERMANENT [DownloadOutcome.Failed] ("Este video no se puede
+ * descargar"): the row ends `refused`, with no "Reintentar" and no crash report. Subtitles become
+ * sidecars ([SubtitleSidecars]); `audioTracks` are NOT saved: the offline copy has only the audio
+ * inside the video file (documented in the SDK guide).
  *
  * Re-checks [offersDownloads] when the download runs, not only when the row was queued: a queued row
  * can outlive the plugin being disabled, uninstalled or updated without the capability, and nothing
@@ -49,19 +52,26 @@ class PluginDownloadStrategy(
                 transient = DownloadRetryPolicy.isTransient(it),
             )
         }
-        PluginDownloadEligibility.refusal(playable)?.let { return DownloadOutcome.Failed(it) }
+        // Permanent: the stream's shape will not change, so the row ends `refused` (no retry, no report).
+        PluginDownloadEligibility.refusal(playable)?.let { return DownloadOutcome.Failed(it, permanent = true) }
 
         val http = downloaderFor(pluginId)
         val target = File(targetDir, LocalFilePaths.fileNameFor(episodeId, "plugin.${extensionOf(playable)}"))
         // Explicit resumeKey: a plugin URL may carry a token that changes on every resolution, so
         // using it as the key (the default) would discard the `.part` on every retry and start over.
-        return http.download(playable.url, target, playable.headers, resumeKey = episodeId, onProgress = onProgress).fold(
+        // `refuseManifests`: what the eligibility check cannot see (a playlist behind an
+        // extensionless URL with no mime) is caught from the response itself, same refusal.
+        return http.download(playable.url, target, playable.headers, resumeKey = episodeId, refuseManifests = true, onProgress = onProgress).fold(
             onSuccess = { file ->
                 SubtitleSidecars.save(http, episodeId, playable.subtitles, targetDir)
                 DownloadOutcome.Done(file)
             },
             onFailure = {
-                DownloadOutcome.Failed(it.message ?: "Falló la descarga", transient = DownloadRetryPolicy.isTransient(it))
+                if (it is ManifestResponseException) {
+                    DownloadOutcome.Failed(PluginDownloadEligibility.NOT_DOWNLOADABLE, permanent = true)
+                } else {
+                    DownloadOutcome.Failed(it.message ?: "Falló la descarga", transient = DownloadRetryPolicy.isTransient(it))
+                }
             },
         )
     }

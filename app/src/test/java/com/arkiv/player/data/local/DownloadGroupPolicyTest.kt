@@ -169,6 +169,30 @@ class DownloadGroupPolicyTest {
         assertEquals("0 de 0 guardados", DownloadGroupPolicy.summarize(emptyList()))
     }
 
+    @Test
+    fun `refused downloads get their own clause, apart from errors`() {
+        val one = listOf(
+            GroupedEpisode(episode("s::1", "s", 0), EpisodeDownloadStatus.Tracked(row("s::1", "s", LocalDownloadState.FAILED))),
+            GroupedEpisode(episode("s::2", "s", 1), EpisodeDownloadStatus.Tracked(row("s::2", "s", LocalDownloadState.REFUSED))),
+        )
+        assertEquals("0 de 2 guardados · 1 con error · 1 no descargable", DownloadGroupPolicy.summarize(one))
+        val two = one + GroupedEpisode(episode("s::3", "s", 2), EpisodeDownloadStatus.Tracked(row("s::3", "s", LocalDownloadState.REFUSED)))
+        assertEquals("0 de 3 guardados · 1 con error · 2 no descargables", DownloadGroupPolicy.summarize(two))
+    }
+
+    @Test
+    fun `retry failed leaves refused downloads alone`() {
+        val group = DownloadGroup(
+            itemId = "s", itemTitle = "Serie", itemThumbnailUrl = "", source = "plugin-download",
+            episodes = listOf(
+                GroupedEpisode(episode("s::1", "s", 0), EpisodeDownloadStatus.Tracked(row("s::1", "s", LocalDownloadState.FAILED))),
+                GroupedEpisode(episode("s::2", "s", 1), EpisodeDownloadStatus.Tracked(row("s::2", "s", LocalDownloadState.REFUSED))),
+            ),
+        )
+        assertEquals(listOf("s::1"), DownloadGroupPolicy.failedEpisodeIds(group))
+        assertEquals(listOf("s::1", "s::2"), DownloadGroupPolicy.trackedEpisodeIds(group))
+    }
+
     // --- group action filters -------------------------------------------------------
 
     @Test

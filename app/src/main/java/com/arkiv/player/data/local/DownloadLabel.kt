@@ -18,6 +18,7 @@ object DownloadLabel {
         // The real reason, not a bare "failed": it's the only thing that tells the user whether
         // this fixes itself by retrying or isn't worth it.
         is DownloadDisplayState.Failed -> state.reason?.takeIf { it.isNotBlank() } ?: "Falló la descarga"
+        is DownloadDisplayState.Refused -> state.reason?.takeIf { it.isNotBlank() } ?: PluginDownloadEligibility.NOT_DOWNLOADABLE
         DownloadDisplayState.NeedsConfirmation -> "Pesa mucho: confírmala en Descargas"
     }
 }

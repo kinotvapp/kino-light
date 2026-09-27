@@ -66,4 +66,18 @@ class DownloadQueuePolicyTest {
         assertFalse(DownloadQueuePolicy.isRetryable(LocalDownloadState.COMPLETED))
         assertFalse(DownloadQueuePolicy.isRetryable(LocalDownloadState.QUEUED))
     }
+
+    /** "Este video no se puede descargar": final, never retried, never picked up, but re-queueable by hand. */
+    @Test
+    fun `a refused download is terminal and not retryable, yet can be queued again`() {
+        assertTrue(DownloadQueuePolicy.isTerminal(LocalDownloadState.REFUSED))
+        assertFalse(DownloadQueuePolicy.isRetryable(LocalDownloadState.REFUSED))
+        assertNull(DownloadQueuePolicy.nextToProcess(listOf(QueueRow("a", LocalDownloadState.REFUSED, createdAt = 100))))
+        // Tapping Descargar again (the plugin may have changed its source) starts over, as after a failure.
+        assertTrue(DownloadQueuePolicy.canRequeue(LocalDownloadState.REFUSED))
+        assertTrue(DownloadQueuePolicy.canRequeue(LocalDownloadState.FAILED))
+        assertFalse(DownloadQueuePolicy.canRequeue(LocalDownloadState.COMPLETED))
+        assertFalse(DownloadQueuePolicy.canRequeue(LocalDownloadState.QUEUED))
+        assertFalse(DownloadQueuePolicy.canRequeue(LocalDownloadState.DOWNLOADING))
+    }
 }

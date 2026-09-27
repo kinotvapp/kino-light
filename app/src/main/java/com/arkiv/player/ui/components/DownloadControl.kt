@@ -114,6 +114,18 @@ fun DownloadControl(
                 tint = ArkivRed,
             )
         }
+        // Refused for good (an HLS-only source, DRM, live): a retry would fail the same way, so the
+        // slot offers the only thing that makes sense, taking it off the list -- nothing was written.
+        is DownloadDisplayState.Refused -> IconButton(
+            onClick = { onRequestAction(DownloadAction.REMOVE_FROM_QUEUE) },
+            enabled = enabled,
+        ) {
+            Icon(
+                Icons.Default.Close,
+                contentDescription = "${state.reason ?: "No se puede descargar"}. Tocar para quitarla de la lista",
+                tint = ArkivRed,
+            )
+        }
         // Not a failure and not downloading: waiting for the user to accept the size in Descargas,
         // which is where that confirmation lives.
         DownloadDisplayState.NeedsConfirmation -> Box(
@@ -197,7 +209,7 @@ fun DownloadBar(state: DownloadDisplayState) {
             LinearProgressIndicator(progress = { 1f }, color = NucDownloadedGreen, trackColor = track, modifier = shape)
         is DownloadDisplayState.Failed ->
             LinearProgressIndicator(progress = { 1f }, color = ArkivRed, trackColor = track, modifier = shape)
-        DownloadDisplayState.NeedsConfirmation ->
+        is DownloadDisplayState.Refused, DownloadDisplayState.NeedsConfirmation ->
             LinearProgressIndicator(progress = { 1f }, color = ArkivRed.copy(alpha = 0.45f), trackColor = track, modifier = shape)
     }
 }
@@ -220,7 +232,7 @@ fun DownloadStatusLine(
         label,
         style = style,
         color = when (state) {
-            is DownloadDisplayState.Failed, DownloadDisplayState.NeedsConfirmation -> ArkivRed
+            is DownloadDisplayState.Failed, is DownloadDisplayState.Refused, DownloadDisplayState.NeedsConfirmation -> ArkivRed
             DownloadDisplayState.Done -> NucDownloadedGreen
             else -> ArkivTextPrimary
         },

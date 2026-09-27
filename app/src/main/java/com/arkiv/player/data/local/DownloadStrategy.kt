@@ -12,8 +12,13 @@ sealed interface DownloadOutcome {
      * it to decide whether to return `Result.retry()` (WorkManager's backoff) or mark the row
      * `failed`. Defaults to false: a new reason nobody classified shouldn't retry on its own.
      * See [DownloadRetryPolicy].
+     *
+     * [permanent] = "this content can never be saved as-is" (an HLS/DASH-only source, DRM, a live
+     * channel: see [PluginDownloadEligibility]). The row ends [LocalDownloadState.REFUSED]: a final
+     * state with no "Reintentar", never crash-reported (a documented limit, not a bug), and still
+     * removable. Defaults to false: an ordinary failure keeps today's retry and report behaviour.
      */
-    data class Failed(val reason: String, val transient: Boolean = false) : DownloadOutcome
+    data class Failed(val reason: String, val transient: Boolean = false, val permanent: Boolean = false) : DownloadOutcome
 }
 
 /**

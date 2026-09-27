@@ -152,5 +152,6 @@ fun downloadLabel(state: DownloadDisplayState): String = when (state) {
         state.fraction?.let { "Descargando ${(it * 100).toInt()} %" } ?: "Descargando"
     DownloadDisplayState.Done -> "Descargada"
     is DownloadDisplayState.Failed -> "Falló la descarga"
+    is DownloadDisplayState.Refused -> "No se puede descargar"
     DownloadDisplayState.NeedsConfirmation -> "En espera"
 }

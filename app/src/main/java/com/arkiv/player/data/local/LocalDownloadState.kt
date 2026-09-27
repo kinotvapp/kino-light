@@ -14,6 +14,14 @@ object LocalDownloadState {
     const val DOWNLOADING = "downloading"
     const val COMPLETED = "completed"
     const val FAILED = "failed"
+    /**
+     * The content can never be saved as-is ("Este video no se puede descargar": an HLS/DASH-only
+     * plugin source, DRM, live). Final like [FAILED] but with no "Reintentar" -- it would fail the
+     * same way -- and nothing on disk; the person can only take it off the list, or queue it again
+     * by hand from the title. A new string value, so no schema migration: an older build that
+     * still reads such a row shows it as not downloaded.
+     */
+    const val REFUSED = "refused"
 }
 
 /** Minimal queue row: the only thing the policy needs to decide. */
@@ -38,8 +46,17 @@ object DownloadQueuePolicy {
     }
 
     fun isTerminal(state: String): Boolean =
-        state == LocalDownloadState.COMPLETED || state == LocalDownloadState.FAILED
+        state == LocalDownloadState.COMPLETED || state == LocalDownloadState.FAILED || state == LocalDownloadState.REFUSED
 
+    /** What "Reintentar" may re-queue. Never [LocalDownloadState.REFUSED]: it would refuse again. */
     fun isRetryable(state: String): Boolean =
         state == LocalDownloadState.FAILED || state == LocalDownloadState.NEEDS_CONFIRMATION
+
+    /**
+     * Whether tapping "Descargar" again on a title that already has this row starts over instead
+     * of answering "you already have it": after a failure, and after a refusal (the plugin may
+     * have changed its source since). Anything queued, running or completed is left alone.
+     */
+    fun canRequeue(state: String): Boolean =
+        state == LocalDownloadState.FAILED || state == LocalDownloadState.REFUSED
 }

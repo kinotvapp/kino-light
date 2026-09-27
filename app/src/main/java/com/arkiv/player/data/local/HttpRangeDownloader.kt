@@ -7,6 +7,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.IOException
+import java.io.InputStream
 import kotlin.coroutines.coroutineContext
 
 /** Resumption arithmetic, kept apart so it can be tested with no network or disk. */
@@ -56,6 +57,15 @@ class HttpRangeDownloader(
          * multi-GB partial.
          */
         resumeKey: String = url,
+        /**
+         * Refuse an HLS/DASH/Smooth manifest served where a video file was expected, by the
+         * response's `Content-Type` or by its first bytes ([ManifestSniff]): nothing of it is kept
+         * (the `.part` and its mark are deleted) and the result fails with
+         * [ManifestResponseException]. Off by default: only `PluginDownloadStrategy` sets it (a
+         * plugin's CDN may serve a playlist from an extensionless URL); Magis/Xuper download
+         * exactly as before.
+         */
+        refuseManifests: Boolean = false,
         onProgress: (bytesDone: Long, totalBytes: Long) -> Unit,
     ): Result<File> = withContext(Dispatchers.IO) {
         runCatching {
@@ -67,10 +77,7 @@ class HttpRangeDownloader(
             // old version) it counts as unknown origin: it can't be asserted to be the same file.
             val sameOrigin = part.exists() &&
                 runCatching { origin.readText() }.getOrNull() == resumeKey
-            if (part.exists() && !sameOrigin) {
-                part.delete()
-                origin.delete()
-            }
+            if (part.exists() && !sameOrigin) discardPartial(part, origin)
             val startByte = if (sameOrigin) part.length() else 0L
 
             // Disk guard, part 1: if the disk is ALREADY at the reserve, don't even open the
@@ -86,6 +93,12 @@ class HttpRangeDownloader(
             client.newCall(builder.build()).execute().use { resp ->
                 if (!resp.isSuccessful) throw HttpStatusException(resp.code)
                 val body = resp.body ?: throw IOException("respuesta sin cuerpo")
+
+                // A manifest by its own admission: whatever partial exists is that same garbage.
+                if (refuseManifests && ManifestSniff.isManifestMime(resp.header("Content-Type"))) {
+                    discardPartial(part, origin)
+                    throw ManifestResponseException()
+                }
 
                 // If Range was requested and the server answered 200 (doesn't support it), what
                 // arrives is the WHOLE file: the partial has to be discarded or the prefix would
@@ -103,16 +116,30 @@ class HttpRangeDownloader(
                 val remaining = if (total > 0) total - effectiveStart else 0L
                 if (!FreeSpacePolicy.fits(available, remaining)) throw InsufficientSpaceException(available)
 
-                // The mark gets (re)written BEFORE the first byte: if the process dies halfway,
-                // whatever partial is left is already labeled and the next attempt knows where it
-                // came from.
-                runCatching { origin.writeText(resumeKey) }
-
                 var written = effectiveStart
-                var sinceDiskCheck = 0L
-                java.io.FileOutputStream(part, appending).use { out ->
-                    val buf = ByteArray(64 * 1024)
-                    body.byteStream().use { input ->
+                body.byteStream().use { input ->
+                    // Sniff the FIRST bytes of the file before any of them touch the disk. Only at
+                    // the file's start: a resumed partial's head is already on disk (and was sniffed
+                    // when it was written), and the middle of a video is anything at all.
+                    val head = if (refuseManifests && effectiveStart == 0L) readHead(input, ManifestSniff.SNIFF_BYTES) else EMPTY
+                    if (head.isNotEmpty() && ManifestSniff.looksLikeManifest(head)) {
+                        discardPartial(part, origin)
+                        throw ManifestResponseException()
+                    }
+
+                    // The mark gets (re)written BEFORE the first byte: if the process dies halfway,
+                    // whatever partial is left is already labeled and the next attempt knows where it
+                    // came from.
+                    runCatching { origin.writeText(resumeKey) }
+
+                    var sinceDiskCheck = 0L
+                    java.io.FileOutputStream(part, appending).use { out ->
+                        if (head.isNotEmpty()) {
+                            out.write(head)
+                            written += head.size
+                            onProgress(written, total)
+                        }
+                        val buf = ByteArray(64 * 1024)
                         while (true) {
                             // The write loop doesn't suspend, so without this check a cancellation
                             // (the user tapped "Quitar", or WorkManager stopped the worker) went
@@ -135,8 +162,8 @@ class HttpRangeDownloader(
                             }
                             onProgress(written, total)
                         }
+                        out.flush()
                     }
-                    out.flush()
                 }
 
                 // Verification: if the server declared a size and it didn't arrive complete, it's a cutoff.
@@ -155,5 +182,27 @@ class HttpRangeDownloader(
             // message) and would lie to WorkManager about why the worker finished.
             if (it is kotlinx.coroutines.CancellationException) throw it
         }
+    }
+
+    /** Up to [max] bytes from the start of [input]; fewer only when the body ends first. */
+    private fun readHead(input: InputStream, max: Int): ByteArray {
+        val buf = ByteArray(max)
+        var read = 0
+        while (read < max) {
+            val n = input.read(buf, read, max - read)
+            if (n < 0) break
+            read += n
+        }
+        return buf.copyOf(read)
+    }
+
+    /** The `.part` and its origin mark: nothing of a discarded attempt may be resumed later. */
+    private fun discardPartial(part: File, origin: File) {
+        runCatching { part.delete() }
+        runCatching { origin.delete() }
+    }
+
+    private companion object {
+        val EMPTY = ByteArray(0)
     }
 }

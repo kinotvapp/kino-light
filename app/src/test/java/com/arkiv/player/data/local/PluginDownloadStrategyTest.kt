@@ -126,19 +126,54 @@ class PluginDownloadStrategyTest {
         assertEquals("plugin_demo_m1__0.mp4", c.file.name)
     }
 
-    @Test fun `an HLS manifest is refused before any request`() = runBlocking {
+    @Test fun `an HLS manifest is refused before any request, permanently`() = runBlocking {
         val outcome = strategy(FakeSource { playable("/master.m3u8") }).run()
 
         val failed = outcome as DownloadOutcome.Failed
         assertEquals(PluginDownloadEligibility.NOT_DOWNLOADABLE, failed.reason)
         assertFalse("nothing to retry: the stream's shape will not change", failed.transient)
+        assertTrue("a final state: no Reintentar, no crash report", failed.permanent)
         assertEquals(0, server.requestCount)
     }
 
-    @Test fun `a DRM stream is refused`() = runBlocking {
+    @Test fun `a DRM stream is refused, permanently`() = runBlocking {
         val outcome = strategy(FakeSource { playable("/v.mp4").copy(drmLicenseUrl = "https://lic.example/wv") }).run()
-        assertEquals(PluginDownloadEligibility.NOT_DOWNLOADABLE, (outcome as DownloadOutcome.Failed).reason)
+        val failed = outcome as DownloadOutcome.Failed
+        assertEquals(PluginDownloadEligibility.NOT_DOWNLOADABLE, failed.reason)
+        assertTrue(failed.permanent)
         assertEquals(0, server.requestCount)
+    }
+
+    @Test fun `a manifest in disguise is caught from the response and refused permanently`() = runBlocking {
+        // An extensionless URL, no mime: the eligibility check passes, the bytes say otherwise.
+        server.enqueue(MockResponse().setBody("#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\nseg0.ts\n"))
+        val outcome = strategy(FakeSource { playable("/hls/index") }).run()
+
+        val failed = outcome as DownloadOutcome.Failed
+        assertEquals(PluginDownloadEligibility.NOT_DOWNLOADABLE, failed.reason)
+        assertTrue(failed.permanent)
+        assertFalse(failed.transient)
+        val target = File(tmp.root, LocalFilePaths.fileNameFor(episodeId, "plugin.mp4"))
+        assertFalse(target.exists())
+        assertFalse(LocalFilePaths.partOf(target).exists())
+        assertFalse(LocalFilePaths.originOf(target).exists())
+
+        server.enqueue(MockResponse().setHeader("Content-Type", "application/dash+xml").setBody("<MPD/>"))
+        val byType = strategy(FakeSource { playable("/dash/stream") }).run() as DownloadOutcome.Failed
+        assertEquals(PluginDownloadEligibility.NOT_DOWNLOADABLE, byType.reason)
+        assertTrue(byType.permanent)
+    }
+
+    @Test fun `other failures are not permanent, so they keep Reintentar`() = runBlocking {
+        val notOffered = strategy(FakeSource { playable("/v.mp4") }, offers = { false }).run() as DownloadOutcome.Failed
+        assertFalse("re-enabling the plugin makes a retry worth it", notOffered.permanent)
+
+        server.enqueue(MockResponse().setResponseCode(403))
+        val forbidden = strategy(FakeSource { playable("/v.mp4") }).run() as DownloadOutcome.Failed
+        assertFalse(forbidden.permanent)
+
+        val network = strategy(FakeSource { throw IOException("red caída") }).run() as DownloadOutcome.Failed
+        assertFalse(network.permanent)
     }
 
     @Test fun `a plugin that no longer offers downloads never resolves`() = runBlocking {

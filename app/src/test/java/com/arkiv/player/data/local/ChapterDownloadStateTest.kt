@@ -83,6 +83,12 @@ class ChapterDownloadStateTest {
     }
 
     @Test
+    fun `refused is its own final state, not a failure to retry`() {
+        val state = ChapterDownloadState.of(row(LocalDownloadState.REFUSED, error = "Este video no se puede descargar"))
+        assertEquals(DownloadDisplayState.Refused("Este video no se puede descargar"), state)
+    }
+
+    @Test
     fun `a heavy torrent asks for confirmation and does not show as if it were downloading`() {
         assertEquals(
             DownloadDisplayState.NeedsConfirmation,

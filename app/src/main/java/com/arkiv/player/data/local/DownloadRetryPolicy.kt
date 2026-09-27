@@ -69,4 +69,32 @@ object DownloadRetryPolicy {
      * exposes it as `runAttemptCount` and applies exponential backoff between one and the next.
      */
     fun shouldRetry(transient: Boolean, attempt: Int): Boolean = transient && attempt + 1 < MAX_ATTEMPTS
+
+    /**
+     * What the worker does with a [DownloadOutcome.Failed]: a [DownloadOutcome.Failed.permanent]
+     * refusal is final whatever else it says ([FailureResolution.REFUSE]); a transient failure with
+     * attempts left retries; everything else lands in `failed` with "Reintentar" available.
+     */
+    fun resolve(transient: Boolean, permanent: Boolean, attempt: Int): FailureResolution = when {
+        permanent -> FailureResolution.REFUSE
+        shouldRetry(transient, attempt) -> FailureResolution.RETRY
+        else -> FailureResolution.FAIL
+    }
+
+    /**
+     * Whether a failure is worth a crash report: a definitive one nobody expected. Network trouble
+     * retries on its own, and a permanent refusal (an HLS-only plugin source, DRM, live) is a
+     * documented limit of the downloader, not a bug -- reporting each one would only be noise.
+     */
+    fun reports(transient: Boolean, permanent: Boolean): Boolean = !transient && !permanent
+}
+
+/** See [DownloadRetryPolicy.resolve]. */
+enum class FailureResolution {
+    /** Same request again, with WorkManager's backoff; the row stays `downloading` with the reason. */
+    RETRY,
+    /** `failed`, with the reason and "Reintentar". */
+    FAIL,
+    /** `refused`: final, no retry, no report, removable. */
+    REFUSE,
 }

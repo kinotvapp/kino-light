@@ -254,11 +254,13 @@ What downloads, and what does not:
 
 - A progressive file (`mp4`, `mkv`, `webm`, `ts`, …) downloads. The saved file takes its extension
   from your `mime` when you give one, else from the URL, else `mp4`; the player sniffs the bytes anyway.
-- An HLS or DASH manifest (`.m3u8`, `.mpd`, or a `mime` such as `application/vnd.apple.mpegurl` or
-  `application/dash+xml`) does **not**: the download fails with "Este video no se puede descargar".
-  A DRM-protected stream or a live channel is refused with the same sentence. There is no separate
-  "resolve for download" call: if your source offers both a manifest and a file, prefer the file, or
-  accept that those titles play but do not download.
+- An HLS or DASH manifest (`.m3u8`, `.mpd`, a `mime` such as `application/vnd.apple.mpegurl` or
+  `application/dash+xml`, or a response whose `Content-Type` or first bytes say so, whatever the URL
+  looks like) does **not**: the download ends as "Este video no se puede descargar", a final state
+  with no "Reintentar" (it would refuse the same way) that the person can only remove. A
+  DRM-protected stream or a live channel is refused the same way. There is no separate "resolve for
+  download" call: if your source offers both a manifest and a file, prefer the file, or accept that
+  those titles play but do not download.
 - The queue downloads one title at a time, so a `ref` may wait a while before `resolve` is called:
   keep something stable in it and look the fresh link up inside `resolve` (as recommended above). A
   retry resumes the partial file even when your URL changed.

@@ -153,31 +153,37 @@ class LocalDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
                 }
             }
             is DownloadOutcome.Failed -> {
-                Log.w(TAG, "failed ${entity.episodeId}: ${outcome.reason} (transient=${outcome.transient})")
-                // Telemetry: a PERMANENT download failure (transient ones just retry) -> this title
-                // won't finish for the user. Tells us which titles/devices can't download offline.
-                if (!outcome.transient) {
+                Log.w(TAG, "failed ${entity.episodeId}: ${outcome.reason} (transient=${outcome.transient}, permanent=${outcome.permanent})")
+                // Telemetry: a definitive download failure nobody expected (transient ones just
+                // retry) -> this title won't finish for the user. Tells us which titles/devices
+                // can't download offline. A `permanent` refusal (an HLS-only plugin source, DRM,
+                // live: "Este video no se puede descargar") is a documented limit, never a report.
+                if (DownloadRetryPolicy.reports(outcome.transient, outcome.permanent)) {
                     com.arkiv.player.crash.Crash.report(
                         com.arkiv.player.crash.OfflineDownloadFailed("${entity.episodeId}: ${outcome.reason}"),
                         "offline-download",
                     )
                 }
-                // The same check ISN'T needed here: this branch notifies nothing visible (it only
-                // logs and writes state), and an `UPDATE`/`Result.retry()` on a row already deleted
-                // doesn't reintroduce the row or mislead anyone — worst case, if the user re-queued
-                // it in the meantime, it's the SAME row (even the same episodeId) and the error's
-                // reason is legitimate information for it.
-                // Network cut halfway through 4 GB: the `.part` is intact and `Range` resumes, but
-                // nothing was triggering that resumption because every failure ended in `failed`.
-                // Now transient failures return `Result.retry()`: WorkManager retries THIS SAME
-                // request with exponential backoff and the row stays in `downloading`, so
-                // `nextToProcess` picks it again (what's started wins over what's queued). The
-                // queue is NOT re-scheduled here: doing so with REPLACE would kill the scheduled retry.
-                if (DownloadRetryPolicy.shouldRetry(outcome.transient, runAttemptCount)) {
-                    dao.setError(entity.episodeId, outcome.reason)
-                    return Result.retry()
+                // The "row already removed" check ISN'T needed here: this branch notifies nothing
+                // visible (it only logs and writes state), and an `UPDATE`/`Result.retry()` on a row
+                // already deleted doesn't reintroduce the row or mislead anyone — worst case, if the
+                // user re-queued it in the meantime, it's the SAME row (even the same episodeId) and
+                // the error's reason is legitimate information for it.
+                when (DownloadRetryPolicy.resolve(outcome.transient, outcome.permanent, runAttemptCount)) {
+                    // Network cut halfway through 4 GB: the `.part` is intact and `Range` resumes,
+                    // but nothing was triggering that resumption because every failure ended in
+                    // `failed`. Transient failures return `Result.retry()`: WorkManager retries THIS
+                    // SAME request with exponential backoff and the row stays in `downloading`, so
+                    // `nextToProcess` picks it again (what's started wins over what's queued). The
+                    // queue is NOT re-scheduled here: doing so with REPLACE would kill the scheduled retry.
+                    FailureResolution.RETRY -> {
+                        dao.setError(entity.episodeId, outcome.reason)
+                        return Result.retry()
+                    }
+                    FailureResolution.FAIL -> dao.updateState(entity.episodeId, LocalDownloadState.FAILED, outcome.reason)
+                    // Final: no "Reintentar" (it would refuse the same way), still removable.
+                    FailureResolution.REFUSE -> dao.updateState(entity.episodeId, LocalDownloadState.REFUSED, outcome.reason)
                 }
-                dao.updateState(entity.episodeId, LocalDownloadState.FAILED, outcome.reason)
             }
         }
 

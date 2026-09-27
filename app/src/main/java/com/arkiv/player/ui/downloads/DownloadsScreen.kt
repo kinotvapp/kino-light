@@ -375,7 +375,7 @@ private fun DownloadItem(
                 Text(
                     stateLabel(row),
                     style = MaterialTheme.typography.bodyMedium,
-                    color = if (row.state == LocalDownloadState.FAILED || row.state == LocalDownloadState.NEEDS_CONFIRMATION) {
+                    color = if (row.state == LocalDownloadState.FAILED || row.state == LocalDownloadState.REFUSED || row.state == LocalDownloadState.NEEDS_CONFIRMATION) {
                         ArkivRed
                     } else {
                         ArkivTextSecondary
@@ -428,6 +428,8 @@ private fun DownloadItem(
                     TextButton(onClick = onRetry) { Text("Reintentar") }
                     TextButton(onClick = onRemove) { Text("Quitar") }
                 }
+                // REFUSED ("Este video no se puede descargar") deliberately has no "Reintentar": it
+                // would refuse the same way. Only "Quitar", through the `else` below.
                 // What's in flight or queued can be CANCELED (stops the download and keeps the
                 // partial, so "Retry" resumes) or REMOVED (stops and deletes everything).
                 LocalDownloadState.QUEUED, LocalDownloadState.STAGING, LocalDownloadState.DOWNLOADING -> {
@@ -457,6 +459,7 @@ private fun stateLabel(row: DownloadRow): String = when (row.state) {
     // another item.
     LocalDownloadState.COMPLETED -> row.error?.let { "Listo · $it" } ?: "Listo"
     LocalDownloadState.FAILED -> row.error ?: "Falló"
+    LocalDownloadState.REFUSED -> row.error ?: "No se puede descargar"
     else -> row.state
 }
 

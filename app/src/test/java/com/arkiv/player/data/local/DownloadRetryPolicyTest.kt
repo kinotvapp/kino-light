@@ -1,5 +1,6 @@
 package com.arkiv.player.data.local
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -19,6 +20,36 @@ class DownloadRetryPolicyTest {
     @Test
     fun `a download cut off halfway is transient`() {
         assertTrue(DownloadRetryPolicy.isTransient(IncompleteDownloadException(written = 400, total = 1000)))
+    }
+
+    @Test
+    fun `a manifest answered where a file was expected is definitive`() {
+        assertFalse(DownloadRetryPolicy.isTransient(ManifestResponseException()))
+    }
+
+    // ---- what the worker does with a failure ----
+
+    @Test
+    fun `a permanent refusal is a final state, whatever else the failure says`() {
+        assertEquals(FailureResolution.REFUSE, DownloadRetryPolicy.resolve(transient = false, permanent = true, attempt = 0))
+        assertEquals(FailureResolution.REFUSE, DownloadRetryPolicy.resolve(transient = true, permanent = true, attempt = 0))
+        assertEquals(FailureResolution.REFUSE, DownloadRetryPolicy.resolve(transient = false, permanent = true, attempt = 3))
+    }
+
+    @Test
+    fun `a transient failure retries while attempts remain, then fails`() {
+        assertEquals(FailureResolution.RETRY, DownloadRetryPolicy.resolve(transient = true, permanent = false, attempt = 0))
+        assertEquals(FailureResolution.RETRY, DownloadRetryPolicy.resolve(transient = true, permanent = false, attempt = DownloadRetryPolicy.MAX_ATTEMPTS - 2))
+        assertEquals(FailureResolution.FAIL, DownloadRetryPolicy.resolve(transient = true, permanent = false, attempt = DownloadRetryPolicy.MAX_ATTEMPTS - 1))
+    }
+
+    @Test
+    fun `a definitive failure fails at once and is the one worth reporting`() {
+        assertEquals(FailureResolution.FAIL, DownloadRetryPolicy.resolve(transient = false, permanent = false, attempt = 0))
+        assertTrue(DownloadRetryPolicy.reports(transient = false, permanent = false))
+        // Network trouble and expected refusals are not bugs.
+        assertFalse(DownloadRetryPolicy.reports(transient = true, permanent = false))
+        assertFalse(DownloadRetryPolicy.reports(transient = false, permanent = true))
     }
 
     @Test

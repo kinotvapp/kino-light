@@ -30,6 +30,12 @@ sealed interface DownloadDisplayState {
     /** Failed. [reason] is what the row saved, so it can be said instead of staying silent. */
     data class Failed(val reason: String?) : DownloadDisplayState
 
+    /**
+     * Refused for good ([LocalDownloadState.REFUSED]): the content cannot be saved as-is, so the
+     * row offers no retry, only its removal. [reason] is the row's ("Este video no se puede descargar").
+     */
+    data class Refused(val reason: String?) : DownloadDisplayState
+
     /** A torrent past the size threshold: nothing downloads until the user confirms. */
     data object NeedsConfirmation : DownloadDisplayState
 }
@@ -44,6 +50,7 @@ object ChapterDownloadState {
         // (DuplicateDownloadPolicy.ADOPTED_REASON, "Ya estaba descargado").
         LocalDownloadState.COMPLETED -> DownloadDisplayState.Done
         LocalDownloadState.FAILED -> DownloadDisplayState.Failed(row.error)
+        LocalDownloadState.REFUSED -> DownloadDisplayState.Refused(row.error)
         LocalDownloadState.NEEDS_CONFIRMATION -> DownloadDisplayState.NeedsConfirmation
         LocalDownloadState.STAGING -> DownloadDisplayState.Downloading(null)
         LocalDownloadState.DOWNLOADING ->

@@ -253,4 +253,100 @@ class HttpRangeDownloaderTest {
         assertEquals(seen.sorted(), seen)
         assertEquals(200_000L, seen.last())
     }
+
+    // ---- manifests in disguise (refuseManifests, set only by the plugin strategy) ----
+
+    private fun assertNothingLeft(target: File) {
+        assertFalse("no final file", target.exists())
+        assertFalse("no partial", LocalFilePaths.partOf(target).exists())
+        assertFalse("no origin mark", LocalFilePaths.originOf(target).exists())
+    }
+
+    @Test
+    fun `a manifest content type is refused before writing anything`() = runBlocking {
+        server.enqueue(MockResponse().setHeader("Content-Type", "application/vnd.apple.mpegurl").setBody("#EXTM3U\n"))
+        val target = File(tmp.root, "peli.mp4")
+
+        val result = downloader.download(server.url("/hls/index").toString(), target, emptyMap(), refuseManifests = true) { _, _ -> }
+
+        assertTrue(result.exceptionOrNull() is ManifestResponseException)
+        assertNothingLeft(target)
+    }
+
+    @Test
+    fun `a body that starts as an HLS playlist is refused and the partial deleted`() = runBlocking {
+        server.enqueue(MockResponse().setHeader("Content-Type", "video/mp4").setBody("#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\nseg0.ts\n"))
+        val target = File(tmp.root, "peli.mp4")
+
+        val result = downloader.download(server.url("/f").toString(), target, emptyMap(), refuseManifests = true) { _, _ -> }
+
+        assertTrue(result.exceptionOrNull() is ManifestResponseException)
+        assertNothingLeft(target)
+    }
+
+    @Test
+    fun `a body that starts as a DASH manifest is refused, with or without the xml prolog`() = runBlocking {
+        val target = File(tmp.root, "peli.mp4")
+        server.enqueue(MockResponse().setBody("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<MPD xmlns=\"urn:mpeg:dash:schema:mpd:2011\"></MPD>"))
+        assertTrue(downloader.download(server.url("/a").toString(), target, emptyMap(), refuseManifests = true) { _, _ -> }.exceptionOrNull() is ManifestResponseException)
+        assertNothingLeft(target)
+
+        server.enqueue(MockResponse().setBody("<MPD xmlns=\"urn:mpeg:dash:schema:mpd:2011\"></MPD>"))
+        assertTrue(downloader.download(server.url("/b").toString(), target, emptyMap(), refuseManifests = true) { _, _ -> }.exceptionOrNull() is ManifestResponseException)
+        assertNothingLeft(target)
+    }
+
+    @Test
+    fun `without refuseManifests the same body downloads as before`() = runBlocking {
+        server.enqueue(MockResponse().setHeader("Content-Type", "application/vnd.apple.mpegurl").setBody("#EXTM3U\n"))
+        val target = File(tmp.root, "peli.mp4")
+
+        val result = downloader.download(server.url("/f").toString(), target, emptyMap()) { _, _ -> }
+
+        assertTrue(result.isSuccess)
+        assertEquals("#EXTM3U\n", target.readText())
+    }
+
+    @Test
+    fun `a real progressive file passes the sniff and downloads whole`() = runBlocking {
+        // An MP4 head (ftyp box) followed by more than the sniff window of payload.
+        val head = byteArrayOf(0, 0, 0, 0x18, 'f'.code.toByte(), 't'.code.toByte(), 'y'.code.toByte(), 'p'.code.toByte())
+        val body = head + ByteArray(5000) { (it % 251).toByte() }
+        server.enqueue(MockResponse().setHeader("Content-Type", "video/mp4").setBody(Buffer().write(body)))
+        val target = File(tmp.root, "peli.mp4")
+        val seen = mutableListOf<Long>()
+
+        val result = downloader.download(server.url("/f.mp4").toString(), target, emptyMap(), refuseManifests = true) { done, _ -> seen.add(done) }
+
+        assertTrue(result.isSuccess)
+        assertTrue(body.contentEquals(target.readBytes()))
+        assertEquals(body.size.toLong(), seen.last())
+        assertFalse(LocalFilePaths.partOf(target).exists())
+    }
+
+    @Test
+    fun `a file shorter than the sniff window still downloads whole`() = runBlocking {
+        server.enqueue(MockResponse().setBody("tiny"))
+        val target = File(tmp.root, "peli.mp4")
+
+        val result = downloader.download(server.url("/f").toString(), target, emptyMap(), refuseManifests = true) { _, _ -> }
+
+        assertTrue(result.isSuccess)
+        assertEquals("tiny", target.readText())
+    }
+
+    @Test
+    fun `a resumed partial is not sniffed, its head is already on disk`() = runBlocking {
+        val target = File(tmp.root, "peli.mp4")
+        val url = server.url("/f").toString()
+        writePart(target, "AAAA", origin = url)
+        // The continuation happens to start with what would look like a playlist header: it is
+        // the middle of a file, not its start.
+        server.enqueue(MockResponse().setResponseCode(206).setBody("#EXTM3U-tail"))
+
+        val result = downloader.download(url, target, emptyMap(), refuseManifests = true) { _, _ -> }
+
+        assertTrue(result.isSuccess)
+        assertEquals("AAAA#EXTM3U-tail", target.readText())
+    }
 }

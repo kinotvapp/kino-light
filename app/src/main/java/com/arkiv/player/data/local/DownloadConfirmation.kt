@@ -33,6 +33,9 @@ object DownloadConfirmation {
         DownloadDisplayState.Queued -> DownloadAction.REMOVE_FROM_QUEUE
         is DownloadDisplayState.Downloading -> DownloadAction.CANCEL
         DownloadDisplayState.Done -> DownloadAction.DELETE
+        // Refused for good: nothing was written, so taking it off the list is the queue removal
+        // (its dialog already says nothing is lost).
+        is DownloadDisplayState.Refused -> DownloadAction.REMOVE_FROM_QUEUE
         // Retrying destroys nothing, so it doesn't ask. And what nobody queued has nothing to undo.
         is DownloadDisplayState.Failed, DownloadDisplayState.NotDownloaded, DownloadDisplayState.NeedsConfirmation -> null
     }
