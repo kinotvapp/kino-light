@@ -1,6 +1,9 @@
 package com.arkiv.player.ui.tv
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.BringIntoViewSpec
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -9,8 +12,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridItemSpanScope
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CircularProgressIndicator
@@ -19,6 +26,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -38,6 +46,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -58,7 +67,6 @@ import com.arkiv.player.ui.plugin.catalogActionOf
 import com.arkiv.player.ui.plugin.catalogRefreshLine
 import com.arkiv.player.ui.plugin.handleAddPluginBack
 import com.arkiv.player.ui.plugin.legacyFirst
-import com.arkiv.player.ui.plugin.pluginStatusText
 import com.arkiv.player.ui.plugin.rowMessagePluginId
 import com.arkiv.player.ui.rememberGraph
 import com.arkiv.player.ui.theme.ArkivRed
@@ -68,13 +76,29 @@ import kotlinx.coroutines.delay
 /** How long the text fields stay out of focus at most while the first recommended row takes it; see [TvAddPluginScreen]. */
 private const val INITIAL_FOCUS_GRACE_MS = 1_500L
 
+/** Recommended plugins per line of the grid. */
+private const val CATALOG_COLUMNS = 3
+
+/**
+ * Room kept between a focused item and the edge of the grid when the scroll brings it into view. The
+ * focused card is scaled up (see [com.arkiv.player.ui.cardFocusScale]) and draws a 3 dp border: without
+ * the margin a card scrolled to the edge would be cut by the grid's bounds.
+ */
+private val FOCUS_MARGIN = 12.dp
+
+/** An item of the grid that takes the whole line: everything but the cards. */
+private val FULL_WIDTH: LazyGridItemSpanScope.() -> GridItemSpan = { GridItemSpan(maxLineSpan) }
+
 /**
  * The "Agregar plugin" window on the TV: the phone's sections ([com.arkiv.player.ui.plugin.AddPluginScreen])
- * laid out for the D-pad. Every row is a [TvActionOption]; one lazy list scrolls with the remote.
+ * laid out for the D-pad. One lazy grid scrolls with the remote: the recommended plugins are cards
+ * ([TvPluginCard]) in [CATALOG_COLUMNS] columns, and everything else (search, custom address, installed
+ * plugins) is a full-width item.
  *
  * Back closes it in [AddPluginMode.SETTINGS]; the onboarding picker has no way out, so it swallows
  * Back. The TV has no close button, so [mode] changes nothing else.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TvAddPluginScreen(mode: AddPluginMode, onClose: () -> Unit) {
     BackHandler { handleAddPluginBack(mode, onClose) }
@@ -88,23 +112,25 @@ fun TvAddPluginScreen(mode: AddPluginMode, onClose: () -> Unit) {
     val plugins by vm.plugins.collectAsStateWithLifecycle()
     val state by vm.state.collectAsStateWithLifecycle()
     val catalog by vm.catalog.collectAsStateWithLifecycle()
+    val art by vm.art.collectAsStateWithLifecycle()
     val focusManager = LocalFocusManager.current
     val rowMessageId = rowMessagePluginId(state, plugins)
     val rows = legacyFirst(catalog.rows)
+    val statusLines = remember(rows) { gridLinesWithStatus(rows, CATALOG_COLUMNS) }
 
-    // Initial focus goes to the first recommended row, with no keyboard. Two things make that fragile:
+    // Initial focus goes to the first recommended card, with no keyboard. Two things make that fragile:
     //  1. On a TV (non-touch mode) Android gives the window's Compose view focus on the first frame, and Compose
-    //     hands it to the first focusable node it finds -- the search field, which sits at the top of the list.
-    //     A focused text field opens the system keyboard by itself, covering the list. So both text fields
+    //     hands it to the first focusable node it finds -- the search field, which sits at the top of the grid.
+    //     A focused text field opens the system keyboard by itself, covering the grid. So both text fields
     //     refuse focus (canFocus = false) until [initialFocusPlaced]; the default focus then lands on another
-    //     control and [FocusWhenReady] moves it to the first row a moment later.
-    //  2. The rows may arrive after the window opens, and a requester on a row that is not composed throws, so
-    //     the request only runs while a row exists (and [FocusWhenReady] retries until the row is attached).
-    // [initialFocusPlaced] turns true, for good, as soon as that first row has focus. If that never happens
-    // (no rows, or the row could not take focus) it turns true anyway after [INITIAL_FOCUS_GRACE_MS], so the
+    //     control and [FocusWhenReady] moves it to the first card a moment later.
+    //  2. The rows may arrive after the window opens, and a requester on a card that is not composed throws, so
+    //     the request only runs while a row exists (and [FocusWhenReady] retries until the card is attached).
+    // [initialFocusPlaced] turns true, for good, as soon as that first card has focus. If that never happens
+    // (no rows, or the card could not take focus) it turns true anyway after [INITIAL_FOCUS_GRACE_MS], so the
     // fields are never unreachable. Once true nothing requests focus again, so a catalog that reloads or a
     // search that filters never takes focus away from the person, and moving INTO the search field by D-pad
-    // (Up from the first row) works, keyboard included, as it always did.
+    // (Up from the first line of cards) works, keyboard included, as it always did.
     val firstRowFocus = remember { FocusRequester() }
     var initialFocusPlaced by remember { mutableStateOf(false) }
     if (!initialFocusPlaced && rows.isNotEmpty()) FocusWhenReady(firstRowFocus)
@@ -126,83 +152,105 @@ fun TvAddPluginScreen(mode: AddPluginMode, onClose: () -> Unit) {
                 Text(it, style = MaterialTheme.typography.bodyMedium, color = Color.White, modifier = Modifier.padding(top = 8.dp))
             }
         }
-        LazyColumn(
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            contentPadding = PaddingValues(top = 16.dp, bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            item(key = "search") {
-                OutlinedTextField(
-                    value = state.query,
-                    onValueChange = vm::onQueryChange,
-                    label = { Text("Buscar plugins") },
-                    singleLine = true,
-                    // `Done` just leaves the field (the list filters as you type).
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = { focusManager.moveFocus(FocusDirection.Down) }),
-                    modifier = Modifier.fillMaxWidth(0.6f).focusProperties { canFocus = initialFocusPlaced }.dpadLeavesTheField(focusManager),
-                )
-            }
-            // Only while the list is still the copy shipped in the APK. The notice waits for the refresh to end
-            // (it may still succeed); meanwhile the action reads "Actualizando…" and does nothing, but stays
-            // focusable so focus is not thrown out from under the person when the label changes.
-            catalogRefreshLine(catalog)?.let { line ->
-                item(key = "seed-notice") {
-                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        line.notice?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary) }
-                        TvActionOption(label = line.actionLabel) { if (line.actionEnabled) vm.reloadCatalog() }
+        // The scaled card has to be fully visible when it takes focus, so the scroll keeps a margin around it.
+        val density = LocalDensity.current
+        val bringIntoView = remember(density) { KeepMarginBringIntoView(with(density) { FOCUS_MARGIN.toPx() }) }
+        CompositionLocalProvider(LocalBringIntoViewSpec provides bringIntoView) {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(CATALOG_COLUMNS),
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                contentPadding = PaddingValues(top = 16.dp, bottom = 24.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                item(key = "search", span = FULL_WIDTH) {
+                    OutlinedTextField(
+                        value = state.query,
+                        onValueChange = vm::onQueryChange,
+                        label = { Text("Buscar plugins") },
+                        singleLine = true,
+                        // `Done` just leaves the field (the list filters as you type).
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { focusManager.moveFocus(FocusDirection.Down) }),
+                        modifier = Modifier
+                            .fillMaxWidth(0.6f)
+                            .noFocusToTheRight()
+                            .focusProperties { canFocus = initialFocusPlaced }
+                            .dpadLeavesTheField(focusManager),
+                    )
+                }
+                // Only while the list is still the copy shipped in the APK. The notice waits for the refresh to end
+                // (it may still succeed); meanwhile the action reads "Actualizando…" and does nothing, but stays
+                // focusable so focus is not thrown out from under the person when the label changes.
+                catalogRefreshLine(catalog)?.let { line ->
+                    item(key = "seed-notice", span = FULL_WIDTH) {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.noFocusToTheRight()) {
+                            line.notice?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary) }
+                            TvActionOption(label = line.actionLabel) { if (line.actionEnabled) vm.reloadCatalog() }
+                        }
                     }
                 }
-            }
-            item(key = "recommended-title") {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Recomendados", style = MaterialTheme.typography.titleMedium, color = Color.White)
-                    if (catalog.loading) CircularProgressIndicator(color = ArkivRed, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+                item(key = "recommended-title", span = FULL_WIDTH) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("Recomendados", style = MaterialTheme.typography.titleMedium, color = Color.White)
+                        if (catalog.loading) CircularProgressIndicator(color = ArkivRed, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+                    }
                 }
-            }
-            items(rows, key = { "catalog-${it.entry.id}" }) { row ->
-                TvCatalogRow(row, vm, modifier = if (row.entry.id == rows.first().entry.id) firstRowModifier else Modifier)
-            }
-            if (rows.isEmpty() && !catalog.loading) {
-                item(key = "no-match") {
-                    Text("No hay plugins que coincidan.", style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary)
-                }
-            }
-
-            item(key = "custom") {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(top = 12.dp)) {
-                    Text("Agregar uno custom", style = MaterialTheme.typography.titleMedium, color = Color.White)
-                    Text(
-                        "Escribe usuario/repositorio de GitHub. Antes de instalar vas a ver con qué sitios se conecta.",
-                        style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary,
+                // One cell per plugin. The first card takes the initial focus; the last has nothing to its right
+                // (see noFocusToTheRight). Up from the first line reaches the search field and Down from the last
+                // one the custom field: nothing here overrides the D-pad, the geometry finds them.
+                itemsIndexed(rows, key = { _, row -> "card-${row.entry.id}" }) { index, row ->
+                    TvPluginCard(
+                        row = row,
+                        art = art[row.entry.repo],
+                        modifier = Modifier
+                            .then(if (index == 0) firstRowModifier else Modifier)
+                            .then(if (index == rows.lastIndex) Modifier.noFocusToTheRight() else Modifier),
+                        reserveStatusLine = statusLines.getOrElse(index) { false },
+                        onClick = { runCatalogAction(vm, row) },
                     )
-                    OutlinedTextField(
-                        value = state.address,
-                        onValueChange = vm::onAddressChange,
-                        label = { Text("usuario/repositorio") },
-                        singleLine = true,
-                        // Same as the adult-lock field in TvSettingsApp: `Done` applies, and D-pad Down always
-                        // leaves the field, since a closed IME otherwise traps focus in it.
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(onDone = { vm.add(); focusManager.moveFocus(FocusDirection.Down) }),
-                        modifier = Modifier.fillMaxWidth(0.6f).focusProperties { canFocus = initialFocusPlaced }.dpadLeavesTheField(focusManager),
-                    )
-                    TvActionOption(label = if (state.busy) "Revisando…" else "Agregar") { vm.add() }
                 }
-            }
+                if (rows.isEmpty() && !catalog.loading) {
+                    item(key = "no-match", span = FULL_WIDTH) {
+                        Text("No hay plugins que coincidan.", style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary)
+                    }
+                }
 
-            item(key = "installed-title") {
-                Text("Instalados", style = MaterialTheme.typography.titleMedium, color = Color.White, modifier = Modifier.padding(top = 12.dp))
-            }
-            if (plugins.isEmpty()) {
-                item(key = "none-installed") {
-                    Text("Todavía no tienes plugins.", style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary)
+                item(key = "custom", span = FULL_WIDTH) {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(top = 12.dp).noFocusToTheRight()) {
+                        Text("Agregar uno custom", style = MaterialTheme.typography.titleMedium, color = Color.White)
+                        Text(
+                            "Escribe usuario/repositorio de GitHub. Antes de instalar vas a ver con qué sitios se conecta.",
+                            style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary,
+                        )
+                        OutlinedTextField(
+                            value = state.address,
+                            onValueChange = vm::onAddressChange,
+                            label = { Text("usuario/repositorio") },
+                            singleLine = true,
+                            // Same as the adult-lock field in TvSettingsApp: `Done` applies, and D-pad Down always
+                            // leaves the field, since a closed IME otherwise traps focus in it.
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
+                            keyboardActions = KeyboardActions(onDone = { vm.add(); focusManager.moveFocus(FocusDirection.Down) }),
+                            modifier = Modifier.fillMaxWidth(0.6f).focusProperties { canFocus = initialFocusPlaced }.dpadLeavesTheField(focusManager),
+                        )
+                        TvActionOption(label = if (state.busy) "Revisando…" else "Agregar") { vm.add() }
+                    }
                 }
-            }
-            items(plugins, key = { "installed-${it.id}" }) { p ->
-                // One item per plugin: a lazy item stacks several roots on top of each other.
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    TvInstalledPluginRows(p, message = state.message.takeIf { rowMessageId == p.id }, vm = vm)
+
+                item(key = "installed-title", span = FULL_WIDTH) {
+                    Text("Instalados", style = MaterialTheme.typography.titleMedium, color = Color.White, modifier = Modifier.padding(top = 12.dp))
+                }
+                if (plugins.isEmpty()) {
+                    item(key = "none-installed", span = FULL_WIDTH) {
+                        Text("Todavía no tienes plugins.", style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary)
+                    }
+                }
+                items(plugins, key = { "installed-${it.id}" }, span = { GridItemSpan(maxLineSpan) }) { p ->
+                    // One item per plugin: a lazy item stacks several roots on top of each other.
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.noFocusToTheRight()) {
+                        TvInstalledPluginRows(p, message = state.message.takeIf { rowMessageId == p.id }, vm = vm)
+                    }
                 }
             }
         }
@@ -214,37 +262,17 @@ fun TvAddPluginScreen(mode: AddPluginMode, onClose: () -> Unit) {
 }
 
 /**
- * One recommended plugin: the action [catalogActionOf] says fits its state, then what it is. An
- * installed plugin that needs nothing reads as a status and its action does nothing, but it stays
- * focusable so the list is still walked one row at a time.
+ * What OK does on a recommended plugin's card: the action [catalogActionOf] says fits its state. An
+ * installed plugin that needs nothing does nothing here (its card stays focusable, so the grid is still
+ * walked one card at a time).
  */
-@Composable
-private fun TvCatalogRow(row: CatalogRow, vm: PluginsViewModel, modifier: Modifier) {
-    val entry = row.entry
+private fun runCatalogAction(vm: PluginsViewModel, row: CatalogRow) {
     val installed = row.installed
-    val action = catalogActionOf(row)
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        TvActionOption(
-            label = catalogRowLabel(action, entry.name),
-            modifier = modifier,
-        ) {
-            when (action) {
-                CatalogAction.INSTALL -> vm.installFromCatalog(entry)
-                CatalogAction.CONFIGURE -> installed?.let { vm.openSettings(it.id) }
-                CatalogAction.ENABLE -> installed?.let { vm.setEnabled(it.id, true) }
-                CatalogAction.INSTALLED -> Unit
-            }
-        }
-        if (entry.legacyDefault) {
-            Text("Lo que ya usabas", style = MaterialTheme.typography.bodySmall, color = ArkivRed)
-        }
-        if (entry.description.isNotBlank()) {
-            Text(entry.description, style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary)
-        }
-        // Why the action says Activar / Configurar / Instalar again, in the same words as the installed list.
-        if (installed != null && action != CatalogAction.INSTALLED) {
-            Text(pluginStatusText(installed.status), style = MaterialTheme.typography.bodySmall, color = ArkivRed)
-        }
+    when (catalogActionOf(row)) {
+        CatalogAction.INSTALL -> vm.installFromCatalog(row.entry)
+        CatalogAction.CONFIGURE -> installed?.let { vm.openSettings(it.id) }
+        CatalogAction.ENABLE -> installed?.let { vm.setEnabled(it.id, true) }
+        CatalogAction.INSTALLED -> Unit
     }
 }
 
@@ -277,3 +305,27 @@ private fun Modifier.dpadLeavesTheField(focusManager: FocusManager): Modifier = 
         false
     }
 }
+
+/**
+ * Compose's focus search takes a full-width item's Right key to the nearest item that lies further right,
+ * even on another line: from "Agregar" (60% of the width) it would jump to a card in the last column, and
+ * from the last card of a partly filled line to a card of the line above. Nothing is meant to be to the
+ * right of these, so the key is consumed and focus stays where it is.
+ */
+private fun Modifier.noFocusToTheRight(): Modifier = focusProperties { right = FocusRequester.Cancel }
+
+/** The scroll of the grid: the minimal one that shows an item whole, with [marginPx] of room around it. */
+@OptIn(ExperimentalFoundationApi::class)
+private class KeepMarginBringIntoView(private val marginPx: Float) : BringIntoViewSpec {
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float =
+        scrollDistanceWithMargin(offset, size, containerSize, marginPx)
+}
+
+/**
+ * How far to scroll to show the item at [offset] (its leading edge, in the container's coordinates) of
+ * [size], with [margin] free on both sides: the minimal scroll ([MinimalScrollBringIntoView]) for the item
+ * grown by the margin. Negative scrolls back, positive forward, zero when it is already there.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+internal fun scrollDistanceWithMargin(offset: Float, size: Float, containerSize: Float, margin: Float): Float =
+    MinimalScrollBringIntoView.calculateScrollDistance(offset - margin, size + 2 * margin, containerSize)

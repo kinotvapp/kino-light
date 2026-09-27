@@ -2,7 +2,13 @@ package com.arkiv.player.ui.tv
 
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.input.key.Key
+import com.arkiv.player.data.plugin.InstalledPlugin
+import com.arkiv.player.data.plugin.InstalledRecord
+import com.arkiv.player.data.plugin.PluginManifest
+import com.arkiv.player.data.plugin.PluginStatus
+import com.arkiv.player.data.plugin.catalog.CatalogEntry
 import com.arkiv.player.ui.plugin.CatalogAction
+import com.arkiv.player.ui.plugin.CatalogRow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -29,5 +35,79 @@ class TvAddPluginScreenTest {
         assertNull(fieldExitDirection(Key.DirectionLeft))
         assertNull(fieldExitDirection(Key.DirectionRight))
         assertNull(fieldExitDirection(Key.A))
+    }
+
+    private val manifest = PluginManifest("demo", "Demo", "1.0.0", 1, "plugin.js", "", "lordmacu", "", listOf("example.com"), setOf("search", "resolve"), null, null)
+    private val record = InstalledRecord("o/r", "1.0.0", "x", listOf("example.com"), 0L)
+
+    private fun row(installed: InstalledRecord?, missingSettings: List<String> = emptyList()) = CatalogRow(
+        CatalogEntry(id = "demo", repo = "o/r", name = "Demo", description = ""),
+        installed?.let { InstalledPlugin(manifest, it, iconFile = null, missingSettings = missingSettings) },
+    )
+
+    // A card only writes a status when the button says something else than "Instalado": that is when the
+    // person needs to know why the button reads Activar / Configurar / Instalar again.
+    @Test fun `a plugin that is not installed has no status line`() {
+        assertNull(cardStatus(row(null)))
+    }
+
+    @Test fun `a working installed plugin has no status line, its button already says Instalado`() {
+        assertNull(cardStatus(row(record)))
+    }
+
+    @Test fun `an update waiting for approval alone has no status line either`() {
+        assertNull(cardStatus(row(record.copy(pendingVersion = "1.1.0"))))
+    }
+
+    @Test fun `a disabled, unresponsive, damaged or unconfigured plugin says why`() {
+        assertEquals(PluginStatus.DISABLED, cardStatus(row(record.copy(enabled = false))))
+        assertEquals(PluginStatus.UNRESPONSIVE, cardStatus(row(record.copy(unresponsive = true))))
+        assertEquals(PluginStatus.DAMAGED, cardStatus(row(record.copy(damaged = true))))
+        assertEquals(PluginStatus.NEEDS_SETUP, cardStatus(row(record, missingSettings = listOf("x"))))
+    }
+
+    private fun rowsWithStatus(vararg hasStatus: Boolean) = hasStatus.map { row(if (it) record.copy(enabled = false) else null) }
+
+    // The grid gives every line the height of its tallest card: a card without a status must leave room
+    // for it, or the cards of a line end at different heights.
+    @Test fun `every card of a line with a status reserves its line, the other lines do not`() {
+        val rows = rowsWithStatus(false, true, false, false, false, false, false)
+        assertEquals(listOf(true, true, true, false, false, false, false), gridLinesWithStatus(rows, columns = 3))
+    }
+
+    @Test fun `a status in the last, partial line reaches only that line`() {
+        val rows = rowsWithStatus(false, false, false, false, true)
+        assertEquals(listOf(false, false, false, true, true), gridLinesWithStatus(rows, columns = 3))
+    }
+
+    @Test fun `no status anywhere reserves nothing, and no rows gives an empty answer`() {
+        assertEquals(listOf(false, false, false, false), gridLinesWithStatus(rowsWithStatus(false, false, false, false), columns = 3))
+        assertEquals(emptyList<Boolean>(), gridLinesWithStatus(emptyList(), columns = 3))
+    }
+
+    // The focused card is scaled up, so it needs room around it: the scroll keeps a margin between it and
+    // the edge of the window, on both sides.
+    @Test fun `an item that fits with its margin does not scroll the grid`() {
+        assertEquals(0f, scrollDistanceWithMargin(offset = 40f, size = 100f, containerSize = 400f, margin = 20f), 0f)
+    }
+
+    @Test fun `an item too close to the bottom scrolls just enough to leave the margin`() {
+        // bottom edge 390 + margin 20 = 410, 10 past the 400 container
+        assertEquals(10f, scrollDistanceWithMargin(offset = 290f, size = 100f, containerSize = 400f, margin = 20f), 0.001f)
+    }
+
+    @Test fun `an item too close to the top scrolls back just enough to leave the margin`() {
+        // top edge 5 - margin 20 = -15
+        assertEquals(-15f, scrollDistanceWithMargin(offset = 5f, size = 100f, containerSize = 400f, margin = 20f), 0.001f)
+    }
+
+    @Test fun `an item below the window scrolls until it and its margin are in`() {
+        // bottom edge 550 + 20 = 570, 170 past the container
+        assertEquals(170f, scrollDistanceWithMargin(offset = 450f, size = 100f, containerSize = 400f, margin = 20f), 0.001f)
+    }
+
+    @Test fun `without a margin it is the plain minimal scroll`() {
+        assertEquals(0f, scrollDistanceWithMargin(offset = 300f, size = 100f, containerSize = 400f, margin = 0f), 0f)
+        assertEquals(1f, scrollDistanceWithMargin(offset = 301f, size = 100f, containerSize = 400f, margin = 0f), 0.001f)
     }
 }
