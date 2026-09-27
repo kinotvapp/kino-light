@@ -349,12 +349,21 @@ all or nothing.
 | Images | `poster`, `backdrop` and `still` must be `https` URLs of at most 2048 characters, or they are ignored. Images are loaded by Kino directly and are **not** checked against `hosts` (they are display only), and Kino does not send your headers or cookies with them. This is the one exception to the host rule, with one limit: an image on an IP address or a local name (`localhost`, `.local`, `.lan`, …) is ignored too, unless it is on a server the person typed in your settings (then `http` works too). |
 
 **`ids.tmdb` enriches the info page, not only matching.** When TMDB has this exact title (matched by
-`ids.tmdb`, or by `ids.imdb` on a movie when you gave no `ids.tmdb`), opening it fills in whatever
-TMDB knows and you left blank: a movie's runtime, the synopsis (only if yours was empty), the year
-(only if yours was empty), the rating, a tagline, the director or (for a series) creator, the cast
-and the age rating; TMDB's genres replace whatever you gave. It does **not** add a poster, a
-backdrop or seasons from TMDB -- those stay exactly what your `Item`/`SeriesInfo`/`episodes` answer
-gave, or blank if you left them out.
+`ids.tmdb`, or by `ids.imdb` on a movie when you gave no `ids.tmdb`), opening it adds three kinds of
+field, each filled in differently:
+
+- **Only TMDB has these, so they always come from it:** a tagline, the director or (for a series)
+  creator, the cast and the age rating.
+- **TMDB wins whenever it has an answer; yours is only the fallback for what TMDB left blank:** the
+  year and the genres. A title with its own year or genres still shows TMDB's once matched, not its
+  own.
+- **Yours wins when you gave one; TMDB only fills the gap:** the synopsis (only replaced if yours was
+  empty), the rating (only if you left it out), and a movie's runtime (only if you left it unset --
+  a series' runtime is never touched either way, TMDB's included; it prints per episode, not for the
+  whole show).
+
+It does **not** add a poster, a backdrop or seasons from TMDB -- those stay exactly what your
+`Item`/`SeriesInfo`/`episodes` answer gave, or blank if you left them out.
 
 **The `Stream` rules.**
 
@@ -633,6 +642,14 @@ a title in more than one field or language (every form's words are combined). Ma
 and case and ignores words of 1-2 letters (the "el", "de", "of" that make unrelated titles look
 alike); `filterRelevant` keeps an item once it shares at least 60% of a requested title's distinctive
 words.
+
+**Bad input never throws.** Unlike `kino.fetch`/`kino.crypto`/`kino.sleep`, these three never raise a
+`kino.error` for a malformed argument: `items` that is not an array answers `[]` from either
+function. An item with no usable title -- `null`, `undefined`, `getTitle` returning something that is
+not a string (or an array with none in it), or `getTitle` itself throwing -- is treated as "no title"
+rather than crashing your call: `filterRelevant` drops it like an actual near-miss, and
+`sortBySimilarity` sorts it after every item that does have one, in your list's own order among
+themselves.
 
 ```js
 export async function search(query) {

@@ -278,6 +278,52 @@ test("kino.rank: titleTokens folds accents and keeps a word whose only accent is
   assert.deepEqual(filterRelevant(items, "Sao Paulo").map((x) => x.title), ["São Paulo em Chamas"]);
 });
 
+// Robustness convention (see kino-rank.mjs's own header comment): a bad `items` argument never
+// throws, and neither does a bad title on one entry -- only a coded error crossing a real boundary
+// (kino.fetch, kino.crypto, kino.sleep) does that.
+test("kino.rank: a non-array items answers [] instead of throwing", () => {
+  for (const bad of [null, undefined, "not an array", 42, { title: "x" }]) {
+    assert.deepEqual(sortBySimilarity(bad, "Dragon Warrior Saga"), []);
+    assert.deepEqual(filterRelevant(bad, "Dragon Warrior Saga"), []);
+  }
+});
+
+test("kino.rank: an item with no usable title is dropped by filterRelevant and sorts last in sortBySimilarity", () => {
+  const real = { title: "Dragon Warrior Saga: Special Edition" };
+  const noTitleAtAll = { note: "no title field" };
+  const numericTitle = { title: 7 };
+  const arrayOfJunk = { title: [1, 2, 3] };
+  const items = [null, undefined, noTitleAtAll, numericTitle, arrayOfJunk, real];
+
+  assert.deepEqual(filterRelevant(items, "Dragon Warrior Saga"), [real]);
+
+  const sorted = sortBySimilarity(items, "Dragon Warrior Saga");
+  // The one real match goes first; every title-less item follows, in its original relative order.
+  assert.equal(sorted[0], real);
+  assert.deepEqual(sorted.slice(1), [null, undefined, noTitleAtAll, numericTitle, arrayOfJunk]);
+});
+
+test("kino.rank: a getTitle that throws is treated as a missing title, not a crash", () => {
+  const boom = () => { throw new Error("backend field is missing"); };
+  const real = { title: "Dragon Warrior Saga: Special Edition" };
+  const items = [{ broken: true }, real];
+
+  assert.deepEqual(filterRelevant(items, "Dragon Warrior Saga", boom), []);
+  assert.deepEqual(sortBySimilarity(items, "Dragon Warrior Saga", boom), items);
+});
+
+test("kino.rank: getTitle answering a non-string, or an array with none, is a missing title too", () => {
+  const real = { name: "Dragon Warrior Saga: Special Edition" };
+  const weird = { name: 123 };
+  const mixedArray = { name: [123, null, "Dragon Warrior Saga: Special Edition"] };
+  const getTitle = (x) => x.name;
+
+  assert.deepEqual(filterRelevant([weird], "Dragon Warrior Saga", getTitle), []);
+  // A form buried in an array of junk is still found and used.
+  assert.deepEqual(filterRelevant([mixedArray], "Dragon Warrior Saga", getTitle), [mixedArray]);
+  assert.deepEqual(sortBySimilarity([weird, real], "Dragon Warrior Saga", getTitle), [real, weird]);
+});
+
 test("kino.rank: the shim wires the exact same functions the runtime inlines", () => {
   const { kino } = createKino(JSON.parse(manifest()));
   // Same module, not a copy: kino-shim.mjs imports kino-rank.mjs directly.

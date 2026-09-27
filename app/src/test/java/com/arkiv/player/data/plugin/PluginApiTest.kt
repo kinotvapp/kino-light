@@ -65,6 +65,43 @@ class PluginApiTest {
         )
     }
 
+    @Test fun `kino rank folds accents inside the real QuickJS engine exactly like the Node kit`() {
+        val out = home(
+            """
+            const items = [
+              { title: 'Pokemon: La pelicula' },
+              { title: 'Nandu del monte' },
+              { title: 'Sao Paulo em Chamas' },
+              { title: 'Algo completamente distinto' },
+            ];
+            const relevant = kino.rank.filterRelevant(items, 'Pokémon: La película').map((x) => x.title);
+            const sorted = kino.rank.sortBySimilarity(items, ['Ñandú del monte', 'São Paulo em Chamas']).map((x) => x.title);
+            return [relevant, sorted];
+            """,
+        )
+        assertEquals(
+            """[["Pokemon: La pelicula"],["Nandu del monte","Sao Paulo em Chamas","Pokemon: La pelicula","Algo completamente distinto"]]""",
+            out,
+        )
+    }
+
+    @Test fun `kino rank never throws on bad input -- a non-array items, and an item with no usable title`() {
+        val out = home(
+            """
+            const real = { title: 'Dragon Warrior Saga: Special Edition' };
+            const badItems = [
+              kino.rank.sortBySimilarity('not an array', 'x'), kino.rank.filterRelevant(null, 'x'),
+            ];
+            const items = [null, { title: 7 }, real];
+            const relevant = kino.rank.filterRelevant(items, 'Dragon Warrior Saga');
+            const relevantOk = relevant.length === 1 && relevant[0] === real;
+            const sorted = kino.rank.sortBySimilarity(items, 'Dragon Warrior Saga', (x) => { throw new Error('boom') });
+            return [badItems, relevantOk, sorted];
+            """,
+        )
+        assertEquals("""[[[],[]],true,[null,{"title":7},{"title":"Dragon Warrior Saga: Special Edition"}]]""", out)
+    }
+
     @Test fun `kino error builds a typed error the app reads, before or after the first await`() {
         runBlocking {
             val rt = open(

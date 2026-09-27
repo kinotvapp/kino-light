@@ -289,12 +289,15 @@ declare namespace kino {
      * `items`' own order. `query` is a title, or several forms of one (try `query.q`,
      * `query.originalTitle` and `query.altTitles` together: a backend may only know a title in one
      * language). `getTitle` reads a title off an item, string or array of them; it defaults to
-     * `(item) => item.title`.
+     * `(item) => item.title`. Never throws: `items` not an array answers `[]`; an item with no
+     * usable title (missing, not a string, or `getTitle` itself failing) sorts after every item
+     * that has one, in `items`' own order among themselves.
      */
     function sortBySimilarity(items: any[], query: string | string[], getTitle?: (item: any) => string | string[]): any[];
     /**
      * Drops items sharing too few words with `query` (under 60% of its distinctive words of 3+
-     * letters): reordering alone (`sortBySimilarity`) still shows a full page of near-misses when
+     * letters), and any item with no usable title along with them. Never throws: `items` not an
+     * array answers `[]`. Reordering alone (`sortBySimilarity`) still shows a full page of near-misses when
      * the title genuinely is not on the backend, so an absent title comes back with 0 results
      * instead.
      */
