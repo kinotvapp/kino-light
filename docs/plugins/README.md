@@ -231,7 +231,7 @@ declared, and nothing is called that you did not declare:
 export async function search(query) { /* -> Item[] or Page */ }
 export async function home() { /* -> Row[] */ }
 export async function browse(ref, cursor) { /* -> Page */ }
-export async function episodes(ref) { /* -> { series?: SeriesInfo, episodes: Episode[] } */ }
+export async function episodes(ref) { /* -> { series?: SeriesInfo, episodes: Episode[], seasons?: Season[] } */ }
 export async function resolve(ref) { /* -> Stream */ }
 ```
 
@@ -275,6 +275,7 @@ SeriesInfo = { title?: string, poster?: string, backdrop?: string, overview?: st
                ids?: { tmdb?: number, imdb?: string }, genres?: string[], year?: string }
 Episode    = { season: number, number: number, ref: string, title?: string,
                still?: string, overview?: string, airDate?: string, runtimeMinutes?: number }
+Season     = { id: string, ref: string, title: string, number?: number, current?: boolean }
 Stream     = { url: string, mime?: string, headers?: Record<string, string>,
                subtitles?: { lang: string, url: string, format?: "vtt" | "srt" }[],
                durationMs?: number, expiresInSeconds?: number }
@@ -283,6 +284,17 @@ Stream     = { url: string, mime?: string, headers?: Record<string, string>,
 **How the pieces connect.** A `movie` item's `ref` goes to `resolve`. A `series` item's `ref` goes to
 `episodes`, and each episode's `ref` goes to `resolve`. A row's `ref` goes to `browse`, and so does
 each page's `next`.
+
+**Seasons.** Two shapes, and your `episodes` answer says which. When every season of a show is in
+one list, give each episode its `season` and leave `seasons` out: Kino reads the seasons from the
+episodes and shows a selector that only filters the list. When your source keeps each season as its
+own `series` item (its own `id` and `ref`, as a search would list it), return only that season's
+episodes and list every season of the show in `seasons`, the one you are answering for included:
+`{ id, ref, title, number?, current? }`, with `title` what the selector shows ("Temporada 2") and
+`current: true` on the season being listed (Kino also recognizes it by `id`). Kino shows the seasons
+as chips; choosing another one calls `episodes` with that season's `ref` and opens it as that title,
+with its own progress in the library. `seasons` is optional and new in this revision of apiVersion 1:
+a plugin that never returns it keeps working exactly as before.
 
 **Paging ("Ver más").** If you declare `browse`, a Home row with a `ref` gets a "Ver más" card that
 opens a grid: Kino calls `browse(ref, null)`, then `browse(ref, next)` while the person scrolls and
@@ -310,6 +322,7 @@ all or nothing.
 | `browse` result | A `Page` of at most 100 items. |
 | `home` result | At most 20 rows of at most 60 items each. A row needs a unique `id` (same pattern as an item id) and a non-blank `title`; rows with no valid items are dropped. Kino shows them after its own rows, labelled with your plugin's name, and caches them for 6 hours (stale rows show while it refreshes; an answer with no valid rows, or over 2 MB, is not cached and is asked again next time). If `home()` fails you contribute no rows and Home is not blocked. |
 | `episodes` result | At most 5000 episodes. `number` is required and from 1 to 99999 (an episode numbered 0, such as a special, is dropped). `season` should be from 1 to 999; a missing or out-of-range season becomes 1. `ref` is required. A repeated season and number is dropped. Without a `title`, Kino shows "Capítulo N". |
+| `seasons` (in the `episodes` result) | Optional; at most 50. Each needs an `id` (same pattern as an item id; a repeated one is dropped), a non-empty `ref` of at most 4096 characters and a non-blank `title` (up to 200 characters), or it is dropped. `number` from 1 to 999 and `current` a boolean; a wrong one is ignored, not the season. Anything that is not a list is ignored. |
 | `id` | `^[A-Za-z0-9._~-]{1,128}$`. Anything else drops the item, so if your source's own ids have other characters (spaces, `/`, `:`, `%`), derive a stable id yourself, such as a slug. Repeated ids in one list are dropped. |
 | `ref` | A non-empty string of at most 4096 characters. |
 | `kind` | `"movie"` or `"series"`. A `series` item from a plugin that does not declare `episodes` is dropped: it could never be opened. |
@@ -547,7 +560,7 @@ characters. Under the Node kit they go to stderr.
 | `kino.crypto` | data at most 5 MB per call; PBKDF2 at most 100,000 iterations and 64-byte keys; `randomBytes` at most 1,024 |
 | `kino.log` / `console.*` | 2,000 characters per message |
 | What a function returns | at most 2,000,000 characters once turned into JSON |
-| Results | `search` 100 items; `home` 20 rows of 60; `browse` 100 per page; `episodes` 5,000; `ref` 4,096 characters; `next` 2,048 characters; `id` matches `^[A-Za-z0-9._~-]{1,128}$` |
+| Results | `search` 100 items; `home` 20 rows of 60; `browse` 100 per page; `episodes` 5,000 (and 50 `seasons`); `ref` 4,096 characters; `next` 2,048 characters; `id` matches `^[A-Za-z0-9._~-]{1,128}$` |
 | Settings | at most 12; `text` 500, `url` 2,048, `password` 500 characters |
 | Error messages | your `kino.error` message is shown as a detail, cut at 200 characters |
 | `hosts` | 1 to 20 entries |

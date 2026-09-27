@@ -161,6 +161,64 @@ class PluginOutputTest {
         assertEquals(PluginOutput.MAX_EPISODES, PluginOutput.episodes(many, log).episodes.size)
     }
 
+    // ---- sibling seasons (an optional part of the episodes answer, apiVersion 1) ----
+
+    @Test fun `sibling seasons are read with their id, ref, title, number and current flag`() {
+        val json = """{"episodes":[{"number":1,"ref":"a"}],
+          "seasons":[{"id":"s1","ref":"S1","title":"Temporada 1","number":1},
+                     {"id":"s2","ref":"S2","title":"Segunda parte","number":2,"current":true},
+                     {"id":"s3","ref":"S3","title":"Especiales"}]}"""
+        val out = PluginOutput.episodes(json, log).seasons
+        assertEquals(listOf("s1", "s2", "s3"), out.map { it.id })
+        assertEquals(listOf("S1", "S2", "S3"), out.map { it.ref })
+        assertEquals(listOf("Temporada 1", "Segunda parte", "Especiales"), out.map { it.title })
+        // No number reads as 0 ("the plugin did not say"), never as season 1.
+        assertEquals(listOf(1, 2, 0), out.map { it.number })
+        assertEquals(listOf(false, true, false), out.map { it.current })
+        assertTrue(logs.isEmpty())
+    }
+
+    @Test fun `an answer without seasons, or with something that is not a list, has none`() {
+        assertEquals(emptyList<PluginSeason>(), PluginOutput.episodes("""{"episodes":[{"number":1,"ref":"a"}]}""", log).seasons)
+        assertEquals(emptyList<PluginSeason>(), PluginOutput.episodes("""{"episodes":[],"seasons":"T1, T2"}""", log).seasons)
+        assertEquals(emptyList<PluginSeason>(), PluginOutput.episodes("""{"episodes":[],"seasons":{"id":"s1"}}""", log).seasons)
+        assertTrue(logs.any { "seasons" in it && "not a list" in it })
+    }
+
+    @Test fun `a malformed season is dropped with a log line and the rest survive`() {
+        val longRef = "r".repeat(PluginOutput.MAX_REF_CHARS + 1)
+        val json = """{"episodes":[],
+          "seasons":[{"id":"ok","ref":"R","title":"Temporada 1","number":1},
+                     {"id":"bad id!","ref":"R","title":"T"},
+                     {"id":"noref","ref":"","title":"T"},
+                     {"id":"longref","ref":"$longRef","title":"T"},
+                     {"id":"notitle","ref":"R","title":"  "},
+                     {"id":"nottext","ref":"R","title":["T"]},
+                     {"id":"ok","ref":"R2","title":"Duplicada"},
+                     "s9", 7, null,
+                     {"id":"range","ref":"R","title":"Fuera de rango","number":1000},
+                     {"id":"text","ref":"R","title":"Número en texto","number":"2","current":"yes"}]}"""
+        val out = PluginOutput.episodes(json, log).seasons
+        assertEquals(listOf("ok", "range", "text"), out.map { it.id })
+        // An out-of-range or non-numeric number, or a non-boolean current, drop the FIELD, not the season.
+        assertEquals(listOf(1, 0, 0), out.map { it.number })
+        assertEquals(listOf(false, false, false), out.map { it.current })
+        assertTrue(logs.any { "bad id!" !in it && "invalid id" in it })
+        assertTrue(logs.any { "noref" in it })
+        assertTrue(logs.any { "longref" in it })
+        assertTrue(logs.any { "notitle" in it })
+        assertTrue(logs.any { "duplicate" in it && "ok" in it })
+    }
+
+    @Test fun `seasons are capped at 50 and never fail the chapters`() {
+        val many = (1..60).joinToString(",") { """{"id":"s$it","ref":"S$it","title":"Temporada $it","number":$it}""" }
+        val out = PluginOutput.episodes("""{"episodes":[{"number":1,"ref":"a"}],"seasons":[$many]}""", log)
+        assertEquals(PluginOutput.MAX_SEASONS, out.seasons.size)
+        assertEquals(50, PluginOutput.MAX_SEASONS)
+        assertEquals(1, out.episodes.size)
+        assertTrue(logs.any { "seasons" in it && "beyond 50" in it })
+    }
+
     @Test fun `stream must be https on a declared host`() {
         val ok = PluginOutput.stream(
             """{"url":"https://archive.org/download/x/y.mp4","mime":"video/mp4","durationMs":5000,"expiresInSeconds":600,

@@ -86,9 +86,30 @@ interface KinoSeriesInfo {
   year?: string | number;
 }
 
+/**
+ * One season of a series, for a source that keeps each season as its own `series` item: that item's
+ * `id` and `ref` (`episodes(ref)` lists it). `title` is what the season selector shows ("Temporada 2");
+ * `current` marks the season whose episodes came in the same answer (Kino also recognizes it by `id`).
+ */
+interface KinoSeason {
+  /** The season's own item id, same pattern as an item id. */
+  id: string;
+  /** The season's own series ref, at most 4096 characters. */
+  ref: string;
+  title: string;
+  /** 1..999; leave it out when the source has no numbering. */
+  number?: number;
+  current?: boolean;
+}
+
 interface KinoEpisodes {
   series?: KinoSeriesInfo;
   episodes: KinoEpisode[];
+  /**
+   * Only when each season is a separate item: every season of the show, this one included, at most
+   * 50. Leave it out when `episodes` already holds every season (Kino reads the seasons from them).
+   */
+  seasons?: KinoSeason[];
 }
 
 interface KinoStream {

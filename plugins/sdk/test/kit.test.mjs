@@ -230,6 +230,33 @@ test("checkOutput drops what the app drops", () => {
   assert.equal(lan.value.expiresInSeconds, 0);
 });
 
+test("checkOutput reads an episodes answer's sibling seasons as the app does", () => {
+  const m = JSON.parse(manifest({ capabilities: ["search", "episodes", "resolve"] }));
+  const none = checkOutput("episodes", { episodes: [{ number: 1, ref: "e1" }] }, m);
+  assert.deepEqual(none.value.seasons, []);
+  const r = checkOutput("episodes", {
+    episodes: [{ number: 1, ref: "e1" }],
+    seasons: [
+      { id: "s1", ref: "S1", title: "Temporada 1", number: 1 },
+      { id: "s2", ref: "S2", title: "Temporada 2", number: 2, current: true },
+      { id: "s2", ref: "S2b", title: "Repetida" },
+      { id: "bad id!", ref: "S3", title: "T" },
+      { id: "s4", ref: "", title: "T" },
+      { id: "s5", ref: "S5", title: "  " },
+      { id: "s6", ref: "S6", title: "Sin número", number: 1000, current: "yes" },
+    ],
+  }, m);
+  assert.deepEqual(r.value.seasons, [
+    { id: "s1", ref: "S1", title: "Temporada 1", number: 1, current: false },
+    { id: "s2", ref: "S2", title: "Temporada 2", number: 2, current: true },
+    { id: "s6", ref: "S6", title: "Sin número", number: 0, current: false },
+  ]);
+  assert.equal(r.drops.length, 4);
+  const many = { episodes: [], seasons: Array.from({ length: 60 }, (_, i) => ({ id: `s${i}`, ref: `S${i}`, title: `T${i}` })) };
+  assert.equal(checkOutput("episodes", many, m).value.seasons.length, contract.output.maxSeasons);
+  assert.deepEqual(checkOutput("episodes", { episodes: [], seasons: "T1, T2" }, m).value.seasons, []);
+});
+
 test("run.mjs's call() gives a clear message for a malformed search argument, not a bare JSON error", async () => {
   await assert.rejects(
     call({ search: () => {} }, "search", ['{"q": bad json']),

@@ -127,6 +127,7 @@ class PluginContractParityTest {
         assertEquals(PluginOutput.MAX_ROW_ITEMS, o.getInt("maxRowItems"))
         assertEquals(PluginOutput.MAX_BROWSE_ITEMS, o.getInt("maxBrowseItems"))
         assertEquals(PluginOutput.MAX_EPISODES, o.getInt("maxEpisodes"))
+        assertEquals(PluginOutput.MAX_SEASONS, o.getInt("maxSeasons"))
         assertEquals(PluginOutput.MAX_REF_CHARS, o.getInt("maxRefChars"))
         assertEquals(PluginOutput.MAX_CURSOR_CHARS, o.getInt("maxCursorChars"))
         assertEquals(PluginRuntime.MAX_RESULT_CHARS, o.getInt("maxResultChars"))

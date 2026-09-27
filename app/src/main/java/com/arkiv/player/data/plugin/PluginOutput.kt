@@ -40,7 +40,21 @@ data class PluginEpisode(
     val runtimeMinutes: Int = 0,
 )
 
-data class PluginEpisodes(val series: PluginSeriesInfo?, val episodes: List<PluginEpisode>)
+/**
+ * One season of a series, for a plugin that keeps each season as its own `series` item: [id] and
+ * [ref] are that item's, exactly as a search or Home would list it. [title] is what the season
+ * selector shows; [number] is 0 when the plugin gave none (never "the 1st"); [current] when the
+ * plugin flagged it as the season whose episodes came in the same answer.
+ */
+data class PluginSeason(val id: String, val ref: String, val title: String, val number: Int = 0, val current: Boolean = false)
+
+/**
+ * [seasons] is empty for a plugin that puts every season in one [episodes] list (the seasons are then
+ * read from the episodes) and lists the whole show's seasons, this one included, for a plugin that
+ * keeps each as its own title. Optional in the answer: an apiVersion 1 plugin that never heard of it
+ * keeps working unchanged.
+ */
+data class PluginEpisodes(val series: PluginSeriesInfo?, val episodes: List<PluginEpisode>, val seasons: List<PluginSeason> = emptyList())
 
 data class PluginSubtitle(val lang: String, val url: String, val format: String = "")
 
@@ -70,6 +84,8 @@ object PluginOutput {
     const val MAX_ROWS = 20
     const val MAX_ROW_ITEMS = 60
     const val MAX_EPISODES = 5000
+    /** Sibling seasons an episodes answer may list (`seasons`); the selector is a row of chips. */
+    const val MAX_SEASONS = 50
     const val MAX_REF_CHARS = 4096
     const val MAX_CURSOR_CHARS = 2048
     const val MAX_IMAGE_URL_CHARS = 2048
@@ -195,7 +211,36 @@ object PluginOutput {
                 year = text(it, "year", 10),
             )
         }
-        return PluginEpisodes(series, eps)
+        return PluginEpisodes(series, eps, seasonsOf(o, log))
+    }
+
+    /**
+     * The optional `seasons` of an episodes answer (see [PluginSeason]): forgiving like every list,
+     * a bad entry is dropped with a [log] line. A wrong `number` or `current` drops the field, not
+     * the season, so a plugin's typo costs it a chip's number, never the whole selector.
+     */
+    private fun seasonsOf(o: JSONObject, log: (String) -> Unit): List<PluginSeason> {
+        if (!o.has("seasons")) return emptyList()
+        val array = o.optJSONArray("seasons") ?: return emptyList<PluginSeason>().also { log("seasons: not a list, ignored") }
+        val seen = HashSet<String>()
+        val out = ArrayList<PluginSeason>()
+        for (i in 0 until array.length()) {
+            if (out.size >= MAX_SEASONS) { log("seasons: beyond $MAX_SEASONS dropped"); break }
+            val s = array.optJSONObject(i) ?: continue
+            val id = s.optString("id")
+            if (!ID.matches(id)) { log("seasons: #$i has an invalid id"); continue }
+            val ref = s.optString("ref")
+            if (ref.isEmpty() || ref.length > MAX_REF_CHARS) { log("seasons: $id has no valid ref"); continue }
+            val title = text(s, "title", MAX_TITLE_CHARS)
+            if (title.isBlank()) { log("seasons: $id has no title"); continue }
+            if (!seen.add(id)) { log("seasons: duplicate $id dropped"); continue }
+            out += PluginSeason(
+                id, ref, title,
+                number = (s.opt("number") as? Number)?.toInt()?.takeIf { it in 1..MAX_SEASON } ?: 0,
+                current = s.opt("current") == true,
+            )
+        }
+        return out
     }
 
     /**

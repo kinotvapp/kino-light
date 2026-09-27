@@ -53,6 +53,7 @@
     "maxRowItems": 60,
     "maxBrowseItems": 100,
     "maxEpisodes": 5000,
+    "maxSeasons": 50,
     "maxRefChars": 4096,
     "maxCursorChars": 2048,
     "maxResultChars": 2000000,

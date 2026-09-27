@@ -272,7 +272,29 @@ function episodes(value, drop) {
     seen.add(key);
     eps.push({ season, number: e.number, ref: e.ref, title: text(e.title, o().maxTitleChars), airDate: re(o().airDatePattern).test(text(e.airDate, 10)) ? text(e.airDate, 10) : "" });
   });
-  return { series: value.series && typeof value.series === "object" ? value.series : null, episodes: eps };
+  return { series: value.series && typeof value.series === "object" ? value.series : null, episodes: eps, seasons: seasons(value, drop) };
+}
+
+/** The optional sibling `seasons` of an episodes answer, read as the app reads them (PluginOutput.seasonsOf). */
+function seasons(value, drop) {
+  if (!("seasons" in value) || value.seasons === undefined) return [];
+  if (!Array.isArray(value.seasons)) { drop("seasons: not a list, ignored"); return []; }
+  const seen = new Set();
+  const out = [];
+  value.seasons.forEach((s, i) => {
+    if (out.length >= o().maxSeasons) { drop(`seasons: beyond ${o().maxSeasons} dropped`); return; }
+    if (s === null || typeof s !== "object" || Array.isArray(s)) return;
+    const id = typeof s.id === "number" ? String(s.id) : s.id;
+    if (typeof id !== "string" || !re(o().itemIdPattern).test(id)) return drop(`seasons: #${i} has an invalid id`);
+    if (typeof s.ref !== "string" || !s.ref || s.ref.length > o().maxRefChars) return drop(`seasons: ${id} has no valid ref`);
+    const title = text(s.title, o().maxTitleChars);
+    if (!title) return drop(`seasons: ${id} has no title`);
+    if (seen.has(id)) return drop(`seasons: duplicate ${id} dropped`);
+    seen.add(id);
+    const number = Number.isInteger(s.number) && s.number >= 1 && s.number <= o().maxSeasonNumber ? s.number : 0;
+    out.push({ id, ref: s.ref, title, number, current: s.current === true });
+  });
+  return out;
 }
 
 function stream(value, { hosts, servers }) {
