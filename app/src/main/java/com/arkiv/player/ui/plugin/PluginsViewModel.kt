@@ -240,6 +240,7 @@ class PluginsViewModel(
                 val setup = settingsFormOf(m.id)?.takeIf { it.plugin.needsSetup }
                 _state.update {
                     val installed = it.copy(address = "", message = "${m.name} quedó instalado")
+                    // settingsClosed = false only mirrors openSettings: just the standalone Configurar route reads it.
                     if (setup == null) installed else installed.copy(configuring = draftOf(m.id, setup), settingsClosed = false)
                 }
             }

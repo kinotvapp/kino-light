@@ -21,6 +21,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -63,9 +64,18 @@ class PluginsViewModelTest {
         override fun uninstall(id: String) { uninstalled += id }
         var form: PluginSettingsForm? = null
         var settingsFailure: Exception? = null
+        /**
+         * The real admin only knows a plugin's settings once it is installed and the registry has reloaded
+         * (`registry.find(id)`); with this on, [settingsOf] answers null until [install] has run for that id.
+         */
+        var settingsOnlyAfterInstall = false
         var saveResult: String? = null
         val saved = mutableListOf<Map<String, Any?>>()
-        override suspend fun settingsOf(id: String): PluginSettingsForm? { settingsFailure?.let { throw it }; return form }
+        override suspend fun settingsOf(id: String): PluginSettingsForm? {
+            settingsFailure?.let { throw it }
+            if (settingsOnlyAfterInstall && installed.none { it.manifest.id == id }) return null
+            return form
+        }
         override suspend fun saveSettings(id: String, values: Map<String, Any?>): String? { saved += values; return saveResult }
     }
 
@@ -308,7 +318,7 @@ class PluginsViewModelTest {
     private val setupPreview = preview.copy(manifest = configurable.manifest)
 
     @Test fun `installing a plugin that needs setup opens its Configurar and keeps the installed message`() {
-        val admin = FakeAdmin().apply { previewResult = { setupPreview }; form = PluginSettingsForm(needingSetup, emptyMap()) }
+        val admin = FakeAdmin().apply { previewResult = { setupPreview }; form = PluginSettingsForm(needingSetup, emptyMap()); settingsOnlyAfterInstall = true }
         val vm = vm(admin)
         vm.onAddressChange("o/r"); vm.add(); vm.confirmInstall()
         val draft = vm.state.value.configuring!!
@@ -318,13 +328,23 @@ class PluginsViewModelTest {
         with(vm.state.value) {
             assertEquals("Demo quedó instalado", message)
             assertEquals("", address)
-            assertFalse(settingsClosed)
             assertFalse(busy)
         }
     }
 
+    @Test fun `the settings are read after the install, when the registry knows the plugin`() {
+        // The real admin answers null for a plugin it has not installed yet, so a read placed before the install
+        // would silently never open Configurar. This fake behaves the same way.
+        val admin = FakeAdmin().apply { previewResult = { setupPreview }; form = PluginSettingsForm(needingSetup, emptyMap()); settingsOnlyAfterInstall = true }
+        val vm = vm(admin)
+        assertNull(runBlocking { admin.settingsOf("demo") })
+        vm.onAddressChange("o/r"); vm.add(); vm.confirmInstall()
+        assertEquals(listOf(setupPreview), admin.installed)
+        assertEquals("demo", vm.state.value.configuring?.pluginId)
+    }
+
     @Test fun `installing a plugin with nothing missing does not open Configurar`() {
-        val admin = FakeAdmin().apply { previewResult = { setupPreview }; form = PluginSettingsForm(configurable, emptyMap()) }
+        val admin = FakeAdmin().apply { previewResult = { setupPreview }; form = PluginSettingsForm(configurable, emptyMap()); settingsOnlyAfterInstall = true }
         val vm = vm(admin)
         vm.onAddressChange("o/r"); vm.add(); vm.confirmInstall()
         assertNull(vm.state.value.configuring)
@@ -333,7 +353,7 @@ class PluginsViewModelTest {
 
     @Test fun `updating a plugin that needs setup never opens Configurar`() {
         val update = setupPreview.copy(isUpdate = true)
-        val admin = FakeAdmin().apply { this.update = { UpdateOutcome.NeedsApproval(update) }; form = PluginSettingsForm(needingSetup, emptyMap()) }
+        val admin = FakeAdmin().apply { this.update = { UpdateOutcome.NeedsApproval(update) }; form = PluginSettingsForm(needingSetup, emptyMap()); settingsOnlyAfterInstall = true }
         val vm = vm(admin)
         vm.checkUpdate("demo"); vm.confirmInstall()
         assertEquals(listOf(update), admin.installed)
@@ -482,6 +502,9 @@ class PluginsViewModelTest {
         assertNull(installedIdFor("a/b", "not an address"))
         assertNull(installedIdFor("a b/c", "a/c"))
         assertEquals("demo", installedIdFor("a b/c", "a b/c"))
+        // Two DIFFERENT addresses that both fail to parse must not match through their shared "no canonical form".
+        assertNull(installedIdFor("a b/c", "x y/z"))
+        assertNull(installedIdFor("x y/z", "a/b"))
     }
 
     @Test fun `the query is kept in the state for the search box`() {
