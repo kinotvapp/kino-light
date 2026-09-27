@@ -541,6 +541,21 @@ class AppGraph(context: Context) {
         )
     }
 
+    /**
+     * The art (colour and icon) each recommended plugin ships in its own repo, for the cards of the two
+     * "Agregar plugin" windows. ONE instance for the whole app: its per-repo de-duplication locks and its
+     * negative cache live in the instance, so a second one would download the same icon twice. It reads
+     * through the same client the installer's fetcher uses (raw.githubusercontent.com, no new host) but
+     * NOT through the installer's fetcher itself, so [debugPluginFetcher] never redirects it. Its folder
+     * is outside `plugins/`, so it can never collide with a plugin's id folder.
+     */
+    val catalogArt: com.arkiv.player.data.plugin.catalog.CatalogArtProvider by lazy {
+        com.arkiv.player.data.plugin.catalog.CatalogArtRepository(
+            fetcher = RawGithubFetcher(pluginBaseHttp),
+            dir = java.io.File(appContext.filesDir, "plugin-catalog-art"),
+        )
+    }
+
     val pluginAdmin: PluginAdmin by lazy {
         DefaultPluginAdmin(
             pluginRegistry, pluginInstaller, pluginRuntimes, pluginConfigStore,

@@ -8,6 +8,8 @@ import com.arkiv.player.data.plugin.PluginAddress
 import com.arkiv.player.data.plugin.PluginAdmin
 import com.arkiv.player.data.plugin.PluginSettingsForm
 import com.arkiv.player.data.plugin.UpdateOutcome
+import com.arkiv.player.data.plugin.catalog.CatalogArt
+import com.arkiv.player.data.plugin.catalog.CatalogArtProvider
 import com.arkiv.player.data.plugin.catalog.CatalogEntry
 import com.arkiv.player.data.plugin.catalog.CatalogOrigin
 import com.arkiv.player.data.plugin.catalog.CatalogProvider
@@ -24,6 +26,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -102,6 +106,12 @@ fun catalogRefreshLine(catalog: CatalogUiState): CatalogRefreshLine? =
 
 private val EMPTY_SEED = CatalogResult(PluginCatalog(emptyList()), CatalogOrigin.SEED)
 
+/** The default art provider: knows no art and makes no calls, for the screens that show no cards. */
+internal object NoCatalogArt : CatalogArtProvider {
+    override fun cached(repo: String): CatalogArt? = null
+    override suspend fun refresh(repo: String): CatalogArt? = null
+}
+
 /**
  * Whether two plugin addresses name the same plugin. `installed.json` stores [PluginAddress.canonical], so
  * `a/b.git`, `a/b@HEAD` and `https://github.com/a/b` are all `a/b`; comparing the raw strings would show
@@ -132,6 +142,10 @@ private fun catalogUiState(result: CatalogResult, refreshing: Boolean, query: St
  *
  * [catalogProvider] is the recommended-plugins list ([catalog]); the default is an empty one so a
  * screen that only needs the installed plugins (Configurar) never touches the network.
+ *
+ * [artProvider] is the art each listed row's own repo ships ([art]); the default knows none and makes
+ * no calls, so only the windows that draw cards pay for it. Its refreshes run on [io]: the real
+ * repository reads and parses files on the thread that calls it.
  */
 class PluginsViewModel(
     private val admin: PluginAdmin,
@@ -140,6 +154,7 @@ class PluginsViewModel(
         override suspend fun load(force: Boolean) = EMPTY_SEED
         override fun cachedOrSeed() = EMPTY_SEED
     },
+    private val artProvider: CatalogArtProvider = NoCatalogArt,
 ) : ViewModel() {
     val plugins: StateFlow<List<InstalledPlugin>> = admin.plugins
 
@@ -165,7 +180,30 @@ class PluginsViewModel(
             catalogUiState(loaded.value, refreshing.value, query.value, admin.plugins.value),
         )
 
-    init { loadCatalog(force = false) }
+    // What is on disk for the rows listed at construction, read here on the calling thread (a handful of
+    // tiny files, like [diskCatalog]) so the very first [art] value already has it.
+    private val _art = MutableStateFlow(diskArt(catalog.value.rows.map { it.entry.repo }))
+
+    /**
+     * The art of the listed rows, keyed by the entry's `repo` exactly as in the catalog. A repo with no art
+     * is absent, never null-valued. It starts as what is on disk, and each repo's refresh lands on its own
+     * as it ends: a slow or failed one never holds back the others.
+     */
+    val art: StateFlow<Map<String, CatalogArt>> = _art.asStateFlow()
+
+    // Every repo is requested at most once per view-model lifetime, whatever it answers: the repository
+    // keeps its own negative cache, and asking again on every keystroke of the search would not help.
+    // Only touched from the collector below, which runs on Main.
+    private val artRequested = HashSet<String>()
+
+    init {
+        loadCatalog(force = false)
+        // Follows the rows as they are listed (the search filter, a reload, the download replacing the
+        // disk copy), so a row that shows up later gets its art too.
+        viewModelScope.launch {
+            catalog.map { state -> state.rows.map { it.entry.repo } }.distinctUntilChanged().collect { requestArt(it) }
+        }
+    }
 
     fun onQueryChange(value: String) {
         query.value = value
@@ -185,6 +223,44 @@ class PluginsViewModel(
         } catch (e: Exception) {
             EMPTY_SEED
         }
+
+    /**
+     * What [artProvider] has on disk for each of [repos]; a repo with nothing, and a provider that throws
+     * anyway, leave that repo out (its refresh is still requested).
+     */
+    private fun diskArt(repos: List<String>): Map<String, CatalogArt> {
+        val found = LinkedHashMap<String, CatalogArt>()
+        for (repo in repos) {
+            val cached = try {
+                artProvider.cached(repo)
+            } catch (e: Exception) {
+                null
+            }
+            if (cached != null) found[repo] = cached
+        }
+        return found
+    }
+
+    /**
+     * Starts the refresh of every repo in [repos] not requested before, each on [io] as its own job so the
+     * answers land one at a time. An answer of null leaves what [art] holds; a provider that throws leaves
+     * it untouched too (only cancellation is passed on, so clearing the view model stops them all).
+     */
+    private fun requestArt(repos: List<String>) {
+        for (repo in repos) {
+            if (!artRequested.add(repo)) continue
+            viewModelScope.launch(io) {
+                val refreshed = try {
+                    artProvider.refresh(repo)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    null
+                }
+                if (refreshed != null) _art.update { it + (repo to refreshed) }
+            }
+        }
+    }
 
     /**
      * The newest request wins: an older one still running is cancelled, so a slow cached answer can

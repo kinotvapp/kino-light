@@ -12,20 +12,30 @@ import com.arkiv.player.data.plugin.PluginSettingsForm
 import com.arkiv.player.data.plugin.SettingType
 import com.arkiv.player.data.plugin.PluginTimeoutException
 import com.arkiv.player.data.plugin.UpdateOutcome
+import com.arkiv.player.data.plugin.catalog.CatalogArt
+import com.arkiv.player.data.plugin.catalog.CatalogArtProvider
 import com.arkiv.player.data.plugin.catalog.CatalogEntry
 import com.arkiv.player.data.plugin.catalog.CatalogOrigin
 import com.arkiv.player.data.plugin.catalog.CatalogProvider
 import com.arkiv.player.data.plugin.catalog.CatalogResult
 import com.arkiv.player.data.plugin.catalog.PluginCatalog
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelStore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -34,6 +44,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.util.concurrent.Executors
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class PluginsViewModelTest {
@@ -701,5 +712,206 @@ class PluginsViewModelTest {
         standard.scheduler.runCurrent()
         assertFalse(vm.catalog.value.refreshing)
         assertEquals(listOf("new"), vm.catalog.value.rows.map { it.entry.id })
+    }
+
+    // ---- Art of the recommended plugins ----
+
+    private class FakeArtProvider(private val onDisk: Map<String, CatalogArt> = emptyMap()) : CatalogArtProvider {
+        val cachedCalls = mutableListOf<String>()
+        val refreshCalls = mutableListOf<String>()
+        val cancelled = mutableListOf<String>()
+        var cachedFailure: Exception? = null
+
+        /** What [refresh] does for a repo; the default answers null at once. */
+        var onRefresh: suspend (repo: String) -> CatalogArt? = { null }
+
+        override fun cached(repo: String): CatalogArt? {
+            cachedCalls += repo
+            cachedFailure?.let { throw it }
+            return onDisk[repo]
+        }
+
+        override suspend fun refresh(repo: String): CatalogArt? {
+            refreshCalls += repo
+            try {
+                return onRefresh(repo)
+            } catch (e: CancellationException) {
+                cancelled += repo
+                throw e
+            }
+        }
+    }
+
+    private val alfaArt = CatalogArt("#112233", null)
+    private val betaArt = CatalogArt("#445566", null)
+    private val gammaArt = CatalogArt("#778899", null)
+    private fun threeEntries() = arrayOf(entry("alfa", "o/alfa"), entry("beta", "o/beta"), entry("gamma", "o/gamma"))
+
+    private fun vmWithArt(catalog: CatalogProvider, provider: CatalogArtProvider, io: CoroutineDispatcher = dispatcher) =
+        PluginsViewModel(FakeAdmin(), io = io, catalogProvider = catalog, artProvider = provider)
+
+    @Test fun `the first art already holds the disk copy of every visible row, before any refresh answers`() {
+        val never = CompletableDeferred<CatalogArt?>()
+        val provider = FakeArtProvider(mapOf("o/alfa" to alfaArt, "o/beta" to betaArt)).apply { onRefresh = { never.await() } }
+        val vm = vmWithArt(FakeCatalog(*threeEntries()), provider)
+        assertEquals(mapOf("o/alfa" to alfaArt, "o/beta" to betaArt), vm.art.value)
+        assertEquals(setOf("o/alfa", "o/beta", "o/gamma"), provider.cachedCalls.toSet())
+    }
+
+    @Test fun `a refresh is started once for each visible row's repo`() {
+        val provider = FakeArtProvider()
+        vmWithArt(FakeCatalog(*threeEntries()), provider)
+        // FakeCatalog answers the same rows on disk and from the download: nothing may be asked twice.
+        assertEquals(listOf("o/alfa", "o/beta", "o/gamma"), provider.refreshCalls)
+    }
+
+    @Test fun `each refresh lands as it arrives, without waiting for the others`() {
+        val gates = mapOf("o/alfa" to CompletableDeferred<CatalogArt?>(), "o/beta" to CompletableDeferred<CatalogArt?>())
+        val provider = FakeArtProvider().apply { onRefresh = { repo -> gates.getValue(repo).await() } }
+        val vm = vmWithArt(FakeCatalog(entry("alfa", "o/alfa"), entry("beta", "o/beta")), provider)
+        assertTrue(vm.art.value.isEmpty())
+        gates.getValue("o/beta").complete(betaArt)
+        assertEquals(mapOf("o/beta" to betaArt), vm.art.value)
+        gates.getValue("o/alfa").complete(alfaArt)
+        assertEquals(mapOf("o/alfa" to alfaArt, "o/beta" to betaArt), vm.art.value)
+    }
+
+    @Test fun `a repo with no art is absent from the map, not a null value`() {
+        val provider = FakeArtProvider().apply { onRefresh = { repo -> if (repo == "o/alfa") alfaArt else null } }
+        val vm = vmWithArt(FakeCatalog(entry("alfa", "o/alfa"), entry("beta", "o/beta")), provider)
+        assertEquals(setOf("o/alfa"), vm.art.value.keys)
+        assertFalse(vm.art.value.containsKey("o/beta"))
+    }
+
+    @Test fun `the refreshed art replaces the disk copy`() {
+        val fresh = CatalogArt("#AABBCC", null)
+        val provider = FakeArtProvider(mapOf("o/alfa" to alfaArt)).apply { onRefresh = { fresh } }
+        val vm = vmWithArt(FakeCatalog(entry("alfa", "o/alfa")), provider)
+        assertEquals(mapOf("o/alfa" to fresh), vm.art.value)
+    }
+
+    @Test fun `a refresh that answers null keeps the disk copy on screen`() {
+        val provider = FakeArtProvider(mapOf("o/alfa" to alfaArt))
+        val vm = vmWithArt(FakeCatalog(entry("alfa", "o/alfa")), provider)
+        assertEquals(listOf("o/alfa"), provider.refreshCalls)
+        assertEquals(mapOf("o/alfa" to alfaArt), vm.art.value)
+    }
+
+    @Test fun `rows that arrive with the download are refreshed, the ones already requested are not`() {
+        val gate = CompletableDeferred<CatalogResult>()
+        val disk = CatalogResult(PluginCatalog(listOf(entry("alfa", "o/alfa"))), CatalogOrigin.CACHE)
+        val provider = FakeArtProvider().apply { onRefresh = { repo -> if (repo == "o/gamma") gammaArt else null } }
+        val vm = vmWithArt(ScriptedCatalog(disk) { gate.await() }, provider)
+        assertEquals(listOf("o/alfa"), provider.refreshCalls)
+        gate.complete(result(CatalogOrigin.FRESH, "alfa", "beta", "gamma"))
+        assertEquals(listOf("o/alfa", "o/beta", "o/gamma"), provider.refreshCalls)
+        assertEquals(mapOf("o/gamma" to gammaArt), vm.art.value)
+    }
+
+    @Test fun `only the rows the search lists are refreshed, and the others when they show up`() {
+        val gate = CompletableDeferred<CatalogResult>()
+        val provider = FakeArtProvider()
+        val vm = vmWithArt(ScriptedCatalog(emptySeed) { gate.await() }, provider)
+        vm.onQueryChange("beta")
+        gate.complete(result(CatalogOrigin.FRESH, "alfa", "beta", "gamma"))
+        assertEquals(listOf("o/beta"), provider.refreshCalls)
+        vm.onQueryChange("")
+        assertEquals(listOf("o/beta", "o/alfa", "o/gamma"), provider.refreshCalls)
+    }
+
+    @Test fun `Reintentar requests only the rows it adds`() {
+        var loads = 0
+        val provider = FakeArtProvider()
+        val catalog = ScriptedCatalog(result(CatalogOrigin.SEED, "alfa")) {
+            if (loads++ == 0) result(CatalogOrigin.FRESH, "alfa", "beta") else result(CatalogOrigin.FRESH, "alfa", "beta", "gamma")
+        }
+        val vm = vmWithArt(catalog, provider)
+        assertEquals(listOf("o/alfa", "o/beta"), provider.refreshCalls)
+        vm.reloadCatalog()
+        assertEquals(listOf("o/alfa", "o/beta", "o/gamma"), provider.refreshCalls)
+    }
+
+    @Test fun `a repo whose refresh answered null is not asked again when its row comes back`() {
+        val provider = FakeArtProvider()
+        val vm = vmWithArt(FakeCatalog(entry("alfa", "o/alfa")), provider)
+        vm.onQueryChange("nothing matches this")
+        vm.onQueryChange("")
+        vm.reloadCatalog()
+        assertEquals(listOf("o/alfa"), provider.refreshCalls)
+    }
+
+    @Test fun `clearing the view model cancels the refreshes still running`() {
+        val never = CompletableDeferred<CatalogArt?>()
+        val provider = FakeArtProvider().apply { onRefresh = { never.await() } }
+        val store = ViewModelStore()
+        val factory = object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T =
+                vmWithArt(FakeCatalog(entry("alfa", "o/alfa"), entry("beta", "o/beta")), provider) as T
+        }
+        val vm = ViewModelProvider(store, factory)[PluginsViewModel::class.java]
+        assertEquals(listOf("o/alfa", "o/beta"), provider.refreshCalls)
+        assertTrue(provider.cancelled.isEmpty())
+        store.clear()
+        assertEquals(setOf("o/alfa", "o/beta"), provider.cancelled.toSet())
+        // A late answer after the screen is gone lands nowhere.
+        never.complete(alfaArt)
+        assertTrue(vm.art.value.isEmpty())
+    }
+
+    @Test fun `every refresh runs on the io dispatcher, never on the thread that built the view model`() {
+        val executor = Executors.newSingleThreadExecutor { Thread(it, "art-io") }
+        try {
+            val ran = CompletableDeferred<String>()
+            val provider = FakeArtProvider().apply { onRefresh = { ran.complete(Thread.currentThread().name); alfaArt } }
+            val vm = vmWithArt(FakeCatalog(entry("alfa", "o/alfa")), provider, io = executor.asCoroutineDispatcher())
+            // Coroutine debug mode appends " @coroutine#N" to the name of the thread a coroutine runs on.
+            val thread = runBlocking { withTimeout(10_000) { ran.await() } }
+            assertTrue("ran on $thread", thread.startsWith("art-io"))
+            assertEquals(mapOf("o/alfa" to alfaArt), runBlocking { withTimeout(10_000) { vm.art.first { it.isNotEmpty() } } })
+        } finally {
+            executor.shutdownNow()
+        }
+    }
+
+    @Test fun `a refresh queued on io does not delay the first art from the disk`() {
+        val queued = StandardTestDispatcher()
+        val provider = FakeArtProvider(mapOf("o/alfa" to alfaArt))
+        val vm = vmWithArt(FakeCatalog(entry("alfa", "o/alfa")), provider, io = queued)
+        assertEquals(mapOf("o/alfa" to alfaArt), vm.art.value)
+        assertTrue(provider.refreshCalls.isEmpty())
+        queued.scheduler.runCurrent()
+        assertEquals(listOf("o/alfa"), provider.refreshCalls)
+    }
+
+    @Test fun `a provider whose refresh throws leaves the state as it was, and the other rows still land`() {
+        val provider = FakeArtProvider(mapOf("o/beta" to betaArt)).apply {
+            onRefresh = { repo ->
+                when (repo) {
+                    "o/beta" -> throw IllegalStateException("boom")
+                    "o/gamma" -> throw CancellationException("gone")
+                    else -> alfaArt
+                }
+            }
+        }
+        val vm = vmWithArt(FakeCatalog(*threeEntries()), provider)
+        assertEquals(mapOf("o/alfa" to alfaArt, "o/beta" to betaArt), vm.art.value)
+        assertEquals(listOf("o/alfa", "o/beta", "o/gamma"), provider.refreshCalls)
+    }
+
+    @Test fun `a provider whose disk read throws gives a view model with no art yet, and the refresh still lands`() {
+        val provider = FakeArtProvider().apply {
+            cachedFailure = IllegalStateException("disk")
+            onRefresh = { alfaArt }
+        }
+        val vm = vmWithArt(FakeCatalog(entry("alfa", "o/alfa")), provider)
+        assertEquals(mapOf("o/alfa" to alfaArt), vm.art.value)
+    }
+
+    @Test fun `a view model built without an art provider shows no art and asks nobody`() {
+        val vm = PluginsViewModel(FakeAdmin(), io = dispatcher, catalogProvider = FakeCatalog(*threeEntries()))
+        assertTrue(vm.art.value.isEmpty())
+        assertNull(NoCatalogArt.cached("o/alfa"))
+        assertNull(runBlocking { NoCatalogArt.refresh("o/alfa") })
     }
 }

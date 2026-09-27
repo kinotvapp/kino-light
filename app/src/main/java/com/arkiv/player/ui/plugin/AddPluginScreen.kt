@@ -84,7 +84,7 @@ fun AddPluginScreen(mode: AddPluginMode, onClose: () -> Unit) {
     // Own key: this window can be hosted next to the Plugins tab's view model on the same owner.
     val vm: PluginsViewModel = viewModel(
         key = "add-plugin",
-        factory = viewModelFactory { initializer { PluginsViewModel(graph.pluginAdmin, catalogProvider = graph.pluginCatalog) } },
+        factory = viewModelFactory { initializer { PluginsViewModel(graph.pluginAdmin, catalogProvider = graph.pluginCatalog, artProvider = graph.catalogArt) } },
     )
     val plugins by vm.plugins.collectAsStateWithLifecycle()
     val state by vm.state.collectAsStateWithLifecycle()
