@@ -46,6 +46,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.arkiv.player.data.plugin.catalog.CatalogArt
+import java.io.File
 import com.arkiv.player.ui.theme.ArkivRed
 import com.arkiv.player.ui.theme.ArkivSurface
 import com.arkiv.player.ui.theme.ArkivTextSecondary
@@ -104,7 +105,7 @@ fun PluginCard(
         shape = RoundedCornerShape(CARD_CORNER),
         colors = CardDefaults.cardColors(containerColor = ArkivSurface),
     ) {
-        CardTile(name = entry.name, art = art, legacyDefault = entry.legacyDefault)
+        CardTile(name = entry.name, iconFile = art?.iconFile, tileColorArgb = tileColor(art), legacyDefault = entry.legacyDefault)
         Column(
             modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 12.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -165,12 +166,13 @@ fun PluginCard(
  * sizes; once the TV pass is done both can share one composable.
  *
  * Internal, not private: [InstalledPluginCard] (the Instalados tab) draws the very same tile for an
- * installed plugin, never with [legacyDefault] (that pill is a Recomendados-only thing).
+ * installed plugin, never with [legacyDefault] (that pill is a Recomendados-only thing); it passes
+ * [iconFile] and [tileColorArgb] straight from its own model ([installedCardModel]) instead of a catalog
+ * [CatalogArt], so its own icon and colour (not just the catalog's) can win.
  */
 @Composable
-internal fun CardTile(name: String, art: CatalogArt?, legacyDefault: Boolean) {
-    val tile = tileColor(art)
-    val iconFile = art?.iconFile
+internal fun CardTile(name: String, iconFile: File?, tileColorArgb: Long, legacyDefault: Boolean) {
+    val tile = tileColorArgb
     var iconFailed by remember(iconFile) { mutableStateOf(false) }
     Column(
         modifier = Modifier

@@ -26,6 +26,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -79,7 +80,7 @@ internal fun InstalledPluginCard(
         shape = RoundedCornerShape(CARD_CORNER),
         colors = CardDefaults.cardColors(containerColor = ArkivSurface),
     ) {
-        CardTile(name = model.name, art = art, legacyDefault = false)
+        CardTile(name = model.name, iconFile = model.iconFile, tileColorArgb = model.tileColorArgb, legacyDefault = false)
         Column(
             modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 12.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -203,7 +204,11 @@ private fun InstalledActionsSheet(
     }
 }
 
-/** One row of the sheet: the same look [com.arkiv.player.ui.library.LibraryScreen]'s own menu sheet uses, dimmed while [enabled] is false. */
+/**
+ * One row of the sheet: the same look [com.arkiv.player.ui.library.LibraryScreen]'s own menu sheet uses,
+ * dimmed while [enabled] is false. `role = Role.Button` on the click so TalkBack reads it as a button, not
+ * as plain clickable text.
+ */
 @Composable
 private fun SheetAction(text: String, color: Color = Color.Unspecified, enabled: Boolean = true, onClick: () -> Unit) {
     Text(
@@ -213,7 +218,7 @@ private fun SheetAction(text: String, color: Color = Color.Unspecified, enabled:
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = MIN_TARGET)
-            .clickable(enabled = enabled, onClick = onClick)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .padding(horizontal = 20.dp, vertical = 16.dp),
     )
 }

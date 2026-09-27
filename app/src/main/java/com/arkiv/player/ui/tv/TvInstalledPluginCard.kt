@@ -65,7 +65,7 @@ internal fun TvInstalledPluginCard(
         ),
     ) {
         Column(Modifier.clearAndSetSemantics { }) {
-            CardTile(name = model.name, art = art, legacyDefault = false)
+            CardTile(name = model.name, iconFile = model.iconFile, tileColorArgb = model.tileColorArgb, legacyDefault = false)
             CardTexts(plugin = plugin, model = model, message = message, reserveMessageLines = reserveMessageLines)
         }
     }

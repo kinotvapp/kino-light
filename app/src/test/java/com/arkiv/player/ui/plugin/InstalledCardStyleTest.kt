@@ -2,6 +2,7 @@ package com.arkiv.player.ui.plugin
 
 import com.arkiv.player.data.plugin.InstalledPlugin
 import com.arkiv.player.data.plugin.InstalledRecord
+import com.arkiv.player.data.plugin.PluginColors
 import com.arkiv.player.data.plugin.PluginManifest
 import com.arkiv.player.data.plugin.PluginSetting
 import com.arkiv.player.data.plugin.PluginStatus
@@ -32,18 +33,37 @@ class InstalledCardStyleTest {
         record: InstalledRecord = this.record,
         manifest: PluginManifest = this.noSettingsManifest,
         missingSettings: List<String> = emptyList(),
-    ) = InstalledPlugin(manifest, record, iconFile = null, missingSettings = missingSettings)
+        iconFile: File? = null,
+    ) = InstalledPlugin(manifest, record, iconFile = iconFile, missingSettings = missingSettings)
 
     @Test fun `the name and version share one line`() {
         assertEquals("Internet Archive · 1.1.0", installedCardModel(plugin(), null).nameLine)
         assertEquals("Internet Archive", installedCardModel(plugin(), null).name)
     }
 
-    @Test fun `the tile reuses the shared colour and icon rules`() {
-        val art = CatalogArt("#112233", File("art.png"))
-        val model = installedCardModel(plugin(), art)
-        assertEquals(tileColor(art), model.tileColorArgb)
-        assertEquals(art.iconFile, model.iconFile)
+    // The whole point of "Agregar": a plugin installed from a repo the catalog does not list still shows
+    // the icon and colour its own manifest and files declare, not the neutral default's letter tile.
+    @Test fun `the plugin's own icon and colour win over the catalog's`() {
+        val ownIcon = File.createTempFile("own-icon", ".png").also { it.deleteOnExit() }
+        val catalogIcon = File.createTempFile("catalog-icon", ".png").also { it.deleteOnExit() }
+        val art = CatalogArt("#00FF00", catalogIcon)
+        val model = installedCardModel(plugin(manifest = noSettingsManifest.copy(color = "#FF0000"), iconFile = ownIcon), art)
+        assertEquals(PluginColors.parse("#FF0000"), model.tileColorArgb)
+        assertEquals(ownIcon, model.iconFile)
+    }
+
+    @Test fun `the catalog fills in whichever the plugin's own manifest and files lack`() {
+        val catalogIcon = File.createTempFile("catalog-icon", ".png").also { it.deleteOnExit() }
+        val art = CatalogArt("#00FF00", catalogIcon)
+        val model = installedCardModel(plugin(manifest = noSettingsManifest.copy(color = null), iconFile = null), art)
+        assertEquals(PluginColors.parse("#00FF00"), model.tileColorArgb)
+        assertEquals(catalogIcon, model.iconFile)
+    }
+
+    @Test fun `neither the plugin nor the catalog offers art, so the tile falls to the neutral default`() {
+        val model = installedCardModel(plugin(manifest = noSettingsManifest.copy(color = null), iconFile = null), null)
+        assertEquals(PluginColors.DEFAULT, model.tileColorArgb)
+        assertNull(model.iconFile)
     }
 
     @Test fun `an active plugin reads Activo, is not a problem, and needs no fix`() {
@@ -52,16 +72,14 @@ class InstalledCardStyleTest {
         assertFalse(model.statusIsProblem)
         assertTrue(model.switchChecked)
         assertTrue(model.switchEnabled)
-        assertNull(model.fixingAction)
     }
 
-    @Test fun `a disabled plugin reads Desactivado, is a problem, and Activar fixes it`() {
+    @Test fun `a disabled plugin reads Desactivado, is a problem, and its switch still moves`() {
         val model = installedCardModel(plugin(record.copy(enabled = false)), null)
         assertEquals("Desactivado", model.statusLabel)
         assertTrue(model.statusIsProblem)
         assertFalse(model.switchChecked)
         assertTrue(model.switchEnabled)
-        assertEquals("Activar", model.fixingAction)
     }
 
     @Test fun `an unresponsive plugin reads No responde and its switch stays enabled`() {
@@ -70,7 +88,6 @@ class InstalledCardStyleTest {
         assertTrue(model.statusIsProblem)
         assertFalse(model.switchChecked)
         assertTrue(model.switchEnabled)
-        assertEquals("Activar", model.fixingAction)
     }
 
     @Test fun `a damaged plugin reads Dañado and its switch cannot be toggled`() {
@@ -78,21 +95,18 @@ class InstalledCardStyleTest {
         assertEquals("Dañado", model.statusLabel)
         assertTrue(model.statusIsProblem)
         assertFalse(model.switchEnabled)
-        assertEquals("Reinstalar", model.fixingAction)
     }
 
-    @Test fun `a plugin missing a required setting reads Falta configurar and Configurar fixes it`() {
+    @Test fun `a plugin missing a required setting reads Falta configurar`() {
         val model = installedCardModel(plugin(manifest = settingsManifest, missingSettings = listOf("apiKey")), null)
         assertEquals("Falta configurar", model.statusLabel)
         assertTrue(model.statusIsProblem)
-        assertEquals("Configurar", model.fixingAction)
         assertTrue(model.hasSettings)
     }
 
     @Test fun `a pending update is flagged red but needs no fix of its own`() {
         val model = installedCardModel(plugin(record.copy(pendingVersion = "1.2.0")), null)
         assertTrue(model.statusIsProblem)
-        assertNull(model.fixingAction)
     }
 
     @Test fun `Configurar only belongs to a plugin whose manifest declares settings`() {

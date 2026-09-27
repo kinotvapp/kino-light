@@ -40,6 +40,7 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import coil.compose.AsyncImage
 import com.arkiv.player.data.plugin.PluginStatus
 import com.arkiv.player.data.plugin.catalog.CatalogArt
+import java.io.File
 import com.arkiv.player.ui.LocalReducedEffects
 import com.arkiv.player.ui.cardFocusScale
 import com.arkiv.player.ui.plugin.CatalogAction
@@ -104,7 +105,7 @@ fun TvPluginCard(
         ),
     ) {
         Column(Modifier.clearAndSetSemantics { }) {
-            CardTile(name = entry.name, art = art, legacyDefault = entry.legacyDefault)
+            CardTile(name = entry.name, iconFile = art?.iconFile, tileColorArgb = tileColor(art), legacyDefault = entry.legacyDefault)
             CardTexts(
                 name = entry.name,
                 description = entry.description,
@@ -127,12 +128,13 @@ fun TvPluginCard(
  * instead of growing the tile out of 16:9.
  *
  * Internal, not private: [TvInstalledPluginCard] (the Instalados tab) draws the very same tile for an
- * installed plugin, never with [legacyDefault] (that pill is a Recomendados-only thing).
+ * installed plugin, never with [legacyDefault] (that pill is a Recomendados-only thing); it passes
+ * [iconFile] and [tileColorArgb] straight from its own model ([com.arkiv.player.ui.plugin.installedCardModel])
+ * instead of a catalog [CatalogArt], so its own icon and colour (not just the catalog's) can win.
  */
 @Composable
-internal fun CardTile(name: String, art: CatalogArt?, legacyDefault: Boolean) {
-    val tile = tileColor(art)
-    val iconFile = art?.iconFile
+internal fun CardTile(name: String, iconFile: File?, tileColorArgb: Long, legacyDefault: Boolean) {
+    val tile = tileColorArgb
     var iconFailed by remember(iconFile) { mutableStateOf(false) }
     Column(
         modifier = Modifier
