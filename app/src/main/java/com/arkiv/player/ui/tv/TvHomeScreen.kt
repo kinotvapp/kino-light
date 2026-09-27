@@ -358,17 +358,22 @@ fun TvHomeScreen(
     // row serves something from the very first open, with nothing watched yet. It matters more
     // here than on the phone -- this TV may have no SIM, which is why detection looks at the time
     // zone before the language.
+    //
+    // Everything Xuper-live here (this row, the "En vivo" and "Xuper" nav buttons) follows the Xuper
+    // plugin (AppGraph.xuperLive): off, the row is empty and the country's channels aren't even
+    // asked for; back on, they're fetched again. Recents stay in Room.
+    val xuperLive by graph.xuperLive.collectAsStateWithLifecycle()
     var countryChannels by remember { mutableStateOf<List<LiveChannel>>(emptyList()) }
-    LaunchedEffect(Unit) {
-        countryChannels = countryChannelsForHome(
+    LaunchedEffect(xuperLive) {
+        countryChannels = if (!xuperLive) emptyList() else countryChannelsForHome(
             context = context,
             api = graph.liveCatalog,
             cacheDao = liveCacheDao,
             prefs = context.getSharedPreferences(SettingsStore.PREFS_NAME, android.content.Context.MODE_PRIVATE),
         )
     }
-    val channelsRow = remember(recentChannels, countryChannels) {
-        homeChannelsRow(recentChannels, countryChannels)
+    val channelsRow = remember(recentChannels, countryChannels, xuperLive) {
+        if (xuperLive) homeChannelsRow(recentChannels, countryChannels) else emptyList()
     }
 
     // The row GROWS after being painted: recents come from Room (instant) and the country's may
@@ -542,6 +547,25 @@ fun TvHomeScreen(
     // anything. And it leaves the user one click from their library, which is what they'll want if
     // nothing's been started.
     val barFocus = remember { FocusRequester() }
+    // The live gate can take away the node that holds focus (the channels row, the "En vivo" or
+    // "Xuper" button) while this screen is showing -- e.g. the Xuper plugin gets marked damaged.
+    // Compose then clears focus instead of moving it, and the D-pad is stranded. A per-node latch
+    // can't catch it (the removed node reports "unfocused" before any effect runs), so this watches
+    // the whole screen: right after the gate closes, if nothing here holds focus, "Mi biblioteca"
+    // takes it.
+    var screenHasFocus by remember { mutableStateOf(false) }
+    var lastXuperLive by remember { mutableStateOf(xuperLive) }
+    LaunchedEffect(xuperLive) {
+        val justClosed = lastXuperLive && !xuperLive
+        lastXuperLive = xuperLive
+        if (!justClosed) return@LaunchedEffect
+        delay(100)
+        if (screenHasFocus) return@LaunchedEffect
+        repeat(20) {
+            if (runCatching { barFocus.requestFocus() }.isSuccess) return@LaunchedEffect
+            delay(50)
+        }
+    }
     val firstFocusKey = continueWatching.firstOrNull()?.episodeId
     // True once focus is back on the card `cardToRestore` names: from then on the default landing
     // below must not take it away (a late "Continuar viendo" changes `firstFocusKey`).
@@ -609,7 +633,7 @@ fun TvHomeScreen(
     // as the image "breathing", not as an animation. See the AsyncImage's graphicsLayer.
     val heroDrift by rememberHeroDrift(reducedEffects, HERO_DRIFT_MS)
 
-    Box(Modifier.fillMaxSize().background(ArkivBlack)) {
+    Box(Modifier.fillMaxSize().background(ArkivBlack).onFocusChanged { screenHasFocus = it.hasFocus }) {
         if (!hasInternet) {
             Row(
                 modifier = Modifier
@@ -690,18 +714,28 @@ fun TvHomeScreen(
                         label = "Categorías",
                         onClick = onOpenCategoriasHome,
                     )
-                    TvNavButton(
-                        icon = Icons.Default.PlayCircle,
-                        label = "Xuper",
-                        onClick = onOpenCategorias,
-                    )
+                    // The native Xuper catalog tree ("categorias" route) and the live guide only
+                    // while the Xuper plugin is on, like the rest of its native surfaces.
+                    if (xuperLive) {
+                        TvNavButton(
+                            icon = Icons.Default.PlayCircle,
+                            label = "Xuper",
+                            onClick = onOpenCategorias,
+                        )
+                    }
                     TvNavButton(
                         icon = Icons.Default.VideoLibrary,
                         label = "Mi biblioteca",
                         onClick = onOpenLibrary,
                         modifier = Modifier.focusRequester(barFocus),
                     )
-                    TvNavButton(icon = Icons.Default.LiveTv, label = "En vivo", onClick = onOpenLive)
+                    if (xuperLive) {
+                        TvNavButton(
+                            icon = Icons.Default.LiveTv,
+                            label = "En vivo",
+                            onClick = onOpenLive,
+                        )
+                    }
                     if (isColombia) {
                         TvNavButton(icon = Icons.Default.Tv, label = "Caracol", onClick = onOpenCaracol)
                     }

@@ -29,6 +29,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
@@ -274,6 +275,9 @@ class AppGraph(context: Context) {
             // flag, so the next cold start just tries again. See autoInstallXuperPluginIfNeeded.
             runCatching { autoInstallXuperPluginIfNeeded(credentialsStore, pluginRegistry, pluginAdmin) }
                 .onFailure { android.util.Log.w("KinoPlugin", "warm-up: Xuper plugin not auto-installed: ${it.javaClass.simpleName}") }
+            // Start the live gate's watcher now (it's eager but lazily built): from here on,
+            // switching the Xuper plugin off drops the live sessions even before a screen reads it.
+            xuperLive
             contentSource
             magisAccount
             built = true
@@ -713,7 +717,10 @@ class AppGraph(context: Context) {
      * this branch. If Magis ever changes the algorithm, it gets fixed by shipping an APK (it used
      * to get fixed by redeploying the server, which is exactly the dependency this branch removes).
      */
-    val liveHlsProxy: com.arkiv.player.playback.LiveHlsProxy by lazy {
+    val liveHlsProxy: com.arkiv.player.playback.LiveHlsProxy get() = liveHlsProxyLazy.value
+
+    /** Kept as a [Lazy] so [closeXuperLive] can stop the proxy only if it was ever built. */
+    private val liveHlsProxyLazy = lazy {
         com.arkiv.player.playback.LiveHlsProxy(
             com.arkiv.player.playback.LocalSignature(),
             // After an unrecoverable double 403 (expired session, no signature): invalidates THAT
@@ -790,11 +797,51 @@ class AppGraph(context: Context) {
 
     /** Opens live channels: resolves against the portal and hands the player the URL from
      *  [liveHlsProxy]. */
-    val liveController: com.arkiv.player.ui.live.LiveController by lazy {
+    val liveController: com.arkiv.player.ui.live.LiveController get() = liveControllerLazy.value
+
+    /** Kept as a [Lazy] so [closeXuperLive] only touches a controller that was ever built. The
+     *  [XuperLiveGate] check is the hard stop: with the Xuper plugin off, no channel resolves
+     *  (no portal call) and no cached session is handed out, whatever surface asked. */
+    private val liveControllerLazy = lazy {
         com.arkiv.player.ui.live.LiveController(
             resolver = { code -> resolveLive(code) },
             urlFor = { session -> liveHlsProxy.urlFor(session) },
+            gate = { XuperLiveGate.blockedMessage(pluginRegistry.plugins.value) },
         )
+    }
+
+    /**
+     * Whether the native Xuper live channels are on ([xuperLiveAllowed]): the recognized Xuper
+     * plugin is installed, enabled and not damaged. Every live surface (phone tab and Home row, TV
+     * nav button, Home row and routes, the player's drawer) follows it without a restart, since
+     * [PluginRegistry.plugins] re-emits on install/enable/disable/uninstall/update. Eager, and the
+     * moment it turns false the resolved sessions are dropped and the proxy stops (a channel being
+     * cast stops too); the player stops what's on screen itself (see `PlayerViewModel`).
+     *
+     * Favourites, recents and the channel cache stay in Room: re-enabling brings them all back.
+     */
+    val xuperLive: kotlinx.coroutines.flow.StateFlow<Boolean> by lazy {
+        val registry = pluginRegistry
+        val state = registry.plugins
+            .map { xuperLiveAllowed(it) }
+            .distinctUntilChanged()
+            .stateIn(applicationScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, xuperLiveAllowed(registry.plugins.value))
+        applicationScope.launch { state.collect { on -> if (!on) closeXuperLive() } }
+        state
+    }
+
+    /** The message the player shows for a Xuper channel while [xuperLive] is off, else null. */
+    val xuperLiveBlocked: kotlinx.coroutines.flow.StateFlow<String?> by lazy {
+        val registry = pluginRegistry
+        registry.plugins
+            .map { XuperLiveGate.blockedMessage(it) }
+            .distinctUntilChanged()
+            .stateIn(applicationScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, XuperLiveGate.blockedMessage(registry.plugins.value))
+    }
+
+    private fun closeXuperLive() {
+        if (liveControllerLazy.isInitialized()) runCatching { liveController.close() }
+        if (liveHlsProxyLazy.isInitialized()) runCatching { liveHlsProxy.stop() }
     }
 
     val pendingUpdateStore: com.arkiv.player.data.update.PendingUpdateStore by lazy {

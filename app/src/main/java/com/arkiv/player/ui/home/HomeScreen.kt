@@ -173,18 +173,22 @@ fun HomeScreen(
     // nothing watched yet) -- see countryChannelsForHome: it detects the country, comes from the
     // Room cache if it's fresh, and doesn't break anything if there's no network or no detectable
     // country.
+    //
+    // The whole row follows the Xuper plugin (AppGraph.xuperLive): off, it's empty and the country's
+    // channels aren't even asked for; back on, they're fetched again. Recents stay in Room.
     val context = LocalContext.current
+    val xuperLive by graph.xuperLive.collectAsStateWithLifecycle()
     var countryChannels by remember { mutableStateOf<List<LiveChannel>>(emptyList()) }
-    LaunchedEffect(Unit) {
-        countryChannels = countryChannelsForHome(
+    LaunchedEffect(xuperLive) {
+        countryChannels = if (!xuperLive) emptyList() else countryChannelsForHome(
             context = context,
             api = graph.liveCatalog,
             cacheDao = liveCacheDao,
             prefs = context.getSharedPreferences(SettingsStore.PREFS_NAME, Context.MODE_PRIVATE),
         )
     }
-    val channelsRow = remember(recentChannels, countryChannels) {
-        homeChannelsRow(recentChannels, countryChannels)
+    val channelsRow = remember(recentChannels, countryChannels, xuperLive) {
+        if (xuperLive) homeChannelsRow(recentChannels, countryChannels) else emptyList()
     }
 
     fun playChannel(channel: LiveChannel) {

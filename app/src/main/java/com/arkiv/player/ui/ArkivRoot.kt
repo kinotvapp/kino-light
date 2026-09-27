@@ -49,6 +49,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -104,6 +105,19 @@ private val TABS = listOf(
     Tab("settings", "Ajustes") { Icon(Icons.Default.Settings, contentDescription = "Ajustes") },
 )
 
+/**
+ * The tabs this device shows: Caracol only in Colombia ([isColombia]), "En vivo" only while the
+ * native Xuper live channels are on ([xuperLive], see `AppGraph.xuperLive`). Pure for the test.
+ */
+internal fun visibleTabRoutes(isColombia: Boolean, xuperLive: Boolean): List<String> =
+    TABS.map { it.route }.filter { route ->
+        when (route) {
+            "caracol" -> isColombia
+            "live" -> xuperLive
+            else -> true
+        }
+    }
+
 /** Whether tapping the top bar's logo goes to Inicio: on every section but Inicio itself. */
 internal fun logoGoesHome(currentRoute: String?): Boolean = currentRoute != null && currentRoute != "home"
 
@@ -121,8 +135,12 @@ fun ArkivRoot(
     // no-permission, no-network signal `countryChannelsForHome` already uses for the live channels
     // row -- SIM, then time zone, then locale.
     val context = androidx.compose.ui.platform.LocalContext.current
-    val tabs = remember {
-        if (com.arkiv.player.ui.live.deviceCountry(context) == "CO") TABS else TABS.filterNot { it.route == "caracol" }
+    val isColombia = remember { com.arkiv.player.ui.live.deviceCountry(context) == "CO" }
+    // "En vivo" follows the Xuper plugin live, without a restart (see AppGraph.xuperLive).
+    val xuperLive by graph.xuperLive.collectAsStateWithLifecycle()
+    val tabs = remember(isColombia, xuperLive) {
+        val routes = visibleTabRoutes(isColombia, xuperLive)
+        TABS.filter { it.route in routes }
     }
 
     // "Ver en el TV / Ver en el celular" chooser: only when linked to a TV; otherwise plays local.
@@ -319,7 +337,12 @@ fun ArkivRoot(
                 )
             }
             composable("live") {
-                com.arkiv.player.ui.live.LiveScreen(
+                // Guard: with the Xuper plugin off the tab is gone, and a route reached anyway (it
+                // was on screen when the plugin went off, or restored state) goes back to Inicio
+                // without composing LiveScreen -- no LiveViewModel, no portal call.
+                if (!xuperLive) {
+                    LaunchedEffect(Unit) { TABS.firstOrNull { it.route == "home" }?.let(::goToTab) }
+                } else com.arkiv.player.ui.live.LiveScreen(
                     // Task 14: the player's live mode already exists (`enVivo` flag in
                     // PlayerViewModel/PlayerScreen). `LiveScreen.open()` already left in
                     // LiveZappingSource the list it was entered with -- this just needs to navigate

@@ -401,6 +401,7 @@ private fun PlayerContent(
                     triviaFacts = graph.triviaFacts,
                     funFactsEnabled = { graph.settings.funFactsEnabled.value },
                     plugins = graph.pluginRegistry,
+                    xuperLiveBlocked = graph.xuperLiveBlocked,
                 )
             }
         },
@@ -4050,8 +4051,9 @@ private fun PlayerContent(
         // "Playing on <TV>" bar (DLNA active).
         ActiveDlnaBar(dlnaState)
 
-        // Goes LAST inside the Box so it sits above the rest of the overlays.
-        if (isTv && isMagisLive && liveState.drawerOpen) {
+        // Goes LAST inside the Box so it sits above the rest of the overlays. Never under the
+        // blocked dialog: with the Xuper plugin switched off the drawer's channels can't open.
+        if (isTv && isMagisLive && liveState.drawerOpen && blocked == null) {
             LiveChannelDrawer(
                 state = liveState,
                 currentChannel = liveChannel?.code,
@@ -4076,6 +4078,11 @@ private fun PlayerContent(
     // see GatewayBlockedException's KDoc. Its own dialog instead of the resolution-error pill,
     // because it isn't a bug in Kino, and there's nothing to retry: dismissing leaves the player,
     // same as if the source had never resolved.
+    // The drawer (TV) closes under the dialog, so its focus handling (the LaunchedEffect above
+    // returns focus to the video) doesn't leave a stale open state behind.
+    LaunchedEffect(blocked != null) {
+        if (blocked != null && liveState.drawerOpen) liveState.closeDrawer()
+    }
     blocked?.let { message ->
         AlertDialog(
             onDismissRequest = { vm.dismissBlocked(); onBack() },

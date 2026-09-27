@@ -349,6 +349,12 @@ class PlayerViewModel internal constructor(
     private val funFactsEnabled: () -> Boolean = { true },
     /** Installed plugins: whether a saved plugin title can play, and the plugin's name. */
     private val plugins: com.arkiv.player.data.plugin.PluginPlayback? = null,
+    /**
+     * Non-null while the native Xuper live channels are off (`AppGraph.xuperLiveBlocked`, the
+     * Xuper plugin disabled/damaged/uninstalled): a Xuper channel on screen stops and shows this
+     * message (see [stopXuperLive]). Caracol and plugin live channels never read it.
+     */
+    private val xuperLiveBlocked: StateFlow<String?> = MutableStateFlow(null),
 ) : ViewModel() {
 
     private val _playlist = MutableStateFlow<PlaylistData?>(null)
@@ -468,6 +474,8 @@ class PlayerViewModel internal constructor(
         // it's no longer the active one. See [DituState].
         ditu.newRequest(episodeId)
         clearTrivia()
+        // Only a Xuper channel (loadLive below) is stopped by the live gate; any other load is not.
+        xuperLiveActive = false
         // Live mode (Task 14): CUTS OFF HERE, before touching anything on the VOD path below --
         // neither markInProgress nor localLibrary. It's the flag that isolates ALL of the different
         // behavior: a live channel has no duration to poll (see LiveZapping/LiveController's KDoc
@@ -598,6 +606,34 @@ class PlayerViewModel internal constructor(
     /** The channel on screen right now (code/name/number/logo), for PlayerScreen's overlay. */
     val liveChannel: StateFlow<LiveChannel?> = _liveChannel.asStateFlow()
 
+    /** True while this player is on a native Xuper channel ([loadLive]/[goToChannel]). */
+    private var xuperLiveActive = false
+
+    init {
+        // The Xuper plugin switched off mid-channel: the channel stops right away (no restart,
+        // no waiting for the next reopen) and the blocked dialog says why.
+        viewModelScope.launch {
+            xuperLiveBlocked.collect { message -> if (message != null) stopXuperLive(message) }
+        }
+    }
+
+    /**
+     * Stops the Xuper channel on screen because the live gate closed: drops the published item
+     * (PlayerScreen disposes its ExoPlayer), cancels preheats and pending reopens, and shows
+     * [message] in the blocked dialog -- dismissing it leaves the player, like any blocked channel.
+     */
+    private fun stopXuperLive(message: String) {
+        if (!xuperLiveActive) return
+        Log.w(PLAY, "live: the Xuper plugin is off → stopping ${zapping?.current?.code}")
+        LiveLog.w("GATE: the Xuper plugin is off, the channel stops")
+        preheatJob?.cancel()
+        reopenJob?.cancel()
+        _liveItem.value = null
+        _error.value = null
+        _needsMagisAccount.value = false
+        _blocked.value = message
+    }
+
     private val _liveGeneration = MutableStateFlow(0)
 
     /**
@@ -617,6 +653,7 @@ class PlayerViewModel internal constructor(
      * channel list: zapping is lost, but the chosen channel still plays.
      */
     private fun loadLive(code: String) {
+        xuperLiveActive = true
         val entryList = LiveZappingSource.list.ifEmpty { listOf(LiveChannel(code, code, 0, null)) }
         val index = entryList.indexOfFirst { it.code == code }.coerceAtLeast(0)
         zapping = LiveZapping(entryList, index)
@@ -684,6 +721,12 @@ class PlayerViewModel internal constructor(
             LiveLog.i("open: session resolved in ${System.currentTimeMillis() - openStartedAt}ms")
             if (zapping?.current?.code != channel.code) {
                 LiveLog.w("open: the person already zapped to another channel, this late answer is dropped")
+                return@launch
+            }
+            // The gate closed while this open was in flight (past LiveController's own check):
+            // never publish a channel the person just switched off.
+            xuperLiveBlocked.value?.let { message ->
+                _blocked.value = message
                 return@launch
             }
             val item = PlayerData(
@@ -838,6 +881,7 @@ class PlayerViewModel internal constructor(
     fun goToChannel(list: List<LiveChannel>, channel: LiveChannel) {
         val entryList = list.ifEmpty { listOf(channel) }
         LiveZappingSource.list = entryList
+        xuperLiveActive = true
         zapping = LiveZapping(entryList, entryList.indexOfFirst { it.code == channel.code }.coerceAtLeast(0))
         openCurrentChannel()
     }

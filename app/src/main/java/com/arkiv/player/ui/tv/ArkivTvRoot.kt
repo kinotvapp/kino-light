@@ -14,6 +14,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -143,6 +144,14 @@ fun ArkivTvRoot(
             )
         }
         composable("categorias") {
+            // Guard: the native Xuper catalog tree only while the Xuper plugin is on (its nav
+            // button is gone otherwise; this covers a route reached anyway). Leaves without
+            // composing TvCatalogSections -- no portal call.
+            val xuperOn by graph.xuperLive.collectAsStateWithLifecycle()
+            if (!xuperOn) {
+                LaunchedEffect(Unit) { navController.popBackStack() }
+                return@composable
+            }
             // The adults sections only if THIS device has the code set (Settings).
             // `MagisLiveCatalog.arbol` filters the 18+ section client-side and blows up with
             // `require` if its root is requested without the flag, so the default is the safe
@@ -212,6 +221,13 @@ fun ArkivTvRoot(
             )
         }
         composable("live") {
+            // Guard, same as "categorias": no live guide (no LiveViewModel, no portal call) while
+            // the Xuper plugin is off.
+            val xuperOn by graph.xuperLive.collectAsStateWithLifecycle()
+            if (!xuperOn) {
+                LaunchedEffect(Unit) { navController.popBackStack() }
+                return@composable
+            }
             TvLiveGuideScreen(
                 // Task 14: the player's live mode already exists (`enVivo` flag in
                 // PlayerViewModel/PlayerScreen). `TvLiveGuideScreen.watchChannel()` already left
