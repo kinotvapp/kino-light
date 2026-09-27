@@ -6,6 +6,7 @@ import com.arkiv.player.data.gateway.GatewayEpisode
 import com.arkiv.player.data.gateway.GatewayResult
 import com.arkiv.player.data.gateway.GatewaySeries
 import com.arkiv.player.data.gateway.SeasonRef
+import com.arkiv.player.data.local.DownloadSource
 import com.arkiv.player.data.plugin.PluginColors
 import com.arkiv.player.data.plugin.PluginIds
 import com.arkiv.player.data.plugin.PluginRef
@@ -30,15 +31,16 @@ data class PluginTitleExtras(
  * list, each with its season (the Internet Archive one), or keeps each season as its own title and
  * names the others as siblings (Xuper); the page reads which from the listing. The library ids are
  * the `PluginEntities` ones, so progress and "Continuar viendo" read the same rows playback writes.
- * Plugin titles have no downloads (a v1 non-goal of the plugin system).
+ * Plugin titles have no downloads (a v1 non-goal of the plugin system) except the recognized
+ * Xuper install's, which get the download actions the native Magis page had ([pluginTitlesDownload]).
  */
 class PluginTitleSource(
     private val extras: PluginTitleExtras,
     private val onPlayMovie: suspend (GatewayResult) -> PlaybackResult,
     private val onPlaySeason: suspend (GatewayResult, List<GatewayEpisode>, GatewayEpisode, GatewaySeries?) -> PlaybackResult,
+    override val downloads: MagisDownloadActions? = null,
 ) : TitleSource {
 
-    override val downloads: MagisDownloadActions? = null
     override val badge: TitleBadge? =
         extras.pluginName.takeIf { it.isNotBlank() }?.let { TitleBadge(it, PluginColors.parse(extras.color)) }
     override val initialYear: String get() = extras.year
@@ -106,3 +108,13 @@ class PluginTitleSource(
         const val UNKNOWN_ITEM = "plugin-unknown"
     }
 }
+
+/**
+ * Whether the info page offers downloads for [pluginId]'s titles: only the recognized Xuper
+ * install's ([isXuperPlugin]: `XuperPrivilege.grants` on the installed record, never the manifest
+ * id), and only while the app has a strategy for [DownloadSource.XUPER] ([strategies]: the keys of
+ * `AppGraph.downloadStrategies`), the same rule the library detail applies. Every other plugin's
+ * titles stay without downloads.
+ */
+fun pluginTitlesDownload(pluginId: String, isXuperPlugin: (pluginId: String) -> Boolean, strategies: Set<String>): Boolean =
+    pluginId.isNotBlank() && isXuperPlugin(pluginId) && DownloadSource.hasStrategy(DownloadSource.XUPER, strategies)

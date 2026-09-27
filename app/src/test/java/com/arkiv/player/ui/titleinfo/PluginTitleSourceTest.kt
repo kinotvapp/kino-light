@@ -4,7 +4,10 @@ import com.arkiv.player.data.PluginEntities
 import com.arkiv.player.data.gateway.CatalogItem
 import com.arkiv.player.data.gateway.GatewayEpisode
 import com.arkiv.player.data.gateway.SeasonRef
+import com.arkiv.player.data.local.DownloadSource
+import com.arkiv.player.data.local.EnqueueOutcome
 import com.arkiv.player.data.plugin.PluginRef
+import com.arkiv.player.ui.home.MagisDownloadActions
 import com.arkiv.player.ui.search.PlaybackResult
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -97,12 +100,40 @@ class PluginTitleSourceTest {
     // ---- capabilities ----
 
     @Test
-    fun `a plugin has no downloads and shows its badge`() {
+    fun `a plugin has no downloads by default and shows its badge`() {
         val s = source()
         assertNull(s.downloads)
         assertFalse(s.canDownload)
         assertEquals(TitleBadge("Demo", 0xFFFF0000), s.badge)
         assertEquals("2021", s.initialYear)
+    }
+
+    // ---- downloads (the recognized Xuper install only) ----
+
+    @Test
+    fun `the download actions it is given are the page's`() {
+        val actions = MagisDownloadActions({ null }, { _, _, chosen, _ -> chosen.map { null } }, { "xuper" }, { _, _ -> EnqueueOutcome.QUEUED })
+        val s = PluginTitleSource(
+            extras = extras,
+            onPlayMovie = { PlaybackResult.Ready("m") },
+            onPlaySeason = { _, _, _, _ -> PlaybackResult.Ready("s") },
+            downloads = actions,
+        )
+        assertTrue(s.canDownload)
+        assertEquals(actions, s.downloads)
+    }
+
+    @Test
+    fun `only the recognized Xuper install's titles download, and only with the strategy registered`() {
+        val strategies = setOf("magis", DownloadSource.XUPER, "ditu")
+        assertTrue(pluginTitlesDownload("xuper", isXuperPlugin = { it == "xuper" }, strategies = strategies))
+        // Another plugin, even one with Xuper's manifest id from another repo: the check is the registry's, not the id's.
+        assertFalse(pluginTitlesDownload("archive-org", isXuperPlugin = { it == "xuper" }, strategies = strategies))
+        assertFalse(pluginTitlesDownload("xuper", isXuperPlugin = { false }, strategies = strategies))
+        // No strategy for XUPER (a build without downloads): no button, so nothing lands FAILED as "Fuente no soportada".
+        assertFalse(pluginTitlesDownload("xuper", isXuperPlugin = { true }, strategies = setOf("magis", "ditu")))
+        // A route whose ref could not be decoded names no plugin.
+        assertFalse(pluginTitlesDownload("", isXuperPlugin = { true }, strategies = strategies))
     }
 
     // ---- sibling seasons ----

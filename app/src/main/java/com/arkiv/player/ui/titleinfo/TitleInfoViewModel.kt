@@ -375,7 +375,8 @@ class TitleInfoViewModel(
         val chosen = loaded.chapters.filter { it.number in numbers }
         if (chosen.isEmpty()) return
         viewModelScope.launch {
-            val outcomes = attempt { actions.enqueueChapters(source.gatewayResult(s.item), chosen, loaded.series) } ?: emptyList()
+            // The whole loaded list goes with the chosen ones: the save is the same one playing makes.
+            val outcomes = attempt { actions.enqueueChapters(source.gatewayResult(s.item), loaded.chapters, chosen, loaded.series) } ?: emptyList()
             _events.send(
                 TitleInfoEvent.Downloaded(outcomes, chapterEnqueueMessage(outcomes, chosen.size), noticeDuplicates = false),
             )

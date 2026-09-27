@@ -45,6 +45,17 @@ object PluginEntities {
         }
     }
 
+    /**
+     * The library episode id of each of [chapters] once [seriesRef]'s series is saved with them:
+     * [chapterId] under the series' item, or null for a chapter [saveableChapters] would not keep
+     * (another series', or numbered 0). For a batch saved once, such as a season download.
+     */
+    fun chapterIds(seriesRef: String, chapters: List<PluginChapter>): List<String?> {
+        val itemId = seriesItemId(seriesRef) ?: return chapters.map { null }
+        val kept = saveableChapters(seriesRef, chapters).toSet()
+        return chapters.map { c -> if (c in kept) chapterId(itemId, c.season.coerceAtLeast(1), c.number) else null }
+    }
+
     /** [tmdbId]: the plugin's `ids.tmdb` (0/null = none); an existing row keeps its own if none comes. */
     fun buildMovie(ref: String, title: String, posterUrl: String, now: Long, existing: ItemEntity?, tmdbId: Int? = null): Pair<ItemEntity, EpisodeEntity>? {
         val r = PluginRef.decode(ref)?.takeIf { it.kind == PluginRef.MOVIE } ?: return null

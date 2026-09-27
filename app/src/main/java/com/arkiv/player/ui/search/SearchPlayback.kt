@@ -203,4 +203,23 @@ class SearchPlayback(private val graph: AppGraph) {
         return if (epId != null) PlaybackResult.Ready(epId)
         else PlaybackResult.Failed("No se pudo preparar el capítulo de ${season.extra["pluginName"] ?: "este plugin"}.")
     }
+
+    /**
+     * Saves the plugin series exactly as [playPluginSeason] does, ONCE, and returns the library
+     * episode id of each of [chosen], in order (null for one the save did not keep). For the info
+     * page's chapter downloads: "Descargar temporada" must not save the whole list once per chapter.
+     */
+    suspend fun pluginEpisodeIdsFor(
+        season: com.arkiv.player.data.gateway.GatewayResult,
+        chapters: List<com.arkiv.player.data.gateway.GatewayEpisode>,
+        chosen: List<com.arkiv.player.data.gateway.GatewayEpisode>,
+        series: com.arkiv.player.data.gateway.GatewaySeries?,
+    ): List<String?> {
+        val first = chosen.firstOrNull() ?: return emptyList()
+        if (playPluginSeason(season, chapters, first, series) !is PlaybackResult.Ready) return chosen.map { null }
+        return com.arkiv.player.data.PluginEntities.chapterIds(
+            season.ref,
+            chosen.map { com.arkiv.player.data.PluginChapter(it.number, it.title, it.ref, it.season ?: 1) },
+        )
+    }
 }

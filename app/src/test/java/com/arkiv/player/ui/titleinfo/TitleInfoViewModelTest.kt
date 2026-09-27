@@ -127,7 +127,18 @@ class TitleInfoViewModelTest {
         genres = listOf("Comedia"), voteAverage = 7.6, directors = listOf("Alguien"),
         cast = listOf("Actriz", "Actor"), certification = "12+",
     )
-    private fun noDownloads() = MagisDownloadActions({ null }, { _, _, _ -> null }, { _, _ -> EnqueueOutcome.QUEUED })
+    private fun noDownloads() = MagisDownloadActions({ null }, { _, _, chosen, _ -> chosen.map { null } }, { "magis" }, { _, _ -> EnqueueOutcome.QUEUED })
+
+    /** Download actions whose chapter ids are `magis:s1::e<n>`, recording what was saved and queued. */
+    private fun downloads(movieId: String? = null, saved: MutableList<Pair<List<Int>, List<Int>>>? = null, queued: MutableList<String>) = MagisDownloadActions(
+        episodeIdForMovie = { movieId },
+        episodeIdsForChapters = { _, chapters, chosen, _ ->
+            saved?.add(chapters.map { it.number } to chosen.map { it.number })
+            chosen.map { "magis:s1::e${it.number}" }
+        },
+        sourceFor = { "magis" },
+        enqueue = { id, _ -> queued += id; EnqueueOutcome.QUEUED },
+    )
 
     private fun vm(
         item: CatalogItem,
@@ -685,8 +696,7 @@ class TitleInfoViewModelTest {
     @Test
     fun `downloading a season enqueues every chapter and reports the batch`() = runTest {
         val queued = mutableListOf<String>()
-        val downloads = MagisDownloadActions({ null }, { _, chapter, _ -> "magis:s1::e${chapter.number}" }, { id, _ -> queued += id; EnqueueOutcome.QUEUED })
-        val vm = vm(show(), FakeContent(episodesFor = { chapters(1, 2, 3) to series() }), downloads = downloads)
+        val vm = vm(show(), FakeContent(episodesFor = { chapters(1, 2, 3) to series() }), downloads = downloads(queued = queued))
         val events = collect(vm)
         advanceUntilIdle()
 
@@ -700,19 +710,20 @@ class TitleInfoViewModelTest {
     }
 
     @Test
-    fun `downloading chosen chapters enqueues only those`() = runTest {
+    fun `downloading chosen chapters saves the whole list once and enqueues only those`() = runTest {
         val queued = mutableListOf<String>()
-        val downloads = MagisDownloadActions({ null }, { _, chapter, _ -> "magis:s1::e${chapter.number}" }, { id, _ -> queued += id; EnqueueOutcome.QUEUED })
-        val vm = vm(show(), FakeContent(episodesFor = { chapters(1, 2, 3) to series() }), downloads = downloads)
+        val saved = mutableListOf<Pair<List<Int>, List<Int>>>()
+        val vm = vm(show(), FakeContent(episodesFor = { chapters(1, 2, 3) to series() }), downloads = downloads(saved = saved, queued = queued))
         advanceUntilIdle()
         vm.downloadChapters(listOf(2))
         advanceUntilIdle()
         assertEquals(listOf("magis:s1::e2"), queued)
+        assertEquals(listOf(listOf(1, 2, 3) to listOf(2)), saved)
     }
 
     @Test
     fun `downloading a movie reports the queued toast`() = runTest {
-        val downloads = MagisDownloadActions({ "magis:m1::0" }, { _, _, _ -> null }, { _, _ -> EnqueueOutcome.QUEUED })
+        val downloads = downloads(movieId = "magis:m1::0", queued = mutableListOf())
         val vm = vm(movie(), downloads = downloads)
         val events = collect(vm)
         advanceUntilIdle()

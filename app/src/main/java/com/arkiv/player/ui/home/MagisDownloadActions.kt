@@ -3,39 +3,58 @@ package com.arkiv.player.ui.home
 import com.arkiv.player.data.gateway.GatewayEpisode
 import com.arkiv.player.data.gateway.GatewayResult
 import com.arkiv.player.data.gateway.GatewaySeries
-import com.arkiv.player.data.local.DownloadSource
 import com.arkiv.player.data.local.EnqueueOutcome
 
 /**
- * The non-Compose core of "download a title" for the info page (`TitleSource.downloads`), kept from
- * the native Magis page: a movie is enqueued with the source its episode id maps to; a season is
- * enqueued chapter by chapter under `"magis"`, each one a separate file, and the queue already
+ * The non-Compose core of "download a title" from the info page (`TitleSource.downloads`), kept
+ * from the native Magis page and now serving the Xuper plugin's titles: a movie is saved and
+ * enqueued; a season's chosen chapters are saved in ONE batch (the whole list the page loaded, as
+ * playing saves it) and enqueued one by one, each a separate file, under the source their id maps
+ * to ([sourceFor]: `DownloadSource.XUPER` for the recognized Xuper install). The queue already
  * knows how to group them by series.
  *
  * What stays with the caller, because it is Compose-only: the notification-permission request, the
  * duplicate notice and the toasts.
  *
- * The three dependencies come in as functions so this is testable without an `AppGraph`.
+ * The dependencies come in as functions so this is testable without an `AppGraph`.
  */
 class MagisDownloadActions(
+    /** Saves the movie and returns its library episode id, null when it could not be prepared. */
     private val episodeIdForMovie: suspend (GatewayResult) -> String?,
-    private val episodeIdForChapter: suspend (GatewayResult, GatewayEpisode, GatewaySeries?) -> String?,
+    /**
+     * Saves the season with every chapter the page listed and returns the library episode id of
+     * each of the chosen ones, in order, null for one the save did not keep.
+     */
+    private val episodeIdsForChapters: suspend (
+        season: GatewayResult,
+        chapters: List<GatewayEpisode>,
+        chosen: List<GatewayEpisode>,
+        series: GatewaySeries?,
+    ) -> List<String?>,
+    /** The `downloads.source` an episode id downloads under (see `DownloadSource.sourceFor`). */
+    private val sourceFor: (episodeId: String) -> String,
     private val enqueue: suspend (episodeId: String, source: String) -> EnqueueOutcome,
 ) {
     /** Enqueues a movie. Null when its episode could not be prepared, in which case nothing was queued. */
     suspend fun enqueueMovie(result: GatewayResult): EnqueueOutcome? {
         val episodeId = episodeIdForMovie(result) ?: return null
-        return enqueue(episodeId, DownloadSource.sourceFor(episodeId))
+        return enqueue(episodeId, sourceFor(episodeId))
     }
 
-    /** Enqueues each chapter in turn. A chapter whose episode could not be prepared is skipped. */
+    /**
+     * Saves the season once, with [chapters] whole, and enqueues each of [chosen] in turn. A
+     * chapter whose episode could not be prepared is skipped.
+     */
     suspend fun enqueueChapters(
         season: GatewayResult,
         chapters: List<GatewayEpisode>,
+        chosen: List<GatewayEpisode>,
         series: GatewaySeries?,
-    ): List<EnqueueOutcome> = chapters.mapNotNull { chapter ->
-        val episodeId = episodeIdForChapter(season, chapter, series) ?: return@mapNotNull null
-        enqueue(episodeId, "magis")
+    ): List<EnqueueOutcome> {
+        if (chosen.isEmpty()) return emptyList()
+        return episodeIdsForChapters(season, chapters, chosen, series)
+            .filterNotNull()
+            .map { episodeId -> enqueue(episodeId, sourceFor(episodeId)) }
     }
 }
 

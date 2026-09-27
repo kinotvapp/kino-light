@@ -49,6 +49,15 @@ class PluginEntitiesTest {
         assertEquals(10_001, s.episodes[2].orderIndex)
     }
 
+    @Test fun `the ids of a saved batch follow the save's own rule, null for what it would not keep`() {
+        val chapters = listOf(chapter(1, 2), chapter(2, 1), chapter(1, 3, plugin = "other"), PluginChapter(0, "Cero", chapter(1, 1).ref, 1))
+        assertEquals(
+            listOf("plugin:demo:s1::e2", "plugin:demo:s1::t2e1", null, null),
+            PluginEntities.chapterIds(seriesRef, chapters),
+        )
+        assertEquals(listOf(null, null), PluginEntities.chapterIds(movieRef, chapters.take(2)))
+    }
+
     @Test fun `chapters from another series or plugin are not saved`() {
         val chapters = listOf(chapter(1, 1), chapter(1, 2, plugin = "other"), chapter(1, 3, item = "s2"))
         val s = PluginEntities.buildSeries(seriesRef, "Serie", chapters, chapters[0], "", 1L, null, null, null, null)!!

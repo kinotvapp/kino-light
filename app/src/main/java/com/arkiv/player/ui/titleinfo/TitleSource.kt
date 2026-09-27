@@ -6,6 +6,8 @@ import com.arkiv.player.data.gateway.GatewayEpisode
 import com.arkiv.player.data.gateway.GatewayResult
 import com.arkiv.player.data.gateway.GatewaySeries
 import com.arkiv.player.data.gateway.SeasonRef
+import com.arkiv.player.data.local.DownloadSource
+import com.arkiv.player.data.plugin.PluginRef
 import com.arkiv.player.ui.home.MagisDownloadActions
 import com.arkiv.player.ui.search.PlaybackResult
 import com.arkiv.player.ui.search.SearchPlayback
@@ -70,17 +72,35 @@ interface TitleSource {
     ): PlaybackResult
 }
 
-/** The source a route's [origin] names, wired to the app's real paths. */
-internal fun titleSourceFor(graph: AppGraph, origin: TitleOrigin): TitleSource = when (origin) {
-    is TitleOrigin.Plugin -> pluginTitleSource(graph, origin.extras)
+/** The source a route's [origin] names, wired to the app's real paths, for the page's [item]. */
+internal fun titleSourceFor(graph: AppGraph, origin: TitleOrigin, item: CatalogItem): TitleSource = when (origin) {
+    is TitleOrigin.Plugin -> pluginTitleSource(graph, origin.extras, PluginRef.decode(item.ref)?.pluginId.orEmpty())
 }
 
-/** Wires [PluginTitleSource] to the app's real plugin playback paths. */
-internal fun pluginTitleSource(graph: AppGraph, extras: PluginTitleExtras): PluginTitleSource {
+/**
+ * Wires [PluginTitleSource] to the app's real plugin playback paths, with the download actions
+ * when [pluginId]'s titles download ([pluginTitlesDownload]: the recognized Xuper install only).
+ */
+internal fun pluginTitleSource(graph: AppGraph, extras: PluginTitleExtras, pluginId: String): PluginTitleSource {
     val playback = SearchPlayback(graph)
     return PluginTitleSource(
         extras = extras,
         onPlayMovie = { playback.playPlugin(it) },
         onPlaySeason = { season, chapters, chosen, series -> playback.playPluginSeason(season, chapters, chosen, series) },
+        downloads = xuperDownloadActions(graph, playback)
+            .takeIf { pluginTitlesDownload(pluginId, graph::isXuperPlugin, graph.downloadStrategies.keys) },
     )
 }
+
+/**
+ * Wires [MagisDownloadActions] to the plugin save paths (the same ones playing uses, so the row a
+ * download hangs off is the row playing writes) and the download queue, under the source a Xuper
+ * plugin episode maps to (`DownloadSource.XUPER`).
+ */
+internal fun xuperDownloadActions(graph: AppGraph, playback: SearchPlayback) = MagisDownloadActions(
+    // `playPlugin` only saves the movie and answers its episode id; the caller decides what to do with it.
+    episodeIdForMovie = { (playback.playPlugin(it) as? PlaybackResult.Ready)?.episodeId },
+    episodeIdsForChapters = { season, chapters, chosen, series -> playback.pluginEpisodeIdsFor(season, chapters, chosen, series) },
+    sourceFor = { DownloadSource.sourceFor(it, graph::isXuperPlugin) },
+    enqueue = { episodeId, source -> graph.localDownloads.enqueue(episodeId, source) },
+)

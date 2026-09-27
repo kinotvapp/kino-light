@@ -101,7 +101,7 @@ fun TitleInfoScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val vm: TitleInfoViewModel = viewModel(
-        factory = viewModelFactory { initializer { titleInfoViewModel(graph, item, titleSourceFor(graph, origin)) } },
+        factory = viewModelFactory { initializer { titleInfoViewModel(graph, item, titleSourceFor(graph, origin, item)) } },
     )
     val state by vm.state.collectAsStateWithLifecycle()
     // Back from Configurar: ask again, with the new settings (the plugin's own Ver más does the same).
