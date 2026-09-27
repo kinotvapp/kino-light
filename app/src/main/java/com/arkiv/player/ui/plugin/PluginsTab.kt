@@ -2,6 +2,8 @@ package com.arkiv.player.ui.plugin
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -22,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -78,6 +81,7 @@ fun PluginsTab(onOpenAddPlugin: () -> Unit = {}) {
  * actions. Shared by Ajustes ▸ Plugins and the "Agregar plugin" window, which drive it with the same
  * [PluginsViewModel] state; [message] is the line for THIS row (see [rowMessagePluginId]).
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun InstalledPluginRow(p: InstalledPlugin, busy: Boolean, message: String?, vm: PluginsViewModel) {
     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -99,16 +103,25 @@ internal fun InstalledPluginRow(p: InstalledPlugin, busy: Boolean, message: Stri
         }
         Text("Se conectará a: ${p.hosts.labels.joinToString(", ")}", style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary)
         message?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Color.White) }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        // A FlowRow, not a Row: at a phone's width the three buttons do not fit side by side, and a Row squeezes
+        // the last one until its word breaks ("Desinstal / ar"). Here each button keeps its text on one line and
+        // the ones that do not fit move, whole, to the next line.
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             if (p.manifest.settings.isNotEmpty()) {
-                TextButton(onClick = { vm.openSettings(p.id) }, enabled = !busy) { Text("Configurar") }
+                TextButton(onClick = { vm.openSettings(p.id) }, enabled = !busy) { ActionLabel("Configurar") }
             }
             TextButton(onClick = { vm.checkUpdate(p.id) }, enabled = !busy) {
-                Text(if (p.status == PluginStatus.UPDATE_PENDING) "Revisar actualización" else "Buscar actualización")
+                ActionLabel(if (p.status == PluginStatus.UPDATE_PENDING) "Revisar actualización" else "Buscar actualización")
             }
-            TextButton(onClick = { vm.askUninstall(p) }, enabled = !busy) { Text("Desinstalar", color = ArkivRed) }
+            TextButton(onClick = { vm.askUninstall(p) }, enabled = !busy) { ActionLabel("Desinstalar", color = ArkivRed) }
         }
     }
+}
+
+/** The words of one of the row's text buttons: always one line, so a word is never broken across two. */
+@Composable
+private fun ActionLabel(text: String, color: Color = Color.Unspecified) {
+    Text(text, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
 }
 
 /**
