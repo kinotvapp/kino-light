@@ -90,6 +90,18 @@ internal fun cardActionLabel(action: CatalogAction): String = when (action) {
 /** How many lines of description a card shows before it ends with an ellipsis. */
 internal fun cardDescriptionLines(): Int = 2
 
+/** Room kept free above and below a tile's icon or initial, so it never touches the pill above it or the tile's edge. */
+private const val TILE_ART_MARGIN = 3f
+
+/**
+ * The side, in dp, of the icon (or the height of the initial) drawn in the [availableHeight] a tile has left
+ * once its "Lo que ya usabas" pill has taken its row: [nominal] when there is room, otherwise what fits
+ * with [TILE_ART_MARGIN] on each side, and never below zero. The tile is 16:9, so on a phone it is only
+ * ~89 dp tall and a big font makes the pill row taller: the art has to give way instead of running under it.
+ */
+internal fun tileArtSize(availableHeight: Float, nominal: Float): Float =
+    minOf(nominal, availableHeight - 2 * TILE_ART_MARGIN).coerceAtLeast(0f)
+
 /** How many tag chips a card shows at most: two is what fits on one line of a phone's half-width card. */
 private const val MAX_CARD_TAGS = 2
 

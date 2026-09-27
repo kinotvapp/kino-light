@@ -3,6 +3,7 @@ package com.arkiv.player.ui.plugin
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Column
@@ -36,13 +37,13 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.arkiv.player.data.plugin.catalog.CatalogArt
 import com.arkiv.player.ui.theme.ArkivRed
@@ -56,6 +57,9 @@ private val CARD_CORNER = 12.dp
 
 /** Side of the box the plugin's icon is drawn in (and decoded for: Coil samples the file down to it). */
 private val ICON_SIZE = 72.dp
+
+/** Height of the placeholder initial, in dp (not sp: it must not grow with the font scale, see [CardTile]). */
+private val INITIAL_SIZE = 44.dp
 
 /** The tile's height is 9/16 of its width, the same 16:9 as the TV card. */
 private const val TILE_ASPECT = 16f / 9f
@@ -137,7 +141,14 @@ fun PluginCard(
                     overflow = TextOverflow.Ellipsis,
                 )
             } else if (reserveStatusLine) {
-                Text(" ", style = MaterialTheme.typography.bodySmall, minLines = STATUS_LINES, maxLines = STATUS_LINES)
+                // Blank space only: a screen reader must not stop on it.
+                Text(
+                    " ",
+                    style = MaterialTheme.typography.bodySmall,
+                    minLines = STATUS_LINES,
+                    maxLines = STATUS_LINES,
+                    modifier = Modifier.clearAndSetSemantics { },
+                )
             }
             Spacer(Modifier.height(4.dp))
             CardAction(name = entry.name, action = action, enabled = enabled, onClick = onAction)
@@ -150,6 +161,11 @@ fun PluginCard(
  * only checks that the file starts with the PNG signature, so a corrupt file reaches Coil, which reports
  * an error and the initial takes its place. The tile is never left blank.
  *
+ * The "Lo que ya usabas" pill takes a row of its own at the top of the tile and the icon (or the initial)
+ * is centred in what is left, shrunk to fit it ([tileArtSize]): the tile is only ~89 dp tall on a phone, so
+ * a pill drawn over a fixed-size icon would cover part of it. Without the pill the art has the whole tile.
+ * The pill is one line with an ellipsis, so a big font shortens it instead of growing the tile out of 16:9.
+ *
  * Deferred cleanup: this is the TV card's tile ([com.arkiv.player.ui.tv.TvPluginCard]) with the phone's
  * sizes; once the TV pass is done both can share one composable.
  */
@@ -158,36 +174,15 @@ private fun CardTile(name: String, art: CatalogArt?, legacyDefault: Boolean) {
     val tile = tileColor(art)
     val iconFile = art?.iconFile
     var iconFailed by remember(iconFile) { mutableStateOf(false) }
-    Box(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .aspectRatio(TILE_ASPECT)
             .clip(RoundedCornerShape(topStart = CARD_CORNER, topEnd = CARD_CORNER))
             .background(Color(tile)),
-        contentAlignment = Alignment.Center,
     ) {
-        if (iconFile != null && !iconFailed) {
-            AsyncImage(
-                model = iconFile,
-                contentDescription = null,
-                contentScale = ContentScale.Fit,
-                onError = { iconFailed = true },
-                modifier = Modifier.size(ICON_SIZE),
-            )
-        } else {
-            // Decoration: the card's name is read right below, so a screen reader must not say the letter first.
-            Text(
-                text = cardInitial(name),
-                style = MaterialTheme.typography.headlineLarge,
-                fontSize = 44.sp,
-                fontWeight = FontWeight.Black,
-                color = Color(onTileColor(tile)),
-                modifier = Modifier.clearAndSetSemantics { },
-            )
-        }
         if (legacyDefault) {
-            // Solid, not the translucent MetaChip: it sits on a tile of any colour. One line with an ellipsis, so
-            // a big font shortens it instead of overflowing the half-width tile.
+            // Solid, not the translucent MetaChip: it sits on a tile of any colour.
             Text(
                 text = "Lo que ya usabas",
                 style = MaterialTheme.typography.labelSmall,
@@ -196,12 +191,43 @@ private fun CardTile(name: String, art: CatalogArt?, legacyDefault: Boolean) {
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(6.dp)
+                    .padding(start = 6.dp, top = 6.dp, end = 6.dp)
                     .clip(RoundedCornerShape(50))
                     .background(ArkivRed)
                     .padding(horizontal = 8.dp, vertical = 2.dp),
             )
+        }
+        BoxWithConstraints(
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (iconFile != null && !iconFailed) {
+                val iconSize = tileArtSize(maxHeight.value, ICON_SIZE.value)
+                if (iconSize > 0f) {
+                    AsyncImage(
+                        model = iconFile,
+                        contentDescription = null,
+                        contentScale = ContentScale.Fit,
+                        onError = { iconFailed = true },
+                        modifier = Modifier.size(iconSize.dp),
+                    )
+                }
+            } else {
+                // The size is in dp, converted to sp, so the letter does not grow with the font scale and run under the pill.
+                val letterSize = with(LocalDensity.current) { tileArtSize(maxHeight.value, INITIAL_SIZE.value).dp.toSp() }
+                if (letterSize.value > 0f) {
+                    // Decoration: the card's name is read right below, so a screen reader must not say the letter first.
+                    Text(
+                        text = cardInitial(name),
+                        style = MaterialTheme.typography.headlineLarge,
+                        fontSize = letterSize,
+                        lineHeight = letterSize,
+                        fontWeight = FontWeight.Black,
+                        color = Color(onTileColor(tile)),
+                        modifier = Modifier.clearAndSetSemantics { },
+                    )
+                }
+            }
         }
     }
 }

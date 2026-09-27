@@ -112,4 +112,35 @@ class CatalogCardStyleTest {
     @Test fun `a tag is shown trimmed`() {
         assertEquals(listOf("Series"), cardTags(listOf("  Series ")))
     }
+
+    // The tile is 16:9, so it is only ~89 dp tall on a 360 dp phone. The "Lo que ya usabas" pill takes its top
+    // ~26 dp, and what is left is all the icon (or the initial) may use: it must never reach under the pill.
+    @Test fun `the art keeps its nominal size while the space left is generous`() {
+        // No pill: the whole 89 dp tile is available, the 72 dp icon fits with room to spare.
+        assertEquals(72f, tileArtSize(availableHeight = 89f, nominal = 72f), 0f)
+        assertEquals(96f, tileArtSize(availableHeight = 150f, nominal = 96f), 0f)
+    }
+
+    @Test fun `the art shrinks to the space left under the pill, less a small margin on each side`() {
+        // 360 dp phone at 1x: 89 dp tile minus a 26 dp pill row leaves 63 dp.
+        assertEquals(57f, tileArtSize(availableHeight = 63f, nominal = 72f), 0f)
+        // 1.3x font (pill row ~31 dp) and Display size largest (78 dp tile): less room, smaller art.
+        assertEquals(52f, tileArtSize(availableHeight = 58f, nominal = 72f), 0f)
+        assertEquals(40f, tileArtSize(availableHeight = 46f, nominal = 72f), 0f)
+    }
+
+    @Test fun `the art never grows past its nominal size`() {
+        assertEquals(44f, tileArtSize(availableHeight = 500f, nominal = 44f), 0f)
+    }
+
+    @Test fun `the art has no negative size when there is no room at all`() {
+        assertEquals(0f, tileArtSize(availableHeight = 5f, nominal = 72f), 0f)
+        assertEquals(0f, tileArtSize(availableHeight = 0f, nominal = 72f), 0f)
+        assertEquals(0f, tileArtSize(availableHeight = -12f, nominal = 72f), 0f)
+    }
+
+    @Test fun `a smaller space never gives bigger art`() {
+        val sizes = (0..120 step 4).map { tileArtSize(availableHeight = it.toFloat(), nominal = 72f) }
+        assertEquals(sizes.sorted(), sizes)
+    }
 }
