@@ -2814,7 +2814,9 @@ private fun PlayerContent(
                 // quiet while an ExoPlayer is active, on the grounds that its STATE_ENDED belongs
                 // to a local player holding nothing. True, but it left the end unhandled entirely.
                 onChapterEnd = { onEndOfChapter() },
-                onTracksChanged = { tracks -> tracksState.updateExoTracks(tracks, webExtras?.audioTracks ?: emptyList()) },
+                // Labelled against the side audio merged NOW, which a failing dub's fallback shrinks
+                // (see StreamExoPlayer.onTracksChanged), never against the Stream's original list.
+                onTracksChanged = { tracks, mergedAudio -> tracksState.updateExoTracks(tracks, mergedAudio) },
                 onFirstFrame = { got -> exoRenderedSomething = got },
                 zoom = gestures.zoomForExo,
                 isTv = isTv,

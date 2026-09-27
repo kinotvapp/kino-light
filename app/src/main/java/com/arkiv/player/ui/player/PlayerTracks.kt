@@ -92,6 +92,9 @@ internal class TracksState(
     /** The preferred language was already applied for this playback. See [autoPickLanguageExo]. */
     private var alreadyAutoPickedExo = false
 
+    /** Notices an audio-track fallback's rebuild under this playback. See [AudioFallbackRepick]. */
+    private val fallbackRepick = AudioFallbackRepick()
+
     /** An embedded subtitle is on. Read by the controls' CC icon. */
     var subsOn by mutableStateOf(false)
         private set
@@ -114,6 +117,7 @@ internal class TracksState(
         // Every playback decides the language again: what was hand-picked in the previous one
         // doesn't carry over to the next (see [autoPickLanguageExo]).
         alreadyAutoPickedExo = false
+        fallbackRepick.reset()
         if (player == null) {
             forgetTracks()
             // Back on the local player: its tracks replace the in-screen player's in the menu.
@@ -127,6 +131,7 @@ internal class TracksState(
      */
     fun onLocalItemLoad() {
         alreadyAutoPickedExo = false
+        fallbackRepick.reset()
         forgetTracks()
     }
 
@@ -165,26 +170,62 @@ internal class TracksState(
      * [StreamExoPlayer]. `MergingMediaSource` reports one flat list, so [audioTrackLabel] is what
      * tells them apart by position and, for the plugin's own, labels them from its `lang`/`label`
      * instead of whatever (usually nothing) a raw audio file's own `Format` carries.
+     *
+     * It must be the list merged RIGHT NOW (`StreamExoPlayer` reports it with every change): after
+     * an audio-track fallback drops a failing one, the rebuilt source has fewer groups, and labelling
+     * them against the original list would name the embedded track after a dub and a dub after a
+     * dead one. That rebuild also invalidates the previous choice (its override names groups that no
+     * longer exist), so [fallbackRepick] chooses the same language again -- see [reapplyAfterFallback].
      */
     fun updateExoTracks(tracks: Tracks, pluginAudioTracks: List<ResolvedAudioTrack> = emptyList()) {
+        // Before the menu is relabelled: what the person has now, named against the previous list.
+        fallbackRepick.onReport(
+            merged = pluginAudioTracks,
+            audioLabel = nameOf(audioTracks, curAudio),
+            spuLabel = if (curSpu >= 0) nameOf(spuTracks, curSpu) else null,
+        )
         val audioGroups = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
         val subGroups   = tracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }
         exoAudioGroups = audioGroups.map { it.mediaTrackGroup }
         exoSubGroups   = subGroups.map { it.mediaTrackGroup }
 
         // Use the index as the id (for setOverrideForType).
-        val embeddedCount = (audioGroups.size - pluginAudioTracks.size).coerceAtLeast(0)
-        audioTracks = audioGroups.mapIndexed { i, group ->
-            val fallback = exoTrackLabel(group.getTrackFormat(0), "A${i + 1}")
-            i to audioTrackLabel(i, embeddedCount, pluginAudioTracks, fallback)
-        }
+        audioTracks = audioMenu(
+            audioGroups.mapIndexed { i, group -> exoTrackLabel(group.getTrackFormat(0), "A${i + 1}") },
+            pluginAudioTracks,
+        )
         spuTracks = subGroups.mapIndexed { i, group ->
             i to exoTrackLabel(group.getTrackFormat(0), "S${i + 1}")
         }
         curAudio = audioGroups.indexOfFirst { it.isSelected }.coerceAtLeast(-1)
         curSpu   = subGroups.indexOfFirst   { it.isSelected }.coerceAtLeast(-1)
         android.util.Log.i("ExoTracks", "tracks updated: audio=${audioTracks.size} subs=${spuTracks.size} curAudio=$curAudio curSpu=$curSpu")
-        autoPickLanguageExo()
+        val pending = fallbackRepick.take(audioTracks)
+        if (pending != null) reapplyAfterFallback(pending) else autoPickLanguageExo()
+    }
+
+    /**
+     * The source was rebuilt without a failing side audio track: choose again, on the NEW groups,
+     * the audio the person was hearing (by its name, which the menu now gets right) and the
+     * subtitle they had, or none if it was off. When their audio is gone -- it was the track that
+     * failed -- or nothing had been chosen yet, the preference decides again, as on a fresh start.
+     */
+    private fun reapplyAfterFallback(pending: AudioFallbackRepick.Pending) {
+        val audioId = trackIdByLabel(pending.audioLabel, audioTracks)
+        if (audioId == null) {
+            android.util.Log.i("ExoTracks", "audio fallback: '${pending.audioLabel}' is gone, the preference decides again")
+            alreadyAutoPickedExo = false
+            autoPickLanguageExo()
+            return
+        }
+        android.util.Log.i("ExoTracks", "audio fallback: keeping '${pending.audioLabel}'")
+        applyAudioExo(audioId)
+        if (pending.spuLabel == null) {
+            applySpuExo(-1)
+        } else {
+            trackIdByLabel(pending.spuLabel, spuTracks)?.let { applySpuExo(it) }
+        }
+        alreadyAutoPickedExo = true
     }
 
     /**
@@ -400,6 +441,63 @@ internal fun audioTrackLabel(id: Int, embeddedCount: Int, pluginTracks: List<Res
     if (extra.lang.isBlank() || extra.lang.equals("und", ignoreCase = true)) return embeddedLabel
     LangTokens.classifyCode(extra.lang).takeIf { it != TrackLang.UNKNOWN }?.label()?.let { return it }
     return extra.lang.uppercase()
+}
+
+/**
+ * The audio menu of an in-screen ExoPlayer: [groupLabels] is each audio group's own name (from its
+ * `Format`, in the order ExoPlayer reports them) and [merged] the stream's side audio tracks merged
+ * in after the container's own -- the ones merged NOW, which after a fallback is fewer than the
+ * Stream listed. See [audioTrackLabel].
+ */
+internal fun audioMenu(groupLabels: List<String>, merged: List<ResolvedAudioTrack>): List<Pair<Int, String>> {
+    val embeddedCount = (groupLabels.size - merged.size).coerceAtLeast(0)
+    return groupLabels.mapIndexed { i, own -> i to audioTrackLabel(i, embeddedCount, merged, own) }
+}
+
+/** The id of the menu entry named exactly [label], or null (no label, or no such entry). */
+internal fun trackIdByLabel(label: String?, tracks: List<Pair<Int, String>>): Int? =
+    label?.let { wanted -> tracks.firstOrNull { it.second == wanted }?.first }
+
+/**
+ * Notices when a stream's merged side audio tracks change under the SAME playback -- which only
+ * happens when `StreamExoPlayer`'s fallback drops a failing one and rebuilds the merged source --
+ * and holds what the person had then, so it can be chosen again once the rebuilt source reports
+ * its tracks. The rebuild is needed because the earlier choice was a `TrackSelectionOverride` on the
+ * previous merge's `TrackGroup`s: on the new ones it matches nothing and ExoPlayer's default wins
+ * (often the embedded original), while the one-shot language auto-pick is already spent.
+ *
+ * Pure (no player, no preferences) so it runs on the JVM; [TracksState] drives it.
+ */
+internal class AudioFallbackRepick {
+    /** What the person had when the rebuild was noticed; [spuLabel] null = subtitles off. */
+    data class Pending(val audioLabel: String?, val spuLabel: String?)
+
+    private var merged: List<ResolvedAudioTrack>? = null
+    private var pending: Pending? = null
+
+    /** A new playback: nothing merged yet, nothing to re-pick. */
+    fun reset() {
+        merged = null
+        pending = null
+    }
+
+    /**
+     * Every track report, BEFORE the menu is relabelled: [merged] is the side audio merged now,
+     * [audioLabel]/[spuLabel] what is selected, named against the previous report's list. The first
+     * change is the one kept: a second failure before the tracks come back finds the menu already
+     * emptied, and would lose the choice.
+     */
+    fun onReport(merged: List<ResolvedAudioTrack>, audioLabel: String?, spuLabel: String?) {
+        val before = this.merged
+        this.merged = merged
+        if (before != null && before != merged && pending == null) pending = Pending(audioLabel, spuLabel)
+    }
+
+    /** Once the rebuilt source reports audio ([audioTracks] non-empty): the pending re-pick, consumed; else null. */
+    fun take(audioTracks: List<Pair<Int, String>>): Pending? {
+        if (audioTracks.isEmpty()) return null
+        return pending.also { pending = null }
+    }
 }
 
 /** The container's real tracks: negative ids are the menu's synthetic entries. */

@@ -199,7 +199,12 @@ internal fun StreamExoPlayer(
      * an error is an error.
      */
     onLiveError: ((LiveErrorKind, String) -> PluginLiveRecovery)? = null,
-    onTracksChanged: ((Tracks) -> Unit)? = null,
+    /**
+     * Every track report, with the side [audioTracks] merged in RIGHT NOW: the list starts as
+     * [audioTracks] and shrinks when [fallbackAudioTracks] drops a failing one and the source is
+     * rebuilt, so the audio menu must be labelled against this one, never the Stream's original.
+     */
+    onTracksChanged: ((Tracks, List<ResolvedAudioTrack>) -> Unit)? = null,
     onFirstFrame: (Boolean) -> Unit = {},
     /**
      * The episode reached its end.
@@ -379,7 +384,7 @@ internal fun StreamExoPlayer(
                     }
                 }
 
-                onTracksChanged?.invoke(tracks)
+                onTracksChanged?.invoke(tracks, activeAudioTracks)
             }
 
             override fun onCues(cueGroup: CueGroup) {
