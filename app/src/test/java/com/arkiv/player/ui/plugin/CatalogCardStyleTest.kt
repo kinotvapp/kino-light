@@ -1,6 +1,7 @@
 package com.arkiv.player.ui.plugin
 
 import com.arkiv.player.data.plugin.PluginColors
+import com.arkiv.player.data.plugin.PluginStatus
 import com.arkiv.player.data.plugin.catalog.CatalogArt
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -101,6 +102,42 @@ class CatalogCardStyleTest {
     // neighbour does. Two lines left a visible gap under the tags of the card without one.
     @Test fun `a status takes one line on a card`() {
         assertEquals(1, cardStatusLines())
+    }
+
+    // The statuses a card can show are those of an installed plugin whose button is not "Instalado". The two long
+    // ones get a short wording of their own so they fit the one line; the rest read as in the installed list.
+    @Test fun `the card shows a short status for the two long ones`() {
+        assertEquals("Dañado", cardStatusLabel(PluginStatus.DAMAGED))
+        assertEquals("No responde", cardStatusLabel(PluginStatus.UNRESPONSIVE))
+    }
+
+    @Test fun `the card keeps the installed list's wording for the short statuses`() {
+        assertEquals("Desactivado", cardStatusLabel(PluginStatus.DISABLED))
+        assertEquals("Falta configurar", cardStatusLabel(PluginStatus.NEEDS_SETUP))
+    }
+
+    @Test fun `a status with no card wording of its own falls back to the installed list's text`() {
+        // ACTIVE and UPDATE_PENDING never reach a card today, but a new or reused status must not go without words.
+        assertEquals(pluginStatusText(PluginStatus.ACTIVE), cardStatusLabel(PluginStatus.ACTIVE))
+        assertEquals(pluginStatusText(PluginStatus.UPDATE_PENDING), cardStatusLabel(PluginStatus.UPDATE_PENDING))
+    }
+
+    @Test fun `every status has a card label, and only the two long ones differ from the installed list`() {
+        val shortened = setOf(PluginStatus.DAMAGED, PluginStatus.UNRESPONSIVE)
+        for (status in PluginStatus.values()) {
+            val label = cardStatusLabel(status)
+            assertTrue("$status has no label", label.isNotBlank())
+            if (status in shortened) {
+                assertTrue("$status: '$label' is not shorter than '${pluginStatusText(status)}'", label.length < pluginStatusText(status).length)
+            } else {
+                assertEquals(pluginStatusText(status), label)
+            }
+        }
+    }
+
+    @Test fun `no status a card can show is longer than the longest short one`() {
+        val onACard = listOf(PluginStatus.DISABLED, PluginStatus.NEEDS_SETUP, PluginStatus.DAMAGED, PluginStatus.UNRESPONSIVE)
+        assertTrue(onACard.all { cardStatusLabel(it).length <= "Falta configurar".length })
     }
 
     @Test fun `a card shows the first two tags in the catalog's order`() {

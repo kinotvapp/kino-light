@@ -47,9 +47,9 @@ import com.arkiv.player.ui.plugin.CatalogRow
 import com.arkiv.player.ui.plugin.cardActionLabel
 import com.arkiv.player.ui.plugin.cardDescriptionLines
 import com.arkiv.player.ui.plugin.cardInitial
+import com.arkiv.player.ui.plugin.cardStatusLabel
 import com.arkiv.player.ui.plugin.catalogActionOf
 import com.arkiv.player.ui.plugin.onTileColor
-import com.arkiv.player.ui.plugin.pluginStatusText
 import com.arkiv.player.ui.plugin.tileArtSize
 import com.arkiv.player.ui.plugin.tileColor
 import com.arkiv.player.ui.theme.ArkivRed
@@ -201,9 +201,9 @@ private fun CardTexts(name: String, description: String, action: CatalogAction, 
             maxLines = cardDescriptionLines(),
             overflow = TextOverflow.Ellipsis,
         )
-        // Why the action says Activar / Configurar / Instalar again, in the same words as the installed list.
+        // Why the action says Activar / Configurar / Instalar again, in the short words of a card (see cardStatusLabel).
         if (status != null) {
-            Text(pluginStatusText(status), style = MaterialTheme.typography.bodySmall, color = ArkivRed, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(cardStatusLabel(status), style = MaterialTheme.typography.bodySmall, color = ArkivRed, maxLines = 1, overflow = TextOverflow.Ellipsis)
         } else if (reserveStatusLine) {
             Text(" ", style = MaterialTheme.typography.bodySmall, maxLines = 1)
         }

@@ -1,6 +1,7 @@
 package com.arkiv.player.ui.plugin
 
 import com.arkiv.player.data.plugin.PluginColors
+import com.arkiv.player.data.plugin.PluginStatus
 import com.arkiv.player.data.plugin.catalog.CatalogArt
 import java.io.File
 import kotlin.math.pow
@@ -93,10 +94,22 @@ internal fun cardDescriptionLines(): Int = 2
 
 /**
  * How many lines a card's status takes, and how many a card without one reserves when its neighbour in
- * the grid line has one. The statuses a card can show ([pluginStatusText] of a plugin whose button is not
+ * the grid line has one. The statuses a card can show ([cardStatusLabel] of a plugin whose button is not
  * "Instalado") are short, so one line is enough and a card with none is left with a one-line gap, not two.
  */
 internal fun cardStatusLines(): Int = 1
+
+/**
+ * The status as a card writes it, on one line of a half-width card: the two long statuses get a short wording
+ * of their own ("Archivos dañados, reinstálalo" is "Dañado", "No responde — actívalo para volver a intentar" is
+ * "No responde"; the card's button already says what to do). Every other status, including one added later,
+ * reads as [pluginStatusText] says, which is also what the installed list and Ajustes ▸ Plugins keep using.
+ */
+internal fun cardStatusLabel(status: PluginStatus): String = when (status) {
+    PluginStatus.DAMAGED -> "Dañado"
+    PluginStatus.UNRESPONSIVE -> "No responde"
+    else -> pluginStatusText(status)
+}
 
 /** Room kept free above and below a tile's icon or initial, so it never touches the pill above it or the tile's edge. */
 private const val TILE_ART_MARGIN = 3f

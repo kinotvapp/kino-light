@@ -130,7 +130,7 @@ fun PluginCard(
             CardTags(cardTags(entry.tags))
             if (status != null) {
                 Text(
-                    pluginStatusText(status),
+                    cardStatusLabel(status),
                     style = MaterialTheme.typography.bodySmall,
                     color = ArkivRed,
                     maxLines = cardStatusLines(),
