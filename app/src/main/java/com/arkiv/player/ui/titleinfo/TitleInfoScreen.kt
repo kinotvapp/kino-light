@@ -135,7 +135,7 @@ fun TitleInfoScreen(
         scope.launch {
             when (p.action) {
                 DownloadAction.CANCEL -> graph.localDownloads.cancel(p.episodeId)
-                DownloadAction.REMOVE_FROM_QUEUE, DownloadAction.DELETE -> graph.localDownloads.remove(p.episodeId)
+                DownloadAction.REMOVE_FROM_QUEUE, DownloadAction.REMOVE_REFUSED, DownloadAction.DELETE -> graph.localDownloads.remove(p.episodeId)
             }
         }
     }

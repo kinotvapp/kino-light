@@ -117,7 +117,7 @@ fun DownloadControl(
         // Refused for good (an HLS-only source, DRM, live): a retry would fail the same way, so the
         // slot offers the only thing that makes sense, taking it off the list -- nothing was written.
         is DownloadDisplayState.Refused -> IconButton(
-            onClick = { onRequestAction(DownloadAction.REMOVE_FROM_QUEUE) },
+            onClick = { onRequestAction(DownloadAction.REMOVE_REFUSED) },
             enabled = enabled,
         ) {
             Icon(

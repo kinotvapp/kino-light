@@ -44,9 +44,19 @@ class DownloadConfirmationTest {
     @Test
     fun `what was refused can only be taken off the list, which loses nothing`() {
         assertEquals(
-            DownloadAction.REMOVE_FROM_QUEUE,
+            DownloadAction.REMOVE_REFUSED,
             DownloadConfirmation.actionFor(DownloadDisplayState.Refused("Este video no se puede descargar")),
         )
+    }
+
+    /** "todavía no empezó a bajar" read as if it might still start; a refused one never will. */
+    @Test
+    fun `removing a refused download says it cannot be downloaded, not that it has not started`() {
+        val text = DownloadConfirmation.text(DownloadAction.REMOVE_REFUSED, "E1")
+        assertTrue(text.body.contains("E1"))
+        assertTrue(text.body.contains("no se puede descargar"))
+        assertTrue(!text.body.contains("todavía"))
+        assertEquals("Quitar", text.confirm)
     }
 
     @Test

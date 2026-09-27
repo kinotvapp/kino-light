@@ -187,7 +187,7 @@ fun DetailScreen(
         scope.launch {
             when (action) {
                 DownloadAction.CANCEL -> graph.localDownloads.cancel(ep.id)
-                DownloadAction.REMOVE_FROM_QUEUE, DownloadAction.DELETE ->
+                DownloadAction.REMOVE_FROM_QUEUE, DownloadAction.REMOVE_REFUSED, DownloadAction.DELETE ->
                     graph.localDownloads.remove(ep.id)
             }
         }

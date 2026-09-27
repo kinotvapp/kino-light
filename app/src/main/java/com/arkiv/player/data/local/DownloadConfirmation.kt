@@ -5,6 +5,9 @@ enum class DownloadAction {
     /** Nothing has downloaded yet: the row is removed and the chapter offers the download button again. */
     REMOVE_FROM_QUEUE,
 
+    /** Refused for good ("Este video no se puede descargar"): it never started and never will; the row is removed. */
+    REMOVE_REFUSED,
+
     /** It's downloading: it's stopped keeping what already downloaded, so it can resume from there. */
     CANCEL,
 
@@ -35,7 +38,7 @@ object DownloadConfirmation {
         DownloadDisplayState.Done -> DownloadAction.DELETE
         // Refused for good: nothing was written, so taking it off the list is the queue removal
         // (its dialog already says nothing is lost).
-        is DownloadDisplayState.Refused -> DownloadAction.REMOVE_FROM_QUEUE
+        is DownloadDisplayState.Refused -> DownloadAction.REMOVE_REFUSED
         // Retrying destroys nothing, so it doesn't ask. And what nobody queued has nothing to undo.
         is DownloadDisplayState.Failed, DownloadDisplayState.NotDownloaded, DownloadDisplayState.NeedsConfirmation -> null
     }
@@ -47,6 +50,12 @@ object DownloadConfirmation {
                 title = "¿Sacarla de la cola?",
                 body = "$subject todavía no empezó a bajar, así que no se pierde nada.",
                 confirm = "Sacar de la cola",
+                dismiss = "Dejarla",
+            )
+            DownloadAction.REMOVE_REFUSED -> ConfirmationText(
+                title = "¿Quitarla de Descargas?",
+                body = "$subject no se puede descargar, así que no hay nada guardado que perder.",
+                confirm = "Quitar",
                 dismiss = "Dejarla",
             )
             DownloadAction.CANCEL -> ConfirmationText(
