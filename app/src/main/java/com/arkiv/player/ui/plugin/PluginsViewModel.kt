@@ -6,6 +6,7 @@ import com.arkiv.player.data.plugin.InstallPreview
 import com.arkiv.player.data.plugin.InstalledPlugin
 import com.arkiv.player.data.plugin.PluginAddress
 import com.arkiv.player.data.plugin.PluginAdmin
+import com.arkiv.player.data.plugin.PluginSettingsForm
 import com.arkiv.player.data.plugin.UpdateOutcome
 import com.arkiv.player.data.plugin.catalog.CatalogEntry
 import com.arkiv.player.data.plugin.catalog.CatalogOrigin
@@ -228,12 +229,18 @@ class PluginsViewModel(
         val m = preview.manifest
         busy(pluginId = m.id.takeIf { preview.isUpdate }) {
             admin.install(preview)
-            _state.update {
-                if (preview.isUpdate) {
-                    // The address field may hold something else the person was typing: keep it.
-                    it.copy(message = "${m.name} quedó actualizado a la ${m.version}")
-                } else {
-                    it.copy(address = "", message = "${m.name} quedó instalado")
+            if (preview.isUpdate) {
+                // The address field may hold something else the person was typing: keep it. An update never
+                // opens Configurar: the plugin was already set up (or the person already skipped it).
+                _state.update { it.copy(message = "${m.name} quedó actualizado a la ${m.version}") }
+            } else {
+                // A new plugin that cannot work until a required setting is filled goes straight to its
+                // Configurar instead of waiting for the person to find the button. Whatever stops that
+                // (the plugin gone, a failed read) only skips it: the install itself succeeded.
+                val setup = settingsFormOf(m.id)?.takeIf { it.plugin.needsSetup }
+                _state.update {
+                    val installed = it.copy(address = "", message = "${m.name} quedó instalado")
+                    if (setup == null) installed else installed.copy(configuring = draftOf(m.id, setup), settingsClosed = false)
                 }
             }
         }
@@ -280,19 +287,26 @@ class PluginsViewModel(
     /** Opens Configurar with the stored values (read on IO by the admin: passwords come from the Keystore). */
     fun openSettings(id: String) {
         viewModelScope.launch {
-            val form = try {
-                admin.settingsOf(id)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                null
-            }
+            val form = settingsFormOf(id)
             _state.update {
                 if (form == null) it.copy(message = "El plugin ya no está instalado", messagePluginId = null, settingsClosed = true)
-                else it.copy(configuring = PluginConfigDraft.of(id, form.plugin.manifest.name, form.plugin.manifest.settings, form.values), settingsClosed = false)
+                else it.copy(configuring = draftOf(id, form), settingsClosed = false)
             }
         }
     }
+
+    /** The stored settings of [id], or null when it is not installed or they cannot be read. */
+    private suspend fun settingsFormOf(id: String): PluginSettingsForm? =
+        try {
+            admin.settingsOf(id)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }
+
+    private fun draftOf(id: String, form: PluginSettingsForm): PluginConfigDraft =
+        PluginConfigDraft.of(id, form.plugin.manifest.name, form.plugin.manifest.settings, form.values)
 
     fun onSettingChange(key: String, value: Any?) = _state.update { s -> s.copy(configuring = s.configuring?.with(key, value)) }
 

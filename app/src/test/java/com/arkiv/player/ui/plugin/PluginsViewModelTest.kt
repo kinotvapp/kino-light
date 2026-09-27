@@ -62,9 +62,10 @@ class PluginsViewModelTest {
         override fun setEnabled(id: String, enabled: Boolean) { this.enabled[id] = enabled }
         override fun uninstall(id: String) { uninstalled += id }
         var form: PluginSettingsForm? = null
+        var settingsFailure: Exception? = null
         var saveResult: String? = null
         val saved = mutableListOf<Map<String, Any?>>()
-        override suspend fun settingsOf(id: String): PluginSettingsForm? = form
+        override suspend fun settingsOf(id: String): PluginSettingsForm? { settingsFailure?.let { throw it }; return form }
         override suspend fun saveSettings(id: String, values: Map<String, Any?>): String? { saved += values; return saveResult }
     }
 
@@ -298,6 +299,80 @@ class PluginsViewModelTest {
         vm.saveSettings()
         assertEquals("El plugin ya no está instalado", vm.state.value.configuring!!.error)
         assertFalse(vm.state.value.configuring!!.saving)
+    }
+
+    // ---- A new install that still needs setup opens its Configurar straight away ----
+
+    /** [configurable] as the registry reports it right after installing it: its required settings still empty. */
+    private val needingSetup = configurable.copy(missingSettings = listOf("server", "password"))
+    private val setupPreview = preview.copy(manifest = configurable.manifest)
+
+    @Test fun `installing a plugin that needs setup opens its Configurar and keeps the installed message`() {
+        val admin = FakeAdmin().apply { previewResult = { setupPreview }; form = PluginSettingsForm(needingSetup, emptyMap()) }
+        val vm = vm(admin)
+        vm.onAddressChange("o/r"); vm.add(); vm.confirmInstall()
+        val draft = vm.state.value.configuring!!
+        assertEquals("demo", draft.pluginId)
+        assertEquals("Demo", draft.pluginName)
+        assertEquals(mapOf("server" to "", "password" to "", "hd" to false), draft.values)
+        with(vm.state.value) {
+            assertEquals("Demo quedó instalado", message)
+            assertEquals("", address)
+            assertFalse(settingsClosed)
+            assertFalse(busy)
+        }
+    }
+
+    @Test fun `installing a plugin with nothing missing does not open Configurar`() {
+        val admin = FakeAdmin().apply { previewResult = { setupPreview }; form = PluginSettingsForm(configurable, emptyMap()) }
+        val vm = vm(admin)
+        vm.onAddressChange("o/r"); vm.add(); vm.confirmInstall()
+        assertNull(vm.state.value.configuring)
+        assertEquals("Demo quedó instalado", vm.state.value.message)
+    }
+
+    @Test fun `updating a plugin that needs setup never opens Configurar`() {
+        val update = setupPreview.copy(isUpdate = true)
+        val admin = FakeAdmin().apply { this.update = { UpdateOutcome.NeedsApproval(update) }; form = PluginSettingsForm(needingSetup, emptyMap()) }
+        val vm = vm(admin)
+        vm.checkUpdate("demo"); vm.confirmInstall()
+        assertEquals(listOf(update), admin.installed)
+        assertNull(vm.state.value.configuring)
+        assertEquals("Demo quedó actualizado a la 1.0.0", vm.state.value.message)
+    }
+
+    @Test fun `a plugin that vanished right after installing leaves the installed message and no dialog`() {
+        val admin = FakeAdmin().apply { previewResult = { setupPreview }; form = null }
+        val vm = vm(admin)
+        vm.onAddressChange("o/r"); vm.add(); vm.confirmInstall()
+        with(vm.state.value) {
+            assertNull(configuring)
+            assertEquals("Demo quedó instalado", message)
+            assertFalse(settingsClosed)
+        }
+    }
+
+    @Test fun `a settings read that throws after installing leaves the installed message and no dialog`() {
+        val admin = FakeAdmin().apply { previewResult = { setupPreview }; settingsFailure = java.io.IOException("keystore") }
+        val vm = vm(admin)
+        vm.onAddressChange("o/r"); vm.add(); vm.confirmInstall()
+        with(vm.state.value) {
+            assertNull(configuring)
+            assertEquals("Demo quedó instalado", message)
+            assertFalse(busy)
+        }
+    }
+
+    @Test fun `a failed install does not open Configurar`() {
+        val admin = FakeAdmin().apply {
+            previewResult = { setupPreview }
+            installResult = { throw PluginTimeoutException("search", 15_000) }
+            form = PluginSettingsForm(needingSetup, emptyMap())
+        }
+        val vm = vm(admin)
+        vm.onAddressChange("o/r"); vm.add(); vm.confirmInstall()
+        assertNull(vm.state.value.configuring)
+        assertEquals("El plugin no respondió a tiempo", vm.state.value.message)
     }
 
     @Test fun `Configurar of a plugin that is gone closes at once`() {
