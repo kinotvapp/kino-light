@@ -136,7 +136,7 @@ private fun catalogUiState(result: CatalogResult, refreshing: Boolean, query: St
     )
 
 /**
- * Ajustes ▸ Plugins on phone and TV: the same state, two layouts.
+ * The Plugins screen on phone and TV (Ajustes ▸ Plugins): the same state, two layouts.
  *
  * [io] runs [PluginAdmin.setEnabled] and [PluginAdmin.uninstall]: they are plain functions that
  * write (uninstall deletes a directory tree), so they never run on Main.
@@ -145,7 +145,7 @@ private fun catalogUiState(result: CatalogResult, refreshing: Boolean, query: St
  * screen that only needs the installed plugins (Configurar) never touches the network.
  *
  * [artProvider] is the art each listed row's own repo ships ([art]); the default knows none and makes
- * no calls, so only the windows that draw cards pay for it. Its refreshes run on [io]: the real
+ * no calls, so only the screens that draw cards pay for it. Its refreshes run on [io]: the real
  * repository reads and parses files on the thread that calls it.
  */
 class PluginsViewModel(
@@ -319,14 +319,12 @@ class PluginsViewModel(
         busy(pluginId = null) { _state.update { it.copy(consent = admin.preview(entry.repo)) } }
     }
 
-    fun onAddressChange(value: String) = _state.update { it.copy(address = value, message = null, messagePluginId = null) }
-
     /**
-     * Drops the message of an earlier action and the row it was about, and nothing else: unlike
-     * [onAddressChange] the typed address stays. The Plugins screens call it when their "Agregar" dialog
-     * opens or closes, so what an earlier action said is not that dialog's news.
+     * The custom address the person is typing. It also drops the message of an earlier action and the row it
+     * was about: what a previous try said is not news about a new address, so the Plugins screens change it
+     * to "" both when their "Agregar" dialog opens and when it is dismissed.
      */
-    fun clearMessage() = _state.update { it.copy(message = null, messagePluginId = null) }
+    fun onAddressChange(value: String) = _state.update { it.copy(address = value, message = null, messagePluginId = null) }
 
     fun add() {
         val input = _state.value.address.trim()

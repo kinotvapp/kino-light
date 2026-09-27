@@ -27,6 +27,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import kotlinx.coroutines.delay
 import com.arkiv.player.data.magis.MagisAccountState
+import com.arkiv.player.ui.plugin.AddPluginMode
 import com.arkiv.player.ui.rememberGraph
 
 /**
@@ -60,7 +61,7 @@ private enum class TvSettingsTab(val label: String) {
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-fun TvSettingsScreen(onOpenAddPlugin: () -> Unit = {}) {
+fun TvSettingsScreen() {
     val graph = rememberGraph()
     val magisAccount = graph.magisAccount
     // Reactive: this can flip WHILE the person is sitting on this screen (the next catalog call
@@ -102,10 +103,14 @@ fun TvSettingsScreen(onOpenAddPlugin: () -> Unit = {}) {
     // "Subtitles" left the screen starting halfway down.
     val scroll = rememberSaveable(tab, saver = ScrollState.Saver) { ScrollState(0) }
 
-    // Focus enters through the selected tab: the first one on a fresh visit, the one the person was on
-    // when coming back from a window opened out of it (Agregar plugin). Without this it starts on the
-    // content's first row and the row above gets discovered by accident.
+    // Focus enters through the selected tab: the first one on a fresh visit, the selected one when the screen
+    // comes back with its saved tab. Without this it starts on the content's first row and the row above gets
+    // discovered by accident.
     val selectedTabFocus = remember { FocusRequester() }
+    // Where Down leads from the tab row while Plugins is the selected tab: the selected tab chip of the Plugins
+    // content's own header row (see [TvPluginsContent]). Plain geometry would pick whichever inner chip lies
+    // below the chip that is focused, which is not necessarily the selected one.
+    val pluginsEntryFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) {
         repeat(20) {
             if (runCatching { selectedTabFocus.requestFocus() }.isSuccess) return@LaunchedEffect
@@ -128,25 +133,41 @@ fun TvSettingsScreen(onOpenAddPlugin: () -> Unit = {}) {
                     label = t.label,
                     selected = t == tab,
                     onClick = { tab = t },
-                    modifier = if (t == tab) Modifier.focusRequester(selectedTabFocus) else Modifier,
+                    modifier = (if (t == tab) Modifier.focusRequester(selectedTabFocus) else Modifier)
+                        .dpadDownTo(pluginsEntryFocus.takeIf { tab == TvSettingsTab.PLUGINS }),
                 )
             }
         }
 
-        Column(
-            modifier = Modifier.fillMaxSize().verticalScroll(scroll).padding(top = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            when (tab) {
-                TvSettingsTab.SUBTITLES -> TvSettingsSubtitles()
-                TvSettingsTab.ACCOUNT -> TvSettingsAccount(
-                    magisAccount,
-                    onLinkMagis = { linkingMagis = true },
-                    accountUnavailable = regionGeoBlocked,
-                )
-                TvSettingsTab.APP -> TvSettingsApp()
-                TvSettingsTab.PLUGINS -> TvSettingsPlugins(onOpenAddPlugin)
-                TvSettingsTab.CONNECT -> TvCompanionSettings()
+        if (tab == TvSettingsTab.PLUGINS) {
+            // The Plugins screen itself, not a section of it: a card grid of its own, in the whole width of the pane
+            // and the height the tab row leaves (a lazy grid inside the scroll below would be measured with an
+            // infinite height and crash). Focus is NOT placed on a card when it opens: the person is walking
+            // Ajustes' tab row. Down from that row enters the content's header, Up from it comes back here to the
+            // selected tab. Back is not handled: it closes Ajustes, as on every other tab.
+            TvPluginsContent(
+                mode = AddPluginMode.SETTINGS,
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                requestInitialFocus = false,
+                entryFocus = pluginsEntryFocus,
+                upFocus = selectedTabFocus,
+            )
+        } else {
+            Column(
+                modifier = Modifier.fillMaxSize().verticalScroll(scroll).padding(top = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                when (tab) {
+                    TvSettingsTab.SUBTITLES -> TvSettingsSubtitles()
+                    TvSettingsTab.ACCOUNT -> TvSettingsAccount(
+                        magisAccount,
+                        onLinkMagis = { linkingMagis = true },
+                        accountUnavailable = regionGeoBlocked,
+                    )
+                    TvSettingsTab.APP -> TvSettingsApp()
+                    TvSettingsTab.CONNECT -> TvCompanionSettings()
+                    TvSettingsTab.PLUGINS -> Unit // Above: it needs a bounded height, not a scroll.
+                }
             }
         }
     }

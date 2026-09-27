@@ -149,39 +149,6 @@ class PluginsViewModelTest {
         assertFalse(vm.state.value.busy)
     }
 
-    // The Plugins screens clear whatever an earlier action said when their "Agregar" dialog opens or closes;
-    // the text already typed is not theirs to touch.
-    @Test fun `clearing the message drops it and the row it was about, and keeps the typed address`() {
-        val admin = FakeAdmin().apply { update = { UpdateOutcome.UpToDate } }
-        admin.plugins.value = listOf(installedPlugin)
-        val vm = vm(admin)
-        vm.onAddressChange("o/r")
-        vm.checkUpdate("demo")
-        assertEquals("Ya tienes la última versión", vm.state.value.message)
-        assertEquals("demo", vm.state.value.messagePluginId)
-
-        vm.clearMessage()
-
-        with(vm.state.value) {
-            assertNull(message)
-            assertNull(messagePluginId)
-            assertEquals("o/r", address)
-        }
-    }
-
-    @Test fun `clearing the message leaves the rest of the state alone`() {
-        val admin = FakeAdmin().apply { previewResult = { preview } }
-        val vm = vm(admin)
-        vm.onQueryChange("archive")
-        vm.onAddressChange("o/r"); vm.add()
-        val before = vm.state.value
-        assertNotNull(before.consent)
-
-        vm.clearMessage()
-
-        assertEquals(before.copy(message = null, messagePluginId = null), vm.state.value)
-    }
-
     // The dialog's two exits: dismissing it (Cancelar, Back) forgets what was typed and what the last try said, so
     // it reopens empty; cancelling the consent sheet it raised keeps the text, so it returns as it was left.
     @Test fun `dismissing the dialog clears the typed address and the refusal that was under it`() {
@@ -195,6 +162,32 @@ class PluginsViewModelTest {
         with(vm.state.value) {
             assertEquals("", address)
             assertNull(message)
+        }
+    }
+
+    // The dialog opens empty too: a confirmed install that failed leaves its address in the field (the failure message
+    // is about it), and the next "Agregar" must not show that stale repository.
+    @Test fun `opening the dialog empties the address a failed install left and drops the message about a row`() {
+        val admin = FakeAdmin().apply {
+            previewResult = { preview }
+            installResult = { throw PluginTimeoutException("search", 15_000) }
+            update = { UpdateOutcome.UpToDate }
+        }
+        admin.plugins.value = listOf(installedPlugin)
+        val vm = vm(admin)
+        vm.onQueryChange("archive")
+        vm.onAddressChange("o/r"); vm.add(); vm.confirmInstall()
+        assertEquals("o/r", vm.state.value.address)
+        vm.checkUpdate("demo")
+        assertEquals("demo", vm.state.value.messagePluginId)
+
+        vm.onAddressChange("")
+
+        with(vm.state.value) {
+            assertEquals("", address)
+            assertNull(message)
+            assertNull(messagePluginId)
+            assertEquals("archive", query)
         }
     }
 

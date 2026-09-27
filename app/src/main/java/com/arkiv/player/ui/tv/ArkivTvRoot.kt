@@ -244,7 +244,7 @@ fun ArkivTvRoot(
             )
         }
         composable("settings") {
-            TvSettingsScreen(onOpenAddPlugin = { navController.navigate("plugins") { launchSingleTop = true } })
+            TvSettingsScreen()
         }
         composable("player/{episodeId}") { entry ->
             val episodeId = Uri.decode(entry.arguments?.getString("episodeId").orEmpty())
@@ -312,12 +312,6 @@ fun ArkivTvRoot(
                     onBack = { navController.popBackStack() },
                 )
             }
-        }
-        composable("plugins") {
-            TvPluginsScreen(
-                com.arkiv.player.ui.plugin.AddPluginMode.SETTINGS,
-                onClose = { navController.popBackStack() },
-            )
         }
         composable("plugin_config/{pluginId}") { entry ->
             com.arkiv.player.ui.plugin.PluginConfigRoute(

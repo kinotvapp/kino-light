@@ -29,20 +29,9 @@ import coil.compose.AsyncImage
 import com.arkiv.player.data.plugin.InstalledPlugin
 import com.arkiv.player.data.plugin.PluginStatus
 import com.arkiv.player.data.plugin.catalog.CatalogArt
-import com.arkiv.player.data.plugin.catalog.CatalogArtProvider
 import com.arkiv.player.ui.theme.ArkivRed
 import com.arkiv.player.ui.theme.ArkivTextSecondary
 import java.io.File
-
-/**
- * The catalog art an installed plugin's row falls back to when the plugin has no icon of its own: what is
- * already on disk for its address (synchronous and small, never the network), read once per address and only
- * for a plugin that needs it. Null otherwise. For the screens whose view model has no catalog rows to take
- * the art from; the Plugins screens have it in [PluginsViewModel.art].
- */
-@Composable
-internal fun rememberFallbackArt(p: InstalledPlugin, provider: CatalogArtProvider): CatalogArt? =
-    remember(p.record.address, p.iconFile) { if (p.iconFile == null) provider.cached(p.record.address) else null }
 
 /**
  * One installed plugin of the Instalados tab ([PluginsContent]): name and version, status, the hosts it may
