@@ -61,7 +61,8 @@ class PluginContractException(message: String) : Exception(message)
  * ignored (forward compatibility). Images must be https and are the one thing NOT host-gated
  * (display-only, loaded by Coil without plugin headers), but an image on an IP literal or a local
  * name is dropped, so a poster can't probe the home network — unless it is exactly one of the
- * servers the person typed in the plugin's settings (see [EffectiveHosts]).
+ * servers the person typed in the plugin's settings (see [EffectiveHosts]). The one other exception
+ * is [stream]'s `xuper`, for the single plugin [XuperPrivilege.grants].
  */
 object PluginOutput {
     const val MAX_SEARCH_ITEMS = 100
@@ -197,16 +198,24 @@ object PluginOutput {
         return PluginEpisodes(series, eps)
     }
 
-    fun stream(json: String, hosts: EffectiveHosts): PluginStream {
+    /**
+     * [xuper] is non-null ONLY for the one plugin [XuperPrivilege.grants] (`PluginContentSource`
+     * enforces it). For that plugin, a URL the native bridge itself resolved, byte for byte, skips
+     * the https and declared-host checks (Magis's CDN is plain http on per-session hosts), and the
+     * stream plays with the bridge's headers instead of any the script returned: the script never
+     * holds them. Every other URL, of that plugin or any other, is checked exactly as always.
+     */
+    fun stream(json: String, hosts: EffectiveHosts, xuper: XuperStreams? = null): PluginStream {
         val o = runCatching { JSONObject(json) }.getOrNull()
             ?: throw PluginContractException("El plugin no devolvió un video")
         if (DRM_KEYS.any { o.has(it) }) throw PluginContractException("El video tiene DRM y los plugins no lo soportan")
         val url = o.optString("url")
-        checkUrl(url, hosts, "El video")
+        val native = xuper?.headersFor(url)
+        if (native == null) checkUrl(url, hosts, "El video")
         val mime = o.optString("mime").trim()
         if (mime.isNotEmpty() && !MIME.matches(mime)) throw PluginContractException("El tipo de video \"${mime.take(100)}\" no es válido")
         val headers = LinkedHashMap<String, String>()
-        o.optJSONObject("headers")?.let { h ->
+        if (native != null) headers.putAll(native) else o.optJSONObject("headers")?.let { h ->
             for (k in h.keys()) {
                 if (headers.size >= MAX_HEADERS) break
                 val v = h.opt(k) as? String ?: continue
@@ -220,7 +229,7 @@ object PluginOutput {
             for (i in 0 until minOf(arr.length(), MAX_SUBTITLES)) {
                 val s = arr.optJSONObject(i) ?: continue
                 val su = s.optString("url")
-                if (runCatching { checkUrl(su, hosts, "El subtítulo") }.isFailure) continue
+                if (xuper?.headersFor(su) == null && runCatching { checkUrl(su, hosts, "El subtítulo") }.isFailure) continue
                 val format = s.optString("format").takeIf { it == "vtt" || it == "srt" }.orEmpty()
                 subtitles += PluginSubtitle(text(s, "lang", 20).ifBlank { "und" }, su, format)
             }

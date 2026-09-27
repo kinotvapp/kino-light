@@ -141,7 +141,7 @@ internal fun StreamExoPlayer(
                 .setReadTimeoutMs(30_000)
             // Every request this stream makes — manifest, variants, segments, keys, subtitles and
             // each redirect hop — is gated to the approved hosts before it leaves the device.
-            is StreamHttp.PluginGated -> OkHttpDataSource.Factory(graph.pluginStreamClient(http.hosts))
+            is StreamHttp.PluginGated -> OkHttpDataSource.Factory(graph.pluginStreamClient(http.hosts, http.xuper))
                 .setUserAgent(requestHeaders.entries.firstOrNull { it.key.equals("User-Agent", true) }?.value ?: "okhttp/4.12.0")
                 .setDefaultRequestProperties(requestHeaders.filterKeys { !it.equals("User-Agent", true) })
         }
@@ -537,13 +537,17 @@ internal fun TextureView.fitAspect(videoAspect: Float, zoom: Float) {
 internal sealed interface StreamHttp {
     data object Default : StreamHttp
 
-    /** [hosts]: the ones the person approved or typed (installed record + settings) — never plugin output. */
-    data class PluginGated(val hosts: com.arkiv.player.data.plugin.EffectiveHosts) : StreamHttp
+    /**
+     * [hosts]: the ones the person approved or typed (installed record + settings) — never plugin output.
+     * [xuper]: the stream is the recognized Xuper plugin's (`PluginAccess.Ready.xuper`), so the
+     * gate also honors `AppGraph`'s one [com.arkiv.player.data.plugin.XuperStreams]; see `AppGraph.pluginStreamClient`.
+     */
+    data class PluginGated(val hosts: com.arkiv.player.data.plugin.EffectiveHosts, val xuper: Boolean = false) : StreamHttp
 }
 
 /** Only a PLUGIN stream is gated; an empty host list is still gated (it reaches nothing). */
-internal fun streamHttpFor(kind: SourceKind, pluginHosts: com.arkiv.player.data.plugin.EffectiveHosts): StreamHttp =
-    if (kind == SourceKind.PLUGIN) StreamHttp.PluginGated(pluginHosts) else StreamHttp.Default
+internal fun streamHttpFor(kind: SourceKind, pluginHosts: com.arkiv.player.data.plugin.EffectiveHosts, xuper: Boolean = false): StreamHttp =
+    if (kind == SourceKind.PLUGIN) StreamHttp.PluginGated(pluginHosts, xuper) else StreamHttp.Default
 
 /**
  * A subtitle's type: the `format` the source declared (plugins), else guessed from its path. VTT

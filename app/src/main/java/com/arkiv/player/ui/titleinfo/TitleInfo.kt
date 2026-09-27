@@ -3,10 +3,8 @@ package com.arkiv.player.ui.titleinfo
 import com.arkiv.player.data.catalog.TmdbInfo
 import com.arkiv.player.data.gateway.CatalogItem
 import com.arkiv.player.data.gateway.GatewayEpisode
-import com.arkiv.player.data.gateway.GatewayResult
 import com.arkiv.player.data.gateway.MAGIS_SERIES
 import com.arkiv.player.data.local.DownloadDisplayState
-import com.arkiv.player.data.magis.MagisRef
 import com.arkiv.player.ui.formatRuntime
 import com.arkiv.player.ui.plainSynopsis
 import java.util.Locale
@@ -76,29 +74,6 @@ fun CatalogItem.toTitleInfo(): TitleInfo {
         score = score,
         runtimeMinutes = if (kind == TitleKind.MOVIE) durationS / 60 else 0,
         episodeCount = episodeCount,
-    )
-}
-
-/**
- * A Magis search result as the catalog item the page opens with, or null when it is not a Magis
- * title (another source, or the portal sent no `content_id`).
- *
- * The ref is rebuilt with [MagisRef] instead of copying the result's: it is the same descriptor
- * home cards carry, and it is what a route can reproduce after process death.
- */
-fun GatewayResult.toMagisCatalogItem(): CatalogItem? {
-    val contentId = extra["content_id"].orEmpty()
-    if (source != "magis" || contentId.isBlank()) return null
-    val type = extra["program_type"].orEmpty().ifBlank { "movie" }
-    return CatalogItem(
-        id = contentId,
-        title = title,
-        poster = extra["poster"]?.takeIf { it.isNotBlank() },
-        durationS = 0,
-        ref = MagisRef(contentId, type, 0).encode(),
-        type = type,
-        backdrop = extra["backdrop"]?.takeIf { it.isNotBlank() },
-        episodeCount = extra["episode_count"]?.toIntOrNull() ?: 0,
     )
 }
 

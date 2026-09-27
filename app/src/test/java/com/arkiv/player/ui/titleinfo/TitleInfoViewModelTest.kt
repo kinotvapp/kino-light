@@ -11,6 +11,7 @@ import com.arkiv.player.data.gateway.GatewayPlayable
 import com.arkiv.player.data.gateway.GatewayResult
 import com.arkiv.player.data.gateway.GatewaySearchQuery
 import com.arkiv.player.data.gateway.GatewaySeries
+import com.arkiv.player.data.gateway.MAGIS_SERIES
 import com.arkiv.player.data.gateway.SearchEvent
 import com.arkiv.player.data.gateway.SeasonRef
 import com.arkiv.player.data.local.DownloadDisplayState
@@ -67,6 +68,45 @@ class TitleInfoViewModelTest {
         override suspend fun movieImdbId(ref: String): String? = imdbFor(ref)
     }
 
+    /**
+     * A source whose seasons are siblings, shaped like the retired native Magis one (its ids, its
+     * `MagisRef` season refs, a `content_id` in the result), so the view model's sibling-season,
+     * download and IMDb-hint paths stay covered now that every real source lists seasons in-list.
+     */
+    private class SiblingsSource(
+        override val downloads: MagisDownloadActions?,
+        private val movieImdbId: suspend (ref: String) -> String?,
+        private val onPlayMovie: suspend (GatewayResult) -> PlaybackResult,
+        private val onPlaySeason: suspend (GatewayResult, List<GatewayEpisode>, GatewayEpisode, GatewaySeries?) -> PlaybackResult,
+    ) : TitleSource {
+        override val seasons: SeasonModel = SeasonModel.Siblings { current, season ->
+            current.copy(
+                id = season.contentId,
+                ref = MagisRef(season.contentId, current.type, 0).encode(),
+                title = seasonTitle(current.title, season.number),
+                episodeCount = 0,
+            )
+        }
+        override fun itemId(item: CatalogItem): String = MagisEntities.itemIdFor(item.id)
+        override fun movieEpisodeId(item: CatalogItem): String = MagisEntities.movieEpisodeId(itemId(item))
+        override fun chapterEpisodeId(item: CatalogItem, chapter: GatewayEpisode): String =
+            MagisEntities.episodeIdFor(itemId(item), chapter.number)
+        override fun gatewayResult(item: CatalogItem): GatewayResult = GatewayResult(
+            source = "magis", title = item.title.ifBlank { item.id }, ref = item.ref,
+            kind = if (item.type in MAGIS_SERIES) "series" else "movie",
+            extra = mapOf("content_id" to item.id, "program_type" to item.type),
+        )
+        override suspend fun tmdbHint(item: CatalogItem): TmdbHint =
+            if (item.type in MAGIS_SERIES) TmdbHint() else TmdbHint(imdbId = movieImdbId(item.ref).orEmpty())
+        override suspend fun playMovie(result: GatewayResult): PlaybackResult = onPlayMovie(result)
+        override suspend fun playSeason(
+            result: GatewayResult,
+            chapters: List<GatewayEpisode>,
+            chosen: GatewayEpisode,
+            series: GatewaySeries?,
+        ): PlaybackResult = onPlaySeason(result, chapters, chosen, series)
+    }
+
     private fun movie(id: String = "m1") = CatalogItem(
         id = id, title = "Una peli", poster = "p", durationS = 6000, ref = MagisRef(id, "movie", 0).encode(),
         type = "movie", genres = listOf("Drama"), description = "Sinopsis del portal",
@@ -99,7 +139,7 @@ class TitleInfoViewModelTest {
         tmdbMovieId: suspend (String) -> Int? = { null },
     ) = TitleInfoViewModel(
         item, content,
-        MagisTitleSource(
+        SiblingsSource(
             downloads = downloads,
             movieImdbId = { ref -> content.movieImdbId(ref) },
             onPlayMovie = playMovie,

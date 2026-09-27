@@ -114,7 +114,7 @@ private const val SEARCH_HISTORY_KIND = "tv"
 fun TvSearchScreen(
     onPlay: (String) -> Unit,
     onBack: () -> Unit,
-    /** A Magis result was picked: open its info page (the route comes from `titleRoute`). */
+    /** A plugin result was picked: open its info page (the route comes from `titleRoute`). */
     onOpenTitle: (String) -> Unit,
     onBrowseRow: ((rowId: String, title: String) -> Unit)? = null,
     shortcutKind: String? = null,
@@ -160,9 +160,8 @@ fun TvSearchScreen(
     var askModeFor by remember { mutableStateOf<TitleCard?>(null) }
     var preparing by remember { mutableStateOf(false) }
     var playError by remember { mutableStateOf<String?>(null) }
-    // Chosen Caracol series: same as Magis, opens its chapters. A SEPARATE state on purpose: its
-    // chapter list only calls `playback.playDituSeason`, so a Caracol chapter never falls into
-    // Magis's save path.
+    // Chosen Caracol series: opens its chapters (a plugin title opens its info page instead, see
+    // `openTitle`). Its chapter list only calls `playback.playDituSeason`.
     var dituSeasonFor by remember { mutableStateOf<com.arkiv.player.data.gateway.GatewayResult?>(null) }
 
     // The chosen card's "enriched" metadata, to save the real title/poster — same criterion as
@@ -179,7 +178,7 @@ fun TvSearchScreen(
     }
 
     fun openTitle(r: com.arkiv.player.data.gateway.GatewayResult) {
-        // Movie or series, a Magis or plugin title opens its info page.
+        // Movie or series, a plugin title (Xuper's among them) opens its info page.
         val route = titleRoute(r)
         if (route != null) onOpenTitle(route) else playError = TITLE_OPEN_ERROR
     }
@@ -190,7 +189,6 @@ fun TvSearchScreen(
     }
 
     fun playResult(source: PlaySource) = when (source) {
-        is PlaySource.Magis -> openTitle(source.result)
         is PlaySource.Ditu ->
             if (source.isSeries()) {
                 dituSeasonFor = source.result
@@ -484,8 +482,9 @@ fun TvSearchScreen(
                     onPickEpisode = { season, episode -> vm.runSourceSearch(season, episode) },
                 )
             }
-            // Source list with immediate playback on picking one; a Magis season or a Caracol
-            // series opens TvMagisSeasonContent (chapter list) instead of playing.
+            // Source list with immediate playback on picking one; a Caracol series opens its
+            // chapter list (TvMagisSeasonContent) instead of playing, and a plugin title its
+            // info page.
             SearchPhase.RESULTS -> {
                 val currentDitu = dituSeasonFor
                 if (currentDitu != null) {
@@ -1217,10 +1216,9 @@ private fun TvResultsContent(
 
 /** Stable and UNIQUE key for the source list (avoids focus "jumps" as new results arrive, and
  *  avoids a Compose crash from duplicate keys in a lazy list).
- *  Magis: the portal's `content_id`, or the `ref` if it doesn't bring one. Caracol: its `ref`,
- *  already unique per content (`ditu1:<contentType>:<contentId>`). */
+ *  Caracol: its `ref`, already unique per content (`ditu1:<contentType>:<contentId>`). A plugin:
+ *  its source plus its item id. */
 internal fun sourceKey(s: PlaySource): String = when (s) {
-    is PlaySource.Magis -> "magis-${s.result.extra["content_id"] ?: s.result.ref}"
     is PlaySource.Ditu -> "ditu-${s.result.ref}"
     is PlaySource.Plugin -> "plugin-${s.result.source}-${s.result.extra["pluginItemId"] ?: s.result.ref}"
 }

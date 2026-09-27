@@ -64,4 +64,20 @@ class MagisDownloadActionsTest {
         val some = listOf(EnqueueOutcome.QUEUED, EnqueueOutcome.ALREADY_DOWNLOADED, EnqueueOutcome.QUEUED)
         assertEquals("Se encolaron 2 de 3 (el resto ya estaba).", chapterEnqueueMessage(some, requested = 3))
     }
+
+    // queuedDownloadToastText: only a fresh EnqueueOutcome.QUEUED gets the "queued" toast.
+    // ALREADY_QUEUED and ALREADY_DOWNLOADED already surface their own message through
+    // rememberDuplicateDownloadNotice, so this must stay silent for them — otherwise the person would
+    // see both "you already have that" and a false "queued".
+
+    @Test
+    fun `a queued movie gets the toast with its title`() {
+        assertEquals("Descarga de \"Matrix\" en cola", queuedDownloadToastText(EnqueueOutcome.QUEUED, "Matrix"))
+    }
+
+    @Test
+    fun `an already queued or downloaded movie gets no toast`() {
+        assertNull(queuedDownloadToastText(EnqueueOutcome.ALREADY_QUEUED, "Matrix"))
+        assertNull(queuedDownloadToastText(EnqueueOutcome.ALREADY_DOWNLOADED, "Matrix"))
+    }
 }

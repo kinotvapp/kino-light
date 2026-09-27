@@ -1,5 +1,6 @@
 package com.arkiv.player.data.local
 
+import com.arkiv.player.data.plugin.PluginIds
 import com.arkiv.player.playback.PlayerSource
 import com.arkiv.player.playback.SourceKind
 
@@ -16,6 +17,39 @@ import com.arkiv.player.playback.SourceKind
  * until someone decides who downloads it.
  */
 object DownloadSource {
+    /**
+     * The recognized Xuper plugin's titles: the one plugin whose titles download (see [sourceFor]).
+     * Its strategy is `MagisDownloadStrategy` behind `XuperPluginDownloadStrategy`'s re-check.
+     */
+    const val XUPER = "xuper"
+
+    /**
+     * Same as the one-argument [sourceFor], except that a plugin episode whose plugin is the
+     * recognized Xuper install ([isXuperPlugin], `AppGraph.isXuperPlugin`: `XuperPrivilege.grants`
+     * on the installed record, never the manifest id) maps to [XUPER] instead of `"plugin"`. Every
+     * other plugin's episode stays `"plugin"`, which has no strategy: plugin downloads remain an SDK
+     * non-goal for ordinary third-party plugins.
+     */
+    fun sourceFor(episodeId: String, isXuperPlugin: (pluginId: String) -> Boolean): String {
+        val source = sourceFor(episodeId)
+        if (source != PLUGIN) return source
+        val pluginId = PluginIds.pluginIdOfEpisode(episodeId) ?: return source
+        return if (isXuperPlugin(pluginId)) XUPER else source
+    }
+
+    /**
+     * [sourceFor] for a library row's `items.source` (`"magis"`, `"ditu"`, `"plugin:<id>"`…): a
+     * plugin item of the recognized Xuper install maps to [XUPER]; anything else is returned as-is.
+     */
+    fun sourceForItem(itemSource: String, isXuperPlugin: (pluginId: String) -> Boolean): String {
+        val pluginId = PluginIds.pluginIdOfSource(itemSource) ?: return itemSource
+        return if (isXuperPlugin(pluginId)) XUPER else itemSource
+    }
+
+    /**
+     * Fails closed for plugins: every plugin episode, Xuper's included, is `"plugin"` (no strategy).
+     * Callers that can meet a plugin episode use the overload with `isXuperPlugin`.
+     */
     fun sourceFor(episodeId: String): String = when (PlayerSource.kindFor(episodeId)) {
         SourceKind.MAGIS -> "magis"
         // Caracol isn't downloadable: its video comes Widevine-encrypted. "ditu" has no strategy
@@ -25,7 +59,8 @@ object DownloadSource {
         SourceKind.DITU -> "ditu"
         // Plugin titles have no download in v1 (spec non-goal). "plugin" has no strategy in
         // `AppGraph.downloadStrategies`, so [canDownload] hides every download button for them.
-        SourceKind.PLUGIN -> "plugin"
+        // The one exception, the recognized Xuper plugin, is decided by the two-argument overload.
+        SourceKind.PLUGIN -> PLUGIN
         // UNKNOWN (ids from removed sources), LOCAL and LIVE have no download strategy. "archive"
         // is the value this branch has always persisted for them in `downloads.source`; it stays
         // until the Phase 3 audit.
@@ -41,9 +76,11 @@ object DownloadSource {
      * Decided by the strategy and not by the source's name: a new source with no strategy stays
      * hidden on its own.
      */
-    fun canDownload(episodeId: String, strategies: Set<String>): Boolean =
-        hasStrategy(sourceFor(episodeId), strategies)
+    fun canDownload(episodeId: String, strategies: Set<String>, isXuperPlugin: (pluginId: String) -> Boolean): Boolean =
+        hasStrategy(sourceFor(episodeId, isXuperPlugin), strategies)
 
     /** Same, with the source already in hand (`items.source`, which is what the library has). */
     fun hasStrategy(source: String, strategies: Set<String>): Boolean = source in strategies
+
+    private const val PLUGIN = "plugin"
 }

@@ -29,12 +29,12 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.arkiv.player.ui.player.PlayerScreen
+import com.arkiv.player.ui.player.shouldOfferPluginConfigurar
 import com.arkiv.player.ui.rememberGraph
 import com.arkiv.player.ui.theme.ArkivBlack
 import com.arkiv.player.ui.titleinfo.TITLE_ROUTE
 import com.arkiv.player.ui.titleinfo.titleItemFrom
 import com.arkiv.player.ui.titleinfo.titleOriginFrom
-import com.arkiv.player.ui.titleinfo.titleRoute
 import com.arkiv.player.ui.titleinfo.titleRouteArguments
 
 @Composable
@@ -71,11 +71,6 @@ fun ArkivTvRoot(
     // a "no longer available" message for it (see PlayerViewModel.loadUnknownSource).
     fun goToPlayer(id: String) {
         navController.navigate("player/${Uri.encode(id)}") { launchSingleTop = true }
-    }
-
-    /** A Magis card, movie or series: opens its info page. */
-    fun openMagis(item: com.arkiv.player.data.gateway.CatalogItem) {
-        titleRoute(item)?.let { route -> navController.navigate(route) { launchSingleTop = true } }
     }
 
     // Most Magis live channels play on an anonymous session (verified against the portal), so we no
@@ -122,11 +117,7 @@ fun ArkivTvRoot(
                 onOpenCaracol = { navController.navigate("caracol") },
                 onOpenCategorias = { navController.navigate("categorias") },
                 onOpenCategoriasHome = { navController.navigate("categorias_home") },
-                onOpenMagis = { openMagis(it) },
                 onOpenTitleRoute = { route -> navController.navigate(route) { launchSingleTop = true } },
-                onBrowseMagisRow = { rowId, title ->
-                    navController.navigate("magis_row/$rowId?title=${android.net.Uri.encode(title)}")
-                },
                 onBrowsePluginRow = { navController.navigate(com.arkiv.player.ui.plugin.PluginMoreTarget.route(it)) },
             )
         }
@@ -192,23 +183,23 @@ fun ArkivTvRoot(
         composable(TITLE_ROUTE, arguments = titleRouteArguments) { entry ->
             val arg = { name: String -> entry.arguments?.getString(name) }
             val item = titleItemFrom(arg)
-            if (item != null) {
+            val origin = titleOriginFrom(arg)
+            if (item != null && origin != null) {
                 TvTitleInfoScreen(
                     item = item,
-                    origin = titleOriginFrom(arg),
+                    origin = origin,
                     onPlay = { goToPlayer(it) },
                     onConfigurePlugin = { id -> navController.navigate("plugin_config/${Uri.encode(id)}") },
                     onBack = { navController.popBackStack() },
                 )
             } else {
+                // A corrupt or foreign route (or one from before Xuper became a plugin).
                 LaunchedEffect(Unit) { navController.popBackStack() }
             }
         }
         composable("categorias_home") {
             TvCategoriesScreen(
-                onBrowseRow = { rowId, title ->
-                    navController.navigate("magis_row/$rowId?title=${android.net.Uri.encode(title)}")
-                },
+                onBrowse = { navController.navigate(com.arkiv.player.ui.plugin.PluginMoreTarget.route(it)) },
                 onOpenSearchRoute = { navController.navigate(it) },
                 onBack = { navController.popBackStack() },
             )
@@ -265,9 +256,13 @@ fun ArkivTvRoot(
                 onNextEpisode = { goToPlayer(it) },
                 isTv = true,
                 // The player leaves: after configuring, Back returns to where the title was.
+                // No destination at all for the recognized Xuper plugin -- see
+                // shouldOfferPluginConfigurar's KDoc for why "Configurar" is meaningless there.
                 onOpenPluginSettings = { id ->
-                    navController.navigate("plugin_config/${Uri.encode(id)}") {
-                        popUpTo("player/{episodeId}") { inclusive = true }
+                    if (shouldOfferPluginConfigurar(graph.pluginRegistry.find(id)?.record?.address)) {
+                        navController.navigate("plugin_config/${Uri.encode(id)}") {
+                            popUpTo("player/{episodeId}") { inclusive = true }
+                        }
                     }
                 },
             )
@@ -308,7 +303,11 @@ fun ArkivTvRoot(
                 TvPluginMoreScreen(
                     target = target,
                     onOpenTitleRoute = { route -> navController.navigate(route) { launchSingleTop = true } },
-                    onOpenPluginSettings = { id -> navController.navigate("plugin_config/${Uri.encode(id)}") },
+                    onOpenPluginSettings = { id ->
+                        if (shouldOfferPluginConfigurar(graph.pluginRegistry.find(id)?.record?.address)) {
+                            navController.navigate("plugin_config/${Uri.encode(id)}")
+                        }
+                    },
                     onBack = { navController.popBackStack() },
                 )
             }
@@ -318,20 +317,6 @@ fun ArkivTvRoot(
                 pluginId = Uri.decode(entry.arguments?.getString("pluginId").orEmpty()),
                 isTv = true,
                 onDone = { navController.popBackStack() },
-            )
-        }
-        composable(
-            "magis_row/{rowId}?title={title}",
-            arguments = listOf(
-                navArgument("rowId") { type = NavType.StringType },
-                navArgument("title") { type = NavType.StringType; defaultValue = "" },
-            ),
-        ) { entry ->
-            TvMagisRowBrowseScreen(
-                rowId = entry.arguments?.getString("rowId").orEmpty(),
-                title = entry.arguments?.getString("title").orEmpty(),
-                onOpenMagis = { openMagis(it) },
-                onBack = { navController.popBackStack() },
             )
         }
     }

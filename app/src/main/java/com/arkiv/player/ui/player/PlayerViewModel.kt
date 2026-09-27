@@ -70,6 +70,12 @@ data class PlayerData(
      * `streamHttpFor`.
      */
     val pluginHosts: com.arkiv.player.data.plugin.EffectiveHosts = com.arkiv.player.data.plugin.EffectiveHosts(emptyList()),
+    /**
+     * PLUGIN only: the stream is the recognized Xuper plugin's (`PluginAccess.Ready.xuper`, from
+     * the INSTALLED record's address, never the id in [episodeId]), so the player's gate also
+     * accepts the http CDN URLs its native bridge resolved; see `AppGraph.pluginStreamClient`.
+     */
+    val pluginXuper: Boolean = false,
     /** Container MIME the source declared ("" = let ExoPlayer sniff). */
     val mime: String = "",
     /**
@@ -1245,8 +1251,11 @@ class PlayerViewModel internal constructor(
         }
         val name = access.name
         // Ready is the only access that gets past `blocked` above; its hosts are the approved ones.
-        val approvedHosts = (access as? com.arkiv.player.data.plugin.PluginAccess.Ready)?.hosts
-            ?: com.arkiv.player.data.plugin.EffectiveHosts(emptyList())
+        val ready = access as? com.arkiv.player.data.plugin.PluginAccess.Ready
+        val approvedHosts = ready?.hosts ?: com.arkiv.player.data.plugin.EffectiveHosts(emptyList())
+        // The registry decides this from the installed record (XuperPrivilege.grants), not from
+        // `pluginId`, which is only the manifest id any repo could claim.
+        val xuper = ready?.xuper == true
         val ref = repo.magisRefForEpisode(episodeId)
         Log.w(PLAY, "loadPlugin() episodeId=$episodeId plugin=$pluginId ref=${ref?.take(16)}…")
         if (ref.isNullOrBlank()) { _error.value = "No se encontró la fuente de $name"; return }
@@ -1289,6 +1298,7 @@ class PlayerViewModel internal constructor(
             kind = SourceKind.PLUGIN,
             requestHeaders = play.headers,
             pluginHosts = approvedHosts,
+            pluginXuper = xuper,
             mime = play.mime,
             startPositionMs = startPos,
         )

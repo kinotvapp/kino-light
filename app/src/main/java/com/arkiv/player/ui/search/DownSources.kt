@@ -14,9 +14,9 @@ import com.arkiv.player.data.plugin.PluginIds
  * resultados en Caracol." as if there were nothing, and with everything down the screen suggested
  * trying another season.
  *
- * Sources go by the name they travel under in search events (`"magis"`, `"ditu"`,
- * `"plugin:<id>"`), the same one `GatewayResult.toPlaySource` sorts them by. [labels]: source →
- * human name, from `SourceStart.label` (plugins announce theirs; Xuper and Caracol are fixed).
+ * Sources go by the name they travel under in search events (`"ditu"`, `"plugin:<id>"`), the
+ * same one `GatewayResult.toPlaySource` sorts them by. [labels]: source → human name, from
+ * `SourceStart.label` (plugins announce theirs; Caracol's is fixed).
  */
 data class SourcesState(
     val responded: Set<String> = emptySet(),
@@ -36,7 +36,6 @@ data class SourcesState(
 
 /** A source's tab by its name in the events, or null if it isn't known which one it is. */
 internal fun tabForSource(source: String, labels: Map<String, String> = emptyMap()): SourceTab? = when {
-    source == SourceTab.MAGIS.key -> SourceTab.MAGIS
     source == SourceTab.CARACOL.key -> SourceTab.CARACOL
     else -> PluginIds.pluginIdOfSource(source)?.let { id ->
         SourceTab.plugin(source, labels[source] ?: id, Color(PluginColors.DEFAULT))
@@ -59,11 +58,11 @@ private fun isTypedPluginError(cause: Throwable?): Boolean =
 
 /**
  * One line per down source matching [tab] ("Todo" shows them all). They go above the list, with
- * or without results: if Caracol goes down and Magis responds, Magis's results show along with
- * Caracol's line. With no errors the list is empty and the screen stays as it was before.
+ * or without results: if Caracol goes down and a plugin responds, the plugin's results show along
+ * with Caracol's line. With no errors the list is empty and the screen stays as it was before.
  *
- * Caracol's line is written by [CaracolFailure], in plain human words. Magis's, a plugin's (by
- * its announced label) and an unnamed source's stay as before: the name and the error text.
+ * Caracol's line is written by [CaracolFailure], in plain human words. A plugin's (by its
+ * announced label) and an unnamed source's stay as before: the name and the error text.
  */
 fun downSourceNotices(state: SourcesState, tab: SourceTab): List<String> =
     state.failed

@@ -10,32 +10,34 @@ import java.net.UnknownHostException
 /** What the search results say when a source, or all of them, didn't respond. */
 class DownSourcesTest {
 
-    private val noErrors = SourcesState(responded = setOf("magis", "ditu"))
-    private val caracolDown = SourcesState().withResponse("magis").withFailure("ditu", "sin red")
-    private val everythingDown = SourcesState().withFailure("magis", "timeout").withFailure("ditu", "sin red")
+    private val demo = "plugin:demo"
+    private val noErrors = SourcesState(responded = setOf(demo, "ditu")).withLabel(demo, "Demo")
+    private val caracolDown = SourcesState().withLabel(demo, "Demo").withResponse(demo).withFailure("ditu", "sin red")
+    private val everythingDown = SourcesState().withLabel(demo, "Demo").withFailure(demo, "timeout").withFailure("ditu", "sin red")
+    private val demoTab = tabForSource(demo, mapOf(demo to "Demo"))!!
 
-    /** With no errors, Magis looks exactly as before: no notice and the usual texts. */
+    /** With no errors, a plugin looks exactly as before: no notice and the usual texts. */
     @Test fun `with no errors the screen says the usual thing`() {
         for (state in listOf(SourcesState(), noErrors)) {
             assertTrue(downSourceNotices(state, SourceTab.ALL).isEmpty())
             assertEquals(NO_SOURCES_TEXT, noSourcesText(state))
             assertEquals("Sin resultados en Caracol.", emptyTabText(SourceTab.CARACOL, false, state))
-            assertEquals("Buscando en Xuper…", emptyTabText(SourceTab.MAGIS, true, state))
-            assertEquals("Sin resultados", emptySectionText(SourceTab.MAGIS, state))
+            assertEquals("Buscando en Demo…", emptyTabText(demoTab, true, state))
+            assertEquals("Sin resultados", emptySectionText(demoTab, state))
         }
     }
 
-    @Test fun `caracol down leaves its line without covering magis`() {
+    @Test fun `caracol down leaves its line without covering a plugin`() {
         // "sin red" says nothing understandable: the line is the generic one, without the raw text.
         assertEquals(listOf("Caracol no respondió"), downSourceNotices(caracolDown, SourceTab.ALL))
         assertEquals(listOf("Caracol no respondió"), downSourceNotices(caracolDown, SourceTab.CARACOL))
-        assertTrue(downSourceNotices(caracolDown, SourceTab.MAGIS).isEmpty())
+        assertTrue(downSourceNotices(caracolDown, demoTab).isEmpty())
         // Caracol's tab doesn't say "Buscando…" or "Sin resultados": its line already explains it.
         assertNull(emptyTabText(SourceTab.CARACOL, true, caracolDown))
-        assertEquals("Sin resultados en Xuper.", emptyTabText(SourceTab.MAGIS, false, caracolDown))
+        assertEquals("Sin resultados en Demo.", emptyTabText(demoTab, false, caracolDown))
         assertEquals("No respondió", emptySectionText(SourceTab.CARACOL, caracolDown))
-        assertEquals("Sin resultados", emptySectionText(SourceTab.MAGIS, caracolDown))
-        // Magis did respond, with nothing: the usual advice is still the right one.
+        assertEquals("Sin resultados", emptySectionText(demoTab, caracolDown))
+        // The plugin did respond, with nothing: the usual advice is still the right one.
         assertEquals(NO_SOURCES_TEXT, noSourcesText(caracolDown))
     }
 
@@ -44,14 +46,14 @@ class DownSourcesTest {
         assertEquals(NO_RESPONSE_TEXT, noSourcesText(everythingDown))
         assertFalse(noSourcesText(everythingDown).contains("temporada"))
         assertEquals(
-            listOf("Xuper no respondió: timeout", "Caracol no respondió"),
+            listOf("Demo no respondió: timeout", "Caracol no respondió"),
             downSourceNotices(everythingDown, SourceTab.ALL),
         )
     }
 
     /** Caracol's line is written by `CaracolFailure`, with the exception the source sent. */
     @Test fun `caracol's line is in plain human words`() {
-        val state = SourcesState().withResponse("magis").withFailure(
+        val state = SourcesState().withResponse(demo).withFailure(
             "ditu",
             "Caracol no responde: Unable to resolve host \"middleware.ditu.caracoltv.com\"",
             UnknownHostException("Unable to resolve host \"middleware.ditu.caracoltv.com\""),
@@ -62,10 +64,17 @@ class DownSourcesTest {
         )
     }
 
-    /** Magis untouched: its line is still its name and its error text, as before. */
-    @Test fun `magis's line stays the same`() {
-        val state = SourcesState().withFailure("magis", "Unable to resolve host \"x\"", UnknownHostException("x"))
-        assertEquals(listOf("Xuper no respondió: Unable to resolve host \"x\""), downSourceNotices(state, SourceTab.ALL))
+    /** A plugin's untyped failure: its line is still its name and its error text, as before. */
+    @Test fun `a plugin's untyped failure keeps its name and error text`() {
+        val state = SourcesState().withLabel(demo, "Demo").withFailure(demo, "Unable to resolve host \"x\"", UnknownHostException("x"))
+        assertEquals(listOf("Demo no respondió: Unable to resolve host \"x\""), downSourceNotices(state, SourceTab.ALL))
+    }
+
+    /** Nothing emits `"magis"` since Xuper moved to its plugin: an old name like it is an unknown source. */
+    @Test fun `magis is no longer a known source name`() {
+        assertNull(tabForSource("magis"))
+        val state = SourcesState().withFailure("magis", "boom")
+        assertEquals(listOf("Una fuente no respondió: boom"), downSourceNotices(state, SourceTab.ALL))
     }
 
     /** `CompositeSource` names "desconocida" a source that goes down before announcing itself. */
@@ -76,11 +85,11 @@ class DownSourcesTest {
     }
 
     @Test fun `a plugin that did not respond is named by its label`() {
-        val state = SourcesState().withLabel("plugin:demo", "Demo").withResponse("magis").withFailure("plugin:demo", "no respondió a tiempo")
+        val state = SourcesState().withLabel("plugin:demo", "Demo").withResponse("ditu").withFailure("plugin:demo", "no respondió a tiempo")
         assertEquals(listOf("Demo no respondió: no respondió a tiempo"), downSourceNotices(state, SourceTab.ALL))
         val tab = tabForSource("plugin:demo", state.labels)!!
         assertEquals(listOf("Demo no respondió: no respondió a tiempo"), downSourceNotices(state, tab))
-        assertEquals(emptyList<String>(), downSourceNotices(state, SourceTab.MAGIS))
+        assertEquals(emptyList<String>(), downSourceNotices(state, SourceTab.CARACOL))
         assertNull(emptyTabText(tab, false, state))
         assertEquals("No respondió", emptySectionText(tab, state))
     }

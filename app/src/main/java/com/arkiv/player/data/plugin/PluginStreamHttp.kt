@@ -24,18 +24,20 @@ object PluginStreamHttp {
     /**
      * [hosts] must come from the INSTALLED record and the person's own settings (what the person
      * approved or typed), never from plugin output. `allowInsecureLocalhost` and `delegateDns`
-     * exist for MockWebServer tests only.
+     * exist for MockWebServer tests only. [xuper] is non-null only for a stream of the one plugin
+     * [XuperPrivilege.grants] (see [PluginHostGate.check]); null leaves the gate exactly as it was.
      */
     fun client(
         base: OkHttpClient,
         hosts: EffectiveHosts,
         allowInsecureLocalhost: Boolean = false,
         delegateDns: Dns = Dns.SYSTEM,
+        xuper: XuperStreams? = null,
     ): OkHttpClient = base.newBuilder()
         .followRedirects(false)
         .followSslRedirects(false)
         .dns(PluginDns(allowLoopback = allowInsecureLocalhost, delegate = delegateDns, userHostNames = hosts.userHostNames))
-        .addInterceptor(PluginStreamGate(hosts, allowInsecureLocalhost))
+        .addInterceptor(PluginStreamGate(hosts, allowInsecureLocalhost, xuper))
         .build()
 }
 
@@ -43,14 +45,15 @@ object PluginStreamHttp {
 class PluginStreamGate(
     private val hosts: EffectiveHosts,
     private val allowInsecureLocalhost: Boolean = false,
+    private val xuper: XuperStreams? = null,
 ) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         var request = chain.request()
         var previous: okhttp3.HttpUrl? = null
         repeat(MAX_REDIRECTS + 1) {
             val from = previous
-            if (from == null) PluginHostGate.check(request.url, hosts, allowInsecureLocalhost)
-            else PluginHostGate.checkRedirect(from, request.url, hosts, allowInsecureLocalhost)
+            if (from == null) PluginHostGate.check(request.url, hosts, allowInsecureLocalhost, xuper)
+            else PluginHostGate.checkRedirect(from, request.url, hosts, allowInsecureLocalhost, xuper)
             val response = chain.proceed(request)
             val location = response.header("Location")
             if (response.code !in REDIRECTS || location == null) return response

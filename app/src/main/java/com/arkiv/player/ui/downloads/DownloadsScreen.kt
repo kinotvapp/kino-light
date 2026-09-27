@@ -462,13 +462,13 @@ private fun stateLabel(row: DownloadRow): String = when (row.state) {
 
 /**
  * File-origin badge. "torrent" and "web" are legacy `source` values from rows saved before this
- * branch's pruning. "magis" is today's real value (`DownloadSource.sourceFor`); any other value falls
- * through to "ARCHIVE".
+ * branch's pruning. "magis" and "xuper" (the Xuper plugin's chapters) are today's real values
+ * (`DownloadSource.sourceFor`); any other value falls through to "ARCHIVE".
  */
 private fun sourceBadge(source: String): String = when (source) {
     "torrent" -> "TORRENT"
     "web" -> "WEB"
-    "magis" -> "XUPER"
+    "magis", com.arkiv.player.data.local.DownloadSource.XUPER -> "XUPER"
     else -> "ARCHIVE"
 }
 

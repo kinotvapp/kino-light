@@ -67,6 +67,22 @@ class ManifestParserTest {
         assertTrue(ManifestParser.parse(base().put("capabilities", JSONArray(listOf("home", "resolve"))).toString()) is ManifestResult.Valid)
     }
 
+    @Test fun `a single placeholder host with all five capabilities validates (Xuper's shape)`() {
+        // Confirms the existing schema needs no change for the Xuper plugin: one host (MIN_HOSTS
+        // is 1, no real Magis domain needed) and all five capabilities together.
+        val m = (
+            ManifestParser.parse(
+                base()
+                    .put("id", "xuper").put("name", "Xuper")
+                    .put("hosts", JSONArray(listOf("kino-plugin-xuper.example")))
+                    .put("capabilities", JSONArray(listOf("search", "home", "browse", "episodes", "resolve")))
+                    .toString(),
+            ) as ManifestResult.Valid
+        ).manifest
+        assertEquals(listOf("kino-plugin-xuper.example"), m.hosts)
+        assertEquals(setOf("search", "home", "browse", "episodes", "resolve"), m.capabilities)
+    }
+
     @Test fun `color and icon are optional but checked`() {
         assertEquals("color", invalidField(base().put("color", "orange")))
         assertEquals("icon", invalidField(base().put("icon", "../icon.png")))

@@ -67,8 +67,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
@@ -87,12 +85,12 @@ import com.arkiv.player.data.db.ContinueRow
 import com.arkiv.player.data.db.LibraryRow
 import com.arkiv.player.data.db.LiveChannelCacheEntity
 import com.arkiv.player.data.db.RecommendationEntity
-import com.arkiv.player.data.gateway.CatalogItem
+import com.arkiv.player.data.gateway.GatewayResult
+import com.arkiv.player.data.plugin.PluginHomeRow
 import com.arkiv.player.data.gateway.LiveChannel
 import com.arkiv.player.thumbnails.ThumbnailChoice
 import com.arkiv.player.ui.home.HomeViewModel
-import com.arkiv.player.ui.home.homeMeta
-import com.arkiv.player.ui.home.magisFeatured
+import com.arkiv.player.ui.home.pluginHeroPick
 import com.arkiv.player.ui.live.deviceCountry
 import com.arkiv.player.ui.EffectsAutoTune
 import com.arkiv.player.ui.KinoWordmark
@@ -124,10 +122,10 @@ import kotlinx.coroutines.withTimeoutOrNull
  * What the background hero shows. [meta] is the data line highlighted in white below the title:
  * the chapter label ("T1 · E5  ·  La conspiración  ·  te faltan 12 min") on "Continuar viendo", a
  * recommendation's reason ("porque terminaste Dragon Ball") on "Para ti" (see
- * [recommendationFeatured]), or the type/genres/score line on a Magis discovery card (see
- * [magisCardFeatured]) -- every portal item has a description, so [subtitle] is never blank there.
+ * [recommendationFeatured]), or the item's own synopsis on a plugin row's card (see
+ * [pluginCardFeatured]).
  *
- * `internal` (not `private`) so [recommendationFeatured] and [magisCardFeatured] can be tested
+ * `internal` (not `private`) so [recommendationFeatured] and [pluginCardFeatured] can be tested
  * without Compose, see `TvHomeScreenForYouTest`.
  */
 internal data class Featured(
@@ -160,16 +158,14 @@ private const val HERO_DRIFT_MS = 14_000
 internal fun showForYouRow(recommendations: List<RecommendationEntity>): Boolean = recommendations.isNotEmpty()
 
 /** The key a Home card is restored by (`returnKey`): one format for the card and the row lookup. */
-internal fun magisCardKey(rowId: String, itemId: String) = "$rowId-$itemId"
-
 internal fun pluginCardKey(pluginId: String, rowId: String, itemId: String?) = "plugin-$pluginId-$rowId-$itemId"
 
 /**
- * Whether any Magis or plugin row holds the card [cardKey]: false while its row has not arrived (a
- * second plugin's rows come later than the first's) and for good when the card no longer exists.
+ * Whether any plugin row holds the card [cardKey]: false while its row has not arrived (a second
+ * plugin's rows come later than the first's) and for good when the card no longer exists.
  */
-internal fun homeCardsHold(cardKey: String, magisCards: List<List<String>>, pluginCards: List<List<String>>): Boolean =
-    pluginCards.any { cardKey in it } || magisCards.any { cardKey in it }
+internal fun homeCardsHold(cardKey: String, pluginCards: List<List<String>>): Boolean =
+    pluginCards.any { cardKey in it }
 
 /**
  * The row to scroll the list to so the card's row [rowIndex] is on screen: the one ABOVE it. The rows
@@ -181,24 +177,20 @@ internal fun homeRowScrollTarget(rowIndex: Int): Int = (rowIndex - 1).coerceAtLe
 
 /**
  * Index, in the Home rows list, of the row that holds the card [cardKey] (one list of card keys per
- * Magis / plugin row), or null when no row holds it or the list is not laid out yet. The list closes
- * with the Magis rows, then the plugin rows, then [trailingItems] pad items, and what comes before
- * varies (continue watching, channels...), so the index counts back from [totalItems]. Pure so it
- * can be tested without Compose.
+ * plugin row), or null when no row holds it or the list is not laid out yet. The list closes with
+ * the plugin rows, then [trailingItems] pad items, and what comes before varies (continue watching,
+ * channels...), so the index counts back from [totalItems]. Pure so it can be tested without
+ * Compose.
  */
 internal fun homeRowIndexOf(
     cardKey: String,
-    magisCards: List<List<String>>,
     pluginCards: List<List<String>>,
     totalItems: Int,
     trailingItems: Int = 1,
 ): Int? {
     val pluginBase = totalItems - trailingItems - pluginCards.size
-    val magisBase = pluginBase - magisCards.size
-    if (magisBase < 0) return null
-    pluginCards.indexOfFirst { cardKey in it }.takeIf { it >= 0 }?.let { return pluginBase + it }
-    magisCards.indexOfFirst { cardKey in it }.takeIf { it >= 0 }?.let { return magisBase + it }
-    return null
+    if (pluginBase < 0) return null
+    return pluginCards.indexOfFirst { cardKey in it }.takeIf { it >= 0 }?.let { pluginBase + it }
 }
 
 /**
@@ -217,17 +209,17 @@ internal fun recommendationFeatured(rec: RecommendationEntity): Featured = Featu
 )
 
 /**
- * What the hero shows on focusing a Magis discovery card: the portal's own synopsis as [subtitle]
- * (fallback `""`, not [homeMeta] -- a title with no description would otherwise show that line
- * twice, once as subtitle and once as meta) and the type/genres/score line ([homeMeta]) as
- * [Featured.meta], same slot "Para ti" uses for its reason. Top-level for the same reason as
- * [recommendationFeatured]: pure, testable without Compose.
+ * What the hero shows on focusing a plugin row's card -- and, with nothing in "Continuar viendo" or
+ * the library, what it starts on (the first item of the first plugin row, see `pluginHeroPick`):
+ * the plugin's name as [Featured.subtitle] and the item's synopsis as [Featured.meta]. Landscape
+ * art first, the poster only if missing. Top-level for the same reason as [recommendationFeatured]:
+ * pure, testable without Compose.
  */
-internal fun magisCardFeatured(item: CatalogItem) = Featured(
+internal fun pluginCardFeatured(row: PluginHomeRow, item: GatewayResult) = Featured(
     title = item.title,
-    subtitle = heroSubtitle(item.title, item.description, fallback = ""),
-    imageUrl = item.backdrop ?: item.poster,
-    meta = item.homeMeta(),
+    subtitle = row.pluginName,
+    imageUrl = item.extra["backdrop"].orEmpty().ifBlank { item.extra["poster"].orEmpty() }.ifBlank { null },
+    meta = item.extra["overview"].orEmpty(),
 )
 
 /**
@@ -308,27 +300,20 @@ fun TvHomeScreen(
     onOpenCategorias: () -> Unit,
     /** Listing of every home row as per-category shortcuts. */
     onOpenCategoriasHome: () -> Unit,
-    /** A Magis card was picked: its info page opens (see ArkivTvRoot.openMagis). */
-    onOpenMagis: (com.arkiv.player.data.gateway.CatalogItem) -> Unit,
     /** A plugin card was picked: the route of its info page (see `titleRoute`). */
     onOpenTitleRoute: (String) -> Unit,
-    /** "Ver todo" of a Magis row. */
-    onBrowseMagisRow: (rowId: String, title: String) -> Unit,
     /** "Ver más" of a plugin row that carries a `ref` (the plugin declares `browse`). */
     onBrowsePluginRow: (com.arkiv.player.ui.plugin.PluginMoreTarget) -> Unit = {},
 ) {
     val graph = rememberGraph()
     val vm: HomeViewModel = viewModel(
-        factory = viewModelFactory { initializer { HomeViewModel(graph.repository, graph.settings, graph.magisHomeCatalog, graph.hasInternet, graph.homeReloads, graph.pluginHomeRows, graph.pluginsChanged) } },
+        factory = viewModelFactory { initializer { HomeViewModel(graph.repository, graph.settings, graph.homeReloads, graph.pluginHomeRows, graph.pluginsChanged) } },
     )
-    // A Magis root that failed on the way in (e.g. a cold start before the network is up) gets
-    // another chance each time this screen comes back to the front; see HomeViewModel.magisRows.
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.onResume() }
     val hasInternet by graph.hasInternet.collectAsStateWithLifecycle()
     val library by vm.library.collectAsStateWithLifecycle()
     val continueWatching by vm.continueWatching.collectAsStateWithLifecycle()
     val artwork by vm.artwork.collectAsStateWithLifecycle()
-    val magisRows by vm.magisRows.collectAsStateWithLifecycle()
+    val pluginRows by vm.pluginRows.collectAsStateWithLifecycle()
     val seedsExhausted by graph.seedsExhausted.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
@@ -465,21 +450,22 @@ fun TvHomeScreen(
     val navSound = rememberNavSound()
     var featured by remember { mutableStateOf<Featured?>(null) }
     // Initial featured item: the first "continue watching", then the first library item, then
-    // the first Magis title (see MagisHomeClassifier) -- the only sensible fallback left now
+    // the first item of the first plugin Home row (see pluginHeroPick) -- the only sensible
+    // fallback left now
     // that Home has no TMDB row at all (`buildRowSpecs` now only feeds the Categories screens,
     // row browse and search's category matching, see HomeRows.kt). Without this, a fresh
     // focus reached a card by hand: with no "Continuar viendo", initial focus goes to the top bar
     // on purpose (see `barFocus` below), which never triggers a card's `onFocus` -- the other way
     // `featured` gets set.
-    LaunchedEffect(library, continueWatching, artwork, magisRows) {
+    LaunchedEffect(library, continueWatching, artwork, pluginRows) {
         if (featured == null) {
             featured = continueWatching.firstOrNull()?.let { continueFeatured(it) }
                 ?: library.firstOrNull()?.let { libraryFeatured(it) }
-                ?: magisFeatured(magisRows)?.let { item -> magisCardFeatured(item) }
+                ?: pluginHeroPick(pluginRows)?.let { pick -> pluginCardFeatured(pick.row, pick.item) }
         }
     }
 
-    val pluginRows by vm.pluginRows.collectAsStateWithLifecycle()
+    // A plugin card (Xuper's among them) opens its info page; the page plays or lists chapters.
     val openPluginItem = com.arkiv.player.ui.titleinfo.rememberTitleOpener(onOpenRoute = onOpenTitleRoute)
 
     // The first card gets focus on opening, so the hero/background reflect something right away.
@@ -495,7 +481,7 @@ fun TvHomeScreen(
     // land there (the scroll wasn't a consequence of lost focus: it was its cause).
     val rowsListState = rememberLazyListState()
 
-    // The Magis card whose info page was opened from here (`"<rowId>-<itemId>"`), so Back lands on
+    // The plugin card whose info page was opened from here (see `pluginCardKey`), so Back lands on
     // it again instead of on the top bar. Saveable: it has to outlive this composition, which
     // leaves when the page opens. Read once per visit into `cardToRestore` and cleared right away,
     // so it only applies to the Back that follows the tap and never to a later visit.
@@ -561,28 +547,24 @@ fun TvHomeScreen(
     LaunchedEffect(firstFocusKey) {
         delay(200)
         if (cardToRestore != null && !cardRestored) {
-            val magisCards = { magisRows.orEmpty().map { r -> r.shown.map { magisCardKey(r.id, it.id) } } }
             val pluginCards = {
                 pluginRows.map { r -> r.items.map { pluginCardKey(r.pluginId, r.id, it.extra["pluginItemId"]) } }
             }
-            // The Magis rows arrive from a cached fetch: give them a moment. A plugin's rows arrive as
-            // each plugin answers, so for a plugin card wait for ITS row, not for any plugin's.
+            // A plugin's rows arrive as each plugin answers (Xuper's from its own cache), so wait
+            // for the card's OWN row, not for any plugin's.
             withTimeoutOrNull(3_000) {
-                snapshotFlow {
-                    if (cardToRestore.startsWith("plugin-")) homeCardsHold(cardToRestore, magisCards(), pluginCards())
-                    else magisRows != null
-                }.first { it }
+                snapshotFlow { homeCardsHold(cardToRestore, pluginCards()) }.first { it }
             }
             // A card no row holds (it left the catalog, or its plugin never answered) cannot be
             // restored: fall through to the default landing instead of searching for it.
-            if (homeCardsHold(cardToRestore, magisCards(), pluginCards())) {
+            if (homeCardsHold(cardToRestore, pluginCards())) {
                 repeat(40) {
                     if (cardRestored) return@repeat
                     // Aim at the card's row: a card that is not composed cannot take focus, and one whose
                     // row is only prefetched takes it without being seen. The row's index counts back from
                     // the end of the list; while the list lags behind the rows it is null or stale, and
                     // the next try (after the delay) gets it.
-                    homeRowIndexOf(cardToRestore, magisCards(), pluginCards(), rowsListState.layoutInfo.totalItemsCount)
+                    homeRowIndexOf(cardToRestore, pluginCards(), rowsListState.layoutInfo.totalItemsCount)
                         ?.let { runCatching { rowsListState.scrollToItem(homeRowScrollTarget(it)) } }
                     if (runCatching { returnFocus.requestFocus() }.isSuccess) cardRestored = true else delay(60)
                 }
@@ -766,11 +748,11 @@ fun TvHomeScreen(
             }
 
             // --- ROWS (the only zone that scrolls; fixed height = exactly 2 rows) ---
-            // LazyColumn instead of Column+verticalScroll: a Column would compose every Magis row's
+            // LazyColumn instead of Column+verticalScroll: a Column would compose every plugin row's
             // LazyRow of cards at once on opening the home. LazyColumn only composes what's visible.
             // (Task 3's ~40 TMDB discovery rows needed this even more, each with its own network
             // fetch on entering the screen -- that per-row lazy load is gone along with those rows;
-            // the Magis rows below arrive all at once from a single cached fetch, see `magisRows`.)
+            // the plugin rows below arrive all at once per plugin, see `PluginHomeRows`.)
             CompositionLocalProvider(LocalBringIntoViewSpec provides MinimalScrollBringIntoView) {
                 LazyColumn(
                     state = rowsListState,
@@ -944,56 +926,7 @@ fun TvHomeScreen(
                         }
                     }
 
-                    // Magis rows: what Xuper actually has, by type × genre (see
-                    // MagisHomeClassifier). They arrive all at once from a cached fetch, so there's
-                    // no per-row loading placeholder.
-                    items(magisRows.orEmpty(), key = { it.id }) { row ->
-                        Column {
-                            TvRowLabel(row.title, labelHeight)
-                            // The TV pivot (focused card at 30%) is kept HERE, horizontally: it's
-                            // what makes the row run under a card that stays still instead of
-                            // dragging it against the edge. See MinimalScrollBringIntoView.
-                            CompositionLocalProvider(LocalBringIntoViewSpec provides TvPivot) {
-                                LazyRow(
-                                    contentPadding = PaddingValues(horizontal = 48.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                                ) {
-                                    items(row.shown, key = { "${row.id}-${it.id}" }) { item ->
-                                        // The portal's 1920×1080 landscape art; the portrait icon only if missing.
-                                        val art = item.backdrop ?: item.poster
-                                        val cardKey = magisCardKey(row.id, item.id)
-                                        TvLandscapeCard(
-                                            title = item.title,
-                                            imageUrl = art,
-                                            cardHeight = cardHeight,
-                                            modifier = if (cardKey == cardToRestore) Modifier.focusRequester(returnFocus) else Modifier,
-                                            onFocus = {
-                                                navSound()
-                                                featured = magisCardFeatured(item)
-                                            },
-                                            onClick = {
-                                                returnKey = cardKey
-                                                onOpenMagis(item)
-                                            },
-                                        )
-                                    }
-                                    item(key = "${row.id}-ver-mas") {
-                                        TvSeeMoreRowCard(
-                                            cardHeight = cardHeight,
-                                            onFocus = {
-                                                navSound()
-                                                featured = Featured(row.title, "Ver más de ${row.title}", null)
-                                            },
-                                            onClick = { onBrowseMagisRow(row.id, row.title) },
-                                        )
-                                    }
-                                }
-                            }
-                            Spacer(Modifier.height(rowGap))
-                        }
-                    }
-
-                    // Plugin rows, after Magis's. The plugin's name rides on each card as its badge.
+                    // Plugin rows (Xuper's among them). The plugin's name rides on each card as its badge.
                     items(pluginRows, key = { "plugin-${it.pluginId}-${it.id}" }) { row ->
                         Column {
                             TvRowLabel(row.title, labelHeight)
@@ -1014,7 +947,7 @@ fun TvHomeScreen(
                                             badgeColor = androidx.compose.ui.graphics.Color(row.color),
                                             onFocus = {
                                                 navSound()
-                                                featured = Featured(item.title, row.pluginName, art, item.extra["overview"].orEmpty())
+                                                featured = pluginCardFeatured(row, item)
                                             },
                                             onClick = {
                                                 returnKey = cardKey
@@ -1155,9 +1088,9 @@ private fun TvSeeMoreChannelsCard(
 }
 
 /**
- * Last card on every Magis row: opens the Magis "Ver todo" (`TvMagisRowBrowseScreen`, via
- * `onBrowseMagisRow`) with that row's full grid. Same template as [TvLandscapeCard] (16:9, row
- * height) so the row doesn't change rhythm on reaching the end.
+ * Last card on a plugin row that declares `browse`: opens that row's "Ver más" (via
+ * `onBrowsePluginRow`). Same template as [TvLandscapeCard] (16:9, row height) so the row doesn't
+ * change rhythm on reaching the end.
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable

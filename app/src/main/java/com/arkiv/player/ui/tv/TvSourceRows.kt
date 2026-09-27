@@ -30,7 +30,7 @@ import com.arkiv.player.ui.theme.ArkivTextSecondary
  * down jumps to the next. It's also the language the TV Home already uses.
  */
 
-/** Height of Magis and Caracol's covers. */
+/** Height of Caracol's and plugins' covers. */
 private val CARD_HEIGHT = 220.dp
 
 /** The Home rows' ([TvHomeScreen]) side margin, so the two screens line up. */
@@ -39,7 +39,7 @@ private val MARGIN = 48.dp
 /**
  * A labeled row with ONE source's results.
  *
- * Magis, Caracol and plugins bring their own image, so all go with a cover ([TvPosterCard]).
+ * Caracol and plugins bring their own image, so all go with a cover ([TvPosterCard]).
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 fun LazyListScope.tvSourceRow(
@@ -79,7 +79,6 @@ fun LazyListScope.tvSourceRow(
                 }
                 // Every source here brings a cover, so all go as a poster.
                 val (title, poster) = when (s) {
-                    is PlaySource.Magis -> s.result.title to s.result.extra["poster"]
                     is PlaySource.Ditu -> s.result.title to s.result.extra["poster"]
                     is PlaySource.Plugin -> s.result.title to s.result.extra["poster"]
                 }

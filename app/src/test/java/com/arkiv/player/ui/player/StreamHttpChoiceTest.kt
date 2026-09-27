@@ -19,5 +19,11 @@ class StreamHttpChoiceTest {
     @Test fun `every other source keeps the default data source, even if hosts leak in`() =
         SourceKind.entries.filter { it != SourceKind.PLUGIN }.forEach { kind ->
             assertEquals(kind.name, StreamHttp.Default, streamHttpFor(kind, hosts))
+            assertEquals(kind.name, StreamHttp.Default, streamHttpFor(kind, hosts, xuper = true))
         }
+
+    @Test fun `a plugin stream carries the Xuper carve-out flag only when asked, off by default`() {
+        assertEquals(StreamHttp.PluginGated(hosts, xuper = false), streamHttpFor(SourceKind.PLUGIN, hosts))
+        assertEquals(StreamHttp.PluginGated(hosts, xuper = true), streamHttpFor(SourceKind.PLUGIN, hosts, xuper = true))
+    }
 }

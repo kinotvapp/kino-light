@@ -73,6 +73,7 @@ import com.arkiv.player.ui.home.HomeScreen
 import com.arkiv.player.ui.home.RowBrowseScreen
 import com.arkiv.player.ui.library.LibraryScreen
 import com.arkiv.player.ui.player.PlayerScreen
+import com.arkiv.player.ui.player.shouldOfferPluginConfigurar
 import com.arkiv.player.ui.search.SearchScreen
 import com.arkiv.player.ui.settings.SettingsScreen
 import com.arkiv.player.ui.theme.ArkivBlack
@@ -81,7 +82,6 @@ import com.arkiv.player.ui.titleinfo.TITLE_ROUTE
 import com.arkiv.player.ui.titleinfo.TitleInfoScreen
 import com.arkiv.player.ui.titleinfo.titleItemFrom
 import com.arkiv.player.ui.titleinfo.titleOriginFrom
-import com.arkiv.player.ui.titleinfo.titleRoute
 import com.arkiv.player.ui.titleinfo.titleRouteArguments
 
 private data class Tab(val route: String, val label: String, val icon: @Composable () -> Unit)
@@ -302,7 +302,6 @@ fun ArkivRoot(
                 HomeScreen(
                     onOpenItem = { navController.navigate("detail/${Uri.encode(it)}") },
                     onPlayEpisode = { playEpisode(it) },
-                    onOpenTitle = { item -> titleRoute(item)?.let { route -> navController.navigate(route) { launchSingleTop = true } } },
                     onOpenTitleRoute = { route -> navController.navigate(route) { launchSingleTop = true } },
                     onPlayLive = { code -> goToLiveChannel(code) },
                     // "Ver más canales": the same options as tapping the "En vivo" tab below, so it
@@ -315,9 +314,6 @@ fun ArkivRoot(
                         }
                     },
                     onOpenLibrary = { navController.navigate("library") },
-                    onBrowseMagisRow = { rowId, title ->
-                        navController.navigate("magis_row/$rowId?title=${android.net.Uri.encode(title)}")
-                    },
                     contentPadding = padding,
                     onBrowsePluginRow = { navController.navigate(com.arkiv.player.ui.plugin.PluginMoreTarget.route(it)) },
                 )
@@ -363,9 +359,7 @@ fun ArkivRoot(
             composable("categorias_home") {
                 com.arkiv.player.ui.home.CategoriesScreen(
                     contentPadding = padding,
-                    onBrowseRow = { rowId, title ->
-                        navController.navigate("magis_row/$rowId?title=${android.net.Uri.encode(title)}")
-                    },
+                    onBrowse = { navController.navigate(com.arkiv.player.ui.plugin.PluginMoreTarget.route(it)) },
                 )
             }
             composable("catalog") {
@@ -464,16 +458,18 @@ fun ArkivRoot(
             composable(TITLE_ROUTE, arguments = titleRouteArguments) { entry ->
                 val arg = { name: String -> entry.arguments?.getString(name) }
                 val item = titleItemFrom(arg)
-                if (item != null) {
+                val origin = titleOriginFrom(arg)
+                if (item != null && origin != null) {
                     TitleInfoScreen(
                         item = item,
-                        origin = titleOriginFrom(arg),
+                        origin = origin,
                         onBack = { navController.popBackStack() },
                         onPlay = { playEpisode(it) },
                         onConfigurePlugin = { id -> navController.navigate("plugin_config/${Uri.encode(id)}") },
                     )
                 } else {
-                    // A corrupt or foreign route: never leave a blank screen on the stack.
+                    // A corrupt or foreign route (or one from before Xuper became a plugin): never
+                    // leave a blank screen on the stack.
                     LaunchedEffect(Unit) { navController.popBackStack() }
                 }
             }
@@ -491,9 +487,13 @@ fun ArkivRoot(
                     },
                     onNextEpisode = { goToPlayer(it) },
                     // The player leaves: after configuring, Back returns to where the title was.
+                    // No destination at all for the recognized Xuper plugin -- see
+                    // shouldOfferPluginConfigurar's KDoc for why "Configurar" is meaningless there.
                     onOpenPluginSettings = { id ->
-                        navController.navigate("plugin_config/${Uri.encode(id)}") {
-                            popUpTo("player/{episodeId}") { inclusive = true }
+                        if (shouldOfferPluginConfigurar(graph.pluginRegistry.find(id)?.record?.address)) {
+                            navController.navigate("plugin_config/${Uri.encode(id)}") {
+                                popUpTo("player/{episodeId}") { inclusive = true }
+                            }
                         }
                     },
                 )
@@ -517,7 +517,11 @@ fun ArkivRoot(
                     com.arkiv.player.ui.plugin.PluginMoreScreen(
                         target = target,
                         onOpenTitleRoute = { route -> navController.navigate(route) { launchSingleTop = true } },
-                        onOpenPluginSettings = { id -> navController.navigate("plugin_config/${Uri.encode(id)}") },
+                        onOpenPluginSettings = { id ->
+                            if (shouldOfferPluginConfigurar(graph.pluginRegistry.find(id)?.record?.address)) {
+                                navController.navigate("plugin_config/${Uri.encode(id)}")
+                            }
+                        },
                         onBack = { navController.popBackStack() },
                     )
                 }
@@ -527,20 +531,6 @@ fun ArkivRoot(
                     pluginId = Uri.decode(entry.arguments?.getString("pluginId").orEmpty()),
                     isTv = false,
                     onDone = { navController.popBackStack() },
-                )
-            }
-            composable(
-                "magis_row/{rowId}?title={title}",
-                arguments = listOf(
-                    navArgument("rowId") { type = NavType.StringType },
-                    navArgument("title") { type = NavType.StringType; defaultValue = "" },
-                ),
-            ) { entry ->
-                com.arkiv.player.ui.home.MagisRowBrowseScreen(
-                    rowId = entry.arguments?.getString("rowId").orEmpty(),
-                    title = entry.arguments?.getString("title").orEmpty(),
-                    onOpenTitle = { item -> titleRoute(item)?.let { route -> navController.navigate(route) { launchSingleTop = true } } },
-                    onBack = { navController.popBackStack() },
                 )
             }
             composable(

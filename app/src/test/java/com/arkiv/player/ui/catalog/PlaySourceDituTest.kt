@@ -9,9 +9,11 @@ class PlaySourceDituTest {
 
     @Test fun `a Caracol source has its own color`() {
         val ditu = PlaySource.Ditu(GatewayResult(source = "ditu", title = "Rigo", ref = "ditu1:BUNDLE:1"))
-        val magis = PlaySource.Magis(GatewayResult(source = "magis", title = "Rigo", ref = "magis1:movie:0:C1"))
+        val plugin = PlaySource.Plugin(
+            "demo", "Demo", 0xFFE0A030, GatewayResult(source = "plugin:demo", title = "Rigo", ref = "plg1:demo:1"),
+        )
 
         assertEquals(ArkivCaracolVerde, accentOf(ditu))
-        assertNotEquals(accentOf(magis), accentOf(ditu))
+        assertNotEquals(accentOf(plugin), accentOf(ditu))
     }
 }

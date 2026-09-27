@@ -1,26 +1,20 @@
 package com.arkiv.player.ui.titleinfo
 
 import com.arkiv.player.AppGraph
-import com.arkiv.player.data.MagisEntities
 import com.arkiv.player.data.gateway.CatalogItem
 import com.arkiv.player.data.gateway.GatewayEpisode
 import com.arkiv.player.data.gateway.GatewayResult
 import com.arkiv.player.data.gateway.GatewaySeries
-import com.arkiv.player.data.gateway.MAGIS_SERIES
 import com.arkiv.player.data.gateway.SeasonRef
-import com.arkiv.player.data.local.DownloadSource
-import com.arkiv.player.data.magis.MagisRef
 import com.arkiv.player.ui.home.MagisDownloadActions
-import com.arkiv.player.ui.home.magisDownloadActions
-import com.arkiv.player.ui.home.toGatewayResult
 import com.arkiv.player.ui.search.PlaybackResult
 import com.arkiv.player.ui.search.SearchPlayback
 
 /** Where a series' seasons come from. */
 sealed interface SeasonModel {
     /**
-     * Every season is a separate title the source lists as a sibling (Magis). Choosing one swaps the
-     * page's item for the one [itemFor] builds.
+     * Every season is a separate title the source lists as a sibling (`ContentSource.seasonsOf`).
+     * Choosing one swaps the page's item for the one [itemFor] builds.
      */
     class Siblings(val itemFor: (current: CatalogItem, season: SeasonRef) -> CatalogItem) : SeasonModel
 
@@ -39,13 +33,14 @@ data class TitleBadge(val label: String, val colorArgb: Long)
 
 /**
  * Everything the information page needs from the source a title came from, so the view model and
- * the two screens never name a source's ids or playback paths. [MagisTitleSource] wraps what the
- * page did before sources existed; `PluginTitleSource` is the plugin one.
+ * the two screens never name a source's ids or playback paths. `PluginTitleSource` is the one
+ * implementation today (Xuper is a plugin; the native Magis source, and the title source that
+ * wrapped it, are gone).
  */
 interface TitleSource {
     val seasons: SeasonModel
 
-    /** Null when the source cannot download (plugins); the screens then draw no download UI. */
+    /** Null when the source cannot download; the screens then draw no download UI. */
     val downloads: MagisDownloadActions?
     val canDownload: Boolean get() = downloads != null
 
@@ -56,8 +51,9 @@ interface TitleSource {
 
     /**
      * Whether the TV page prints a failure's own message under its fixed line. A plugin's message is
-     * worded for the person ("Esto venía del plugin X, que ya no está instalado"); Magis's raw cause
-     * names the portal's host in English, so Magis keeps the fixed line alone, as before sources.
+     * worded for the person ("Esto venía del plugin X, que ya no está instalado"); a source whose
+     * raw cause is not (the native Magis one named the portal's host in English) keeps the fixed
+     * line alone.
      */
     val showsFailureDetail: Boolean get() = false
 
@@ -79,46 +75,8 @@ interface TitleSource {
     ): PlaybackResult
 }
 
-/** The behavior the page had for Magis before sources existed, unchanged. */
-class MagisTitleSource(
-    override val downloads: MagisDownloadActions?,
-    private val movieImdbId: suspend (ref: String) -> String?,
-    private val onPlayMovie: suspend (GatewayResult) -> PlaybackResult,
-    private val onPlaySeason: suspend (GatewayResult, List<GatewayEpisode>, GatewayEpisode, GatewaySeries?) -> PlaybackResult,
-) : TitleSource {
-
-    override val seasons: SeasonModel = SeasonModel.Siblings { current, season ->
-        current.copy(
-            id = season.contentId,
-            ref = MagisRef(season.contentId, current.type, 0).encode(),
-            title = seasonTitle(current.title, season.number),
-            episodeCount = 0,
-        )
-    }
-
-    override fun itemId(item: CatalogItem): String = MagisEntities.itemIdFor(item.id)
-    override fun movieEpisodeId(item: CatalogItem): String = MagisEntities.movieEpisodeId(itemId(item))
-    override fun chapterEpisodeId(item: CatalogItem, chapter: GatewayEpisode): String =
-        MagisEntities.episodeIdFor(itemId(item), chapter.number)
-
-    override fun gatewayResult(item: CatalogItem): GatewayResult = item.toGatewayResult()
-
-    override suspend fun tmdbHint(item: CatalogItem): TmdbHint =
-        if (item.type in MAGIS_SERIES) TmdbHint() else TmdbHint(imdbId = movieImdbId(item.ref).orEmpty())
-
-    override suspend fun playMovie(result: GatewayResult): PlaybackResult = onPlayMovie(result)
-
-    override suspend fun playSeason(
-        result: GatewayResult,
-        chapters: List<GatewayEpisode>,
-        chosen: GatewayEpisode,
-        series: GatewaySeries?,
-    ): PlaybackResult = onPlaySeason(result, chapters, chosen, series)
-}
-
 /** The source a route's [origin] names, wired to the app's real paths. */
 internal fun titleSourceFor(graph: AppGraph, origin: TitleOrigin): TitleSource = when (origin) {
-    TitleOrigin.Magis -> magisTitleSource(graph)
     is TitleOrigin.Plugin -> pluginTitleSource(graph, origin.extras)
 }
 
@@ -129,17 +87,5 @@ internal fun pluginTitleSource(graph: AppGraph, extras: PluginTitleExtras): Plug
         extras = extras,
         onPlayMovie = { playback.playPlugin(it) },
         onPlaySeason = { season, chapters, chosen, series -> playback.playPluginSeason(season, chapters, chosen, series) },
-    )
-}
-
-/** Wires [MagisTitleSource] to the app's real Magis paths. */
-internal fun magisTitleSource(graph: AppGraph): MagisTitleSource {
-    val playback = SearchPlayback(graph)
-    return MagisTitleSource(
-        downloads = magisDownloadActions(graph, playback)
-            .takeIf { DownloadSource.hasStrategy("magis", graph.downloadStrategies.keys) },
-        movieImdbId = { ref -> graph.contentSource.movieImdbId(ref) },
-        onPlayMovie = { playback.playMagis(it) },
-        onPlaySeason = { season, chapters, chosen, series -> playback.playMagisSeason(season, chapters, chosen, series) },
     )
 }

@@ -101,7 +101,7 @@ internal fun InstalledPluginCard(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                "Se conectará a: ${plugin.hosts.labels.joinToString(", ")}",
+                pluginConsentHostLine(address = plugin.record.address, hostsLabel = plugin.hosts.labels.joinToString(", ")),
                 style = MaterialTheme.typography.bodySmall,
                 color = ArkivTextSecondary,
                 minLines = installedHostsLines(),
@@ -187,7 +187,7 @@ private fun InstalledActionsSheet(
             )
             // The full list, wrapping freely: the card's own line is capped and may cut it.
             Text(
-                "Se conectará a: ${plugin.hosts.labels.joinToString(", ")}",
+                pluginConsentHostLine(address = plugin.record.address, hostsLabel = plugin.hosts.labels.joinToString(", ")),
                 style = MaterialTheme.typography.bodySmall,
                 color = ArkivTextSecondary,
                 modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 12.dp),

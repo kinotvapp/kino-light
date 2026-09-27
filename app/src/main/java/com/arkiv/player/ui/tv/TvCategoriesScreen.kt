@@ -59,7 +59,8 @@ private const val HERO_DRIFT_MS = 14_000
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TvCategoriesScreen(
-    onBrowseRow: (rowId: String, title: String) -> Unit,
+    /** A tile was picked: the Xuper plugin's "Ver más" over that category. */
+    onBrowse: (com.arkiv.player.ui.plugin.PluginMoreTarget) -> Unit,
     onOpenSearchRoute: (String) -> Unit,
     onBack: () -> Unit,
 ) {
@@ -67,7 +68,7 @@ fun TvCategoriesScreen(
 
     val graph = rememberGraph()
     val vm: CategoriesViewModel = viewModel(
-        factory = viewModelFactory { initializer { CategoriesViewModel(graph.magisHomeCatalog, graph.homeReloads) } },
+        factory = viewModelFactory { initializer { CategoriesViewModel(graph.magisHomeCatalog, graph.pluginRegistry.plugins, graph.homeReloads) } },
     )
     val rows by vm.rows.collectAsStateWithLifecycle()
     val loading by vm.loading.collectAsStateWithLifecycle()
@@ -214,7 +215,7 @@ fun TvCategoriesScreen(
                                                 navSound()
                                                 featured = Featured(title = label, subtitle = "", imageUrl = imageUrl)
                                             },
-                                            onClick = { onBrowseRow(spec.id, spec.title) },
+                                            onClick = { vm.browseTarget(spec)?.let(onBrowse) },
                                         )
                                     }
                                 }
@@ -223,6 +224,16 @@ fun TvCategoriesScreen(
                         }
                     }
 
+                    if (sections.isEmpty()) {
+                        item(key = "empty") {
+                            Text(
+                                "No hay categorías para mostrar",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = ArkivTextSecondary,
+                                modifier = Modifier.padding(horizontal = 48.dp),
+                            )
+                        }
+                    }
                     item(key = "bottom_pad") { Spacer(Modifier.height(rowGap)) }
                 }
             }

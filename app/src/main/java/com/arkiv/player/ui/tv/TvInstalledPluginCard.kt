@@ -28,6 +28,7 @@ import com.arkiv.player.ui.plugin.InstalledCardModel
 import com.arkiv.player.ui.plugin.installedCardModel
 import com.arkiv.player.ui.plugin.installedHostsLines
 import com.arkiv.player.ui.plugin.installedMessageLines
+import com.arkiv.player.ui.plugin.pluginConsentHostLine
 import com.arkiv.player.ui.theme.ArkivRed
 import com.arkiv.player.ui.theme.ArkivSurfaceHigh
 import com.arkiv.player.ui.theme.ArkivTextSecondary
@@ -86,7 +87,7 @@ private fun CardTexts(plugin: InstalledPlugin, model: InstalledCardModel, messag
             overflow = TextOverflow.Ellipsis,
         )
         Text(
-            "Se conectará a: ${plugin.hosts.labels.joinToString(", ")}",
+            pluginConsentHostLine(address = plugin.record.address, hostsLabel = plugin.hosts.labels.joinToString(", ")),
             style = MaterialTheme.typography.bodySmall,
             color = ArkivTextSecondary,
             minLines = installedHostsLines(),

@@ -52,6 +52,11 @@ class LocalDownloadManager(
      * and so tests need no Android to say `true`.
      */
     private val isTelevision: () -> Boolean = { false },
+    /**
+     * `AppGraph.isXuperPlugin`: lets [retry] keep a Xuper plugin chapter on [DownloadSource.XUPER]
+     * instead of re-pointing it at `"plugin"`. Fails closed (no plugin is Xuper) by default.
+     */
+    private val isXuperPlugin: (pluginId: String) -> Boolean = { false },
 ) {
     private val appContext = context.applicationContext
     private val downloadDao = db.downloadDao()
@@ -132,7 +137,7 @@ class LocalDownloadManager(
         if (!DownloadQueuePolicy.isRetryable(row.state)) return@withContext
         // An old row might be left pointing at the wrong strategy (see [DownloadSource]);
         // re-queuing it as-is would make it fail with the same message forever.
-        val source = DownloadSource.sourceFor(episodeId)
+        val source = DownloadSource.sourceFor(episodeId, isXuperPlugin)
         if (row.source != source) downloadDao.updateSource(episodeId, source)
         downloadDao.updateState(episodeId, LocalDownloadState.QUEUED, null)
         wakeWorker(appContext)

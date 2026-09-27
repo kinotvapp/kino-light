@@ -42,6 +42,11 @@ class PluginContentSource(
     // The plugin's effective hosts (declared ∪ typed servers): a declared-only default would
     // silently drop the person's own server for any caller relying on it.
     private val hosts: EffectiveHosts = plugin.hosts,
+    /**
+     * `AppGraph`'s one [XuperStreams], handed to every plugin's source alike: only the plugin
+     * [XuperPrivilege.grants] ever reads it (see [xuper]), so passing it to the others grants nothing.
+     */
+    xuperStreams: XuperStreams? = null,
     private val log: (String) -> Unit = { android.util.Log.w("KinoPlugin", it) },
 ) : ContentSource {
     private val id = plugin.manifest.id
@@ -50,6 +55,9 @@ class PluginContentSource(
     private val caps = plugin.manifest.capabilities
     private val allowSeries = "episodes" in caps
     private val allowNext = "browse" in caps
+
+    /** [XuperStreams], only for the one plugin [XuperPrivilege.grants]: null for every other one. */
+    private val xuper: XuperStreams? = xuperStreams?.takeIf { XuperPrivilege.grants(plugin.record) }
 
     /**
      * `CompositeSource`'s limit is only a BACKSTOP: the plugin's own call limit
@@ -116,7 +124,7 @@ class PluginContentSource(
         if (own.kind == PluginRef.SERIES) throw GatewayException("Elige un capítulo primero")
         val out = callOrThrow("resolve", JSONObject.quote(own.ref), RESOLVE_TIMEOUT_MS)
         val stream = try {
-            PluginOutput.stream(out, hosts)
+            PluginOutput.stream(out, hosts, xuper)
         } catch (e: PluginContractException) {
             throw GatewayException("$name: ${e.message}", e)
         }

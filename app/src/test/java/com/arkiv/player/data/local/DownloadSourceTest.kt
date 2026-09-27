@@ -28,30 +28,33 @@ class DownloadSourceTest {
 
     @Test fun `a plugin chapter has its own download source, and no strategy offers it`() {
         assertEquals("plugin", DownloadSource.sourceFor("plugin:demo:m1::0"))
-        assertFalse(DownloadSource.canDownload("plugin:demo:m1::0", setOf("magis", "ditu")))
+        assertFalse(DownloadSource.canDownload("plugin:demo:m1::0", setOf("magis", "ditu"), noXuper))
     }
 
-    /** What `AppGraph.downloadStrategies` has today: Magis only. */
+    /** No installed plugin is the recognized Xuper install. */
+    private val noXuper: (String) -> Boolean = { false }
+
+    /** What `AppGraph.downloadStrategies` has today, minus the Xuper plugin's key: Magis only. */
     private val strategies = setOf("magis")
 
     @Test
     fun `magis is offered for download`() {
-        assertTrue(DownloadSource.canDownload("magis:2AD2591D4242471D96B68FF04FFD2784::e6", strategies))
+        assertTrue(DownloadSource.canDownload("magis:2AD2591D4242471D96B68FF04FFD2784::e6", strategies, noXuper))
         assertTrue(DownloadSource.hasStrategy("magis", strategies))
     }
 
     /** Widevine: there's nothing to download it with, so the option stays hidden instead of failing later. */
     @Test
     fun `caracol is not offered for download`() {
-        assertFalse(DownloadSource.canDownload("ditu:12345::e1", strategies))
-        assertFalse(DownloadSource.canDownload("ditu:P1::0", strategies))
+        assertFalse(DownloadSource.canDownload("ditu:12345::e1", strategies, noXuper))
+        assertFalse(DownloadSource.canDownload("ditu:P1::0", strategies, noXuper))
         assertFalse(DownloadSource.hasStrategy("ditu", strategies))
     }
 
     /** The rule is "has a strategy", not a list of names: a future source is covered on its own. */
     @Test
     fun `a source with no strategy is not offered, whatever its name`() {
-        assertFalse(DownloadSource.canDownload("dragon-ball-gt_s01e01", strategies))
+        assertFalse(DownloadSource.canDownload("dragon-ball-gt_s01e01", strategies, noXuper))
         assertFalse(DownloadSource.hasStrategy("fuente_nueva", strategies))
         assertTrue(DownloadSource.hasStrategy("fuente_nueva", strategies + "fuente_nueva"))
     }

@@ -7,10 +7,10 @@ import com.arkiv.player.data.local.DownloadSource
 import com.arkiv.player.data.local.EnqueueOutcome
 
 /**
- * The non-Compose core of "download a Magis title", shared by the home card's long-press and the
- * info page. Same behavior `rememberMagisActions` used to inline: a movie is enqueued with the
- * source its episode id maps to; a season is enqueued chapter by chapter under `"magis"`, each one
- * a separate file, and the queue already knows how to group them by series.
+ * The non-Compose core of "download a title" for the info page (`TitleSource.downloads`), kept from
+ * the native Magis page: a movie is enqueued with the source its episode id maps to; a season is
+ * enqueued chapter by chapter under `"magis"`, each one a separate file, and the queue already
+ * knows how to group them by series.
  *
  * What stays with the caller, because it is Compose-only: the notification-permission request, the
  * duplicate notice and the toasts.
@@ -38,6 +38,16 @@ class MagisDownloadActions(
         enqueue(episodeId, "magis")
     }
 }
+
+/**
+ * Text for the "queued" toast after downloading a movie from the info page, or null to show
+ * nothing. Only [EnqueueOutcome.QUEUED] gets this toast: [EnqueueOutcome.ALREADY_QUEUED] and
+ * [EnqueueOutcome.ALREADY_DOWNLOADED] already surface their own message through
+ * `rememberDuplicateDownloadNotice`, so a "queued" toast on top of that would be misleading — the
+ * person would see both "you already have that" and a false "queued".
+ */
+fun queuedDownloadToastText(outcome: EnqueueOutcome, movieTitle: String): String? =
+    if (outcome == EnqueueOutcome.QUEUED) "Descarga de \"$movieTitle\" en cola" else null
 
 /** The toast after enqueueing [requested] chapters, from what the queue answered for each. */
 fun chapterEnqueueMessage(outcomes: List<EnqueueOutcome>, requested: Int): String {

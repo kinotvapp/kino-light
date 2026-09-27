@@ -15,8 +15,8 @@ import com.arkiv.player.data.local.DownloadDisplayState
 import com.arkiv.player.data.local.EnqueueOutcome
 import com.arkiv.player.data.plugin.PluginSetupRequiredException
 import com.arkiv.player.ui.home.chapterEnqueueMessage
+import com.arkiv.player.ui.home.queuedDownloadToastText
 import com.arkiv.player.ui.search.PlaybackResult
-import com.arkiv.player.ui.search.queuedDownloadToastText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job

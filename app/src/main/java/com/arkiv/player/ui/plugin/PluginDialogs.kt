@@ -66,11 +66,16 @@ fun PluginConsentDialog(preview: InstallPreview, onInstall: () -> Unit, onCancel
                     style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary,
                 )
                 if (m.description.isNotBlank()) Text(m.description, style = MaterialTheme.typography.bodyMedium, color = Color.White)
-                Text("Se va a conectar con:", style = MaterialTheme.typography.titleSmall, color = Color.White)
-                m.hosts.forEach { host ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(host, style = MaterialTheme.typography.bodyMedium, color = Color.White)
-                        if (preview.isUpdate && host in preview.newHosts) MetaChip("nuevo", ArkivRed, strong = true)
+                val protectedLine = pluginConsentProtectedLine(preview.address.canonical)
+                if (protectedLine != null) {
+                    Text(protectedLine, style = MaterialTheme.typography.bodyMedium, color = Color.White)
+                } else {
+                    Text("Se va a conectar con:", style = MaterialTheme.typography.titleSmall, color = Color.White)
+                    m.hosts.forEach { host ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(host, style = MaterialTheme.typography.bodyMedium, color = Color.White)
+                            if (preview.isUpdate && host in preview.newHosts) MetaChip("nuevo", ArkivRed, strong = true)
+                        }
                     }
                 }
                 // Permissions (each with the warning icon), passwords and typed servers: spec §1.2-1.3.

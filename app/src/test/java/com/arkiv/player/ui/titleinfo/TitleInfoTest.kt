@@ -3,7 +3,6 @@ package com.arkiv.player.ui.titleinfo
 import com.arkiv.player.data.catalog.TmdbInfo
 import com.arkiv.player.data.gateway.CatalogItem
 import com.arkiv.player.data.gateway.GatewayEpisode
-import com.arkiv.player.data.gateway.GatewayResult
 import com.arkiv.player.data.local.DownloadDisplayState
 import com.arkiv.player.data.magis.MagisRef
 import org.junit.Assert.assertEquals
@@ -76,44 +75,6 @@ class TitleInfoTest {
     @Test
     fun `a blank title falls back to the id`() {
         assertEquals("c1", item(title = "").toTitleInfo().title)
-    }
-
-    // ---- GatewayResult -> CatalogItem ----
-
-    private fun result(source: String = "magis", extra: Map<String, String>) =
-        GatewayResult(source = source, title = "Dragon Ball Daima T1", ref = "ignored", kind = "series", extra = extra)
-
-    @Test
-    fun `a Magis search result becomes a catalog item with a rebuilt ref`() {
-        val out = result(
-            extra = mapOf(
-                "content_id" to "c9", "program_type" to "teleplay", "episode_count" to "20",
-                "poster" to "https://img/p.jpg", "backdrop" to "https://img/b.jpg",
-            ),
-        ).toMagisCatalogItem()!!
-        assertEquals("c9", out.id)
-        assertEquals("Dragon Ball Daima T1", out.title)
-        assertEquals("teleplay", out.type)
-        assertEquals(20, out.episodeCount)
-        assertEquals("https://img/p.jpg", out.poster)
-        assertEquals("https://img/b.jpg", out.backdrop)
-        assertEquals(MagisRef("c9", "teleplay", 0).encode(), out.ref)
-    }
-
-    @Test
-    fun `a result from another source or with no content id is not a Magis title`() {
-        assertNull(result(source = "ditu", extra = mapOf("content_id" to "c9")).toMagisCatalogItem())
-        assertNull(result(extra = mapOf("content_id" to " ")).toMagisCatalogItem())
-        assertNull(result(extra = emptyMap()).toMagisCatalogItem())
-    }
-
-    @Test
-    fun `missing extras default to a movie with no chapters and no images`() {
-        val out = result(extra = mapOf("content_id" to "c9", "episode_count" to "x", "poster" to "")).toMagisCatalogItem()!!
-        assertEquals("movie", out.type)
-        assertEquals(0, out.episodeCount)
-        assertNull(out.poster)
-        assertNull(out.backdrop)
     }
 
     // ---- chapter identity ----

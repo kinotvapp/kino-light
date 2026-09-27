@@ -241,7 +241,7 @@ class AppGraph(context: Context) {
      *  installs flip it immediately (nothing to warm -> the activation screen shows at once). */
     val warmedUp: kotlinx.coroutines.flow.StateFlow<Boolean> = _warmedUp
 
-    fun warmUpCredentials() {
+    suspend fun warmUpCredentials() {
         val t0 = android.os.SystemClock.elapsedRealtime()
         var built = false
         try {
@@ -267,6 +267,13 @@ class AppGraph(context: Context) {
             runCatching { reconcilePluginSecrets() }
                 .onFailure { android.util.Log.w("KinoPlugin", "warm-up: plugin secrets not reconciled: ${it.javaClass.simpleName}") }
             pluginRegistry.reload()
+            // One-time migration (Task 12): a person activated before this app version shipped
+            // never "installed" anything -- Xuper was simply always there. Guarded exactly like
+            // reconcilePluginSecrets() above: no network right now (or GitHub unreachable) must
+            // never abort the rest of warm-up, and this isn't gated behind a "did we already try"
+            // flag, so the next cold start just tries again. See autoInstallXuperPluginIfNeeded.
+            runCatching { autoInstallXuperPluginIfNeeded(credentialsStore, pluginRegistry, pluginAdmin) }
+                .onFailure { android.util.Log.w("KinoPlugin", "warm-up: Xuper plugin not auto-installed: ${it.javaClass.simpleName}") }
             contentSource
             magisAccount
             built = true
@@ -305,20 +312,39 @@ class AppGraph(context: Context) {
         com.arkiv.player.data.magis.MagisCatalog(magisPortal, magisSession)
     }
 
-    /** Magis titles, straight from the portal. Only visible from outside through [contentSource]. */
-    private val magisSource: com.arkiv.player.data.gateway.ContentSource by lazy {
+    /** Magis playback resolution for [magisPluginBridge] (one CDN-info cache). */
+    private val magisResolve: com.arkiv.player.data.magis.MagisResolve by lazy {
         val creds = credentialsStore.read()!!
-        com.arkiv.player.data.magis.MagisSource(
-            catalog = magisCatalog,
-            vodResolver = com.arkiv.player.data.magis.MagisResolve(
-                magisPortal, magisSession,
-                appId = creds.iptvAppId,
-                apkVersion = creds.iptvApkVersion,
-            ),
-            tmdb = tmdbApi,
-            vodStore = com.arkiv.player.data.magis.VodSearchStore(database.vodSearchCacheDao()),
+        com.arkiv.player.data.magis.MagisResolve(
+            magisPortal, magisSession,
+            appId = creds.iptvAppId,
+            apkVersion = creds.iptvApkVersion,
         )
     }
+
+    /**
+     * The Magis side of the privileged `kino.xuper.*` host functions (see `DefaultPrivilegedXuperHost`),
+     * over the portal's catalog, resolver and TMDB. One per process, so its caches outlive a
+     * plugin runtime's idle close. A plain [Lazy], not a `by lazy` property: it is handed to every
+     * plugin runtime's host selection, and only the privileged host ever reads it.
+     */
+    private val magisPluginBridge: Lazy<com.arkiv.player.data.magis.MagisPluginBridge> = lazy {
+        com.arkiv.player.data.magis.MagisPluginBridge(
+            catalog = magisCatalog,
+            vodResolver = magisResolve,
+            tmdb = tmdbApi,
+            vodStore = com.arkiv.player.data.magis.VodSearchStore(database.vodSearchCacheDao()),
+            streams = xuperStreams,
+            homeCatalog = magisHomeCatalog,
+        )
+    }
+
+    /**
+     * The streams [magisPluginBridge] resolved, with their CDN headers kept out of the plugin's
+     * script: written by the bridge, read by the Xuper plugin's [PluginContentSource] (and only
+     * its: see [XuperStreams]). Cheap and credential-free, so not lazy.
+     */
+    private val xuperStreams = XuperStreams()
 
     // --- Direct Caracol (Ditu) -----------------------------------------------------------------
     //
@@ -341,10 +367,12 @@ class AppGraph(context: Context) {
     }
 
     /**
-     * Where the titles the app searches and plays come from: Magis and Caracol behind a single
-     * object. To resolve and list episodes it dispatches by `ref` (each source recognizes its
-     * own); to search, it merges both. See [com.arkiv.player.data.gateway.CompositeSource].
-     * Plus every usable installed plugin, read on EACH call: installing, disabling or
+     * Where the titles the app searches and plays come from: Caracol and the installed plugins
+     * (Xuper among them) behind a single object. To resolve and list episodes it dispatches by
+     * `ref` (each source recognizes its own); to search, it merges them. See
+     * [com.arkiv.player.data.gateway.CompositeSource]. Xuper refs saved before Xuper became a
+     * plugin are claimed by [LegacyXuperRefSource] and forwarded to the Xuper plugin.
+     * Every usable installed plugin is read on EACH call: installing, disabling or
      * uninstalling a plugin applies to the next search/resolve with no restart. A ref of a plugin
      * that isn't usable falls through to [UnusablePluginSource], last, which answers with the
      * registry's reason ("Activa el plugin X…") instead of "no source can open this".
@@ -352,11 +380,24 @@ class AppGraph(context: Context) {
     val contentSource: com.arkiv.player.data.gateway.ContentSource by lazy {
         val unusablePlugins = UnusablePluginSource(pluginRegistry)
         com.arkiv.player.data.gateway.CompositeSource {
-            listOf(magisSource, dituSource) +
-                pluginRegistry.usable().map { PluginContentSource(it, pluginCaller, it.hosts) } +
+            val pluginSources = pluginRegistry.usable().map { PluginContentSource(it, pluginCaller, it.hosts, xuperStreams) } +
                 unusablePlugins
+            // Xuper refs saved before Xuper became a plugin (`magis1:`), forwarded to the installed
+            // Xuper plugin through the SAME plugin sources below. In MagisSource's old slot: first.
+            val legacyXuper = LegacyXuperRefSource(
+                pluginRegistry.plugins.value,
+                com.arkiv.player.data.gateway.CompositeSource(pluginSources),
+            )
+            listOf(legacyXuper, dituSource) + pluginSources
         }
     }
+
+    /**
+     * Whether the INSTALLED plugin with manifest id [pluginId] is the recognized Xuper install
+     * ([XuperPrivilege.grants] on its record, never the id itself). The only plugin whose titles
+     * get a download strategy: see `DownloadSource.sourceFor`.
+     */
+    fun isXuperPlugin(pluginId: String): Boolean = pluginRegistry.isXuper(pluginId)
 
     // --- Plugins (docs/superpowers/specs/2026-09-24-plugin-sources-design.md) ---
 
@@ -405,9 +446,14 @@ class AppGraph(context: Context) {
      * The player's client for one plugin stream, gated to [hosts] (the approved ones plus the
      * servers typed in its settings, carried in `PlayerData.pluginHosts`) on every request and
      * redirect hop. See PluginStreamHttp.
+     *
+     * [xuper] (`PlayerData.pluginXuper`, from `PluginAccess.Ready.xuper`: [XuperPrivilege.grants] on
+     * the installed record) hands the gate the SAME [xuperStreams] the bridge writes and
+     * [PluginContentSource] reads -- never a second table, or a URL accepted at resolve time would
+     * be refused at playback. False for every other plugin: the gate is then exactly as before.
      */
-    fun pluginStreamClient(hosts: EffectiveHosts): okhttp3.OkHttpClient =
-        PluginStreamHttp.client(pluginBaseHttp, hosts)
+    fun pluginStreamClient(hosts: EffectiveHosts, xuper: Boolean = false): okhttp3.OkHttpClient =
+        PluginStreamHttp.client(pluginBaseHttp, hosts, xuper = xuperStreams.takeIf { xuper })
 
     /** The live PluginHttp of each open runtime, so the pool can reset its per-call request budget. */
     private val pluginHttps = java.util.concurrent.ConcurrentHashMap<String, PluginHttp>()
@@ -448,7 +494,7 @@ class AppGraph(context: Context) {
 
     /** "Ver más" talks to one plugin directly; null when it isn't usable any more. */
     fun pluginSource(id: String): PluginContentSource? =
-        pluginRegistry.find(id)?.takeIf { it.isUsable }?.let { PluginContentSource(it, pluginCaller, it.hosts) }
+        pluginRegistry.find(id)?.takeIf { it.isUsable }?.let { PluginContentSource(it, pluginCaller, it.hosts, xuperStreams) }
 
     val pluginRuntimes: PluginRuntimePool by lazy {
         PluginRuntimePool(
@@ -487,7 +533,10 @@ class AppGraph(context: Context) {
         val http = PluginHttp(pluginBaseHttp, id, hosts, BuildConfig.VERSION_NAME, cookies = cookies)
         pluginHttps[id] = http
         val storage = PluginStorage(java.io.File(dataDir, "storage.json"))
-        val runtime = PluginRuntime.open(id, script, DefaultPluginHost(id, http, storage, config, cookies, hosts), PluginEnv(appVersion = BuildConfig.VERSION_NAME))
+        // Only the one recognized Xuper source gets the extra kino.xuper.* host functions -- see
+        // pluginHostFor's KDoc and XuperPrivilege.grants for the gate itself.
+        val host = pluginHostFor(plugin, http, storage, config, cookies, hosts, magisPluginBridge)
+        val runtime = PluginRuntime.open(id, script, host, PluginEnv(appVersion = BuildConfig.VERSION_NAME))
         // F5: drop this plugin's PluginHttp the moment its runtime is closed -- idle timeout, or an
         // explicit pool.close() from DefaultPluginAdmin's disable/update/uninstall -- so pluginHttps
         // never keeps a stale, no-longer-approved host list around after the runtime that used it is
@@ -864,6 +913,7 @@ class AppGraph(context: Context) {
             strategies = { downloadStrategies },
             // Downloads are never allowed on a TV (see `DownloadAvailability`).
             isTelevision = { com.arkiv.player.DeviceType.isTelevision(appContext) },
+            isXuperPlugin = ::isXuperPlugin,
         )
     }
 
@@ -974,10 +1024,16 @@ class AppGraph(context: Context) {
      * `DownloadSource.canDownload`/`hasStrategy` using this map's keys.
      */
     val downloadStrategies: Map<String, com.arkiv.player.data.local.DownloadStrategy> by lazy {
+        // One strategy for both Xuper keys: it resolves whatever ref the chapter saved through
+        // `contentSource`, a legacy `magis1:` one (via `LegacyXuperRefSource`) or the plugin's `plg1:`.
+        val xuper = com.arkiv.player.data.local.MagisDownloadStrategy(repository, contentSource, httpRangeDownloader)
         mapOf(
-            "magis" to com.arkiv.player.data.local.MagisDownloadStrategy(
-                repository, contentSource, httpRangeDownloader,
-            ),
+            "magis" to xuper,
+            // The recognized Xuper plugin's chapters, and no other plugin's: `DownloadSource.sourceFor`
+            // only maps a plugin episode here when `isXuperPlugin`, and the wrapper checks it again
+            // when the download runs. Every other plugin stays on "plugin", which has no entry.
+            com.arkiv.player.data.local.DownloadSource.XUPER to
+                com.arkiv.player.data.local.XuperPluginDownloadStrategy(xuper, ::isXuperPlugin),
             // Caracol. With this key present, `DownloadSource.canDownload` starts saying yes for
             // its episodes and the UI shows the button on its own -- that's exactly the contract
             // this documents: a source with no strategy stays hidden, one with a strategy shows up.
@@ -1285,4 +1341,55 @@ class AppGraph(context: Context) {
                 instance ?: AppGraph(context).also { instance = it }
             }
     }
+}
+
+/**
+ * One-time migration (Task 12, `docs/superpowers/specs/2026-09-25-xuper-privileged-plugin-design.md`): someone
+ * who activated Xuper before this app version shipped never "installed" anything -- Xuper was
+ * simply always there. Once `contentSource` stops special-casing it, their Home/Categorías/search
+ * would go blank unless the plugin is installed for them, so this installs it once, silently, with
+ * NO consent screen -- the one deliberate exception in the whole plugin system, since activating
+ * Xuper already granted everything this plugin needs.
+ *
+ * "Already there" means present in [pluginRegistry] at all, REGARDLESS of enabled/damaged/
+ * unresponsive status -- not [PluginRegistry.usable], which excludes a disabled plugin. A person
+ * who deliberately disabled Xuper after this ran once must not have it silently re-previewed and
+ * re-installed (a network round-trip) on every single cold start after that; [PluginInstaller]
+ * would preserve their `enabled = false` either way (`install()` carries the previous record's
+ * `enabled` forward), but repeating the fetch forever for no visible effect is exactly the kind of
+ * silent cost this migration must not add. [XuperPrivilege.grants] is the one recognized comparison
+ * (exact-string match on [InstalledRecord.address]; see its own KDoc for why nothing should
+ * reproduce it) -- called against every installed record, not just an id-keyed lookup, since the
+ * Xuper plugin's manifest `id` isn't known ahead of the network fetch [PluginAdmin.preview] does.
+ *
+ * [pluginAdmin]'s calls are left to throw straight into the caller's `runCatching` (see
+ * [AppGraph.warmUpCredentials]): the manual "type an address" install flow
+ * ([com.arkiv.player.ui.plugin.PluginsViewModel]) is the only other caller of
+ * [PluginAdmin.preview]/[PluginAdmin.install], and it already treats every failure from them
+ * (a bad manifest, no network, GitHub unreachable) as an ordinary [InstallException]/[IOException]
+ * to show and move on from, never as something to special-case -- this migration does the same,
+ * just with nothing to show, so the next cold start simply tries again.
+ *
+ * Fix round 1: an absent record isn't the only way "not already there" can be true -- a person
+ * who explicitly uninstalled the auto-installed Xuper plugin also has no live record, but their
+ * uninstall must stick, forever, exactly like it does for every other plugin ([PluginStore]'s
+ * `removed.json` tombstone, checked here through [PluginRegistry.wasExplicitlyRemoved], is what
+ * makes that stick even across [PluginInstaller.install]'s own `isUpdate=false` path, which has
+ * no live record to compare against and so can't apply [PluginStore.finishInstall]'s own
+ * `isUpdate` guard). The check has to happen AFTER [PluginAdmin.preview] fetches the manifest,
+ * same as [XuperPrivilege.grants] above it: Xuper's real manifest `id` isn't known before that
+ * fetch, so there's no id to look up a tombstone for any earlier. This still costs only the one
+ * network call [preview] already made -- [install] is simply skipped when the tombstone is there.
+ */
+suspend fun autoInstallXuperPluginIfNeeded(
+    credentialsStore: com.arkiv.player.data.credentials.RemoteCredentialsStore,
+    pluginRegistry: PluginRegistry,
+    pluginAdmin: PluginAdmin,
+) {
+    if (credentialsStore.read() == null) return // never activated: nothing to migrate
+    val alreadyThere = pluginRegistry.plugins.value.any { XuperPrivilege.grants(it.record) }
+    if (alreadyThere) return
+    val preview = pluginAdmin.preview(XuperPrivilege.SOURCE_REPO)
+    if (pluginRegistry.wasExplicitlyRemoved(preview.manifest.id)) return // person's own uninstall stands
+    pluginAdmin.install(preview)
 }

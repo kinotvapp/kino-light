@@ -10,17 +10,10 @@ import org.junit.Test
 class GatewayMapperTest {
 
     @Test
-    fun `magis maps to its own type`() {
-        // Without this branch the mapper used to return null and Magis results never made it to
-        // the screen, even though the gateway was delivering them.
-        val ps = GatewayResult(
-            source = "magis", title = "Duna", ref = "r", year = "2021",
-            extra = mapOf("content_id" to "abc", "program_type" to "movie"),
-        ).toPlaySource()
-        assertTrue(ps is PlaySource.Magis)
-        assertEquals("Duna", (ps as PlaySource.Magis).result.title)
-        assertEquals("abc", ps.result.extra["content_id"])
-        assertEquals("r", ps.result.ref)
+    fun `magis is no longer a known source -- xuper arrives through its plugin`() {
+        // The native MagisSource was deleted: nothing emits "magis" any more, and a result under
+        // that name is discarded like any unknown source.
+        assertNull(GatewayResult(source = "magis", title = "Duna", ref = "r").toPlaySource())
     }
 
     @Test
@@ -40,10 +33,10 @@ class GatewayMapperTest {
 
     @Test
     fun `the known sources all map -- none falls through to null`() {
-        // Guards against the real bug: the composite source delivers these two and the mapper has
-        // to know both of them. "archive" is NOT in this list on purpose: it was deleted in the
+        // Guards against the real bug: the composite source delivers these and the mapper has to
+        // know all of them. "archive" is NOT in this list on purpose: it was deleted in the
         // light-magis pruning (see the test below).
-        for (source in listOf("magis", "ditu")) {
+        for (source in listOf("ditu", "plugin:xuper")) {
             val r = GatewayResult(source = source, title = "x", ref = "r")
             assertTrue("source '$source' doesn't map", r.toPlaySource() != null)
         }
@@ -68,11 +61,16 @@ class GatewayMapperTest {
     @Test
     fun `the ref survives the mapping`() {
         // Without this there's nothing to resolve against later: /v1/resolve only understands the
-        // ref. Magis maps the whole GatewayResult, so this is mostly a regression guard.
+        // ref. Both known types keep the whole GatewayResult, so this is mostly a regression guard.
         assertEquals(
             "r",
-            (GatewayResult(source = "magis", title = "x", ref = "r").toPlaySource()
-                as PlaySource.Magis).result.ref,
+            (GatewayResult(source = "ditu", title = "x", ref = "r").toPlaySource()
+                as PlaySource.Ditu).result.ref,
+        )
+        assertEquals(
+            "r",
+            (GatewayResult(source = "plugin:demo", title = "x", ref = "r").toPlaySource()
+                as PlaySource.Plugin).result.ref,
         )
     }
 

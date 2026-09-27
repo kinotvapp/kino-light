@@ -27,6 +27,7 @@ import com.arkiv.player.ui.plugin.FocusWhenReady
 import com.arkiv.player.ui.plugin.InstalledCardModel
 import com.arkiv.player.ui.plugin.PluginsViewModel
 import com.arkiv.player.ui.plugin.installedCardModel
+import com.arkiv.player.ui.plugin.pluginConsentHostLine
 import com.arkiv.player.ui.plugin.pluginStatusText
 import com.arkiv.player.ui.theme.ArkivSurface
 import com.arkiv.player.ui.theme.ArkivTextSecondary
@@ -78,7 +79,7 @@ internal fun TvInstalledActionsDialog(plugin: InstalledPlugin, art: CatalogArt?,
             Text("${model.nameLine} — ${pluginStatusText(plugin.status)}", style = MaterialTheme.typography.headlineSmall, color = Color.White)
             // The full host list, wrapping freely: the card's own line is capped and may cut it.
             Text(
-                "Se conectará a: ${plugin.hosts.labels.joinToString(", ")}",
+                pluginConsentHostLine(address = plugin.record.address, hostsLabel = plugin.hosts.labels.joinToString(", ")),
                 style = MaterialTheme.typography.bodyMedium,
                 color = ArkivTextSecondary,
             )

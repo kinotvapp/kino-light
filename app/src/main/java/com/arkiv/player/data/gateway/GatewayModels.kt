@@ -35,7 +35,7 @@ data class GatewaySearchQuery(
     val altTitles: List<String> = emptyList(),
 )
 
-/** A search result, built by the source (today `MagisSource`) against what the portal returns. */
+/** A search result, built by the source (`DituSource`, `PluginContentSource`) against what it returns. */
 data class GatewayResult(
     val source: String,
     val title: String,
@@ -177,7 +177,7 @@ sealed interface SearchEvent {
     data class SourceDone(val source: String, val count: Int, val ms: Long, val more: String? = null) : SearchEvent
     /**
      * [cause] is the exception, when the source has it on hand: `CaracolFailure` needs it to tell
-     * the person what happened. `DituSource` sends it; `MagisSource` and `CompositeSource` don't.
+     * the person what happened. `DituSource` and `PluginContentSource` send it; `CompositeSource` doesn't.
      */
     data class SourceError(
         val source: String,
