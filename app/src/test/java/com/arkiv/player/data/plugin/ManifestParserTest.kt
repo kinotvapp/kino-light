@@ -60,6 +60,28 @@ class ManifestParserTest {
         assertEquals("hosts", invalidField(base().apply { remove("hosts") }))
     }
 
+    private val serverSetting = JSONObject().put("key", "server").put("label", "Servidor").put("type", "url").put("required", true)
+
+    /** A plugin whose only reach is the server the person types needs no placeholder host (apiVersion 2). */
+    @Test fun `empty hosts are valid on apiVersion 2 with a url setting, and nowhere else`() {
+        val ok = ManifestParser.parse(
+            base().put("apiVersion", 2).put("hosts", JSONArray()).put("settings", JSONArray(listOf(serverSetting))).toString(),
+        ) as ManifestResult.Valid
+        assertEquals(emptyList<String>(), ok.manifest.hosts)
+
+        // apiVersion 1: refused exactly as always, with or without the setting.
+        val v1 = ManifestParser.parse(base().put("hosts", JSONArray()).put("settings", JSONArray(listOf(serverSetting))).toString()) as ManifestResult.Invalid
+        assertEquals("hosts", v1.field)
+        assertEquals("El campo \"hosts\" debe tener de 1 a 20 dominios", v1.message)
+
+        // apiVersion 2 with no url setting: it could reach nothing at all.
+        val text = JSONObject().put("key", "user").put("label", "Usuario").put("type", "text")
+        val none = ManifestParser.parse(base().put("apiVersion", 2).put("hosts", JSONArray()).put("settings", JSONArray(listOf(text))).toString()) as ManifestResult.Invalid
+        assertEquals("hosts", none.field)
+        assertEquals(ManifestParser.NO_HOSTS_NEEDS_URL_SETTING, none.message)
+        assertEquals("hosts", invalidField(base().put("apiVersion", 2).put("hosts", JSONArray())))
+    }
+
     @Test fun `capabilities rules`() {
         assertEquals("capabilities", invalidField(base().put("capabilities", JSONArray(listOf("search")))))
         assertEquals("capabilities", invalidField(base().put("capabilities", JSONArray(listOf("resolve", "episodes")))))

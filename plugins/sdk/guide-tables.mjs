@@ -30,7 +30,7 @@ export const TABLES = {
     ["Results", `\`search\` ${c.output.maxSearchItems} items; \`home\` ${c.output.maxHomeRows} rows of ${c.output.maxRowItems}; \`browse\` ${c.output.maxBrowseItems} per page; \`episodes\` ${n(c.output.maxEpisodes)} (and ${c.output.maxSeasons} \`seasons\`); \`ref\` ${n(c.output.maxRefChars)} characters; \`next\` ${n(c.output.maxCursorChars)} characters; \`id\` matches \`${c.output.itemIdPattern}\``],
     ["Settings", `at most ${c.settings.max}; \`text\` ${c.settings.types.text.maxChars}, \`url\` ${n(c.settings.types.url.maxChars)}, \`password\` ${c.settings.types.password.maxChars} characters`],
     ["Error messages", `your \`kino.error\` message is shown as a detail, cut at ${c.errors.maxMessageChars} characters`],
-    ["`hosts`", `${c.manifest.minHosts} to ${c.manifest.maxHosts} entries`],
+    ["`hosts`", `${c.manifest.minHosts} to ${c.manifest.maxHosts} entries; from apiVersion ${c.manifest.noHostsApiVersion}, none (\`[]\`) when a \`url\` setting exists`],
   ]),
   settings: () => table(["type", "value", "can be `required`", "can have a `default`", "longest value"], Object.entries(c.settings.types).map(([t, v]) => [
     `\`${t}\``,

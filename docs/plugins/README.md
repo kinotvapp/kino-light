@@ -151,7 +151,7 @@ names the field.
 | `version` | Required. `MAJOR.MINOR.PATCH` and nothing else (no `-beta`, no `+build`), each number up to 6 digits and without leading zeros. |
 | `apiVersion` | Required. `1` or `2`. A higher number than Kino supports is refused with "Este plugin necesita una versión más nueva de Kino". Declare `2` only if you use something that needs it (below); otherwise stay on `1` so your plugin also runs on older Kino builds. |
 | `entry` | Required. Relative path of the JavaScript file: letters, digits, `.`, `_`, `-` and `/` only, no `..`, at most 200 characters, ends in `.js`. The file is at most 1 MB. |
-| `hosts` | Required. 1 to 20 entries; each a lowercase DNS name (`archive.org`), `*.` plus a DNS name (`*.archive.org`), or (apiVersion 2 only) an object `{ "host": "…", "insecureHttp": true }` (below). Host names only: no scheme, port or path. No bare `*`, no IP addresses, no `localhost`, nothing ending in `.local`, `.lan`, `.internal`, `.localhost` or `.home.arpa`, and at least one dot. **`*.x` covers subdomains only, not `x` itself**: if you need both, list both. |
+| `hosts` | Required. 1 to 20 entries (from apiVersion 2 it may be empty, `[]`, when the plugin has a `url` setting: see [The person's own servers](#the-persons-own-servers)); each a lowercase DNS name (`archive.org`), `*.` plus a DNS name (`*.archive.org`), or (apiVersion 2 only) an object `{ "host": "…", "insecureHttp": true }` (below). Host names only: no scheme, port or path. No bare `*`, no IP addresses, no `localhost`, nothing ending in `.local`, `.lan`, `.internal`, `.localhost` or `.home.arpa`, and at least one dot. **`*.x` covers subdomains only, not `x` itself**: if you need both, list both. |
 | `capabilities` | Required. A subset of `search`, `home`, `browse`, `episodes`, `resolve`, `download`, `drm`. Must include `resolve` and at least one of `search` or `home`. `search`, `home`, `browse`, `episodes` and `resolve` must each be an exported function of the entry file, or the install fails with "El plugin no carga: le falta ...". `download` and `drm` need `apiVersion: 2` and are declarative flags instead — the app acts on them, not your code, so nothing extra to export; declaring one shows its consent line ("Puede descargar videos para verlos sin conexión" / "Reproduce video protegido (DRM)") and needs approval again on an update that adds it. `download` gives your titles offline downloads (see [Downloads](#downloads-apiversion-2)); `drm` lets a `Stream` carry a Widevine license (see [A Widevine-protected stream](#a-widevine-protected-stream-apiversion-2)). |
 | `settings` | Optional. What the person fills in on your plugin's "Configurar" screen: see below. |
 | `permissions` | Optional. A list of names from the closed list in `contract.json`. **The list is empty in this version**: any name is refused with "permiso desconocido: …". It exists so a later version can add permissions (each one shown on the consent screen) without a new `apiVersion`. |
@@ -215,6 +215,14 @@ certificate), host and port. Nothing else on that machine or network is allowed,
 may only go to the same server or to your declared `hosts`, and your stream and image URLs may point
 at it. The consent screen warns "Se conectará a los servidores que escribas en su configuración", and
 Ajustes lists what each plugin reaches ("Se conectará a: …").
+
+A plugin whose **only** reach is that server (it never calls a site of its own) declares
+`"hosts": []` from `"apiVersion": 2`, as long as it has at least one `url` setting: the consent
+screen then lists no host at all, only the line about the servers the person types, and Ajustes says
+"Se conectará solo a los servidores que escribas en su configuración" until one is typed. An empty
+`hosts` with no `url` setting is refused (`El campo "hosts" solo puede estar vacío si el plugin
+tiene un ajuste de tipo "url"`), and on `"apiVersion": 1` it is refused as always. (Kino never lists
+a host under the reserved `.invalid` domain either, the placeholder older manifests used.)
 
 Only the scheme, host and port count: any path on that server is reachable, and
 `kino.config.get` returns the value as typed. Kino refuses, with a message under the field, a value
@@ -797,7 +805,7 @@ does anything with season numbers or ordering: how a backend spells "season 2" i
 | Results | `search` 100 items; `home` 20 rows of 60; `browse` 100 per page; `episodes` 5,000 (and 50 `seasons`); `ref` 4,096 characters; `next` 2,048 characters; `id` matches `^[A-Za-z0-9._~-]{1,128}$` |
 | Settings | at most 12; `text` 500, `url` 2,048, `password` 500 characters |
 | Error messages | your `kino.error` message is shown as a detail, cut at 200 characters |
-| `hosts` | 1 to 20 entries |
+| `hosts` | 1 to 20 entries; from apiVersion 2, none (`[]`) when a `url` setting exists |
 <!-- contract:limits:end -->
 
 ### How your code lives
@@ -998,7 +1006,8 @@ Before you publish, check that:
 ## 9. What people see
 
 - **The consent sheet.** When someone types your address, Kino shows "Instalar <name>", your version
-  and author, the description, the list of hosts under "Se va a conectar con:", and the warning
+  and author, the description, the list of hosts under "Se va a conectar con:" (left out when
+  `hosts` is empty), and the warning
   "Plugin no verificado: solo instálalo si confías en quien lo hizo." with "Instalar" and "Cancelar".
   If your manifest has a `password` setting it adds "Este plugin usa tu usuario y contraseña"; a `url`
   setting adds "Se conectará a los servidores que escribas en su configuración". Declaring `download`

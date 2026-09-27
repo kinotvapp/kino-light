@@ -46,6 +46,13 @@ object ManifestParser {
     const val SUPPORTED_API = 2
     const val MAX_BYTES = 16 * 1024
     const val MIN_HOSTS = 1
+    /**
+     * From this apiVersion `hosts` may be empty when the manifest has a `url` setting: a plugin
+     * whose only reach is the server the person types needs no placeholder host. Its own constant,
+     * not [SUPPORTED_API], so a later round cannot move it by accident.
+     */
+    const val NO_HOSTS_API_VERSION = 2
+    const val NO_HOSTS_NEEDS_URL_SETTING = "El campo \"hosts\" solo puede estar vacío si el plugin tiene un ajuste de tipo \"url\""
     const val MAX_HOSTS = 20
     const val MAX_NAME_CHARS = 40
     const val MAX_DESCRIPTION_CHARS = 300
@@ -100,7 +107,10 @@ object ManifestParser {
         }
 
         val hostsJson = o.optJSONArray("hosts") ?: return invalid("hosts", "Falta el campo \"hosts\"")
-        if (hostsJson.length() < MIN_HOSTS || hostsJson.length() > MAX_HOSTS) {
+        // Empty is judged once the settings are read (below), and only from NO_HOSTS_API_VERSION:
+        // an older manifest gets the refusal it always got, at the point it always got it.
+        val emptyHostsAllowedLater = hostsJson.length() == 0 && api >= NO_HOSTS_API_VERSION
+        if (!emptyHostsAllowedLater && (hostsJson.length() < MIN_HOSTS || hostsJson.length() > MAX_HOSTS)) {
             return invalid("hosts", "El campo \"hosts\" debe tener de $MIN_HOSTS a $MAX_HOSTS dominios")
         }
         val hostEntries = ArrayList<HostEntry>(hostsJson.length())
@@ -160,6 +170,8 @@ object ManifestParser {
             is PluginSettings.Parsed.Error -> return invalid("settings", p.message)
             is PluginSettings.Parsed.Ok -> p.value
         }
+
+        if (hosts.isEmpty() && settings.none { it.type == SettingType.URL }) return invalid("hosts", NO_HOSTS_NEEDS_URL_SETTING)
 
         return ManifestResult.Valid(
             PluginManifest(

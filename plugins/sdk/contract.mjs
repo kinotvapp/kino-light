@@ -81,7 +81,10 @@ export function validateManifest(text, { knownPermissions = contract.permissions
   if (o.apiVersion < 1) return bad("apiVersion", 'El campo "apiVersion" debe ser 1 o mayor');
   if (!isSafeRelativePath(o.entry) || !o.entry.endsWith(".js")) return bad("entry", 'El campo "entry" debe ser una ruta relativa a un archivo .js');
   if (!Array.isArray(o.hosts)) return bad("hosts", 'Falta el campo "hosts"');
-  if (o.hosts.length < m.minHosts || o.hosts.length > m.maxHosts) return bad("hosts", `El campo "hosts" debe tener de 1 a ${m.maxHosts} dominios`);
+  // Empty is judged once the settings are read (below), and only from noHostsApiVersion: an older
+  // manifest gets the refusal it always got, at the point it always got it.
+  const emptyHostsAllowedLater = o.hosts.length === 0 && o.apiVersion >= m.noHostsApiVersion;
+  if (!emptyHostsAllowedLater && (o.hosts.length < m.minHosts || o.hosts.length > m.maxHosts)) return bad("hosts", `El campo "hosts" debe tener de 1 a ${m.maxHosts} dominios`);
   const hostEntries = [];
   for (const raw of o.hosts) {
     if (typeof raw === "string") { hostEntries.push({ host: raw, insecure: false }); continue; }
@@ -125,6 +128,9 @@ export function validateManifest(text, { knownPermissions = contract.permissions
   if (o.settings !== undefined && !Array.isArray(o.settings)) return bad("settings", 'El campo "settings" debe ser una lista');
   const settingsError = validateSettings(o.settings || []);
   if (settingsError) return bad("settings", settingsError);
+  if (hosts.length === 0 && !(o.settings || []).some((x) => x.type === "url")) {
+    return bad("hosts", 'El campo "hosts" solo puede estar vacío si el plugin tiene un ajuste de tipo "url"');
+  }
   return { ok: true, manifest: { ...o, hosts: [...new Set(hosts)], capabilities: caps, permissions: o.permissions || [], settings: o.settings || [], insecureHosts } };
 }
 

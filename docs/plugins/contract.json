@@ -18,6 +18,7 @@
     "homepageMaxChars": 200,
     "minHosts": 1,
     "maxHosts": 20,
+    "noHostsApiVersion": 2,
     "colorPattern": "^#[0-9A-Fa-f]{6}$",
     "entryMaxBytes": 1048576,
     "iconMaxBytes": 131072,

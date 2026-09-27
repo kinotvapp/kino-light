@@ -38,6 +38,7 @@ class PluginContractParityTest {
         assertEquals(ManifestParser.MAX_HOMEPAGE_CHARS, m.getInt("homepageMaxChars"))
         assertEquals(ManifestParser.MIN_HOSTS, m.getInt("minHosts"))
         assertEquals(ManifestParser.MAX_HOSTS, m.getInt("maxHosts"))
+        assertEquals(ManifestParser.NO_HOSTS_API_VERSION, m.getInt("noHostsApiVersion"))
         assertEquals(ManifestParser.COLOR.pattern, m.getString("colorPattern"))
         assertEquals(PluginInstaller.MAX_SCRIPT_BYTES, m.getInt("entryMaxBytes"))
         assertEquals(PluginInstaller.MAX_ICON_BYTES, m.getInt("iconMaxBytes"))
