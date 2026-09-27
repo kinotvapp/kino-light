@@ -69,9 +69,10 @@ fun PluginConsentDialog(preview: InstallPreview, onInstall: () -> Unit, onCancel
                 val protectedLine = pluginConsentProtectedLine(preview.address.canonical)
                 if (protectedLine != null) {
                     Text(protectedLine, style = MaterialTheme.typography.bodyMedium, color = Color.White)
-                } else {
+                } else pluginConsentHosts(m.hosts).takeIf { it.isNotEmpty() }?.let { hosts ->
+                    // None left (only the person's own server): the url-setting line below says it all.
                     Text("Se va a conectar con:", style = MaterialTheme.typography.titleSmall, color = Color.White)
-                    m.hosts.forEach { host ->
+                    hosts.forEach { host ->
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text(host, style = MaterialTheme.typography.bodyMedium, color = Color.White)
                             if (preview.isUpdate && host in preview.newHosts) MetaChip("nuevo", ArkivRed, strong = true)

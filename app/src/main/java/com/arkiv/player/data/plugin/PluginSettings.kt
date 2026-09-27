@@ -212,10 +212,20 @@ data class EffectiveHosts(
     val userHostNames: Set<String> get() = user.map { it.host }.filterNot { PluginHosts.isIpLiteral(it) }.toSet()
 
     /** "Se conectará a: …": declared hosts, then the configured servers. */
-    val labels: List<String> get() = declared + user.map { it.label }
+    val labels: List<String> get() = declared.filterNot(PluginHosts::isReservedInvalid) + user.map { it.label }
 }
 
 object PluginHosts {
+    /**
+     * A name under the reserved `.invalid` top-level domain (RFC 2606): it never resolves, so a
+     * manifest that declares one (a placeholder, as plugins needing no host of their own had to
+     * before apiVersion 2 allowed an empty list) reaches nothing there, and no screen lists it.
+     */
+    fun isReservedInvalid(host: String): Boolean {
+        val h = host.lowercase().trimEnd('.')
+        return h == "invalid" || h.endsWith(".invalid")
+    }
+
     /**
      * [declared] from the installed record (what the person approved), plus a [UserHost] for every
      * `url` setting that has a usable value in [config].

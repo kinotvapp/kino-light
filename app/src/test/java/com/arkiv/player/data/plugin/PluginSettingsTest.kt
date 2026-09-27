@@ -162,6 +162,15 @@ class PluginHostsTest {
     private val url2 = PluginSetting("mirror", "Espejo", SettingType.URL)
     private val text = PluginSetting("user", "Usuario", SettingType.TEXT)
 
+    /** `.invalid` is reserved (RFC 2606) and never resolves: a placeholder host is no destination to list. */
+    @Test fun `a reserved invalid host is never listed as a destination, nor is an empty declared list`() {
+        val hosts = PluginHosts.effective(listOf("tu-servidor.invalid", "api.example.com", "x.INVALID."), listOf(url), mapOf("server" to "http://192.168.1.10:8096"))
+        assertEquals(listOf("api.example.com", "http://192.168.1.10:8096"), hosts.labels)
+        assertEquals(emptyList<String>(), PluginHosts.effective(emptyList(), listOf(url), emptyMap()).labels)
+        assertTrue(PluginHosts.isReservedInvalid("tu-servidor.invalid"))
+        assertFalse(PluginHosts.isReservedInvalid("invalid.example.com"))
+    }
+
     @Test fun `a typed server becomes a user host with its exact scheme, host and port`() {
         val hosts = PluginHosts.effective(listOf("api.example.com"), listOf(url, text), mapOf("server" to "http://192.168.1.10:8096/web", "user" to "http://evil.example"))
         assertEquals(listOf("api.example.com"), hosts.declared)

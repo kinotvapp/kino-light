@@ -19,6 +19,17 @@ class PluginConsentTextTest {
 
     // The install sheet (PluginConsentDialog) keys on InstallPreview.address.canonical: whatever
     // form the person typed, it must agree with the installed row and with XuperPrivilege.grants.
+    /** A plugin whose only reach is the person's own server lists no host at all (never an empty header). */
+    @Test fun `a plugin with no declared host says it reaches only the servers the person types`() {
+        assertEquals("Se conectará solo a los servidores que escribas en su configuración", pluginConsentHostLine("kinotvapp/kino-plugin-own-server", ""))
+    }
+
+    @Test fun `the install sheet never lists a reserved invalid host`() {
+        assertEquals(listOf("api.example.com"), pluginConsentHosts(listOf("tu-servidor.invalid", "api.example.com")))
+        assertEquals(emptyList<String>(), pluginConsentHosts(listOf("tu-servidor.invalid")))
+        assertEquals(emptyList<String>(), pluginConsentHosts(emptyList()))
+    }
+
     @Test fun `the install sheet gets the protected line for every way of typing the Xuper repo`() {
         listOf(
             "kinotvapp/kino-plugin-xuper",
