@@ -79,7 +79,8 @@ internal fun titleSourceFor(graph: AppGraph, origin: TitleOrigin, item: CatalogI
 
 /**
  * Wires [PluginTitleSource] to the app's real plugin playback paths, with the download actions
- * when [pluginId]'s titles download ([pluginTitlesDownload]: the recognized Xuper install only).
+ * when [pluginId]'s titles download ([pluginTitlesDownload]: the recognized Xuper install, or a
+ * usable plugin that declared the `download` capability).
  */
 internal fun pluginTitleSource(graph: AppGraph, extras: PluginTitleExtras, pluginId: String): PluginTitleSource {
     val playback = SearchPlayback(graph)
@@ -87,20 +88,21 @@ internal fun pluginTitleSource(graph: AppGraph, extras: PluginTitleExtras, plugi
         extras = extras,
         onPlayMovie = { playback.playPlugin(it) },
         onPlaySeason = { season, chapters, chosen, series -> playback.playPluginSeason(season, chapters, chosen, series) },
-        downloads = xuperDownloadActions(graph, playback)
-            .takeIf { pluginTitlesDownload(pluginId, graph::isXuperPlugin, graph.downloadStrategies.keys) },
+        downloads = pluginDownloadActions(graph, playback)
+            .takeIf { pluginTitlesDownload(pluginId, graph::isXuperPlugin, graph.downloadStrategies.keys, graph::pluginDownloads) },
     )
 }
 
 /**
  * Wires [MagisDownloadActions] to the plugin save paths (the same ones playing uses, so the row a
- * download hangs off is the row playing writes) and the download queue, under the source a Xuper
- * plugin episode maps to (`DownloadSource.XUPER`).
+ * download hangs off is the row playing writes) and the download queue, under the source each plugin
+ * episode maps to (`DownloadSource.XUPER` for the Xuper install, `DownloadSource.PLUGIN_DOWNLOAD` for
+ * a plugin that declared `download`).
  */
-internal fun xuperDownloadActions(graph: AppGraph, playback: SearchPlayback) = MagisDownloadActions(
+internal fun pluginDownloadActions(graph: AppGraph, playback: SearchPlayback) = MagisDownloadActions(
     // `playPlugin` only saves the movie and answers its episode id; the caller decides what to do with it.
     episodeIdForMovie = { (playback.playPlugin(it) as? PlaybackResult.Ready)?.episodeId },
     episodeIdsForChapters = { season, chapters, chosen, series -> playback.pluginEpisodeIdsFor(season, chapters, chosen, series) },
-    sourceFor = { DownloadSource.sourceFor(it, graph::isXuperPlugin) },
+    sourceFor = { DownloadSource.sourceFor(it, graph::isXuperPlugin, graph::pluginDownloads) },
     enqueue = { episodeId, source -> graph.localDownloads.enqueue(episodeId, source) },
 )

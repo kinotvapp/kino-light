@@ -152,7 +152,7 @@ names the field.
 | `apiVersion` | Required. `1` or `2`. A higher number than Kino supports is refused with "Este plugin necesita una versión más nueva de Kino". Declare `2` only if you use something that needs it (below); otherwise stay on `1` so your plugin also runs on older Kino builds. |
 | `entry` | Required. Relative path of the JavaScript file: letters, digits, `.`, `_`, `-` and `/` only, no `..`, at most 200 characters, ends in `.js`. The file is at most 1 MB. |
 | `hosts` | Required. 1 to 20 entries; each a lowercase DNS name (`archive.org`), `*.` plus a DNS name (`*.archive.org`), or (apiVersion 2 only) an object `{ "host": "…", "insecureHttp": true }` (below). Host names only: no scheme, port or path. No bare `*`, no IP addresses, no `localhost`, nothing ending in `.local`, `.lan`, `.internal`, `.localhost` or `.home.arpa`, and at least one dot. **`*.x` covers subdomains only, not `x` itself**: if you need both, list both. |
-| `capabilities` | Required. A subset of `search`, `home`, `browse`, `episodes`, `resolve`, `download`, `drm`. Must include `resolve` and at least one of `search` or `home`. `search`, `home`, `browse`, `episodes` and `resolve` must each be an exported function of the entry file, or the install fails with "El plugin no carga: le falta ...". `download` and `drm` need `apiVersion: 2` and are declarative flags instead — the app would act on them, not your code, so nothing extra to export; declaring one shows its consent line ("Puede descargar videos para verlos sin conexión" / "Reproduce video protegido (DRM)") and needs approval again on an update that adds it, but neither the download button nor DRM playback exist yet in this version. |
+| `capabilities` | Required. A subset of `search`, `home`, `browse`, `episodes`, `resolve`, `download`, `drm`. Must include `resolve` and at least one of `search` or `home`. `search`, `home`, `browse`, `episodes` and `resolve` must each be an exported function of the entry file, or the install fails with "El plugin no carga: le falta ...". `download` and `drm` need `apiVersion: 2` and are declarative flags instead — the app acts on them, not your code, so nothing extra to export; declaring one shows its consent line ("Puede descargar videos para verlos sin conexión" / "Reproduce video protegido (DRM)") and needs approval again on an update that adds it. `download` gives your titles offline downloads (see [Downloads](#downloads-apiversion-2)); DRM playback does not exist yet in this version. |
 | `settings` | Optional. What the person fills in on your plugin's "Configurar" screen: see below. |
 | `permissions` | Optional. A list of names from the closed list in `contract.json`. **The list is empty in this version**: any name is refused with "permiso desconocido: …". It exists so a later version can add permissions (each one shown on the consent screen) without a new `apiVersion`. |
 | `color` | Optional `#RRGGBB`: the accent of your plugin's tab and chips. A neutral color by default. |
@@ -237,6 +237,38 @@ name, no `*`, no IP, nothing private/LAN) plus one more: **no `*.` wildcard** �
 named exactly. The consent screen shows it in red, "Conexión sin cifrar con cdn.example.org", and an
 update that newly marks a host this way waits for approval like a brand new host would. **Declared
 and reviewable today; `kino.fetch` itself still refuses plain `http` on every host in this version.**
+
+### Downloads (apiVersion 2)
+
+Declare `"download"` in `capabilities` (with `"apiVersion": 2`) and Kino offers your titles for
+offline viewing: "Descargar" on the info page and "Guardar en el dispositivo" in the library, on
+phones (Kino never downloads on a TV). Nothing extra to export. When the person saves a title, Kino
+calls your `resolve(ref)` when the download actually runs, exactly as playing would, and saves the
+`Stream` as **one file**, with your `headers` on the request, through the same host gate as the player
+(https on your `hosts` or the person's own server, every redirect hop checked, never the home
+network). Your `subtitles` are saved next to it. `audioTracks` are **not** saved: the offline copy has
+only the audio inside the video file, so a source that dubs through separate tracks is heard in its
+main audio when offline.
+
+What downloads, and what does not:
+
+- A progressive file (`mp4`, `mkv`, `webm`, `ts`, …) downloads. The saved file takes its extension
+  from your `mime` when you give one, else from the URL, else `mp4`; the player sniffs the bytes anyway.
+- An HLS or DASH manifest (`.m3u8`, `.mpd`, or a `mime` such as `application/vnd.apple.mpegurl` or
+  `application/dash+xml`) does **not**: the download fails with "Este video no se puede descargar".
+  A DRM-protected stream or a live channel is refused with the same sentence. There is no separate
+  "resolve for download" call: if your source offers both a manifest and a file, prefer the file, or
+  accept that those titles play but do not download.
+- The queue downloads one title at a time, so a `ref` may wait a while before `resolve` is called:
+  keep something stable in it and look the fresh link up inside `resolve` (as recommended above). A
+  retry resumes the partial file even when your URL changed.
+- A plugin that is disabled, waiting for its settings, or uninstalled downloads nothing: its titles
+  show no download button, and a title already queued fails with "Este plugin ya no puede descargar
+  videos". Files already downloaded keep playing offline and stay removable in Descargas, whatever
+  happens to the plugin afterwards.
+
+Declaring `download` shows "Puede descargar videos para verlos sin conexión" on the consent sheet,
+and an update that newly declares it waits for the person's approval ([section 8](#8-publishing-your-plugin)).
 
 ## 4. The contract (apiVersion 1 and 2)
 
@@ -380,7 +412,8 @@ It does **not** add a poster, a backdrop or seasons from TMDB -- those stay exac
   person's own network is refused. A request that breaks this fails before it leaves the device and
   playback stops with an error, so a manifest that points at another CDN needs that CDN in `hosts`.
 - `headers` are sent with every one of those player requests (the stream, its manifest's segments and
-  keys, its subtitles, and redirect hops, all on your `hosts`), and nowhere else. At most 20; names are letters, digits and
+  keys, its subtitles, and redirect hops, all on your `hosts`) and, if you declare `download`, with
+  the request that saves the stream to the device — and nowhere else. At most 20; names are letters, digits and
   hyphens; values are at most 4096 characters with no line breaks; `Host`, `Content-Length`,
   `Transfer-Encoding` and `Connection` are ignored.
 - `subtitles`: at most 30, each `{ lang, url, format? }`. `lang` is a short language code such as
@@ -908,8 +941,9 @@ Before you publish, check that:
   person scrolls.
 - **Search, Home and the library.** Your results appear in search under your plugin's name (with your
   `color`), next to the app's own sources; your `home` rows appear on Home after the app's own; your
-  titles play in Kino's player and appear in "Continuar viendo" and the library. Not available for
-  plugin titles in this version: downloads, Chromecast and DLNA.
+  titles play in Kino's player and appear in "Continuar viendo" and the library. Titles of a plugin
+  that declares `download` can be saved for offline viewing ([section 3](#downloads-apiversion-2));
+  Chromecast and DLNA are not available for plugin titles in this version.
 - **Status of each plugin** in Ajustes > Plugins: "Activo", "Desactivado", "Falta configurar", "No
   responde — actívalo para volver a intentar" (three timeouts in a row; the person can re-enable it),
   "Actualización
@@ -920,6 +954,7 @@ Before you publish, check that:
   files, its storage and its cached Home rows immediately, but keeps the person's library titles and
   progress: opening one says "Esto venía del plugin <name>, que ya no está instalado", and installing
   the plugin again restores them. That is one more reason to keep `id` and `ref` handling stable.
+  Titles already downloaded keep playing offline and can be removed from Descargas.
 
 ## 10. The reference plugin
 

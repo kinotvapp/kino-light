@@ -129,6 +129,17 @@ class PluginRegistry(
     fun isXuper(id: String): Boolean = find(id)?.let { XuperPrivilege.grants(it.record) } == true
 
     /**
+     * Whether the installed plugin [id]'s titles get offline downloads: it declared the `download`
+     * capability (apiVersion 2; the manifest on disk is the one the person approved, an update that
+     * adds it waits for approval), it is usable, and it is not waiting for its settings (it could not
+     * resolve anything, the same rule Home rows apply). Decides the button on the info page and in
+     * the library, and is re-checked when the download runs (`PluginDownloadStrategy`). Independent
+     * of [isXuper]: `DownloadSource` asks that first, so the Xuper install keeps its own path.
+     */
+    fun offersDownloads(id: String): Boolean =
+        find(id)?.let { it.isUsable && !it.needsSetup && DOWNLOAD_CAPABILITY in it.manifest.capabilities } == true
+
+    /**
      * True when [id] carries the store's removal tombstone (see [PluginStore.removedName]):
      * [uninstall] writes it, and only committing a fresh install for the same id clears it. A
      * caller that would otherwise install over a plugin with no live record must check this
@@ -169,5 +180,10 @@ class PluginRegistry(
     private fun update(id: String, change: (InstalledRecord) -> InstalledRecord) {
         store.updateRecord(id, change)
         reload()
+    }
+
+    private companion object {
+        /** The declarative capability of `contract.json` that turns downloads on (apiVersion 2). */
+        const val DOWNLOAD_CAPABILITY = "download"
     }
 }

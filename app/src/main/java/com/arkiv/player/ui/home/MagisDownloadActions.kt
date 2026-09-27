@@ -7,10 +7,11 @@ import com.arkiv.player.data.local.EnqueueOutcome
 
 /**
  * The non-Compose core of "download a title" from the info page (`TitleSource.downloads`), kept
- * from the native Magis page and now serving the Xuper plugin's titles: a movie is saved and
- * enqueued; a season's chosen chapters are saved in ONE batch (the whole list the page loaded, as
- * playing saves it) and enqueued one by one, each a separate file, under the source their id maps
- * to ([sourceFor]: `DownloadSource.XUPER` for the recognized Xuper install). The queue already
+ * from the native Magis page and now serving plugin titles (the Xuper install's, and those of any
+ * plugin that declared `download`): a movie is saved and enqueued; a season's chosen chapters are
+ * saved in ONE batch (the whole list the page loaded, as playing saves it) and enqueued one by one,
+ * each a separate file, under the source their id maps to ([sourceFor]: `DownloadSource.XUPER` for
+ * the recognized Xuper install, `DownloadSource.PLUGIN_DOWNLOAD` for the others). The queue already
  * knows how to group them by series.
  *
  * What stays with the caller, because it is Compose-only: the notification-permission request, the

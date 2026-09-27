@@ -31,8 +31,9 @@ data class PluginTitleExtras(
  * list, each with its season (the Internet Archive one), or keeps each season as its own title and
  * names the others as siblings (Xuper); the page reads which from the listing. The library ids are
  * the `PluginEntities` ones, so progress and "Continuar viendo" read the same rows playback writes.
- * Plugin titles have no downloads (a v1 non-goal of the plugin system) except the recognized
- * Xuper install's, which get the download actions the native Magis page had ([pluginTitlesDownload]).
+ * A plugin's titles download only when [pluginTitlesDownload] says so (the recognized Xuper install,
+ * or a plugin that declared the `download` capability); the page then gets the download actions the
+ * native Magis page had. Every other plugin's titles stay without a download button.
  */
 class PluginTitleSource(
     private val extras: PluginTitleExtras,
@@ -110,11 +111,21 @@ class PluginTitleSource(
 }
 
 /**
- * Whether the info page offers downloads for [pluginId]'s titles: only the recognized Xuper
- * install's ([isXuperPlugin]: `XuperPrivilege.grants` on the installed record, never the manifest
- * id), and only while the app has a strategy for [DownloadSource.XUPER] ([strategies]: the keys of
- * `AppGraph.downloadStrategies`), the same rule the library detail applies. Every other plugin's
- * titles stay without downloads.
+ * Whether the info page offers downloads for [pluginId]'s titles, the same rule the library detail
+ * applies (`DownloadSource.canDownload`): the recognized Xuper install ([isXuperPlugin]:
+ * `XuperPrivilege.grants` on the installed record, never the manifest id) while the app has a
+ * strategy for [DownloadSource.XUPER]; otherwise a usable plugin that declared the `download`
+ * capability ([pluginDownloads]: `AppGraph.pluginDownloads`) while the app has a strategy for
+ * [DownloadSource.PLUGIN_DOWNLOAD]. [strategies] are the keys of `AppGraph.downloadStrategies`.
+ * Every other plugin's titles stay without downloads. [pluginDownloads] fails closed by default.
  */
-fun pluginTitlesDownload(pluginId: String, isXuperPlugin: (pluginId: String) -> Boolean, strategies: Set<String>): Boolean =
-    pluginId.isNotBlank() && isXuperPlugin(pluginId) && DownloadSource.hasStrategy(DownloadSource.XUPER, strategies)
+fun pluginTitlesDownload(
+    pluginId: String,
+    isXuperPlugin: (pluginId: String) -> Boolean,
+    strategies: Set<String>,
+    pluginDownloads: (pluginId: String) -> Boolean = { false },
+): Boolean = pluginId.isNotBlank() && when {
+    isXuperPlugin(pluginId) -> DownloadSource.hasStrategy(DownloadSource.XUPER, strategies)
+    pluginDownloads(pluginId) -> DownloadSource.hasStrategy(DownloadSource.PLUGIN_DOWNLOAD, strategies)
+    else -> false
+}

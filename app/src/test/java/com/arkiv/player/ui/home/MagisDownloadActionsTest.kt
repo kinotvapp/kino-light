@@ -21,7 +21,7 @@ class MagisDownloadActionsTest {
         movieId: String? = "plugin:xuper:c1::0",
         chapterIds: Map<Int, String?> = emptyMap(),
         outcome: EnqueueOutcome = EnqueueOutcome.QUEUED,
-        sourceFor: (String) -> String = { DownloadSource.sourceFor(it) { true } },
+        sourceFor: (String) -> String = { DownloadSource.sourceFor(it, isXuperPlugin = { true }) },
     ) = MagisDownloadActions(
         episodeIdForMovie = { movieId },
         episodeIdsForChapters = { _, chapters, chosen, _ ->

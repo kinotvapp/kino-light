@@ -34,8 +34,51 @@ class DownloadSourceTest {
     /** No installed plugin is the recognized Xuper install. */
     private val noXuper: (String) -> Boolean = { false }
 
-    /** What `AppGraph.downloadStrategies` has today, minus the Xuper plugin's key: Magis only. */
+    /** What `AppGraph.downloadStrategies` has today, minus the plugin keys: Magis only. */
     private val strategies = setOf("magis")
+
+    // ---- plugins that declare the `download` capability (apiVersion 2) ----
+
+    private val demoEpisode = "plugin:demo:m1::0"
+
+    /** The installed `demo` plugin is usable and declares `download`; no other plugin does. */
+    private val demoDownloads: (String) -> Boolean = { it == "demo" }
+
+    @Test fun `a plugin that offers downloads routes to the generic plugin strategy`() {
+        assertEquals(DownloadSource.PLUGIN_DOWNLOAD, DownloadSource.sourceFor(demoEpisode, noXuper, demoDownloads))
+        assertTrue(DownloadSource.canDownload(demoEpisode, strategies + DownloadSource.PLUGIN_DOWNLOAD, noXuper, demoDownloads))
+        // A build without the generic strategy shows no button, so nothing lands FAILED as "Fuente no soportada".
+        assertFalse(DownloadSource.canDownload(demoEpisode, strategies + DownloadSource.XUPER, noXuper, demoDownloads))
+    }
+
+    @Test fun `a plugin without the download capability stays on plugin, which has no strategy`() {
+        assertEquals("plugin", DownloadSource.sourceFor("plugin:other:m1::0", noXuper, demoDownloads))
+        assertFalse(DownloadSource.canDownload("plugin:other:m1::0", strategies + DownloadSource.PLUGIN_DOWNLOAD, noXuper, demoDownloads))
+    }
+
+    @Test fun `without the download predicate every plugin fails closed`() {
+        assertEquals("plugin", DownloadSource.sourceFor(demoEpisode, noXuper))
+        assertEquals("plugin:demo", DownloadSource.sourceForItem("plugin:demo", noXuper))
+    }
+
+    @Test fun `the recognized Xuper install keeps its own key even when it declares download`() {
+        val xuperEpisode = "plugin:xuper:26A13B36463F46D48002E304FB909D1C::0"
+        assertEquals(DownloadSource.XUPER, DownloadSource.sourceFor(xuperEpisode, { it == "xuper" }, { true }))
+        assertEquals(DownloadSource.XUPER, DownloadSource.sourceForItem("plugin:xuper", { it == "xuper" }, { true }))
+    }
+
+    @Test fun `library rows of a downloading plugin map by the same rule`() {
+        assertEquals(DownloadSource.PLUGIN_DOWNLOAD, DownloadSource.sourceForItem("plugin:demo", noXuper, demoDownloads))
+        assertEquals("plugin:other", DownloadSource.sourceForItem("plugin:other", noXuper, demoDownloads))
+        assertEquals("magis", DownloadSource.sourceForItem("magis", noXuper, demoDownloads))
+    }
+
+    @Test fun `non-plugin sources ignore both plugin predicates`() {
+        val always: (String) -> Boolean = { true }
+        assertEquals("magis", DownloadSource.sourceFor("magis:2AD2591D4242471D96B68FF04FFD2784::e6", always, always))
+        assertEquals("ditu", DownloadSource.sourceFor("ditu:12345::e1", always, always))
+        assertEquals("archive", DownloadSource.sourceFor("dragon-ball-gt_s01e01", always, always))
+    }
 
     @Test
     fun `magis is offered for download`() {

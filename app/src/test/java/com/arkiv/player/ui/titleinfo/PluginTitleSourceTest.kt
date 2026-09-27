@@ -108,7 +108,7 @@ class PluginTitleSourceTest {
         assertEquals("2021", s.initialYear)
     }
 
-    // ---- downloads (the recognized Xuper install only) ----
+    // ---- downloads (the recognized Xuper install, and plugins that declare `download`) ----
 
     @Test
     fun `the download actions it is given are the page's`() {
@@ -134,6 +134,21 @@ class PluginTitleSourceTest {
         assertFalse(pluginTitlesDownload("xuper", isXuperPlugin = { true }, strategies = setOf("magis", "ditu")))
         // A route whose ref could not be decoded names no plugin.
         assertFalse(pluginTitlesDownload("", isXuperPlugin = { true }, strategies = strategies))
+    }
+
+    @Test
+    fun `a plugin that declares download gets the page's button, only with the generic strategy registered`() {
+        val strategies = setOf("magis", DownloadSource.XUPER, DownloadSource.PLUGIN_DOWNLOAD)
+        val demoDownloads: (String) -> Boolean = { it == "demo" }
+        assertTrue(pluginTitlesDownload("demo", isXuperPlugin = { false }, strategies = strategies, pluginDownloads = demoDownloads))
+        // A plugin without the capability (or disabled): no button, as before.
+        assertFalse(pluginTitlesDownload("other", isXuperPlugin = { false }, strategies = strategies, pluginDownloads = demoDownloads))
+        // No generic strategy (a build without it): no button.
+        assertFalse(pluginTitlesDownload("demo", isXuperPlugin = { false }, strategies = setOf("magis", DownloadSource.XUPER), pluginDownloads = demoDownloads))
+        // Xuper keeps its own key: its page needs the XUPER strategy, never the generic one.
+        assertFalse(pluginTitlesDownload("xuper", isXuperPlugin = { it == "xuper" }, strategies = setOf("magis", DownloadSource.PLUGIN_DOWNLOAD), pluginDownloads = { true }))
+        assertTrue(pluginTitlesDownload("xuper", isXuperPlugin = { it == "xuper" }, strategies = strategies, pluginDownloads = { true }))
+        assertFalse(pluginTitlesDownload("", isXuperPlugin = { false }, strategies = strategies, pluginDownloads = { true }))
     }
 
     // ---- sibling seasons ----

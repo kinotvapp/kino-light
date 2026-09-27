@@ -170,7 +170,7 @@ fun DetailScreen(
         askNotifications()
         scope.launch {
             // A single notice for the whole batch, not one per chapter.
-            notifyDuplicates(episodes.map { graph.localDownloads.enqueue(it.id, DownloadSource.sourceFor(it.id, graph::isXuperPlugin)) })
+            notifyDuplicates(episodes.map { graph.localDownloads.enqueue(it.id, DownloadSource.sourceFor(it.id, graph::isXuperPlugin, graph::pluginDownloads)) })
         }
     }
 
@@ -200,12 +200,13 @@ fun DetailScreen(
     val snackbarHost = remember { SnackbarHostState() }
 
     // Only chapters that CAN be downloaded are offered for saving to the device: the ones with a
-    // strategy in `AppGraph.downloadStrategies` (today, only Magis). A Caracol (Widevine) chapter
-    // or an old archive.org row used to end up FAILED with "Fuente no soportada" AFTER this screen
-    // said "Guardando": an option that's going to fail isn't shown. See `DownloadSource.canDownload`.
+    // strategy in `AppGraph.downloadStrategies`. A Caracol (Widevine) chapter or an old archive.org
+    // row used to end up FAILED with "Fuente no soportada" AFTER this screen said "Guardando": an
+    // option that's going to fail isn't shown. See `DownloadSource.canDownload`.
     val strategies = remember { graph.downloadStrategies.keys }
-    // The recognized Xuper plugin's chapters are downloadable too (`DownloadSource.XUPER`); no other plugin's.
-    val canDownload: (Episode) -> Boolean = { ep -> DownloadSource.canDownload(ep.id, strategies, graph::isXuperPlugin) }
+    // Plugin chapters download when their plugin does: the recognized Xuper install
+    // (`DownloadSource.XUPER`) or a plugin that declared `download` (`DownloadSource.PLUGIN_DOWNLOAD`).
+    val canDownload: (Episode) -> Boolean = { ep -> DownloadSource.canDownload(ep.id, strategies, graph::isXuperPlugin, graph::pluginDownloads) }
     val savableEpisodes = detail?.episodes.orEmpty().filter(canDownload)
 
     // This screen's button saves TO THE DEVICE (local worker), not to any server of our own: the

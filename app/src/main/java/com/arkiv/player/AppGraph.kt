@@ -394,10 +394,17 @@ class AppGraph(context: Context) {
 
     /**
      * Whether the INSTALLED plugin with manifest id [pluginId] is the recognized Xuper install
-     * ([XuperPrivilege.grants] on its record, never the id itself). The only plugin whose titles
-     * get a download strategy: see `DownloadSource.sourceFor`.
+     * ([XuperPrivilege.grants] on its record, never the id itself). Its titles download through
+     * their own privileged strategy (`DownloadSource.XUPER`): see `DownloadSource.sourceFor`.
      */
     fun isXuperPlugin(pluginId: String): Boolean = pluginRegistry.isXuper(pluginId)
+
+    /**
+     * Whether the INSTALLED plugin [pluginId] declared the `download` capability (apiVersion 2) and
+     * is usable right now (`PluginRegistry.offersDownloads`): its titles get the download button and
+     * the generic plugin strategy (`DownloadSource.PLUGIN_DOWNLOAD`). Asked after [isXuperPlugin].
+     */
+    fun pluginDownloads(pluginId: String): Boolean = pluginRegistry.offersDownloads(pluginId)
 
     // --- Plugins (docs/superpowers/specs/2026-09-24-plugin-sources-design.md) ---
 
@@ -883,23 +890,40 @@ class AppGraph(context: Context) {
     }
 
     // --- Downloads to the device itself (see docs/superpowers/specs/2026-08-07-...) ---
+
+    /** The client every file download goes through; a plugin's download derives its gated client from it. */
+    private val downloadHttp: okhttp3.OkHttpClient by lazy {
+        okhttp3.OkHttpClient.Builder()
+            .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            // HEADS UP: OkHttp's `readTimeout` is per socket read, not per whole request — it
+            // only fires if this long passes without a SINGLE byte arriving. That's why a
+            // multi-GB download that's crawling never gets cut off: every chunk that arrives
+            // resets the clock. It used to be 0 (disabled), on the thinking that it protected
+            // long downloads, but that also disables protection against a server that stops
+            // sending data without closing the socket — the read hangs forever. Since the queue
+            // processes one at a time, THAT hang doesn't jam a single download: it jams ALL of
+            // them (the worker never returns, never re-queues). 60s works as a stall watchdog,
+            // same idea as the stall cutoff `TorrentDownloadStrategy` used to have
+            // (POLL_MS/STALL_TIMEOUT_MS) before it was removed in this branch's pruning,
+            // without risking a legitimate download that's still coming in.
+            .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+    }
+
     val httpRangeDownloader: com.arkiv.player.data.local.HttpRangeDownloader by lazy {
-        com.arkiv.player.data.local.HttpRangeDownloader(
-            okhttp3.OkHttpClient.Builder()
-                .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
-                // HEADS UP: OkHttp's `readTimeout` is per socket read, not per whole request — it
-                // only fires if this long passes without a SINGLE byte arriving. That's why a
-                // multi-GB download that's crawling never gets cut off: every chunk that arrives
-                // resets the clock. It used to be 0 (disabled), on the thinking that it protected
-                // long downloads, but that also disables protection against a server that stops
-                // sending data without closing the socket — the read hangs forever. Since the queue
-                // processes one at a time, THAT hang doesn't jam a single download: it jams ALL of
-                // them (the worker never returns, never re-queues). 60s works as a stall watchdog,
-                // same idea as the stall cutoff `TorrentDownloadStrategy` used to have
-                // (POLL_MS/STALL_TIMEOUT_MS) before it was removed in this branch's pruning,
-                // without risking a legitimate download that's still coming in.
-                .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
-                .build()
+        com.arkiv.player.data.local.HttpRangeDownloader(downloadHttp)
+    }
+
+    /**
+     * The downloader a third-party plugin's file comes through: [downloadHttp] behind the same host
+     * gate the player applies to that plugin's stream (`PluginStreamHttp`: https on its approved
+     * hosts or typed servers, every redirect hop checked, never the home network). A plugin that
+     * vanished between the queue and the download gets an empty host list, which refuses everything.
+     */
+    private fun pluginDownloaderFor(pluginId: String): com.arkiv.player.data.local.HttpRangeDownloader {
+        val hosts = pluginRegistry.find(pluginId)?.hosts ?: com.arkiv.player.data.plugin.EffectiveHosts(emptyList())
+        return com.arkiv.player.data.local.HttpRangeDownloader(
+            com.arkiv.player.data.plugin.PluginStreamHttp.client(downloadHttp, hosts),
         )
     }
 
@@ -914,6 +938,7 @@ class AppGraph(context: Context) {
             // Downloads are never allowed on a TV (see `DownloadAvailability`).
             isTelevision = { com.arkiv.player.DeviceType.isTelevision(appContext) },
             isXuperPlugin = ::isXuperPlugin,
+            pluginDownloads = ::pluginDownloads,
         )
     }
 
@@ -1031,9 +1056,22 @@ class AppGraph(context: Context) {
             "magis" to xuper,
             // The recognized Xuper plugin's chapters, and no other plugin's: `DownloadSource.sourceFor`
             // only maps a plugin episode here when `isXuperPlugin`, and the wrapper checks it again
-            // when the download runs. Every other plugin stays on "plugin", which has no entry.
+            // when the download runs. Its path predates third-party downloads and stays as it was.
             com.arkiv.player.data.local.DownloadSource.XUPER to
                 com.arkiv.player.data.local.XuperPluginDownloadStrategy(xuper, ::isXuperPlugin),
+            // Any other plugin that declared the `download` capability (apiVersion 2), while it is
+            // usable: `DownloadSource.sourceFor` maps its episodes here when `pluginDownloads`, and
+            // the strategy re-checks that when the download runs. It resolves the saved ref through
+            // the plugin's own `resolve()` (via `contentSource`) and saves the Stream as one file
+            // with the Stream's headers, through the plugin's host-gated client. A plugin without
+            // the capability stays on "plugin", which has no entry: no button, as before.
+            com.arkiv.player.data.local.DownloadSource.PLUGIN_DOWNLOAD to
+                com.arkiv.player.data.local.PluginDownloadStrategy(
+                    refForEpisode = repository::magisRefForEpisode,
+                    source = contentSource,
+                    downloaderFor = ::pluginDownloaderFor,
+                    offersDownloads = ::pluginDownloads,
+                ),
             // Caracol. With this key present, `DownloadSource.canDownload` starts saying yes for
             // its episodes and the UI shows the button on its own -- that's exactly the contract
             // this documents: a source with no strategy stays hidden, one with a strategy shows up.

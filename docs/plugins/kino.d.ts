@@ -116,6 +116,10 @@ interface KinoStream {
   /** https on a declared host, or the person's own server exactly as typed. */
   url: string;
   mime?: string;
+  /**
+   * Sent with every request the player makes for this stream (and, for a plugin that declares the
+   * `download` capability, with the request that saves it to the device). At most 20.
+   */
   headers?: Record<string, string>;
   subtitles?: { lang: string; url: string; format?: "vtt" | "srt" }[];
   /**

@@ -192,7 +192,7 @@ fun LibraryScreen(
         }
     }
 
-    // Which sources something can be downloaded with (today, only Magis). See `DownloadSource.hasStrategy`.
+    // Which sources something can be downloaded with. See `DownloadSource.hasStrategy`.
     val strategies = remember { graph.downloadStrategies.keys }
     menuRow?.let { row ->
         ModalBottomSheet(onDismissRequest = { menuRow = null }) {
@@ -213,9 +213,10 @@ fun LibraryScreen(
                 // Only if there's something to download it with: with no strategy for its source
                 // (Caracol, or an old archive.org row) the download used to end up FAILED with
                 // "Fuente no soportada" after accepting it. An option that's going to fail isn't shown.
-                // A plugin row of the recognized Xuper install downloads as `DownloadSource.XUPER`; any other
-                // plugin row keeps its `plugin:<id>` source, which has no strategy.
-                val downloadSource = com.arkiv.player.data.local.DownloadSource.sourceForItem(row.source, graph::isXuperPlugin)
+                // A plugin row of the recognized Xuper install downloads as `DownloadSource.XUPER`; one of a
+                // plugin that declared `download` as `DownloadSource.PLUGIN_DOWNLOAD`; any other plugin row
+                // keeps its `plugin:<id>` source, which has no strategy.
+                val downloadSource = com.arkiv.player.data.local.DownloadSource.sourceForItem(row.source, graph::isXuperPlugin, graph::pluginDownloads)
                 if (com.arkiv.player.data.local.DownloadSource.hasStrategy(downloadSource, strategies)) SheetAction("Guardar en el dispositivo") {
                     scope.launch {
                         // A movie is a single-episode item; a series is saved from its detail
