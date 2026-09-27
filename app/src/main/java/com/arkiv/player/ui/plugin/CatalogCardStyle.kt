@@ -2,6 +2,7 @@ package com.arkiv.player.ui.plugin
 
 import com.arkiv.player.data.plugin.PluginColors
 import com.arkiv.player.data.plugin.catalog.CatalogArt
+import java.io.File
 import kotlin.math.pow
 
 /*
@@ -118,3 +119,20 @@ private const val MAX_CARD_TAGS = 2
  */
 internal fun cardTags(tags: List<String>): List<String> =
     tags.map { it.trim() }.filter { it.isNotEmpty() }.take(MAX_CARD_TAGS)
+
+/**
+ * The icon an installed plugin's row draws: its own, from its installed files ([ownIcon], when that file is
+ * still there), else the one its catalog repo ships ([art]), else none. A file that is not there (a stale
+ * path, a folder) is no icon, so the row never hands Coil something it cannot open when the art could do.
+ */
+internal fun installedIconFile(ownIcon: File?, art: CatalogArt?): File? =
+    ownIcon?.takeIf { it.isFile } ?: art?.iconFile
+
+/**
+ * The art for the installed plugin at [address] out of [art], which is keyed by each catalog entry's `repo`
+ * exactly as the catalog spells it. An installed plugin's address is the canonical `owner/repo`, so the keys
+ * are compared with [sameAddress], the same comparison that marks a catalog row as installed: the art is
+ * found however the catalog wrote the repo.
+ */
+internal fun artForInstalled(art: Map<String, CatalogArt>, address: String): CatalogArt? =
+    art.entries.firstOrNull { sameAddress(it.key, address) }?.value

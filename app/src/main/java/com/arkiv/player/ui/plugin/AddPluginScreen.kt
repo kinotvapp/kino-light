@@ -230,7 +230,10 @@ fun AddPluginScreen(mode: AddPluginMode, onClose: () -> Unit) {
                         }
                     }
                     items(plugins, key = { "installed-${it.id}" }, span = { GridItemSpan(maxLineSpan) }) { p ->
-                        InstalledPluginRow(p, busy = state.busy, message = state.message.takeIf { rowMessageId == p.id }, vm = vm)
+                        InstalledPluginRow(
+                            p, busy = state.busy, message = state.message.takeIf { rowMessageId == p.id }, vm = vm,
+                            art = artForInstalled(art, p.record.address),
+                        )
                     }
                 }
             }

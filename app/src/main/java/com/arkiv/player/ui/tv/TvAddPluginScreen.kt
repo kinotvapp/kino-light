@@ -65,6 +65,7 @@ import com.arkiv.player.ui.plugin.PluginConsentDialog
 import com.arkiv.player.ui.plugin.PluginConfigDialog
 import com.arkiv.player.ui.plugin.PluginUninstallDialog
 import com.arkiv.player.ui.plugin.PluginsViewModel
+import com.arkiv.player.ui.plugin.artForInstalled
 import com.arkiv.player.ui.plugin.catalogActionOf
 import com.arkiv.player.ui.plugin.catalogRefreshLine
 import com.arkiv.player.ui.plugin.handleAddPluginBack
@@ -263,7 +264,7 @@ fun TvAddPluginScreen(mode: AddPluginMode, onClose: () -> Unit) {
                 items(plugins, key = { "installed-${it.id}" }, span = { GridItemSpan(maxLineSpan) }) { p ->
                     // One item per plugin: a lazy item stacks several roots on top of each other.
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.noFocusToTheRight()) {
-                        TvInstalledPluginRows(p, message = state.message.takeIf { rowMessageId == p.id }, vm = vm)
+                        TvInstalledPluginRows(p, message = state.message.takeIf { rowMessageId == p.id }, vm = vm, art = artForInstalled(art, p.record.address))
                     }
                 }
             }

@@ -34,6 +34,8 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import coil.compose.AsyncImage
 import com.arkiv.player.data.plugin.InstalledPlugin
 import com.arkiv.player.data.plugin.PluginStatus
+import com.arkiv.player.data.plugin.catalog.CatalogArt
+import com.arkiv.player.data.plugin.catalog.CatalogArtProvider
 import com.arkiv.player.ui.rememberGraph
 import com.arkiv.player.ui.theme.ArkivRed
 import com.arkiv.player.ui.theme.ArkivTextSecondary
@@ -66,7 +68,10 @@ fun PluginsTab(onOpenAddPlugin: () -> Unit = {}) {
             Text("Todavía no tienes plugins.", style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary)
         }
         plugins.forEach { p ->
-            InstalledPluginRow(p, busy = state.busy, message = state.message.takeIf { rowMessageId == p.id }, vm = vm)
+            InstalledPluginRow(
+                p, busy = state.busy, message = state.message.takeIf { rowMessageId == p.id }, vm = vm,
+                art = rememberFallbackArt(p, graph.catalogArt),
+            )
         }
         Spacer(Modifier.padding(bottom = 24.dp))
     }
@@ -77,16 +82,27 @@ fun PluginsTab(onOpenAddPlugin: () -> Unit = {}) {
 }
 
 /**
+ * The catalog art an installed plugin's row falls back to when the plugin has no icon of its own: what is
+ * already on disk for its address (synchronous and small, never the network), read once per address and only
+ * for a plugin that needs it. Null otherwise. For the screens whose view model has no catalog rows to take
+ * the art from; the "Agregar plugin" windows have it in [PluginsViewModel.art].
+ */
+@Composable
+internal fun rememberFallbackArt(p: InstalledPlugin, provider: CatalogArtProvider): CatalogArt? =
+    remember(p.record.address, p.iconFile) { if (p.iconFile == null) provider.cached(p.record.address) else null }
+
+/**
  * One installed plugin: name and version, status, the hosts it may reach, the on/off switch and its
  * actions. Shared by Ajustes ▸ Plugins and the "Agregar plugin" window, which drive it with the same
- * [PluginsViewModel] state; [message] is the line for THIS row (see [rowMessagePluginId]).
+ * [PluginsViewModel] state; [message] is the line for THIS row (see [rowMessagePluginId]). It draws the
+ * plugin's own icon, or [art]'s when the plugin has none ([installedIconFile]).
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun InstalledPluginRow(p: InstalledPlugin, busy: Boolean, message: String?, vm: PluginsViewModel) {
+internal fun InstalledPluginRow(p: InstalledPlugin, busy: Boolean, message: String?, vm: PluginsViewModel, art: CatalogArt? = null) {
     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            p.iconFile?.let { InstalledPluginIcon(it, size = 40.dp) }
+            installedIconFile(p.iconFile, art)?.let { InstalledPluginIcon(it, size = 40.dp) }
             Column(Modifier.weight(1f)) {
                 Text("${p.manifest.name} · ${p.record.version}", style = MaterialTheme.typography.bodyLarge, color = Color.White)
                 Text(

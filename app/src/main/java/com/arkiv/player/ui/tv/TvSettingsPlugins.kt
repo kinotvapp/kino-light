@@ -16,11 +16,14 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.arkiv.player.data.plugin.InstalledPlugin
 import com.arkiv.player.data.plugin.PluginStatus
+import com.arkiv.player.data.plugin.catalog.CatalogArt
 import com.arkiv.player.ui.plugin.InstalledPluginIcon
 import com.arkiv.player.ui.plugin.PluginConsentDialog
 import com.arkiv.player.ui.plugin.PluginUninstallDialog
 import com.arkiv.player.ui.plugin.PluginsViewModel
+import com.arkiv.player.ui.plugin.installedIconFile
 import com.arkiv.player.ui.plugin.pluginStatusText
+import com.arkiv.player.ui.plugin.rememberFallbackArt
 import com.arkiv.player.ui.plugin.rowMessagePluginId
 import com.arkiv.player.ui.rememberGraph
 import com.arkiv.player.ui.theme.ArkivTextSecondary
@@ -48,7 +51,7 @@ internal fun TvSettingsPlugins(onOpenAddPlugin: () -> Unit = {}) {
         Text("Instalados", style = MaterialTheme.typography.titleMedium, color = Color.White)
         if (plugins.isEmpty()) Text("Todavía no tienes plugins.", color = ArkivTextSecondary)
         plugins.forEach { p ->
-            TvInstalledPluginRows(p, message = state.message.takeIf { rowMessageId == p.id }, vm = vm)
+            TvInstalledPluginRows(p, message = state.message.takeIf { rowMessageId == p.id }, vm = vm, art = rememberFallbackArt(p, graph.catalogArt))
         }
     }
 
@@ -61,12 +64,12 @@ internal fun TvSettingsPlugins(onOpenAddPlugin: () -> Unit = {}) {
  * One installed plugin's rows: name and status, the sites it talks to, [message] (the line for THIS
  * plugin, see [rowMessagePluginId]) and its actions. It emits several children, so the caller gives
  * them one column: Ajustes ▸ Plugins spaces them in its own, the "Agregar plugin" window wraps each
- * plugin in one.
+ * plugin in one. The icon is the plugin's own, or [art]'s when the plugin has none ([installedIconFile]).
  */
 @Composable
-internal fun TvInstalledPluginRows(p: InstalledPlugin, message: String?, vm: PluginsViewModel) {
+internal fun TvInstalledPluginRows(p: InstalledPlugin, message: String?, vm: PluginsViewModel, art: CatalogArt? = null) {
     val heading = "${p.manifest.name} · ${p.record.version} — ${pluginStatusText(p.status)}"
-    val iconFile = p.iconFile
+    val iconFile = installedIconFile(p.iconFile, art)
     if (iconFile == null) {
         Text(heading, style = MaterialTheme.typography.bodyLarge, color = Color.White)
     } else {
