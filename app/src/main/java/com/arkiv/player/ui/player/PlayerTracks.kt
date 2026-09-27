@@ -191,7 +191,7 @@ internal class TracksState(
 
         // Use the index as the id (for setOverrideForType).
         audioTracks = audioMenu(
-            audioGroups.mapIndexed { i, group -> exoTrackLabel(group.getTrackFormat(0), "A${i + 1}") },
+            audioGroups.mapIndexed { i, group -> exoTrackLabel(group.getTrackFormat(0), audioFallbackLabel(i)) },
             pluginAudioTracks,
         )
         spuTracks = subGroups.mapIndexed { i, group ->
@@ -319,7 +319,7 @@ internal class TracksState(
      */
     private fun exoTrackLabel(fmt: Format, fallback: String): String {
         fmt.label?.takeIf { it.isNotBlank() }?.let { return it }
-        val code = fmt.language?.trim()?.takeIf { it.isNotEmpty() } ?: return fallback
+        val code = fmt.language?.trim()?.takeIf { it.isNotEmpty() && !isUndeterminedLanguage(it) } ?: return fallback
         LangTokens.classifyCode(code)
             .takeIf { it != TrackLang.UNKNOWN }
             ?.label()
@@ -435,6 +435,17 @@ internal fun tracksBelongToEpisode(mediaIdOnThePlayer: String?, episodeId: Strin
  * unrecognized `lang` is shown uppercased rather than guessed from `Locale`: a plugin that wants a
  * precise name should send `label`.
  */
+/**
+ * ISO 639 codes that name no language: `und` (undetermined, what a muxer writes when nobody set
+ * one), `mul`, `zxx` and `mis`. `Locale` has no name for them, so without this check the menu
+ * showed the raw code uppercased ("UND") next to a plugin's properly named dub.
+ */
+internal fun isUndeterminedLanguage(code: String): Boolean =
+    code.trim().lowercase() in setOf("und", "mul", "zxx", "mis")
+
+/** The menu name of an ExoPlayer audio track with no usable language or label: the first is the file's own ("Original"). */
+internal fun audioFallbackLabel(index: Int): String = if (index == 0) "Original" else "Audio ${index + 1}"
+
 internal fun audioTrackLabel(id: Int, embeddedCount: Int, pluginTracks: List<ResolvedAudioTrack>, embeddedLabel: String): String {
     val extra = pluginTracks.getOrNull(id - embeddedCount) ?: return embeddedLabel
     extra.label.takeIf { it.isNotBlank() }?.let { return it }
