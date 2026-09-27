@@ -122,8 +122,13 @@ fun DownloadsScreen(
                     // group.source is the item's `items.source` ("plugin:<id>" for a plugin title),
                     // not a strategy key: route it the way every other download button does, or a
                     // plugin chapter queued from here fails with "Fuente no soportada".
-                    onDownload = { episodeId ->
-                        vm.download(episodeId, DownloadSource.sourceForItem(group.source, graph::isXuperPlugin, graph::pluginDownloads))
+                    //
+                    // Null (no download button on its missing chapters) when that source cannot
+                    // download at all: Caracol, or a plugin without `download`.
+                    onDownload = if (DownloadSource.canDownloadItem(group.source, graph.downloadStrategies.keys, graph::isXuperPlugin, graph::pluginDownloads)) {
+                        { episodeId -> vm.download(episodeId, DownloadSource.sourceForItem(group.source, graph::isXuperPlugin, graph::pluginDownloads)) }
+                    } else {
+                        null
                     },
                     onCancelAll = { vm.cancelGroup(group) },
                     onRemoveAll = { vm.removeGroup(group) },
@@ -148,7 +153,8 @@ private fun DownloadGroupSection(
     onRetry: (String) -> Unit,
     onCancel: (String) -> Unit,
     onRemove: (String) -> Unit,
-    onDownload: (String) -> Unit,
+    /** Null: this group's source cannot download, so its missing chapters show no button. */
+    onDownload: ((String) -> Unit)?,
     onCancelAll: () -> Unit,
     onRemoveAll: () -> Unit,
     onRetryFailed: () -> Unit,
@@ -198,7 +204,7 @@ private fun DownloadGroupSection(
                             episode = grouped.episode,
                             itemId = group.itemId,
                             itemThumbnailUrl = group.itemThumbnailUrl,
-                            onDownload = { onDownload(grouped.episode.id) },
+                            onDownload = onDownload?.let { download -> { download(grouped.episode.id) } },
                         )
                     }
                 }
@@ -285,7 +291,7 @@ private fun NotDownloadedRow(
     episode: Episode,
     itemId: String,
     itemThumbnailUrl: String,
-    onDownload: () -> Unit,
+    onDownload: (() -> Unit)?,
 ) {
     Row(
         modifier = Modifier
@@ -323,8 +329,10 @@ private fun NotDownloadedRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        IconButton(onClick = onDownload) {
-            Icon(Icons.Default.Download, contentDescription = "Descargar", tint = ArkivTextSecondary)
+        if (onDownload != null) {
+            IconButton(onClick = onDownload) {
+                Icon(Icons.Default.Download, contentDescription = "Descargar", tint = ArkivTextSecondary)
+            }
         }
     }
 }

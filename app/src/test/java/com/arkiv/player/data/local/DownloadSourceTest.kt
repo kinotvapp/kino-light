@@ -56,6 +56,20 @@ class DownloadSourceTest {
         assertFalse(DownloadSource.canDownload("plugin:other:m1::0", strategies + DownloadSource.PLUGIN_DOWNLOAD, noXuper, demoDownloads))
     }
 
+    /** The Downloads screen offers a group's missing chapters only when its item's source can download them. */
+    @Test fun `a downloads group offers its missing chapters only for an item source with a strategy`() {
+        val all = strategies + DownloadSource.PLUGIN_DOWNLOAD + DownloadSource.XUPER
+        val xuper: (String) -> Boolean = { it == "xuper" }
+        assertTrue(DownloadSource.canDownloadItem("magis", all, xuper, demoDownloads))
+        assertTrue(DownloadSource.canDownloadItem("plugin:xuper", all, xuper, demoDownloads))
+        assertTrue(DownloadSource.canDownloadItem("plugin:demo", all, xuper, demoDownloads))
+        // Caracol (no strategy) and a plugin that never declared `download`: no button, nothing queued to fail.
+        assertFalse(DownloadSource.canDownloadItem("ditu", all, xuper, demoDownloads))
+        assertFalse(DownloadSource.canDownloadItem("plugin:other", all, xuper, demoDownloads))
+        // A plugin that stopped offering downloads since (disabled, uninstalled, needs setup).
+        assertFalse(DownloadSource.canDownloadItem("plugin:demo", all, xuper) { false })
+    }
+
     @Test fun `without the download predicate every plugin fails closed`() {
         assertEquals("plugin", DownloadSource.sourceFor(demoEpisode, noXuper))
         assertEquals("plugin:demo", DownloadSource.sourceForItem("plugin:demo", noXuper))

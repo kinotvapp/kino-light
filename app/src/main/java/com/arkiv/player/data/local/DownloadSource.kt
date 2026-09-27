@@ -118,6 +118,18 @@ object DownloadSource {
         pluginDownloads: (pluginId: String) -> Boolean = { false },
     ): Boolean = hasStrategy(sourceFor(episodeId, isXuperPlugin, pluginDownloads), strategies)
 
+    /**
+     * [canDownload] for a library row's `items.source` (a Downloads group's): its item's chapters
+     * route by [sourceForItem] and are offered only when a strategy takes them -- never for Caracol
+     * or a plugin without the `download` capability, whose chapter would be queued only to fail.
+     */
+    fun canDownloadItem(
+        itemSource: String,
+        strategies: Set<String>,
+        isXuperPlugin: (pluginId: String) -> Boolean,
+        pluginDownloads: (pluginId: String) -> Boolean = { false },
+    ): Boolean = hasStrategy(sourceForItem(itemSource, isXuperPlugin, pluginDownloads), strategies)
+
     /** Same, with the source already in hand (`items.source`, which is what the library has). */
     fun hasStrategy(source: String, strategies: Set<String>): Boolean = source in strategies
 
