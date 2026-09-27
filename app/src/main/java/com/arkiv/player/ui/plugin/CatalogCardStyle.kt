@@ -1,0 +1,91 @@
+package com.arkiv.player.ui.plugin
+
+import com.arkiv.player.data.plugin.PluginColors
+import com.arkiv.player.data.plugin.catalog.CatalogArt
+import kotlin.math.pow
+
+/*
+ * The pure decisions behind a recommended-plugin card: what letter to draw when there is no icon, what
+ * colour the tile is, which text colour is readable on it, and the words on its button. Nothing here
+ * touches Compose, so the phone and the TV share it and it is tested on the JVM.
+ */
+
+/** Near-black used for text on a light tile; softer than pure black, still far above the contrast a small label needs. */
+private const val DARK_ON_TILE: Long = 0xFF1A1A1A
+
+private const val WHITE_ON_TILE: Long = 0xFFFFFFFF
+
+/** What [cardInitial] answers when the name has no letter or digit at all. */
+private const val NO_INITIAL = "?"
+
+/**
+ * The letter drawn on a plugin's tile while it has no icon: the first letter or digit of [name], in
+ * upper case. Leading spaces, punctuation and emoji are skipped, accents are kept (`"Ñandú"` gives
+ * `"Ñ"`), and a name with nothing to show gives `"?"`, so the result is never empty.
+ *
+ * It walks code points, not chars, so a letter outside the basic plane (two chars in UTF-16) is never
+ * cut in half. The upper-casing is the simple one-to-one mapping of [Character.toUpperCase], which
+ * does not depend on the device's locale (a Turkish device does not turn `i` into a dotted capital)
+ * and never widens the initial into several letters (`ß` stays `ß` instead of `SS`).
+ */
+internal fun cardInitial(name: String): String {
+    var index = 0
+    while (index < name.length) {
+        val codePoint = name.codePointAt(index)
+        if (Character.isLetterOrDigit(codePoint)) {
+            return String(Character.toChars(Character.toUpperCase(codePoint)))
+        }
+        index += Character.charCount(codePoint)
+    }
+    return NO_INITIAL
+}
+
+/** The tile's colour: the plugin's own when its art declares a valid one, else [PluginColors.DEFAULT]. */
+internal fun tileColor(art: CatalogArt?): Long = PluginColors.parse(art?.colorHex)
+
+/**
+ * Near-black or white, whichever reads better on a tile of colour [argb] (`0xAARRGGBB`; the alpha is
+ * ignored, the tile is opaque). It compares the WCAG contrast ratio of each against the tile's relative
+ * luminance instead of guessing a threshold, so a mid-tone colour gets whichever side is really better.
+ */
+internal fun onTileColor(argb: Long): Long {
+    val tile = relativeLuminance(argb)
+    val againstDark = contrastRatio(tile, relativeLuminance(DARK_ON_TILE))
+    val againstWhite = contrastRatio(tile, relativeLuminance(WHITE_ON_TILE))
+    return if (againstDark >= againstWhite) DARK_ON_TILE else WHITE_ON_TILE
+}
+
+/** WCAG 2 relative luminance of an sRGB colour, 0.0 (black) to 1.0 (white). */
+private fun relativeLuminance(argb: Long): Double {
+    val red = linearChannel(((argb shr 16) and 0xFF).toInt())
+    val green = linearChannel(((argb shr 8) and 0xFF).toInt())
+    val blue = linearChannel((argb and 0xFF).toInt())
+    return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+}
+
+private fun linearChannel(value: Int): Double {
+    val c = value / 255.0
+    return if (c <= 0.03928) c / 12.92 else ((c + 0.055) / 1.055).pow(2.4)
+}
+
+/** WCAG 2 contrast ratio between two relative luminances, 1.0 (none) to 21.0 (black on white). */
+private fun contrastRatio(a: Double, b: Double): Double {
+    val lighter = maxOf(a, b)
+    val darker = minOf(a, b)
+    return (lighter + 0.05) / (darker + 0.05)
+}
+
+/**
+ * The words on the card's button. The accessibility description of the whole row keeps using
+ * `catalogRowLabel` (verb plus the plugin's name), because a screen reader needs to know which plugin
+ * the button acts on and the card's button does not say it.
+ */
+internal fun cardActionLabel(action: CatalogAction): String = when (action) {
+    CatalogAction.INSTALL -> "Instalar"
+    CatalogAction.CONFIGURE -> "Configurar"
+    CatalogAction.ENABLE -> "Activar"
+    CatalogAction.INSTALLED -> "Instalado"
+}
+
+/** How many lines of description a card shows before it ends with an ellipsis. */
+internal fun cardDescriptionLines(): Int = 2
