@@ -506,6 +506,10 @@ test("checkOutput accepts a widevine drm block only for a plugin that declares d
   }
   assert.deepEqual(contract.output.drm, { field: "drm", types: ["widevine"] });
   assert.equal(contract.output.maxHeaders, 20);
+  // A protected video may still bring side audio tracks: both are kept (the app plays the audio clear).
+  const both = checkOutput("resolve", { ...stream, audioTracks: [{ lang: "es", url: "https://example.com/a.aac" }, { lang: "en", url: "https://evil.example/a.aac" }] }, withDrm).value;
+  assert.equal(both.drm.licenseUrl, "https://example.com/lic");
+  assert.deepEqual(both.audioTracks.map((a) => a.lang), ["es"]);
 });
 
 test("checkOutput lets a stream, its subtitles, audio and license use http only on a host declared insecureHttp", () => {

@@ -341,6 +341,18 @@ class PluginOutputTest {
         }
     }
 
+    @Test fun `a protected stream keeps its side audio tracks, which the player then plays clear`() {
+        val s = PluginOutput.stream(
+            """{"url":"https://archive.org/x.mpd","drm":{"type":"widevine","licenseUrl":"https://archive.org/lic"},
+               "audioTracks":[{"lang":"es-419","url":"https://archive.org/a-es.aac","label":"Latino"},{"lang":"en","url":"https://evil.example/a-en.aac"}],
+               "subtitles":[{"lang":"es","url":"https://archive.org/s.vtt"}]}""",
+            hosts, allowDrm = true,
+        )
+        assertEquals("https://archive.org/lic", s.drm!!.licenseUrl)
+        assertEquals(listOf("es-419"), s.audioTracks.map { it.lang })
+        assertEquals(listOf("es"), s.subtitles.map { it.lang })
+    }
+
     @Test fun `license headers are capped and filtered like the stream headers`() {
         val many = (1..25).joinToString(",") { """"H$it":"v"""" }
         val s = PluginOutput.stream(

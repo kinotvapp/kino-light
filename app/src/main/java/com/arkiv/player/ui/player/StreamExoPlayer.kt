@@ -80,7 +80,23 @@ internal const val STREAM_TS_SEARCH_BYTES = (TsDurationProbe.PROBE_BYTES / MpegT
  * fallback (see [fallbackAudioTracks]) can rebuild the merged source on the SAME player -- without
  * this, retrying would need the whole `httpFactory`/`mediaSourceFactory` construction repeated.
  */
-private class PreparedSource(val player: ExoPlayer, val mediaItem: MediaItem, val mediaSourceFactory: DefaultMediaSourceFactory)
+private class PreparedSource(
+    val player: ExoPlayer,
+    val mediaItem: MediaItem,
+    val mediaSourceFactory: DefaultMediaSourceFactory,
+    /** Set by [PluginWidevine.sessionManagerProvider] (playback thread) when the device would not run Widevine at L3; read by `onPlayerError` to tag the report. */
+    val drmSoftwareLevelRefused: java.util.concurrent.atomic.AtomicBoolean = java.util.concurrent.atomic.AtomicBoolean(false),
+)
+
+/**
+ * A stream's separately-hosted audio track as its own media item: a CLEAR one, never with a
+ * [MediaItem.DrmConfiguration], even when the video it is merged with is Widevine-protected. The
+ * item then gets [androidx.media3.exoplayer.drm.DrmSessionManager.DRM_UNSUPPORTED] from
+ * [PluginWidevine.sessionManagerProvider] -- no license request, no session -- which is right for
+ * a plain audio file and is what the guide asks a plugin to serve next to a protected video: an
+ * encrypted side file fails the playback as a DRM error instead.
+ */
+private fun clearAudioItem(track: ResolvedAudioTrack): MediaItem = MediaItem.Builder().setUri(Uri.parse(track.url)).build()
 
 /**
  * Sets [tracks] on [prepared]'s player: merged into the video via [MergingMediaSource] when there
@@ -101,9 +117,7 @@ private fun applyAudioTracks(
     if (tracks.isEmpty()) {
         player.setMediaItem(prepared.mediaItem)
     } else {
-        val audioSources = tracks.map { track ->
-            prepared.mediaSourceFactory.createMediaSource(MediaItem.Builder().setUri(Uri.parse(track.url)).build())
-        }
+        val audioSources = tracks.map { track -> prepared.mediaSourceFactory.createMediaSource(clearAudioItem(track)) }
         player.setMediaSource(
             MergingMediaSource(prepared.mediaSourceFactory.createMediaSource(prepared.mediaItem), *audioSources.toTypedArray()),
         )
@@ -132,7 +146,9 @@ private fun applyAudioTracks(
  * subtitle tracks are reported via [onTracksChanged] so [TracksState] can expose them in the menu.
  *
  * A plugin's Widevine stream ([drm]) plays on this same [TextureView], at security level L3 so no
- * secure decoder is ever asked for: see [PluginWidevine] for why, and for where the license goes.
+ * secure decoder is ever asked for -- and only once the device confirms L3, else it fails closed:
+ * see [PluginWidevine] for why, and for where the license goes. Its side [audioTracks] stay clear
+ * ([clearAudioItem]).
  */
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
@@ -230,8 +246,15 @@ internal fun StreamExoPlayer(
         )
         // Only with a license to fetch: the factory's default provider would request it through its
         // own plain DefaultHttpDataSource, outside the host gate. With [httpFactory] instead, the
-        // license request meets the same gate and carries the same headers as every segment.
-        if (drm != null) mediaSourceFactory.setDrmSessionManagerProvider(PluginWidevine.sessionManagerProvider(httpFactory))
+        // license request meets the same gate and carries the same headers as every segment. The
+        // provider serves the video item's DRM block only; the merged audio items ([clearAudioItem])
+        // have none and get no session.
+        val drmSoftwareLevelRefused = java.util.concurrent.atomic.AtomicBoolean(false)
+        if (drm != null) {
+            mediaSourceFactory.setDrmSessionManagerProvider(
+                PluginWidevine.sessionManagerProvider(httpFactory) { drmSoftwareLevelRefused.set(true) },
+            )
+        }
 
         // Magis's CDN delivers at 70–230 KB/s and its files carry 8 badly interleaved audio
         // tracks: the video lives in one zone and the audio 13 MB away, so the player jumps
@@ -265,7 +288,7 @@ internal fun StreamExoPlayer(
             .setMediaSourceFactory(mediaSourceFactory)
             .setLoadControl(loadControl)
             .build()
-        val built = PreparedSource(player, mediaItem, mediaSourceFactory)
+        val built = PreparedSource(player, mediaItem, mediaSourceFactory, drmSoftwareLevelRefused)
         // Unchanged from before audio tracks existed when [audioTracks] is empty: same mediaItem,
         // same setMediaItem call, no merge at all (see [applyAudioTracks]).
         applyAudioTracks(built, audioTracks, startPositionMs)
@@ -417,13 +440,14 @@ internal fun StreamExoPlayer(
                 // never an audio track's fault: it is fixed in place before anything is blamed.
                 val liveKind = if (onLiveError != null) liveErrorKind(error) else null
                 if (liveKind != null && liveKind.recoverableInPlace) { recoverLive(liveKind, msg, error); return }
-                // A DRM session's failure (license refused or unreachable, no Widevine on the device,
-                // key expired) is never an audio track's fault, so it is never retried without them:
-                // for a VOD it is final and said in Spanish. A live channel's goes through its reopen
-                // budget below like any other cut (a fresh resolve may bring a fresh license).
+                // A DRM session's failure (license refused or unreachable, no Widevine or no L3 on the
+                // device, key expired) is never an audio track's fault, so it is never retried without
+                // them: for a VOD it is final and said in Spanish. A live channel's goes through its
+                // reopen budget below like any other cut (a fresh resolve may bring a fresh license).
                 if (onLiveError == null && PluginWidevine.isDrmError(error.errorCode)) {
-                    Log.e(TAG, "onPlayerError DRM errorCode=${error.errorCode} msg=$msg", error)
-                    com.arkiv.player.crash.Crash.report(error, "$crashTag-drm-${androidx.media3.common.PlaybackException.getErrorCodeName(error.errorCode)}")
+                    val tag = PluginWidevine.crashTag(crashTag, error.errorCode, prepared.drmSoftwareLevelRefused.get())
+                    Log.e(TAG, "onPlayerError DRM errorCode=${error.errorCode} tag=$tag msg=$msg", error)
+                    com.arkiv.player.crash.Crash.report(error, tag)
                     onError(PluginWidevine.ERROR_MESSAGE)
                     return
                 }

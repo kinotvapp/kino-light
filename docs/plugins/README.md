@@ -1302,11 +1302,16 @@ What Kino does with it, and what it does not:
   capability, or with any other DRM-shaped key (`license`, `licenseUrl`, `drmLicenseUrl`, `keySystem`,
   `widevine`) in the `Stream`, the stream is refused as it always was.
 - Kino asks Widevine for security level **L3** (software) so the same player, surface and decoder
-  as a clear stream are used. A license server that refuses L3, or grants it only SD, gives the
-  person SD or the message below: check your server's policy before you ship.
-- When the license is refused, unreachable or expired, or the device has no Widevine, the person
-  reads "No se pudo abrir este video protegido" (after one more `resolve` if `expiresInSeconds` had
-  passed, like any stream). A protected title is **never downloadable** ("Este video no se puede
+  as a clear stream are used, and plays **only if the device confirms L3**: a device that stays at
+  L1 (or won't say) opens no session at all and shows the message below. A license server that
+  refuses L3, or grants it only SD, gives the person SD or that same message: check your server's
+  policy before you ship.
+- `audioTracks` next to `drm`: the video is protected, the side audio files are played **clear** --
+  no license is requested for them, so they must be plain, unencrypted files (an encrypted side
+  file fails the whole playback with the message below). `subtitles` and `headers` work as always.
+- When the license is refused, unreachable or expired, or the device has no Widevine (or no L3), the
+  person reads "No se pudo abrir este video protegido" (after one more `resolve` if `expiresInSeconds`
+  had passed, like any stream). A protected title is **never downloadable** ("Este video no se puede
   descargar"), even with `download` declared, and cannot be sent to a Chromecast (no plugin title can).
 - The consent sheet adds "Reproduce video protegido (DRM)" when `drm` is declared, and an update that
   newly declares it waits for the person's approval ([section 8](#8-publishing-your-plugin)).

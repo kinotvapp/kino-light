@@ -1,11 +1,15 @@
 package com.arkiv.player.ui.player
 
 import androidx.media3.common.C
+import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
+import androidx.media3.datasource.DataSource
+import androidx.media3.exoplayer.drm.DrmSessionManager
 import com.arkiv.player.data.gateway.GatewayPlayable
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -34,6 +38,27 @@ class PluginWidevineTest {
         assertEquals(mapOf("Authorization" to "Bearer t", "X-Custom" to "1"), config.licenseRequestHeaders)
         assertFalse(config.multiSession)
         assertFalse(config.forceDefaultLicenseUri)
+    }
+
+    @Test fun `Widevine is allowed only when the device confirms L3 after being asked for it`() {
+        assertTrue(PluginWidevine.widevineAllowed("L3"))
+        // L1 would demand a secure decoder on the TextureView (measured process abort): closed.
+        listOf("L1", "L2", "", "l3", " L3", "L3 ", "L30", null).forEach { level ->
+            assertFalse("$level", PluginWidevine.widevineAllowed(level))
+        }
+    }
+
+    @Test fun `the crash tag names the refused L3 stably, else media3's code name`() {
+        assertEquals("plugin-drm-l3-unavailable", PluginWidevine.crashTag("plugin", PlaybackException.ERROR_CODE_DRM_SYSTEM_ERROR, softwareLevelRefused = true))
+        assertEquals("plugin-drm-ERROR_CODE_DRM_LICENSE_ACQUISITION_FAILED", PluginWidevine.crashTag("plugin", PlaybackException.ERROR_CODE_DRM_LICENSE_ACQUISITION_FAILED, softwareLevelRefused = false))
+        assertEquals("plugin-drm-ERROR_CODE_DRM_SYSTEM_ERROR", PluginWidevine.crashTag("plugin", PlaybackException.ERROR_CODE_DRM_SYSTEM_ERROR, softwareLevelRefused = false))
+    }
+
+    @Test fun `an item without a drm block gets no session manager at all, so a side audio file next to a protected video stays clear`() {
+        val neverOpened = DataSource.Factory { throw AssertionError("a clear item must not open a license connection") }
+        val provider = PluginWidevine.sessionManagerProvider(neverOpened)
+        assertSame(DrmSessionManager.DRM_UNSUPPORTED, provider.get(MediaItem.EMPTY))
+        assertSame(DrmSessionManager.DRM_UNSUPPORTED, provider.get(MediaItem.Builder().build()))
     }
 
     @Test fun `a DRM session error is the one Spanish message, any other error is not`() {

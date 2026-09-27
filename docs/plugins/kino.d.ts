@@ -146,7 +146,9 @@ interface KinoStream {
    * Kino fetches its license from `licenseUrl` (checked exactly like `url`: https on a declared host, http only on one declared `insecureHttp`)
    * sending `licenseHeaders` (filtered like `headers`, at most 20) with the license request only.
    * Without the capability any DRM-shaped key refuses the stream. A protected title never downloads.
-   * Kino negotiates Widevine at security level L3 (software): the license server must allow it.
+   * Kino negotiates Widevine at security level L3 (software), and only when the device confirms L3:
+   * the license server must allow it. `audioTracks` next to `drm` are played clear (no license for
+   * them): plain, unencrypted files only.
    */
   drm?: { type: "widevine"; licenseUrl: string; licenseHeaders?: Record<string, string> };
 }
