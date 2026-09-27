@@ -181,11 +181,32 @@ data class UserHost(val scheme: String, val host: String, val port: Int) {
 
 /**
  * What a plugin may reach right now: the hosts the person approved at install ([declared], https
- * only, public names only) plus the servers typed in its `url` settings ([user]). Every component
- * that gates plugin traffic reads this one object (see [PluginHosts.effective]).
+ * only, public names only) plus the servers typed in its `url` settings ([user]), and which of the
+ * declared ones the person approved for plain http ([insecure]: the manifest's
+ * `{ host, insecureHttp: true }` entries, apiVersion 2, from the INSTALLED record). Every component
+ * that gates plugin traffic reads this one object (see [PluginHosts.effective]), and every one of
+ * them asks [allowsScheme] the same question.
  */
-data class EffectiveHosts(val declared: List<String>, val user: List<UserHost> = emptyList()) {
+data class EffectiveHosts(
+    val declared: List<String>,
+    val user: List<UserHost> = emptyList(),
+    val insecure: Set<String> = emptySet(),
+) {
     fun userHostFor(url: okhttp3.HttpUrl): UserHost? = user.firstOrNull { it.matches(url) }
+
+    /**
+     * The one scheme rule of a declared host, for `kino.fetch`, a stream and its manifest's every
+     * request, subtitles, audio tracks and a Widevine license alike: https always; plain http only
+     * on a host the person approved as insecure, matched exactly (lowercase, trailing dot ignored)
+     * -- never through a `*.` pattern, so a hand-edited record with one covers nothing, and never a
+     * subdomain. Whether the host is declared at all is the caller's separate check; a typed server
+     * ([userHostFor]) has its own rule and never reaches this one.
+     */
+    fun allowsScheme(url: okhttp3.HttpUrl): Boolean = when (url.scheme) {
+        "https" -> true
+        "http" -> insecure.isNotEmpty() && url.host.lowercase().trimEnd('.') in insecure
+        else -> false
+    }
 
     /** A user host's NAME (not an IP literal): the DNS gate lets it resolve into the LAN. */
     val userHostNames: Set<String> get() = user.map { it.host }.filterNot { PluginHosts.isIpLiteral(it) }.toSet()

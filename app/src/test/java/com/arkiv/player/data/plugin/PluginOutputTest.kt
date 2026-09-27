@@ -353,6 +353,36 @@ class PluginOutputTest {
         assertEquals(emptyMap<String, String>(), none.drm!!.licenseHeaders)
     }
 
+    // --- declared insecure hosts (apiVersion 2, `{ host, insecureHttp: true }`) ---
+
+    private val insecure = EffectiveHosts(listOf("api.example.com", "cdn.example.com", "lic.example.com"), insecure = setOf("cdn.example.com"))
+
+    @Test fun `a stream, its subtitles, audio and license may use http on a host approved as insecureHttp, and on no other`() {
+        val s = PluginOutput.stream(
+            """{"url":"http://cdn.example.com/v.mpd",
+               "subtitles":[{"lang":"es","url":"http://cdn.example.com/s.vtt"},{"lang":"en","url":"http://api.example.com/s.vtt"},{"lang":"fr","url":"https://api.example.com/s.vtt"}],
+               "audioTracks":[{"lang":"es","url":"http://cdn.example.com/a.aac"},{"lang":"en","url":"http://lic.example.com/a.aac"},{"lang":"fr","url":"http://sub.cdn.example.com/a.aac"}],
+               "drm":{"type":"widevine","licenseUrl":"http://cdn.example.com/lic"}}""",
+            insecure, allowDrm = true,
+        )
+        assertEquals("http://cdn.example.com/v.mpd", s.url)
+        assertEquals(listOf("es", "fr"), s.subtitles.map { it.lang })
+        assertEquals(listOf("es"), s.audioTracks.map { it.lang })
+        assertEquals("http://cdn.example.com/lic", s.drm!!.licenseUrl)
+        // https keeps working on the insecure host.
+        assertEquals("https://cdn.example.com/v.mp4", PluginOutput.stream("""{"url":"https://cdn.example.com/v.mp4"}""", insecure).url)
+        listOf("http://api.example.com/v.mp4", "http://sub.cdn.example.com/v.mp4", "http://lic.example.com/v.mp4").forEach { u ->
+            val e = assertThrows(u, PluginContractException::class.java) { PluginOutput.stream("""{"url":"$u"}""", insecure) }
+            assertEquals("El video debe usar https", e.message)
+        }
+        val lic = assertThrows(PluginContractException::class.java) {
+            PluginOutput.stream("""{"url":"https://cdn.example.com/v.mpd","drm":{"type":"widevine","licenseUrl":"http://lic.example.com/lic"}}""", insecure, allowDrm = true)
+        }
+        assertEquals("La licencia del video debe usar https", lic.message)
+        // A v1 plugin's hosts (never an insecure one) refuse http exactly as before.
+        assertThrows(PluginContractException::class.java) { PluginOutput.stream("""{"url":"http://archive.org/x.mp4"}""", hosts) }
+    }
+
     @Test fun `a stream with no audioTracks field has none, exactly as before this feature`() {
         val s = PluginOutput.stream("""{"url":"https://archive.org/x.mp4"}""", hosts)
         assertTrue(s.audioTracks.isEmpty())

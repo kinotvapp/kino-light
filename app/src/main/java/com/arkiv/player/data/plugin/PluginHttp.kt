@@ -34,10 +34,12 @@ class PrivateAddressException(val hostname: String) : UnknownHostException("$hos
 
 /**
  * The single rule of plugin networking: a request (and every redirect hop) goes only to a host the
- * person approved at install, over https and never to an IP literal or a local name — or to a
- * server the person typed in the plugin's settings, exactly as typed (see [UserHost]). Used by
- * `kino.fetch` ([PluginHttp]) and by the player ([PluginStreamGate]). `allowInsecureLocalhost`
- * exists for MockWebServer tests; production code never sets it.
+ * person approved at install, over https (or plain http on the one host they approved as
+ * `insecureHttp`, see [EffectiveHosts.allowsScheme]) and never to an IP literal or a local name —
+ * or to a server the person typed in the plugin's settings, exactly as typed (see [UserHost]). Used
+ * by `kino.fetch` ([PluginHttp]) and by the player ([PluginStreamGate]), which also carries a
+ * Widevine license request. `allowInsecureLocalhost` exists for MockWebServer tests; production
+ * code never sets it.
  */
 object PluginHostGate {
     /**
@@ -70,7 +72,7 @@ object PluginHostGate {
         if (HostRules.isLocalAddress(url.host) && !testLocalhost) throw HostNotAllowedException(url.host)
         if (xuper?.resolved(url) == true) return
         if (!HostRules.matches(url.host, hosts.declared)) throw HostNotAllowedException(url.host)
-        if (url.scheme == "https") return
+        if (hosts.allowsScheme(url)) return
         if (testLocalhost) return
         throw PluginFetchException("host_not_allowed", "solo se permite https")
     }
@@ -156,6 +158,8 @@ class PluginHttp(
     appVersion: String,
     private val cookies: PluginCookies? = null,
     private val allowInsecureLocalhost: Boolean = false,
+    /** MockWebServer tests only, as in [PluginStreamHttp.client]: where a declared name resolves. Production keeps the system's. */
+    delegateDns: Dns = Dns.SYSTEM,
 ) {
     /** A request body as the prelude sends it; see [PluginHttp.Request.body]. */
     sealed interface Body {
@@ -193,7 +197,7 @@ class PluginHttp(
         .followRedirects(false)
         .followSslRedirects(false)
         .cookieJar(cookies ?: CookieJar.NO_COOKIES)
-        .dns(PluginDns(allowLoopback = allowInsecureLocalhost, userHostNames = hosts.userHostNames))
+        .dns(PluginDns(allowLoopback = allowInsecureLocalhost, delegate = delegateDns, userHostNames = hosts.userHostNames))
         .build()
 
     /** Starts a new plugin call: the 60-request budget is per call. */

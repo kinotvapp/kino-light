@@ -11,10 +11,11 @@ import java.io.IOException
  *
  * Checking only the URL `resolve()` returned isn't enough: an HLS/DASH manifest names its own
  * variants, segments, `#EXT-X-KEY` URIs and `BaseURL`s, and any request can be redirected. All of
- * them go through this one client, so all of them meet [PluginHostGate] (https + a host the person
- * approved, never an IP literal or a local name) BEFORE the request leaves the device, with the
- * plugin's headers on them. [PluginDns] additionally refuses a declared name that resolves into
- * the home network.
+ * them go through this one client -- and so does a Widevine license request (`PluginWidevine`) --
+ * so all of them meet [PluginHostGate] (a host the person approved, https unless they approved it
+ * as `insecureHttp`, never an IP literal or a local name) BEFORE the request leaves the device,
+ * with the plugin's headers on them. [PluginDns] additionally refuses a declared name that
+ * resolves into the home network.
  *
  * OkHttp's own redirect following is off: it would connect to the target before any interceptor
  * saw it. [PluginStreamGate], an APPLICATION interceptor, follows redirects by hand instead —

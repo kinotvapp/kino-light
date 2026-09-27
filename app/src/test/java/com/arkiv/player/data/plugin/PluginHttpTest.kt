@@ -53,6 +53,42 @@ class PluginHttpTest {
         assertThrows(PluginFetchException::class.java) { PluginHostGate.check("http://localhost/".toHttpUrl(), EffectiveHosts(listOf("localhost"))) }
     }
 
+    @Test fun `the gate lets plain http through only on a host approved as insecureHttp`() {
+        val hosts = EffectiveHosts(listOf("api.example.com", "cdn.example.com"), insecure = setOf("cdn.example.com"))
+        PluginHostGate.check("http://cdn.example.com/v.mp4".toHttpUrl(), hosts)
+        PluginHostGate.check("https://cdn.example.com/v.mp4".toHttpUrl(), hosts)
+        PluginHostGate.check("https://api.example.com/".toHttpUrl(), hosts)
+        listOf("http://api.example.com/", "http://sub.cdn.example.com/", "http://evil.example/")
+            .forEach { u -> assertThrows(u, PluginFetchException::class.java) { PluginHostGate.check(u.toHttpUrl(), hosts) } }
+        assertEquals("solo se permite https", assertThrows(PluginFetchException::class.java) { PluginHostGate.check("http://api.example.com/".toHttpUrl(), hosts) }.message)
+        // A redirect may land on the insecure host over http, and on no other declared host over http.
+        val from = "https://api.example.com/start".toHttpUrl()
+        PluginHostGate.checkRedirect(from, "http://cdn.example.com/v.mp4".toHttpUrl(), hosts)
+        assertThrows(PluginFetchException::class.java) { PluginHostGate.checkRedirect(from, "http://api.example.com/v.mp4".toHttpUrl(), hosts) }
+        // An insecure host is still never an IP literal, a local name, or one that resolves into the LAN.
+        assertThrows(HostNotAllowedException::class.java) { PluginHostGate.check("http://192.168.1.10/".toHttpUrl(), EffectiveHosts(listOf("192.168.1.10"), insecure = setOf("192.168.1.10"))) }
+        assertThrows(HostNotAllowedException::class.java) { PluginHostGate.check("http://nas.local/".toHttpUrl(), EffectiveHosts(listOf("nas.local"), insecure = setOf("nas.local"))) }
+    }
+
+    @Test fun `kino fetch reaches an insecure host over http, and no other declared host`() {
+        val hosts = EffectiveHosts(listOf("api.example.com", "cdn.example.com"), insecure = setOf("cdn.example.com"))
+        // Both names resolve to this MockWebServer; the gate decides before any lookup happens.
+        val loopback = object : Dns { override fun lookup(hostname: String) = listOf(InetAddress.getLoopbackAddress()) }
+        val h = PluginHttp(OkHttpClient(), "test", hosts, "1.0", cookies = null, allowInsecureLocalhost = true, delegateDns = loopback)
+        server.enqueue(MockResponse().setBody("hola"))
+        val r = runBlocking { h.fetch(PluginHttp.Request("http://cdn.example.com:${server.port}/x")) }
+        assertEquals(200, r.status)
+        assertEquals("hola", r.text)
+        assertEquals(1, server.requestCount)
+        assertEquals("host_not_allowed", fetchError(h, PluginHttp.Request("http://api.example.com:${server.port}/x")).code)
+        assertEquals("host_not_allowed", fetchError(h, PluginHttp.Request("http://sub.cdn.example.com:${server.port}/x")).code)
+        assertEquals(1, server.requestCount)
+        // The same names without the flag (a v1 plugin): http is refused on both, exactly as always.
+        val v1 = PluginHttp(OkHttpClient(), "test", EffectiveHosts(listOf("api.example.com", "cdn.example.com")), "1.0", cookies = null, allowInsecureLocalhost = true, delegateDns = loopback)
+        assertEquals("host_not_allowed", fetchError(v1, PluginHttp.Request("http://cdn.example.com:${server.port}/x")).code)
+        assertEquals(1, server.requestCount)
+    }
+
     @Test fun `the gate refuses IP literals and local names before matching the declared hosts`() {
         // Declared patterns can never be IP literals or local names (HostRules), but the gate
         // refuses them on its own too: it's the one check every request and redirect hop goes through.

@@ -90,6 +90,16 @@ class PluginRegistryTest {
         )
     }
 
+    @Test fun `the insecure hosts the person approved travel with the effective hosts, from the record`() {
+        install("pa", "A") { copy(hosts = listOf("api.example.com", "cdn.example.com"), insecureHosts = listOf("cdn.example.com")) }
+        val expected = EffectiveHosts(listOf("api.example.com", "cdn.example.com"), insecure = setOf("cdn.example.com"))
+        assertEquals(expected, registry.find("pa")!!.hosts)
+        assertEquals(PluginAccess.Ready("A", expected), registry.accessFor("pa"))
+        // A record from before the flag existed approved none.
+        install("pb", "B")
+        assertEquals(emptySet<String>(), registry.find("pb")!!.hosts.insecure)
+    }
+
     /**
      * Fix round 2, finding 4 (still open after round 1's in-memory-only counter, which the
      * re-review proved can't work: a value that lives OUTSIDE `InstalledPlugin` can never change

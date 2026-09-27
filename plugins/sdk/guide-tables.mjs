@@ -20,7 +20,7 @@ export const TABLES = {
     ["Loading the module (its top level)", `${c.timeoutsMs.load / 1000} s`],
     ["Idle sandbox", `closed after ${c.runtime.idleCloseMs / 60000} minutes without calls`],
     ["Consecutive timeouts", `${c.runtime.timeoutsBeforeUnresponsive} in a row and Kino disables the plugin ("No responde")`],
-    ["`kino.fetch`", `https only (or the person's own server as typed); ${c.fetch.defaultTimeoutMs / 1000} s default, ${c.fetch.maxTimeoutMs / 1000} s maximum; response body at most ${kb(c.fetch.maxBodyBytes)}; the request (URL, headers and body) at most ${n(c.fetch.maxRequestChars)} characters; at most ${c.fetch.maxRequestsPerCall} requests per call; at most ${c.fetch.maxRedirects} redirects per request`],
+    ["`kino.fetch`", `https only (or the person's own server as typed, or \`http\` on a host declared \`insecureHttp\`); ${c.fetch.defaultTimeoutMs / 1000} s default, ${c.fetch.maxTimeoutMs / 1000} s maximum; response body at most ${kb(c.fetch.maxBodyBytes)}; the request (URL, headers and body) at most ${n(c.fetch.maxRequestChars)} characters; at most ${c.fetch.maxRequestsPerCall} requests per call; at most ${c.fetch.maxRedirects} redirects per request`],
     ["Cookies", `${c.cookies.maxPerHost} per domain, ${kb(c.cookies.maxTotalBytes)} in total per plugin`],
     ["`kino.storage`", `${kb(c.storage.maxTotalBytes)} per plugin; an entry's optional \`ttlMs\` is 1..${n(c.storage.maxTtlMs)} ms (30 days)`],
     ["`kino.sleep`", `0 to ${n(c.sleep.maxMs)} ms per call`],
@@ -53,7 +53,7 @@ export const TABLES = {
     ["`unavailable`", "\"{plugin} no está disponible ahora\""],
   ].filter(([code]) => c.errors.codes.includes(code.replace(/`/g, "")))),
   fetchErrors: () => table(["`e.code`", "When"], [
-    ["`host_not_allowed`", "the host (or a redirect hop) is not one you declared or the person typed, or it is `http` on a declared host"],
+    ["`host_not_allowed`", "the host (or a redirect hop) is not one you declared or the person typed, or it is `http` on a declared host not marked `insecureHttp`"],
     ["`timeout`", "no complete answer within `timeoutMs`"],
     ["`network`", "the connection failed, or too many redirects"],
     ["`too_large`", "the request over the size cap, or a body over 5 MB"],

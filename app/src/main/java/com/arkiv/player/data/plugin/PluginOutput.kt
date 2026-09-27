@@ -383,11 +383,15 @@ object PluginOutput {
         return out
     }
 
-    /** A stream, subtitle, audio or license URL: https on a declared host, or exactly a server the person typed. */
+    /**
+     * A stream, subtitle, audio or license URL: https on a declared host (plain http only on one
+     * the person approved as insecure -- [EffectiveHosts.allowsScheme], the same rule the host gate
+     * applies when the player then requests it), or exactly a server the person typed.
+     */
     private fun checkUrl(url: String, hosts: EffectiveHosts, what: String) {
         val u = url.toHttpUrlOrNull() ?: throw PluginContractException("$what tiene una dirección inválida")
         if (hosts.userHostFor(u) != null) return
-        if (u.scheme != "https") throw PluginContractException("$what debe usar https")
+        if (!hosts.allowsScheme(u)) throw PluginContractException("$what debe usar https")
         if (!HostRules.matches(u.host, hosts.declared)) throw PluginContractException("$what apunta a ${u.host.take(100)}, que el plugin no declaró")
     }
 

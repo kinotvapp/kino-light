@@ -50,6 +50,18 @@ export function hostMatches(host, patterns) {
   return patterns.some((p) => (p.startsWith("*.") ? h.endsWith("." + p.slice(2)) : h === p));
 }
 
+/**
+ * The one scheme rule of a declared host (the app's `EffectiveHosts.allowsScheme`): https always;
+ * plain http only on a host the manifest marked `insecureHttp` (apiVersion 2), matched exactly --
+ * never through a `*.` pattern, never a subdomain. A typed server has its own rule (`isUserServer`).
+ */
+export function schemeAllowed(u, manifest) {
+  if (u.protocol === "https:") return true;
+  if (u.protocol !== "http:") return false;
+  const h = String(u.hostname).toLowerCase().replace(/\.$/, "");
+  return (manifest.insecureHosts || []).includes(h);
+}
+
 /** Same checks, same order, same Spanish messages as the app's own manifest validation. Returns { ok, field?, message?, manifest? }. */
 export function validateManifest(text, { knownPermissions = contract.permissions } = {}) {
   const m = contract.manifest;
@@ -353,14 +365,14 @@ function drmOf(value, check, allowDrm) {
   return { type: d.type, licenseUrl: d.licenseUrl, licenseHeaders: headersOf(d.licenseHeaders) };
 }
 
-function stream(value, { hosts, servers, allowDrm }) {
+function stream(value, { manifest, servers, allowDrm }) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("El plugin no devolvió un video");
   const check = (url, what) => {
     let u;
     try { u = new URL(String(url)); } catch { throw new Error(`${what} tiene una dirección inválida`); }
     if (servers.some((s) => sameServer(s, u))) return;
-    if (u.protocol !== "https:") throw new Error(`${what} debe usar https`);
-    if (!hostMatches(u.hostname, hosts)) throw new Error(`${what} apunta a ${u.hostname}, que el plugin no declaró`);
+    if (!schemeAllowed(u, manifest)) throw new Error(`${what} debe usar https`);
+    if (!hostMatches(u.hostname, manifest.hosts)) throw new Error(`${what} apunta a ${u.hostname}, que el plugin no declaró`);
   };
   const drm = drmOf(value, check, allowDrm);
   check(value.url, "El video");
@@ -398,7 +410,7 @@ export function checkOutput(fn, value, manifest, servers = []) {
     case "home": return { value: rows(parsed, ctx, drop), drops };
     case "episodes": return { value: episodes(parsed, drop), drops };
     // Widevine is the `drm` capability (apiVersion 2 by the manifest rules): without it every DRM-shaped key refuses the stream.
-    case "resolve": return { value: stream(parsed, { hosts: manifest.hosts, servers, allowDrm: manifest.capabilities.includes("drm") }), drops };
+    case "resolve": return { value: stream(parsed, { manifest, servers, allowDrm: manifest.capabilities.includes("drm") }), drops };
     default: throw new Error(`unknown function ${fn}`);
   }
 }

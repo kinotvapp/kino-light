@@ -119,7 +119,7 @@ interface KinoEpisodes {
 }
 
 interface KinoStream {
-  /** https on a declared host, or the person's own server exactly as typed. */
+  /** https on a declared host (http only on one declared `insecureHttp`), or the person's own server exactly as typed. */
   url: string;
   mime?: string;
   /**
@@ -143,7 +143,7 @@ interface KinoStream {
   expiresInSeconds?: number;
   /**
    * apiVersion 2, and only with the `drm` capability declared: the stream is Widevine-protected and
-   * Kino fetches its license from `licenseUrl` (checked exactly like `url`: https on a declared host)
+   * Kino fetches its license from `licenseUrl` (checked exactly like `url`: https on a declared host, http only on one declared `insecureHttp`)
    * sending `licenseHeaders` (filtered like `headers`, at most 20) with the license request only.
    * Without the capability any DRM-shaped key refuses the stream. A protected title never downloads.
    * Kino negotiates Widevine at security level L3 (software): the license server must allow it.
@@ -232,7 +232,7 @@ declare namespace kino {
   const appVersion: string;
   const lang: string;
 
-  /** Only to the manifest's hosts over https, or to the person's own server as typed. Never throws for a non-2xx status. */
+  /** Only to the manifest's hosts over https (http only on a host declared `insecureHttp`), or to the person's own server as typed. Never throws for a non-2xx status. */
   function fetch(url: string, options?: KinoFetchOptions): Promise<KinoResponse>;
 
   /** `throw kino.error("not_found", "…")`: the app words the message; yours is a detail of at most 200 characters. */

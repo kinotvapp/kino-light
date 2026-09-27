@@ -10,7 +10,7 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, pbkdf2Sync, randomBytes, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { contract, hostMatches, isUserServer, kb } from "./contract.mjs";
+import { contract, hostMatches, isUserServer, kb, schemeAllowed } from "./contract.mjs";
 import { filterRelevant, shortQuery, sortBySimilarity } from "./kino-rank.mjs";
 
 // Captured at load: the runner later replaces console.error to keep stdout clean, and kino.log
@@ -78,7 +78,7 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", stora
       return;
     }
     if (!hostMatches(u.hostname, manifest.hosts)) throw kinoError("host_not_allowed", "host no permitido: " + u.hostname);
-    if (u.protocol !== "https:") throw kinoError("host_not_allowed", "solo se permite https");
+    if (!schemeAllowed(u, manifest)) throw kinoError("host_not_allowed", "solo se permite https");
   }
 
   // --- cookies: enough of RFC 6265 for logins (Domain, Path, Expires, Max-Age, Secure) ---

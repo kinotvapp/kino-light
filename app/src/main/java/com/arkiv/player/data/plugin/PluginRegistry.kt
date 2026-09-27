@@ -31,8 +31,12 @@ data class InstalledPlugin(
 ) {
     val id: String get() = manifest.id
 
-    /** What this plugin may reach right now: approved hosts plus the servers typed in its settings. */
-    val hosts: EffectiveHosts get() = EffectiveHosts(record.hosts, userHosts)
+    /**
+     * What this plugin may reach right now: approved hosts plus the servers typed in its settings,
+     * and which approved hosts may be spoken to over plain http -- all from the INSTALLED record
+     * (what the person approved on the consent sheet), never the manifest on disk.
+     */
+    val hosts: EffectiveHosts get() = EffectiveHosts(record.hosts, userHosts, record.insecureHosts.toSet())
 
     /** A required setting has no value: its calls fail with `auth_required` without running. */
     val needsSetup: Boolean get() = missingSettings.isNotEmpty()

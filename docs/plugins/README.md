@@ -231,12 +231,16 @@ A `hosts` entry can also be an object, for a site of yours that has no certifica
 ```
 
 This needs `"apiVersion": 2`. `insecureHttp: true` is the only thing it can carry beyond `host`, and
-it marks the only *declared* hosts (not the person's own server, above) allowed over plain `http`;
-every other declared host stays https-only. The same rules as a plain string still apply (public DNS
-name, no `*`, no IP, nothing private/LAN) plus one more: **no `*.` wildcard** — an insecure host is
+it marks the only *declared* hosts (not the person's own server, above) allowed over plain `http`:
+`kino.fetch`, a `Stream`'s `url`, its `subtitles`, its `audioTracks` and a `drm` block's `licenseUrl`
+all accept `http://cdn.example.org/…` once it is declared this way, and every redirect hop is judged
+by the same rule. Every other declared host stays https-only, `https` keeps working on the insecure
+one, and the host is matched exactly: `sub.cdn.example.org` is not covered. The same rules as a plain
+string still apply (public DNS name, no `*`, no IP, nothing private/LAN; a name that resolves into
+the person's own network is still refused) plus one more: **no `*.` wildcard** — an insecure host is
 named exactly. The consent screen shows it in red, "Conexión sin cifrar con cdn.example.org", and an
-update that newly marks a host this way waits for approval like a brand new host would. **Declared
-and reviewable today; `kino.fetch` itself still refuses plain `http` on every host in this version.**
+update that newly marks a host this way waits for approval like a brand new host would. See
+[A site of yours without a certificate](#a-site-of-yours-without-a-certificate-apiversion-2).
 
 ### Downloads (apiVersion 2)
 
@@ -454,15 +458,18 @@ It does **not** add a poster, a backdrop or seasons from TMDB -- those stay exac
 
 - `url` must be `https` and its host must be one of your `hosts`, and so must the host of every
   subtitle URL, or it must be on a server the person typed in your settings (exactly that scheme,
-  host and port). A stream that breaks this is refused as a whole; a bad subtitle is dropped and the
+  host and port). The one other way to plain `http` is a host you declared
+  `{ "host": "…", "insecureHttp": true }` (apiVersion 2, [above](#declaring-an-insecure-host-apiversion-2)):
+  that host, exactly, accepts `http` for the stream, its subtitles, its audio tracks and its
+  license. A stream that breaks this is refused as a whole; a bad subtitle is dropped and the
   stream still plays.
 - `mime` is optional, of the form `video/mp4` (anything else refuses the stream). When it is missing
   Kino's player detects HLS, DASH or a plain file from the URL and the content.
 - **Everything the player fetches for the stream follows the `kino.fetch` host rules.** That covers the
   `url` itself, the variants, segments and `#EXT-X-KEY` keys an HLS manifest names, the `BaseURL`s of a
   DASH manifest, the subtitles, and every redirect hop of any of them: each must be `https` on one of
-  your `hosts`, never an IP address or a local name, and a declared name that resolves inside the
-  person's own network is refused. A request that breaks this fails before it leaves the device and
+  your `hosts` (or `http` on one you declared `insecureHttp`), never an IP address or a local name,
+  and a declared name that resolves inside the person's own network is refused. A request that breaks this fails before it leaves the device and
   playback stops with an error, so a manifest that points at another CDN needs that CDN in `hosts`.
 - `headers` are sent with every one of those player requests (the stream, its manifest's segments and
   keys, its subtitles, and redirect hops, all on your `hosts`) and, if you declare `download`, with
@@ -568,7 +575,8 @@ seconds of your call's time. Ask for the form the content is.
 - **https only, and only your hosts.** The host of the request and of **every redirect hop** must
   match `hosts` (`*.x` matches subdomains of `x`, not `x`), or be a server the person typed in your
   settings, exactly as typed. A request to anything else fails before it leaves the device. An `http`
-  URL on a declared host fails too. An IP address or a local name (`localhost`, `.local`, …) is always
+  URL on a declared host fails too, unless you declared that host `{ "host": "…", "insecureHttp": true }`
+  (apiVersion 2, [section 3](#declaring-an-insecure-host-apiversion-2)). An IP address or a local name (`localhost`, `.local`, …) is always
   refused unless the person typed it. Kino also refuses a declared name that resolves to an address
   inside the person's own network (loopback, private, link-local, carrier-grade NAT, multicast).
 - **Redirects** (301, 302, 303, 307, 308) are followed by Kino, up to 10 hops; each hop is checked
@@ -580,7 +588,7 @@ seconds of your call's time. Ask for the form the content is.
 <!-- contract:fetchErrors:start -->
 | `e.code` | When |
 | --- | --- |
-| `host_not_allowed` | the host (or a redirect hop) is not one you declared or the person typed, or it is `http` on a declared host |
+| `host_not_allowed` | the host (or a redirect hop) is not one you declared or the person typed, or it is `http` on a declared host not marked `insecureHttp` |
 | `timeout` | no complete answer within `timeoutMs` |
 | `network` | the connection failed, or too many redirects |
 | `too_large` | the request over the size cap, or a body over 5 MB |
@@ -775,7 +783,7 @@ does anything with season numbers or ordering: how a backend spells "season 2" i
 | Loading the module (its top level) | 10 s |
 | Idle sandbox | closed after 5 minutes without calls |
 | Consecutive timeouts | 3 in a row and Kino disables the plugin ("No responde") |
-| `kino.fetch` | https only (or the person's own server as typed); 15 s default, 30 s maximum; response body at most 5 MB; the request (URL, headers and body) at most 1,048,576 characters; at most 60 requests per call; at most 10 redirects per request |
+| `kino.fetch` | https only (or the person's own server as typed, or `http` on a host declared `insecureHttp`); 15 s default, 30 s maximum; response body at most 5 MB; the request (URL, headers and body) at most 1,048,576 characters; at most 60 requests per call; at most 10 redirects per request |
 | Cookies | 50 per domain, 64 KB in total per plugin |
 | `kino.storage` | 256 KB per plugin; an entry's optional `ttlMs` is 1..2,592,000,000 ms (30 days) |
 | `kino.sleep` | 0 to 5,000 ms per call |
@@ -1307,3 +1315,42 @@ To test without a real service, a public Widevine test stream works: the manifes
 `https://storage.googleapis.com/wvmedia/cenc/h264/tears/tears.mpd` with the license server
 `https://proxy.uat.widevine.com/proxy?provider=widevine_test` (declare `storage.googleapis.com` and
 `proxy.uat.widevine.com` in `hosts`; no `licenseHeaders` needed).
+
+### A site of yours without a certificate (apiVersion 2)
+
+Your videos sit on a server of yours that only speaks plain `http` -- a CDN box with no certificate,
+an old media server on a public name. Declare `"apiVersion": 2` and mark that one host
+`insecureHttp` in `hosts`; nothing changes in your code beyond the scheme:
+
+```json
+{
+  "id": "mi-cdn", "name": "Mi CDN", "version": "1.0.0", "apiVersion": 2, "entry": "plugin.js",
+  "hosts": ["api.example.com", { "host": "cdn.example.com", "insecureHttp": true }],
+  "capabilities": ["search", "resolve"]
+}
+```
+
+```js
+export async function resolve(ref) {
+  const s = await api("/play/" + encodeURIComponent(ref)); // over https, api.example.com
+  return {
+    url: "http://cdn.example.com/videos/" + s.file,           // plain http: only because cdn.example.com is insecureHttp
+    subtitles: s.subs.map((x) => ({ lang: x.lang, url: "http://cdn.example.com/subs/" + x.file })),
+  };
+}
+```
+
+What the flag does, and what it does not:
+
+- Only `cdn.example.com`, exactly, accepts `http`: for `kino.fetch`, a `Stream`'s `url`, `subtitles`,
+  `audioTracks` and a `drm` block's `licenseUrl`, and for every redirect hop that lands on it.
+  `api.example.com` stays https-only, and so does `sub.cdn.example.com` (no wildcard, no subdomains).
+  `https://cdn.example.com/…` keeps working too.
+- Everything else about a declared host holds: a public DNS name (no IP, no `localhost`, nothing
+  `.local`/`.lan`), and a name that resolves into the person's own network is refused at request
+  time. For a server at home the person types in a `url` setting instead (see
+  [The person's own server](#the-persons-own-server)): that path takes `http` without this flag.
+- The consent sheet adds, in red, "Conexión sin cifrar con cdn.example.com", so the person knows
+  that traffic can be read on the way; an update that newly marks an already-approved host
+  `insecureHttp` waits for approval ([section 8](#8-publishing-your-plugin)). Prefer `https` whenever
+  the server can: the flag is for the host that cannot.

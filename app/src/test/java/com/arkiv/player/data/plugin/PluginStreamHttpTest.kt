@@ -65,6 +65,30 @@ class PluginStreamHttpTest {
         assertEquals(emptyList<String>(), lookups)
     }
 
+    @Test fun `a stream request over http is served only from a host approved as insecureHttp`() {
+        val hosts = EffectiveHosts(listOf("api.example.com", "cdn.example.com"), insecure = setOf("cdn.example.com"))
+        // Both names resolve to this MockWebServer (the loopback allowance is the test-only flag; the
+        // gate's own decision runs before any lookup, and never depends on it).
+        val client = PluginStreamHttp.client(OkHttpClient(), hosts, allowInsecureLocalhost = true, delegateDns = recordingDns())
+        server.enqueue(MockResponse().setBody("#EXTM3U"))
+        get(client, "http://cdn.example.com:${server.port}/master.m3u8").use { r ->
+            assertEquals("#EXTM3U", r.body!!.string())
+            assertEquals("https://cdn.example.com/", server.takeRequest().getHeader("Referer"))
+        }
+        assertEquals(listOf("cdn.example.com"), lookups)
+        assertThrows(IOException::class.java) { get(client, "http://api.example.com:${server.port}/seg1.ts") }
+        assertThrows(IOException::class.java) { get(client, "http://sub.cdn.example.com:${server.port}/seg1.ts") }
+        assertEquals(1, server.requestCount)
+        assertEquals(listOf("cdn.example.com"), lookups)
+        // A redirect from the https API onto the insecure CDN over http is followed; onto the API over http it is not.
+        server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "http://cdn.example.com:${server.port}/final.ts"))
+        server.enqueue(MockResponse().setBody("bytes"))
+        get(client, "http://cdn.example.com:${server.port}/seg1.ts").use { r -> assertEquals("bytes", r.body!!.string()) }
+        server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "http://api.example.com:${server.port}/final.ts"))
+        assertThrows(IOException::class.java) { get(client, "http://cdn.example.com:${server.port}/seg2.ts") }
+        assertEquals(4, server.requestCount)
+    }
+
     @Test fun `IP literals and localhost are refused, whatever was declared`() {
         listOf("https://192.168.1.1/cgi-bin/x", "https://127.0.0.1:8080/s?u=x", "https://[::1]/k", "https://localhost/x")
             .forEach { u -> assertThrows(u, HostNotAllowedException::class.java) { get(client(listOf("cdn.example.com")), u) } }

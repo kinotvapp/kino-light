@@ -508,6 +508,54 @@ test("checkOutput accepts a widevine drm block only for a plugin that declares d
   assert.equal(contract.output.maxHeaders, 20);
 });
 
+test("checkOutput lets a stream, its subtitles, audio and license use http only on a host declared insecureHttp", () => {
+  const m = validateManifest(manifest({
+    apiVersion: 2,
+    hosts: ["api.example.com", { host: "cdn.example.com", insecureHttp: true }, "lic.example.com"],
+    capabilities: ["search", "resolve", "drm"],
+  })).manifest;
+  const r = checkOutput("resolve", {
+    url: "http://cdn.example.com/v.mpd",
+    subtitles: [{ lang: "es", url: "http://cdn.example.com/s.vtt" }, { lang: "en", url: "http://api.example.com/s.vtt" }],
+    audioTracks: [{ lang: "es", url: "http://cdn.example.com/a.aac" }, { lang: "en", url: "http://lic.example.com/a.aac" }],
+    drm: { type: "widevine", licenseUrl: "http://cdn.example.com/lic" },
+  }, m).value;
+  assert.equal(r.url, "http://cdn.example.com/v.mpd");
+  assert.deepEqual(r.subtitles.map((s) => s.lang), ["es"]);
+  assert.deepEqual(r.audioTracks.map((a) => a.lang), ["es"]);
+  assert.equal(r.drm.licenseUrl, "http://cdn.example.com/lic");
+  // Every other declared host stays https-only, and https still works on the insecure one.
+  assert.throws(() => checkOutput("resolve", { url: "http://api.example.com/v.mp4" }, m), /El video debe usar https/);
+  assert.throws(() => checkOutput("resolve", { url: "http://sub.cdn.example.com/v.mp4" }, m), /El video debe usar https/);
+  assert.throws(() => checkOutput("resolve", { url: "https://cdn.example.com/v.mp4", drm: { type: "widevine", licenseUrl: "http://lic.example.com/l" } }, m), /La licencia del video debe usar https/);
+  assert.equal(checkOutput("resolve", { url: "https://cdn.example.com/v.mp4" }, m).value.url, "https://cdn.example.com/v.mp4");
+  // A v1 manifest (never an insecure host) is unchanged: http is refused on every declared host.
+  assert.throws(() => checkOutput("resolve", { url: "http://example.com/v.mp4" }, validateManifest(manifest()).manifest), /El video debe usar https/);
+});
+
+test("kino.fetch reaches a host declared insecureHttp over http, and no other declared host", async () => {
+  const s = await server((req, res) => { res.writeHead(200, { "Content-Type": "text/plain" }); res.end("hola " + req.url); });
+  const m = validateManifest(manifest({ apiVersion: 2, hosts: ["api.example.com", { host: "cdn.example.com", insecureHttp: true }] })).manifest;
+  const port = s.address().port;
+  const local = (url, init) => fetch(String(url).replace(/^http:\/\/[^/]+/, `http://127.0.0.1:${port}`), init);
+  let touched = 0;
+  const { kino } = createKino(m, { fetchImpl: (url, init) => { touched++; return local(url, init); } });
+  try {
+    const r = await kino.fetch("http://cdn.example.com/x");
+    assert.equal(r.status, 200);
+    assert.equal(r.text(), "hola /x");
+    assert.equal(r.url, "http://cdn.example.com/x");
+    await assert.rejects(kino.fetch("http://api.example.com/x"), (e) => e.code === "host_not_allowed" && /https/.test(e.message));
+    await assert.rejects(kino.fetch("http://sub.cdn.example.com/x"), (e) => e.code === "host_not_allowed");
+    assert.equal(touched, 1);
+    // A v1 plugin never has an insecure host: http on its declared host is refused as always.
+    const v1 = createKino(JSON.parse(manifest()), { fetchImpl: () => { throw new Error("must not reach the network"); } }).kino;
+    await assert.rejects(v1.fetch("http://example.com/"), (e) => e.code === "host_not_allowed");
+  } finally {
+    s.close();
+  }
+});
+
 test("checkOutput reads an episodes answer's sibling seasons as the app does", () => {
   const m = JSON.parse(manifest({ capabilities: ["search", "episodes", "resolve"] }));
   const none = checkOutput("episodes", { episodes: [{ number: 1, ref: "e1" }] }, m);

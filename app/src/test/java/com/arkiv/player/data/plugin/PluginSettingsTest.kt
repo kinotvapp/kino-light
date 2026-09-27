@@ -173,6 +173,21 @@ class PluginHostsTest {
         assertNull(hosts.userHostFor("http://192.168.1.11:8096/".toHttpUrl()))
     }
 
+    @Test fun `plain http is allowed only on a host approved as insecureHttp, matched exactly`() {
+        val hosts = EffectiveHosts(listOf("api.example.com", "cdn.example.com", "*.mirror.example.com"), insecure = setOf("cdn.example.com", "*.mirror.example.com"))
+        assertTrue(hosts.allowsScheme("http://cdn.example.com/v.mp4".toHttpUrl()))
+        assertTrue(hosts.allowsScheme("http://CDN.example.com./v.mp4".toHttpUrl()))
+        assertTrue(hosts.allowsScheme("https://cdn.example.com/v.mp4".toHttpUrl()))
+        assertTrue(hosts.allowsScheme("https://api.example.com/v.mp4".toHttpUrl()))
+        assertFalse(hosts.allowsScheme("http://api.example.com/v.mp4".toHttpUrl()))
+        assertFalse(hosts.allowsScheme("http://sub.cdn.example.com/v.mp4".toHttpUrl()))
+        // The parser never lets a wildcard be insecure; a hand-edited record with one covers nothing.
+        assertFalse(hosts.allowsScheme("http://a.mirror.example.com/v.mp4".toHttpUrl()))
+        // Without any insecure host (every v1 plugin, every record from before the flag): https only, as always.
+        assertFalse(EffectiveHosts(listOf("cdn.example.com")).allowsScheme("http://cdn.example.com/".toHttpUrl()))
+        assertTrue(EffectiveHosts(listOf("cdn.example.com")).allowsScheme("https://cdn.example.com/".toHttpUrl()))
+    }
+
     @Test fun `default ports are explicit and names stay names`() {
         assertEquals(UserHost("https", "jellyfin.example.org", 443), PluginHosts.userHostOf("https://Jellyfin.Example.org/"))
         assertEquals(UserHost("http", "nas.local", 80), PluginHosts.userHostOf("http://nas.local"))
