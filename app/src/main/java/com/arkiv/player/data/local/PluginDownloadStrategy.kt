@@ -46,7 +46,8 @@ class PluginDownloadStrategy(
     ): DownloadOutcome {
         val pluginId = PluginIds.pluginIdOfEpisode(episodeId)
             ?: return DownloadOutcome.Failed("Este video no es de un plugin")
-        if (!offersDownloads(pluginId)) return DownloadOutcome.Failed(NOT_OFFERED)
+        // Retryable once the plugin can download again; the person's own doing, so never a report.
+        if (!offersDownloads(pluginId)) return DownloadOutcome.Failed(NOT_OFFERED, expected = true)
 
         val ref = refForEpisode(episodeId) ?: return DownloadOutcome.Failed("No se encontró la fuente del video")
         // A background call: a queue against a slow server must never switch the plugin off

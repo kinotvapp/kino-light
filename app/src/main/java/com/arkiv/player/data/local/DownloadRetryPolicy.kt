@@ -84,9 +84,10 @@ object DownloadRetryPolicy {
     /**
      * Whether a failure is worth a crash report: a definitive one nobody expected. Network trouble
      * retries on its own, and a permanent refusal (an HLS-only plugin source, DRM, live) is a
-     * documented limit of the downloader, not a bug -- reporting each one would only be noise.
+     * documented limit of the downloader, not a bug -- reporting each one would only be noise; so
+     * is an [expected][DownloadOutcome.Failed.expected] one (a plugin the person switched off).
      */
-    fun reports(transient: Boolean, permanent: Boolean): Boolean = !transient && !permanent
+    fun reports(transient: Boolean, permanent: Boolean, expected: Boolean = false): Boolean = !transient && !permanent && !expected
 }
 
 /** See [DownloadRetryPolicy.resolve]. */

@@ -52,6 +52,13 @@ class DownloadRetryPolicyTest {
         assertFalse(DownloadRetryPolicy.reports(transient = false, permanent = true))
     }
 
+    /** A plugin the person switched off with rows queued: retryable once it is back, never a bug. */
+    @Test
+    fun `an expected failure still fails and stays retryable, but is never reported`() {
+        assertEquals(FailureResolution.FAIL, DownloadRetryPolicy.resolve(transient = false, permanent = false, attempt = 0))
+        assertFalse(DownloadRetryPolicy.reports(transient = false, permanent = false, expected = true))
+    }
+
     @Test
     fun `5xx and server throttling get retried`() {
         assertTrue(DownloadRetryPolicy.isTransient(HttpStatusException(500)))

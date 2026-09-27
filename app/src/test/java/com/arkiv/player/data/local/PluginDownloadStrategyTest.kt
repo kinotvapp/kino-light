@@ -227,6 +227,9 @@ class PluginDownloadStrategyTest {
 
         assertTrue(outcome is DownloadOutcome.Failed)
         assertFalse((outcome as DownloadOutcome.Failed).transient)
+        // The person's own doing (plugin disabled or uninstalled): retryable later, never a crash report.
+        assertFalse(outcome.permanent)
+        assertTrue(outcome.expected)
         assertTrue(source.resolved.isEmpty())
         assertEquals(0, server.requestCount)
     }

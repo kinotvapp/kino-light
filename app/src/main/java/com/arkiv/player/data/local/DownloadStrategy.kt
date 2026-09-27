@@ -18,7 +18,17 @@ sealed interface DownloadOutcome {
      * state with no "Reintentar", never crash-reported (a documented limit, not a bug), and still
      * removable. Defaults to false: an ordinary failure keeps today's retry and report behaviour.
      */
-    data class Failed(val reason: String, val transient: Boolean = false, val permanent: Boolean = false) : DownloadOutcome
+    data class Failed(
+        val reason: String,
+        val transient: Boolean = false,
+        val permanent: Boolean = false,
+        /**
+         * A failure of the person's own making, not a bug: e.g. the plugin was disabled or
+         * uninstalled with rows still queued. Fails and stays retryable like any other, but is
+         * never crash-reported (see [DownloadRetryPolicy.reports]).
+         */
+        val expected: Boolean = false,
+    ) : DownloadOutcome
 }
 
 /**

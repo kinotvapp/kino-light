@@ -158,7 +158,7 @@ class LocalDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
                 // retry) -> this title won't finish for the user. Tells us which titles/devices
                 // can't download offline. A `permanent` refusal (an HLS-only plugin source, DRM,
                 // live: "Este video no se puede descargar") is a documented limit, never a report.
-                if (DownloadRetryPolicy.reports(outcome.transient, outcome.permanent)) {
+                if (DownloadRetryPolicy.reports(outcome.transient, outcome.permanent, outcome.expected)) {
                     com.arkiv.player.crash.Crash.report(
                         com.arkiv.player.crash.OfflineDownloadFailed("${entity.episodeId}: ${outcome.reason}"),
                         "offline-download",
