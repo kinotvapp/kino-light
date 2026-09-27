@@ -85,4 +85,10 @@ class PluginsScreenStateTest {
     @Test fun `the Instalados tab never shows a negative count`() {
         assertEquals("Instalados", installedTabLabel(-2))
     }
+
+    // A TV keyboard types at the end of what the field holds: a dialog that reopened with the old text made the
+    // person type a doubled repository ("kinotvapp/kino-plugin-archivekinotvapp/kino-plugin-archive").
+    @Test fun `dismissing the Agregar dialog leaves the address field empty`() {
+        assertEquals("", addressAfterDialogDismissed())
+    }
 }

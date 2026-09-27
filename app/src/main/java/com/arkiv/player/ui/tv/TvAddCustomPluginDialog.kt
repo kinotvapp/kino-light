@@ -7,9 +7,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -42,9 +44,11 @@ import com.arkiv.player.ui.theme.ArkivTextSecondary
  * screen over and being cancelled (see [com.arkiv.player.ui.plugin.addModalVisible]).
  *
  * [message] is the answer of the last try (an unknown or refused repository), drawn under the field it is
- * about, inside the dialog. While [busy] the field can be read but not edited and "Agregar" reads
- * "Revisando…". Done on the keyboard does what "Agregar" does, under the same rule ([canSubmitCustom]).
- * [onDismiss] is "Cancelar" and system Back (which first closes the keyboard, if it is up).
+ * about, above the buttons, inside the dialog. The content scrolls and the buttons scroll into view when they
+ * take focus, so they stay reachable with the keyboard up. While [busy] the field can be read but not edited
+ * and "Agregar" reads "Revisando…". Done on the keyboard does what "Agregar" does, under the same rule
+ * ([canSubmitCustom]), and nothing at all on an empty field. [onDismiss] is "Cancelar" and system Back (which
+ * first closes the keyboard, if it is up); the caller then clears the address ([com.arkiv.player.ui.plugin.addressAfterDialogDismissed]).
  *
  * The field takes focus as soon as the dialog opens, keyboard included. That is deliberate and only
  * possible here: on the Plugins screen itself no text field is ever focused by itself, but this dialog exists
@@ -72,8 +76,17 @@ internal fun TvAddCustomPluginDialog(
         // Read INSIDE the dialog: it is a window of its own, with its own focus manager.
         val focusManager = LocalFocusManager.current
         Column(
-            modifier = Modifier.width(560.dp).clip(RoundedCornerShape(16.dp)).background(ArkivSurface).padding(32.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            // Scrolls: the TV keyboard takes the lower half of the screen and the dialog is centred, so the window is
+            // shorter than the content whenever it is up (as the phone modal's, and the consent dialog's). The vertical
+            // padding is kept small for the same reason, so that with a two-line error the field, the error and the
+            // buttons still fit above the keyboard without scrolling (measured on the KALLEY: 1280x720 px, keyboard from y=400).
+            modifier = Modifier
+                .width(560.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(ArkivSurface)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 32.dp, vertical = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text("Agregar un plugin", style = MaterialTheme.typography.headlineSmall, color = Color.White)
             Text(
@@ -94,6 +107,8 @@ internal fun TvAddCustomPluginDialog(
                     keyboardType = KeyboardType.Uri,
                     imeAction = ImeAction.Done,
                 ),
+                // Done on an empty field does nothing at all: the handler replaces the default action, so the keyboard
+                // stays up and focus stays in the field.
                 keyboardActions = KeyboardActions(onDone = { if (canSubmit) onSubmit() }),
                 modifier = Modifier
                     .fillMaxWidth()

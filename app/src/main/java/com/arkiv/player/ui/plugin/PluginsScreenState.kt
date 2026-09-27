@@ -37,6 +37,16 @@ internal fun addModalVisible(requested: Boolean, state: PluginsUiState): Boolean
 internal fun addRequestAfterConsent(requested: Boolean, confirmed: Boolean): Boolean = requested && !confirmed
 
 /**
+ * What the address field holds after the person dismisses the "Agregar" dialog with Cancelar or Back: nothing.
+ * The dialog then reopens empty. A keyboard types at the end of what the field holds (on the TV, always), so a
+ * dialog that reopened with the old text made the person type a doubled repository. Cancelling the CONSENT sheet
+ * the dialog raised is not a dismissal ([addRequestAfterConsent]): the dialog returns with the text as it was
+ * left, and a confirmed install clears the address itself when it completes. Applied through
+ * [PluginsViewModel.onAddressChange], which also drops the message the last try left.
+ */
+internal fun addressAfterDialogDismissed(): String = ""
+
+/**
  * Whether "Agregar" does anything with the field: not while another action runs (the view model would
  * ignore it) and not for an empty or whitespace-only address ([PluginsViewModel.add] trims it too).
  */

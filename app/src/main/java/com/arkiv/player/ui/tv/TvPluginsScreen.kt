@@ -74,6 +74,7 @@ import com.arkiv.player.ui.plugin.PluginsTab
 import com.arkiv.player.ui.plugin.PluginsViewModel
 import com.arkiv.player.ui.plugin.addModalVisible
 import com.arkiv.player.ui.plugin.addRequestAfterConsent
+import com.arkiv.player.ui.plugin.addressAfterDialogDismissed
 import com.arkiv.player.ui.plugin.artForInstalled
 import com.arkiv.player.ui.plugin.catalogActionOf
 import com.arkiv.player.ui.plugin.catalogRefreshLine
@@ -166,10 +167,13 @@ internal fun TvPluginsContent(mode: AddPluginMode, modifier: Modifier = Modifier
     var addRequested by rememberSaveable { mutableStateOf(false) }
     val dialogVisible = addModalVisible(addRequested, state)
 
-    // The three places focus is sent to. [selectedTabFocus] is on whichever tab is selected, [addFocus] on the
-    // "Agregar" button and [installedEntryFocus] on the first action of the Instalados body (or on its "Ver
+    // The places focus is sent to. Each tab chip has ITS OWN requester ([tabFocus], for good: one that moved
+    // between chips as the selection changed could reach the stale chip while the row recomposed), and
+    // [selectedTabFocus] is just the one of the tab that is selected now, where Up from a body leads. [addFocus] is
+    // on the "Agregar" button and [installedEntryFocus] on the first action of the Instalados body (or on its "Ver
     // recomendados" when nothing is installed). [firstRowFocus] (below) is on the first recommended card.
-    val selectedTabFocus = remember { FocusRequester() }
+    val tabFocus = remember { PluginsTab.entries.associateWith { FocusRequester() } }
+    val selectedTabFocus = tabFocus.getValue(tab)
     val addFocus = remember { FocusRequester() }
     val installedEntryFocus = remember { FocusRequester() }
 
@@ -209,12 +213,12 @@ internal fun TvPluginsContent(mode: AddPluginMode, modifier: Modifier = Modifier
     }
 
     // "Ver recomendados" switches tab from inside the Instalados body, which then leaves composition and takes
-    // its focus with it: the selected tab (now Recomendados) is where focus is put back.
-    var focusSelectedTab by remember { mutableStateOf(false) }
-    LaunchedEffect(focusSelectedTab) {
-        if (focusSelectedTab) {
-            requestFocusWhenReady(selectedTabFocus)
-            focusSelectedTab = false
+    // its focus with it: the Recomendados chip is where focus is put back.
+    var focusRecommendedChip by remember { mutableStateOf(false) }
+    LaunchedEffect(focusRecommendedChip) {
+        if (focusRecommendedChip) {
+            requestFocusWhenReady(tabFocus.getValue(PluginsTab.RECOMMENDED))
+            focusRecommendedChip = false
         }
     }
 
@@ -233,7 +237,7 @@ internal fun TvPluginsContent(mode: AddPluginMode, modifier: Modifier = Modifier
             installedCount = plugins.size,
             busy = state.busy,
             focusable = initialFocusPlaced,
-            selectedTabFocus = selectedTabFocus,
+            tabFocus = tabFocus,
             addFocus = addFocus,
             downTarget = when (tab) {
                 // A requester on a card that is not composed throws: with no cards, Down takes its usual course.
@@ -274,7 +278,7 @@ internal fun TvPluginsContent(mode: AddPluginMode, modifier: Modifier = Modifier
                     entryFocus = installedEntryFocus,
                     onBrowseRecommended = {
                         tab = PluginsTab.RECOMMENDED
-                        focusSelectedTab = true
+                        focusRecommendedChip = true
                     },
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
@@ -290,8 +294,10 @@ internal fun TvPluginsContent(mode: AddPluginMode, modifier: Modifier = Modifier
             onAddressChange = vm::onAddressChange,
             onSubmit = vm::add,
             onDismiss = {
+                // Cancelar and Back forget what was typed and what the last try said: a TV keyboard types at the
+                // end of the field, so a dialog that reopened with the old text made a doubled repository.
                 addRequested = false
-                vm.clearMessage()
+                vm.onAddressChange(addressAfterDialogDismissed())
             },
         )
     }
@@ -327,7 +333,7 @@ private fun PluginsHeader(
     installedCount: Int,
     busy: Boolean,
     focusable: Boolean,
-    selectedTabFocus: FocusRequester,
+    tabFocus: Map<PluginsTab, FocusRequester>,
     addFocus: FocusRequester,
     downTarget: FocusRequester?,
     onSelect: (PluginsTab) -> Unit,
@@ -350,7 +356,7 @@ private fun PluginsHeader(
                     selected = t == tab,
                     onClick = { onSelect(t) },
                     modifier = Modifier
-                        .then(if (t == tab) Modifier.focusRequester(selectedTabFocus) else Modifier)
+                        .focusRequester(tabFocus.getValue(t))
                         .focusProperties { canFocus = focusable }
                         .dpadDownTo(downTarget),
                 )

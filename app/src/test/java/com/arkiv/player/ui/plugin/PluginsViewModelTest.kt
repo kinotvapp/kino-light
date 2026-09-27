@@ -182,6 +182,30 @@ class PluginsViewModelTest {
         assertEquals(before.copy(message = null, messagePluginId = null), vm.state.value)
     }
 
+    // The dialog's two exits: dismissing it (Cancelar, Back) forgets what was typed and what the last try said, so
+    // it reopens empty; cancelling the consent sheet it raised keeps the text, so it returns as it was left.
+    @Test fun `dismissing the dialog clears the typed address and the refusal that was under it`() {
+        val admin = FakeAdmin().apply { previewResult = { throw InstallException("No encontré kino-plugin.json") } }
+        val vm = vm(admin)
+        vm.onAddressChange("nope"); vm.add()
+        assertEquals("No encontré kino-plugin.json", vm.state.value.message)
+
+        vm.onAddressChange(addressAfterDialogDismissed())
+
+        with(vm.state.value) {
+            assertEquals("", address)
+            assertNull(message)
+        }
+    }
+
+    @Test fun `cancelling the consent keeps the typed address`() {
+        val admin = FakeAdmin().apply { previewResult = { preview } }
+        val vm = vm(admin)
+        vm.onAddressChange("o/r"); vm.add()
+        vm.cancelConsent()
+        assertEquals("o/r", vm.state.value.address)
+    }
+
     @Test fun `an engine failure is said in Spanish, never with its raw message`() {
         val admin = FakeAdmin().apply {
             previewResult = { preview }

@@ -214,8 +214,9 @@ fun PluginsScreen(mode: AddPluginMode, onClose: () -> Unit) {
             onAddressChange = vm::onAddressChange,
             onSubmit = vm::add,
             onDismiss = {
+                // Cancelar, a tap outside and Back forget what was typed and what the last try said.
                 addRequested = false
-                vm.clearMessage()
+                vm.onAddressChange(addressAfterDialogDismissed())
             },
         )
     }
