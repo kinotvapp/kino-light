@@ -73,9 +73,10 @@ import com.arkiv.player.ui.theme.ArkivTextSecondary
 import com.arkiv.player.ui.tv.gridLinesWithStatus
 
 /**
- * How the Plugins screen is reached. [SETTINGS] is the button in Ajustes ▸ Plugins: back closes it.
- * [ONBOARDING] is the mandatory first-launch picker (not wired yet): it has no way out, so it draws no
- * back arrow and swallows system Back.
+ * How the Plugins content is shown. [SETTINGS] is the person's own visit, from Ajustes ▸ Plugins: it can be
+ * left, so a full-screen host draws a back arrow and system Back closes it. [ONBOARDING] is the mandatory
+ * first-launch picker (Phase 2, not wired yet): it has no way out, so it draws no back arrow and swallows
+ * system Back.
  */
 enum class AddPluginMode { ONBOARDING, SETTINGS }
 
@@ -106,25 +107,75 @@ private val MIN_TARGET = 48.dp
 private val ADD_CONTAINER = ArkivRed.copy(alpha = 0.30f)
 
 /**
- * The Plugins screen on the phone, two tabs under one title. **Recomendados**: search the recommended
- * plugins (cards in a two-column grid) and install one. **Instalados**: manage what is installed. The
- * "Agregar" button at the top right opens a modal to add one by `usuario/repositorio` ([AddCustomPluginModal]).
- * Installing always goes through the consent sheet, whichever tab or modal it starts from.
+ * The Plugins screen on the phone as a full screen: a top bar with the title "Plugins" (and a back arrow when
+ * [mode] can be left, see [AddPluginMode.canClose]) over [PluginsContent], which is the screen itself. Ajustes ▸
+ * Plugins does NOT use this host (it shows [PluginsContent] under its own header and chips); this one is the
+ * first-launch picker's ([AddPluginMode.ONBOARDING], Phase 2, not wired yet), pre-wired here so that phase adds
+ * a route and nothing else.
  *
- * Each tab is its own scrolling list, so either can grow. What must be seen wherever the person is stays
- * above the tabs: the progress bar and the message of the last action. The dialogs (consent, uninstall,
- * Configurar) are drawn over whichever tab is showing, and the Configurar that an install needing setup
- * opens likewise. The search text lives in the view model, so it survives switching tabs.
+ * System Back closes it in [AddPluginMode.SETTINGS] and is swallowed in [AddPluginMode.ONBOARDING].
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PluginsScreen(mode: AddPluginMode, onClose: () -> Unit) {
     BackHandler { handleAddPluginBack(mode, onClose) }
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Plugins", maxLines = 1) },
+                navigationIcon = {
+                    if (mode.canClose) {
+                        IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver") }
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = ArkivBlack, titleContentColor = Color.White, navigationIconContentColor = Color.White,
+                ),
+            )
+        },
+        containerColor = ArkivBlack,
+    ) { padding ->
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+            PluginsContent(
+                mode = mode,
+                bottomInset = padding.calculateBottomPadding(),
+                modifier = Modifier
+                    .readingWidth()
+                    .fillMaxSize()
+                    .padding(top = padding.calculateTopPadding())
+                    // The bottom inset is taken by the list's own padding; the keyboard then only adds
+                    // what it covers on top of it.
+                    .consumeWindowInsets(padding)
+                    .imePadding(),
+            )
+        }
+    }
+}
 
+/**
+ * What the Plugins screen shows on the phone: no title, no back arrow and no Back handling of its own (the
+ * host adds them: [PluginsScreen], or Ajustes ▸ Plugins under its own header) and no insets (the host
+ * pads the top and the keyboard; [bottomInset] is the system bar it leaves at the bottom, which the lists
+ * keep clear). From top to bottom: what an action answers (the progress bar and its message), the
+ * **Agregar** button, the two tabs **Recomendados** and **Instalados (n)**, and the selected tab's body.
+ * **Recomendados**: search the recommended plugins (cards in a two-column grid) and install one.
+ * **Instalados**: manage what is installed. **Agregar** opens a modal to add one by `usuario/repositorio`
+ * ([AddCustomPluginModal]). Installing always goes through the consent sheet, whichever tab or modal it
+ * starts from.
+ *
+ * The button has a line of its own (with the message beside it) instead of sharing the tabs' line: two
+ * tabs and a "+ Agregar" do not fit side by side at a phone's width, and less so at a large font.
+ *
+ * Each tab is its own scrolling list, so either can grow: the body takes the height its host leaves (the
+ * host must bound it). What must be seen wherever the person is stays above the tabs. The dialogs (consent,
+ * uninstall, Configurar) are drawn over whichever tab is showing, and the Configurar that an install needing
+ * setup opens likewise. The search text lives in the view model, so it survives switching tabs.
+ */
+@Composable
+internal fun PluginsContent(mode: AddPluginMode, bottomInset: Dp, modifier: Modifier = Modifier) {
     val graph = rememberGraph()
-    // Own key: this screen can be hosted next to the Plugins tab's view model on the same owner.
     val vm: PluginsViewModel = viewModel(
-        key = "add-plugin",
+        key = "plugins",
         factory = viewModelFactory { initializer { PluginsViewModel(graph.pluginAdmin, catalogProvider = graph.pluginCatalog, artProvider = graph.catalogArt) } },
     )
     val plugins by vm.plugins.collectAsStateWithLifecycle()
@@ -141,68 +192,43 @@ fun PluginsScreen(mode: AddPluginMode, onClose: () -> Unit) {
     val installedList = rememberLazyListState()
     val modalVisible = addModalVisible(addRequested, state)
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Plugins", maxLines = 1) },
-                navigationIcon = {
-                    if (mode.canClose) {
-                        IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver") }
-                    }
-                },
-                actions = {
-                    AddPluginButton(
-                        enabled = !state.busy,
-                        onClick = {
-                            // Whatever an earlier action said is not this modal's news.
-                            vm.clearMessage()
-                            addRequested = true
-                        },
-                    )
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = ArkivBlack, titleContentColor = Color.White, navigationIconContentColor = Color.White,
-                ),
-            )
-        },
-        containerColor = ArkivBlack,
-    ) { padding ->
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-            Column(
-                Modifier
-                    .readingWidth()
-                    .fillMaxSize()
-                    .padding(top = padding.calculateTopPadding())
-                    // The bottom inset is taken by the list's own padding; the keyboard then only adds
-                    // what it covers on top of it.
-                    .consumeWindowInsets(padding)
-                    .imePadding(),
-            ) {
-                // Above the tabs, not inside them: what an install or an add answers must be seen on either tab,
-                // wherever its list is scrolled to. A message about one installed plugin shows on its own row, and
-                // while the modal is up its message is drawn inside it.
-                if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth(), color = ArkivRed)
+    Column(modifier) {
+        // Above the tabs, not inside them: what an install or an add answers must be seen on either tab,
+        // wherever its list is scrolled to. A message about one installed plugin shows on its own row, and
+        // while the modal is up its message is drawn inside it.
+        if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth(), color = ArkivRed)
+        Row(Modifier.fillMaxWidth().padding(horizontal = SIDE_GUTTER), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(1f).padding(end = 12.dp)) {
                 if (rowMessageId == null && !modalVisible) {
                     state.message?.let {
-                        Text(it, style = MaterialTheme.typography.bodySmall, color = Color.White, modifier = Modifier.padding(horizontal = SIDE_GUTTER, vertical = 8.dp))
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = Color.White, modifier = Modifier.padding(vertical = 8.dp))
                     }
                 }
-                PluginsTabRow(selected = tab, installedCount = plugins.size, onSelect = { tab = it })
-                when (tab) {
-                    PluginsTab.RECOMMENDED -> RecommendedTab(
-                        vm = vm, query = state.query, busy = state.busy, catalog = catalog, art = art,
-                        gridState = recommendedGrid, bottomInset = padding.calculateBottomPadding(),
-                        modifier = Modifier.weight(1f),
-                    )
-                    PluginsTab.INSTALLED -> InstalledTab(
-                        vm = vm, plugins = plugins, art = art, busy = state.busy,
-                        message = state.message, rowMessageId = rowMessageId,
-                        listState = installedList, bottomInset = padding.calculateBottomPadding(),
-                        onBrowseRecommended = { tab = PluginsTab.RECOMMENDED },
-                        modifier = Modifier.weight(1f),
-                    )
-                }
             }
+            AddPluginButton(
+                enabled = !state.busy,
+                onClick = {
+                    // The modal opens empty: what an earlier action said is not its news, and neither is an address
+                    // a confirmed install left behind when it failed. (Changing the address also drops the message.)
+                    vm.onAddressChange("")
+                    addRequested = true
+                },
+            )
+        }
+        PluginsTabRow(selected = tab, installedCount = plugins.size, onSelect = { tab = it })
+        when (tab) {
+            PluginsTab.RECOMMENDED -> RecommendedTab(
+                vm = vm, query = state.query, busy = state.busy, catalog = catalog, art = art,
+                gridState = recommendedGrid, bottomInset = bottomInset,
+                modifier = Modifier.weight(1f),
+            )
+            PluginsTab.INSTALLED -> InstalledTab(
+                vm = vm, plugins = plugins, art = art, busy = state.busy,
+                message = state.message, rowMessageId = rowMessageId,
+                listState = installedList, bottomInset = bottomInset,
+                onBrowseRecommended = { tab = PluginsTab.RECOMMENDED },
+                modifier = Modifier.weight(1f),
+            )
         }
     }
 
@@ -237,13 +263,13 @@ fun PluginsScreen(mode: AddPluginMode, onClose: () -> Unit) {
     state.configuring?.let { PluginConfigDialog(it, isTv = false, vm = vm) }
 }
 
-/** The "Agregar" button of the top bar: a plus and the word, at least [MIN_TARGET] tall, off while an action runs. */
+/** The "Agregar" button: a plus and the word, at least [MIN_TARGET] tall, off while an action runs. */
 @Composable
 private fun AddPluginButton(enabled: Boolean, onClick: () -> Unit) {
     FilledTonalButton(
         onClick = onClick,
         enabled = enabled,
-        modifier = Modifier.padding(end = 8.dp).heightIn(min = MIN_TARGET),
+        modifier = Modifier.heightIn(min = MIN_TARGET),
         colors = ButtonDefaults.filledTonalButtonColors(containerColor = ADD_CONTAINER, contentColor = Color.White),
     ) {
         Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))

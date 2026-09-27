@@ -9,8 +9,10 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
@@ -30,6 +32,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.arkiv.player.data.magis.MagisAccountState
+import com.arkiv.player.ui.plugin.AddPluginMode
+import com.arkiv.player.ui.plugin.PluginsContent
 import com.arkiv.player.ui.readingWidth
 import com.arkiv.player.ui.rememberGraph
 
@@ -55,7 +59,7 @@ private enum class SettingsTab(val label: String) {
  * outside the scroll, so it's always within reach.
  */
 @Composable
-fun SettingsScreen(contentPadding: PaddingValues, onOpenDownloads: () -> Unit = {}, onOpenAddPlugin: () -> Unit = {}) {
+fun SettingsScreen(contentPadding: PaddingValues, onOpenDownloads: () -> Unit = {}) {
     val graph = rememberGraph()
     val magisAccount = graph.magisAccount
     // Reactive: this can flip WHILE the person is sitting on this screen (the next catalog call
@@ -114,26 +118,44 @@ fun SettingsScreen(contentPadding: PaddingValues, onOpenDownloads: () -> Unit = 
                 }
             }
 
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(scroll)
-                    .padding(horizontal = 20.dp),
-            ) {
-                when (tab) {
-                    SettingsTab.SUBTITLES -> SubtitlesTab()
-                    SettingsTab.ACCOUNT -> AccountSection(
-                        magisAccount,
-                        onLink = { linkingMagis = true },
-                        accountUnavailable = regionGeoBlocked,
-                    )
-                    SettingsTab.APP -> AppTab(onOpenDownloads = onOpenDownloads)
-                    SettingsTab.PLUGINS -> com.arkiv.player.ui.plugin.PluginsTab(onOpenAddPlugin = onOpenAddPlugin)
-                    SettingsTab.CONNECT -> CompanionSettings()
+            if (tab == SettingsTab.PLUGINS) {
+                // The Plugins screen itself, not a section of it: its tabs are lazy lists that scroll on their own, so
+                // it takes the height the chips leave (a lazy list inside the scroll below would be measured with an
+                // infinite height and crash). It keeps its own 16 dp gutter, 4 dp inside the 20 dp of the rest of Ajustes.
+                // The keyboard lifts it by what it covers beyond the system bar, as the full-screen host does.
+                val bottomInset = contentPadding.calculateBottomPadding()
+                PluginsContent(
+                    mode = AddPluginMode.SETTINGS,
+                    bottomInset = bottomInset,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(horizontal = 4.dp)
+                        .consumeWindowInsets(PaddingValues(bottom = bottomInset))
+                        .imePadding(),
+                )
+            } else {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(scroll)
+                        .padding(horizontal = 20.dp),
+                ) {
+                    when (tab) {
+                        SettingsTab.SUBTITLES -> SubtitlesTab()
+                        SettingsTab.ACCOUNT -> AccountSection(
+                            magisAccount,
+                            onLink = { linkingMagis = true },
+                            accountUnavailable = regionGeoBlocked,
+                        )
+                        SettingsTab.APP -> AppTab(onOpenDownloads = onOpenDownloads)
+                        SettingsTab.CONNECT -> CompanionSettings()
+                        SettingsTab.PLUGINS -> Unit // Above: it needs a bounded height, not a scroll.
+                    }
+                    // The bottom shell adds the air below: the tabs don't need to know there's a
+                    // navigation bar under them.
+                    Spacer(Modifier.height(contentPadding.calculateBottomPadding() + 32.dp))
                 }
-                // The bottom shell adds the air below: the tabs don't need to know there's a
-                // navigation bar under them.
-                Spacer(Modifier.height(contentPadding.calculateBottomPadding() + 32.dp))
             }
         }
     }
