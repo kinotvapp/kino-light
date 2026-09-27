@@ -89,3 +89,13 @@ internal fun cardActionLabel(action: CatalogAction): String = when (action) {
 
 /** How many lines of description a card shows before it ends with an ellipsis. */
 internal fun cardDescriptionLines(): Int = 2
+
+/** How many tag chips a card shows at most: two is what fits on one line of a phone's half-width card. */
+private const val MAX_CARD_TAGS = 2
+
+/**
+ * The tags a card writes under the description: the first [MAX_CARD_TAGS] non-blank ones, trimmed, in the
+ * order the catalog gave them. A blank tag is skipped instead of taking up one of the places.
+ */
+internal fun cardTags(tags: List<String>): List<String> =
+    tags.map { it.trim() }.filter { it.isNotEmpty() }.take(MAX_CARD_TAGS)

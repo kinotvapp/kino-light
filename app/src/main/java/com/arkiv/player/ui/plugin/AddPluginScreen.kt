@@ -4,8 +4,6 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.consumeWindowInsets
@@ -14,9 +12,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridItemSpanScope
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -30,13 +31,13 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -47,13 +48,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
-import com.arkiv.player.ui.catalog.MetaChip
 import com.arkiv.player.ui.readingWidth
 import com.arkiv.player.ui.rememberGraph
 import com.arkiv.player.ui.theme.ArkivBlack
 import com.arkiv.player.ui.theme.ArkivRed
-import com.arkiv.player.ui.theme.ArkivSurface
 import com.arkiv.player.ui.theme.ArkivTextSecondary
+import com.arkiv.player.ui.tv.gridLinesWithStatus
 
 /**
  * How the "Agregar plugin" window is reached. [SETTINGS] is the button in Ajustes ▸ Plugins: back
@@ -70,10 +70,26 @@ internal fun handleAddPluginBack(mode: AddPluginMode, onClose: () -> Unit) {
     if (mode.canClose) onClose()
 }
 
+/** Recommended plugins per line of the grid. */
+private const val CATALOG_COLUMNS = 2
+
+/** Space between the cards, in both directions, and between the full-width items. */
+private val GRID_SPACING = 12.dp
+
+/** The phone's side gutter; the message above the grid uses it too so both line up. */
+private val SIDE_GUTTER = 16.dp
+
+/** An item of the grid that takes the whole line: everything but the cards. */
+private val FULL_WIDTH: LazyGridItemSpanScope.() -> GridItemSpan = { GridItemSpan(maxLineSpan) }
+
 /**
- * The "Agregar plugin" window on the phone: search the recommended plugins and install one, add one
- * by `usuario/repositorio`, and manage what is installed. Installing always goes through the consent
- * sheet, whichever list it starts from.
+ * The "Agregar plugin" window on the phone: search the recommended plugins (cards in a two-column grid)
+ * and install one, add one by `usuario/repositorio`, and manage what is installed. Installing always
+ * goes through the consent sheet, whichever list it starts from.
+ *
+ * One lazy grid scrolls the whole window: each recommended plugin is a [PluginCard] in one cell, and
+ * everything else (search, refresh notice, headings, the custom address, the installed plugins) is a
+ * full-width item, in the order the window always had.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -89,8 +105,10 @@ fun AddPluginScreen(mode: AddPluginMode, onClose: () -> Unit) {
     val plugins by vm.plugins.collectAsStateWithLifecycle()
     val state by vm.state.collectAsStateWithLifecycle()
     val catalog by vm.catalog.collectAsStateWithLifecycle()
+    val art by vm.art.collectAsStateWithLifecycle()
     val rowMessageId = rowMessagePluginId(state, plugins)
     val rows = legacyFirst(catalog.rows)
+    val statusLines = remember(rows) { gridLinesWithStatus(rows, CATALOG_COLUMNS) }
 
     Scaffold(
         topBar = {
@@ -124,15 +142,17 @@ fun AddPluginScreen(mode: AddPluginMode, onClose: () -> Unit) {
                 if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth(), color = ArkivRed)
                 if (rowMessageId == null) {
                     state.message?.let {
-                        Text(it, style = MaterialTheme.typography.bodySmall, color = Color.White, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = Color.White, modifier = Modifier.padding(horizontal = SIDE_GUTTER, vertical = 8.dp))
                     }
                 }
-                LazyColumn(
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(CATALOG_COLUMNS),
                     modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = padding.calculateBottomPadding() + 24.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    contentPadding = PaddingValues(start = SIDE_GUTTER, end = SIDE_GUTTER, top = 8.dp, bottom = padding.calculateBottomPadding() + 24.dp),
+                    horizontalArrangement = Arrangement.spacedBy(GRID_SPACING),
+                    verticalArrangement = Arrangement.spacedBy(GRID_SPACING),
                 ) {
-                    item(key = "search") {
+                    item(key = "search", span = FULL_WIDTH) {
                         OutlinedTextField(
                             value = state.query,
                             onValueChange = vm::onQueryChange,
@@ -145,7 +165,7 @@ fun AddPluginScreen(mode: AddPluginMode, onClose: () -> Unit) {
                     // Only while the list is still the copy shipped in the APK. The notice waits for the refresh to
                     // end (it may still succeed); meanwhile the action reads "Actualizando…" and does nothing.
                     catalogRefreshLine(catalog)?.let { line ->
-                        item(key = "seed-notice") {
+                        item(key = "seed-notice", span = FULL_WIDTH) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
                                     line.notice.orEmpty(),
@@ -158,20 +178,29 @@ fun AddPluginScreen(mode: AddPluginMode, onClose: () -> Unit) {
                             }
                         }
                     }
-                    item(key = "recommended-title") {
+                    item(key = "recommended-title", span = FULL_WIDTH) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             SectionTitle("Recomendados")
                             if (catalog.loading) CircularProgressIndicator(color = ArkivRed, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
                         }
                     }
-                    items(rows, key = { "catalog-${it.entry.id}" }) { row -> CatalogCard(row, busy = state.busy, vm = vm) }
+                    // One cell per plugin, the one of what the person already used first (see legacyFirst).
+                    itemsIndexed(rows, key = { _, row -> "card-${row.entry.id}" }) { index, row ->
+                        PluginCard(
+                            row = row,
+                            art = art[row.entry.repo],
+                            reserveStatusLine = statusLines.getOrElse(index) { false },
+                            enabled = !state.busy,
+                            onAction = { runCatalogAction(vm, row) },
+                        )
+                    }
                     if (rows.isEmpty() && !catalog.loading) {
-                        item(key = "no-match") {
+                        item(key = "no-match", span = FULL_WIDTH) {
                             Text("No hay plugins que coincidan.", style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary)
                         }
                     }
 
-                    item(key = "custom") {
+                    item(key = "custom", span = FULL_WIDTH) {
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(top = 12.dp)) {
                             SectionTitle("Agregar uno custom")
                             Text(
@@ -194,13 +223,13 @@ fun AddPluginScreen(mode: AddPluginMode, onClose: () -> Unit) {
                         }
                     }
 
-                    item(key = "installed-title") { SectionTitle("Instalados", Modifier.padding(top = 12.dp)) }
+                    item(key = "installed-title", span = FULL_WIDTH) { SectionTitle("Instalados", Modifier.padding(top = 12.dp)) }
                     if (plugins.isEmpty()) {
-                        item(key = "none-installed") {
+                        item(key = "none-installed", span = FULL_WIDTH) {
                             Text("Todavía no tienes plugins.", style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary)
                         }
                     }
-                    items(plugins, key = { "installed-${it.id}" }) { p ->
+                    items(plugins, key = { "installed-${it.id}" }, span = { GridItemSpan(maxLineSpan) }) { p ->
                         InstalledPluginRow(p, busy = state.busy, message = state.message.takeIf { rowMessageId == p.id }, vm = vm)
                     }
                 }
@@ -218,51 +247,16 @@ private fun SectionTitle(text: String, modifier: Modifier = Modifier) {
     Text(text, style = MaterialTheme.typography.titleMedium, color = Color.White, modifier = modifier)
 }
 
-/** One recommended plugin: what it is, and the one button [catalogActionOf] says fits its state. */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun CatalogCard(row: CatalogRow, busy: Boolean, vm: PluginsViewModel) {
-    val entry = row.entry
+/**
+ * What the button of a recommended plugin's card does: the action [catalogActionOf] says fits its state.
+ * An installed plugin that needs nothing does nothing (its button is disabled anyway).
+ */
+private fun runCatalogAction(vm: PluginsViewModel, row: CatalogRow) {
     val installed = row.installed
-    val action = catalogActionOf(row)
-    Surface(shape = RoundedCornerShape(12.dp), color = ArkivSurface, modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(entry.name, style = MaterialTheme.typography.titleMedium, color = Color.White, modifier = Modifier.weight(1f, fill = false))
-                if (entry.legacyDefault) MetaChip("Lo que ya usabas", ArkivRed, strong = true)
-            }
-            if (entry.description.isNotBlank()) {
-                Text(entry.description, style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary)
-            }
-            if (entry.tags.isNotEmpty()) {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    entry.tags.forEach { MetaChip(it) }
-                }
-            }
-            // Why the button says Activar / Configurar / Instalar again, in the same words as the installed list.
-            if (installed != null && action != CatalogAction.INSTALLED) {
-                Text(pluginStatusText(installed.status), style = MaterialTheme.typography.bodySmall, color = ArkivRed)
-            }
-            Button(
-                onClick = {
-                    when (action) {
-                        CatalogAction.INSTALL -> vm.installFromCatalog(entry)
-                        CatalogAction.CONFIGURE -> installed?.let { vm.openSettings(it.id) }
-                        CatalogAction.ENABLE -> installed?.let { vm.setEnabled(it.id, true) }
-                        CatalogAction.INSTALLED -> Unit
-                    }
-                },
-                enabled = !busy && action != CatalogAction.INSTALLED,
-            ) {
-                Text(
-                    when (action) {
-                        CatalogAction.INSTALL -> "Instalar"
-                        CatalogAction.CONFIGURE -> "Configurar"
-                        CatalogAction.ENABLE -> "Activar"
-                        CatalogAction.INSTALLED -> "Instalado"
-                    },
-                )
-            }
-        }
+    when (catalogActionOf(row)) {
+        CatalogAction.INSTALL -> vm.installFromCatalog(row.entry)
+        CatalogAction.CONFIGURE -> installed?.let { vm.openSettings(it.id) }
+        CatalogAction.ENABLE -> installed?.let { vm.setEnabled(it.id, true) }
+        CatalogAction.INSTALLED -> Unit
     }
 }

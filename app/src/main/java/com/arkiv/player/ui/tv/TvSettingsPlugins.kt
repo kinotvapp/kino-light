@@ -2,10 +2,12 @@ package com.arkiv.player.ui.tv
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -14,6 +16,7 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.arkiv.player.data.plugin.InstalledPlugin
 import com.arkiv.player.data.plugin.PluginStatus
+import com.arkiv.player.ui.plugin.InstalledPluginIcon
 import com.arkiv.player.ui.plugin.PluginConsentDialog
 import com.arkiv.player.ui.plugin.PluginUninstallDialog
 import com.arkiv.player.ui.plugin.PluginsViewModel
@@ -62,7 +65,17 @@ internal fun TvSettingsPlugins(onOpenAddPlugin: () -> Unit = {}) {
  */
 @Composable
 internal fun TvInstalledPluginRows(p: InstalledPlugin, message: String?, vm: PluginsViewModel) {
-    Text("${p.manifest.name} · ${p.record.version} — ${pluginStatusText(p.status)}", style = MaterialTheme.typography.bodyLarge, color = Color.White)
+    val heading = "${p.manifest.name} · ${p.record.version} — ${pluginStatusText(p.status)}"
+    val iconFile = p.iconFile
+    if (iconFile == null) {
+        Text(heading, style = MaterialTheme.typography.bodyLarge, color = Color.White)
+    } else {
+        // Plain decoration: an image is not a focus target, so the D-pad walks the same actions in the same order.
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            InstalledPluginIcon(iconFile, size = 32.dp)
+            Text(heading, style = MaterialTheme.typography.bodyLarge, color = Color.White)
+        }
+    }
     Text("Se conectará a: ${p.hosts.labels.joinToString(", ")}", style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary)
     if (message != null) {
         Text(message, style = MaterialTheme.typography.bodyMedium, color = Color.White)

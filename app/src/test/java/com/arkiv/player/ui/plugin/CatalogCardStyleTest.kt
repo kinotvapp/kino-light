@@ -95,4 +95,21 @@ class CatalogCardStyleTest {
     @Test fun `a description takes two lines on a card`() {
         assertEquals(2, cardDescriptionLines())
     }
+
+    @Test fun `a card shows the first two tags in the catalog's order`() {
+        assertEquals(listOf("Películas", "Series"), cardTags(listOf("Películas", "Series", "Anime", "Documentales")))
+    }
+
+    @Test fun `a card with fewer tags than the limit shows them all, or none`() {
+        assertEquals(listOf("Series"), cardTags(listOf("Series")))
+        assertEquals(emptyList<String>(), cardTags(emptyList()))
+    }
+
+    @Test fun `a blank tag is skipped and does not use up one of the two places`() {
+        assertEquals(listOf("Series", "Anime"), cardTags(listOf("", "  ", "Series", "Anime", "Cine")))
+    }
+
+    @Test fun `a tag is shown trimmed`() {
+        assertEquals(listOf("Series"), cardTags(listOf("  Series ")))
+    }
 }

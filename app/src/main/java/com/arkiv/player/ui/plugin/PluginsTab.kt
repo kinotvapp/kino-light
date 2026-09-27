@@ -15,10 +15,14 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -30,6 +34,7 @@ import com.arkiv.player.data.plugin.PluginStatus
 import com.arkiv.player.ui.rememberGraph
 import com.arkiv.player.ui.theme.ArkivRed
 import com.arkiv.player.ui.theme.ArkivTextSecondary
+import java.io.File
 
 /**
  * Ajustes ▸ Plugins on the phone: manage what's installed. Adding a plugin (from the recommended list
@@ -77,9 +82,7 @@ fun PluginsTab(onOpenAddPlugin: () -> Unit = {}) {
 internal fun InstalledPluginRow(p: InstalledPlugin, busy: Boolean, message: String?, vm: PluginsViewModel) {
     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (p.iconFile != null) {
-                AsyncImage(model = p.iconFile, contentDescription = null, modifier = Modifier.size(40.dp).clip(RoundedCornerShape(8.dp)))
-            }
+            p.iconFile?.let { InstalledPluginIcon(it, size = 40.dp) }
             Column(Modifier.weight(1f)) {
                 Text("${p.manifest.name} · ${p.record.version}", style = MaterialTheme.typography.bodyLarge, color = Color.White)
                 Text(
@@ -105,5 +108,23 @@ internal fun InstalledPluginRow(p: InstalledPlugin, busy: Boolean, message: Stri
             }
             TextButton(onClick = { vm.askUninstall(p) }, enabled = !busy) { Text("Desinstalar", color = ArkivRed) }
         }
+    }
+}
+
+/**
+ * An installed plugin's own icon, [size] square with rounded corners. It is decoration (the name is read
+ * next to it) and is dropped when the file cannot be decoded, so a corrupt icon leaves no empty square
+ * in the row. Shared by the phone's and the TV's installed rows; not focusable.
+ */
+@Composable
+internal fun InstalledPluginIcon(file: File, size: Dp) {
+    var failed by remember(file) { mutableStateOf(false) }
+    if (!failed) {
+        AsyncImage(
+            model = file,
+            contentDescription = null,
+            onError = { failed = true },
+            modifier = Modifier.size(size).clip(RoundedCornerShape(8.dp)),
+        )
     }
 }
