@@ -56,9 +56,9 @@ import com.arkiv.player.AppGraph
 
 private const val TAG = "LiveExo"
 
-/** What kind of live error this is, from the error code and the exceptions behind it. */
+/** What kind of live error this is, from the error code and the exceptions behind it. Shared with [StreamExoPlayer]'s live branch (a plugin's channel). */
 @androidx.annotation.OptIn(UnstableApi::class)
-private fun errorKind(error: PlaybackException): LiveErrorKind {
+internal fun liveErrorKind(error: PlaybackException): LiveErrorKind {
     if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) return LiveErrorKind.BEHIND_LIVE_WINDOW
     var cause: Throwable? = error.cause
     var depth = 0
@@ -286,7 +286,7 @@ internal fun LiveExoPlayer(
                 // Fell behind the window, or the playlist reset / froze: a fresh look at the playlist at the live
                 // edge fixes it, no need to re-resolve the whole channel. Only a few tries a minute; then the
                 // full reopen (and its warning) takes over.
-                val kind = errorKind(error)
+                val kind = liveErrorKind(error)
                 if (kind.recoverableInPlace && inPlaceBudget.tryConsume(SystemClock.elapsedRealtime())) {
                     LiveLog.w("in-place recovery: $kind ($msg) -> seek to the live edge and prepare again")
                     // Once per recovery, not per retry: a stuck playlist keeps hitting the same error while it's
@@ -313,7 +313,7 @@ internal fun LiveExoPlayer(
                         extras = mapOf(
                             "channel" to channelCode,
                             "session_kind" to LiveLog.sessionKind,
-                            "error_kind" to errorKind(error).name,
+                            "error_kind" to liveErrorKind(error).name,
                             "video_decoder" to quality.videoDecoder,
                             "software_forced" to software.toString(),
                         ),

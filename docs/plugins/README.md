@@ -304,8 +304,13 @@ What Kino does with a `live` item:
 - The `Stream` plays as live: an HLS or DASH live manifest (`.m3u8`/`.mpd`) is what the player
   expects; a progressive file plays too but reads as a channel (no seek bar, no length). `headers`,
   `subtitles`, `audioTracks` and `expiresInSeconds` work as for any stream; `durationMs` is ignored.
-- The player shows the live overlay (no progress bar, no seeking, no "next"), starts at the live
-  edge, and when the stream cuts or the URL expires it calls `resolve` again with the same `ref`.
+- The player shows the live overlay (no progress bar, no seeking, no "next") and starts at the live
+  edge. If it falls behind the live window, or the playlist resets or stalls, it re-joins the live
+  edge in place without calling you (a few times a minute). On any other cut, or when your URL
+  stops working, it calls `resolve` again with the same `ref` after 2 s, then 4 s, then 8 s: three
+  reopens, replenished once the channel has played for five seconds. Only after the third failed
+  reopen does the person read "Se cortó la señal de <canal> y no volvió". `expiresInSeconds` plays
+  no part for a channel: a cut always re-resolves.
 - A channel is never saved: no library row, no resume position, never in "Continuar viendo", and
   never downloadable (a plugin that declares `download` gets "Este video no se puede descargar"
   for it). `runtimeMinutes` on the item is ignored; a channel has no `episodes`.

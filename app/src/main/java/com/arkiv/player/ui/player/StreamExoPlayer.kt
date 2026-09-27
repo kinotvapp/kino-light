@@ -48,6 +48,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.ui.SubtitleView
+import com.arkiv.player.playback.LiveErrorKind
 import com.arkiv.player.playback.MpegTs
 import com.arkiv.player.playback.SourceKind
 import com.arkiv.player.playback.TsDurationProbe
@@ -161,6 +162,14 @@ internal fun StreamExoPlayer(
     onPlayerReady: (Player?) -> Unit = {},
     onTextureViewReady: (TextureView?) -> Unit = {},
     onError: (String) -> Unit = {},
+    /**
+     * Non-null for a live channel (a plugin's): every player error goes here instead of [onError],
+     * with its [LiveErrorKind], and the answer says what this player does about it -- rejoin the
+     * live edge in place, wait for a rebuild with a freshly resolved Stream, or nothing more (the
+     * caller already warned the person). See `PlayerViewModel.onPluginLiveError`. Null = VOD, where
+     * an error is an error.
+     */
+    onLiveError: ((LiveErrorKind, String) -> PluginLiveRecovery)? = null,
     onTracksChanged: ((Tracks) -> Unit)? = null,
     onFirstFrame: (Boolean) -> Unit = {},
     /**
@@ -365,7 +374,34 @@ internal fun StreamExoPlayer(
                 onFirstFrame(true)
             }
 
+            /**
+             * A live channel's error, decided by [onLiveError] (never an error dialog on the first
+             * hiccup, same as Magis live): only the in-place recovery is this player's to do; a
+             * re-resolve rebuilds this player from outside, and a give-up was already shown.
+             */
+            fun recoverLive(kind: LiveErrorKind, msg: String, error: PlaybackException) {
+                when (onLiveError!!(kind, msg)) {
+                    PluginLiveRecovery.REJOIN_EDGE -> {
+                        Log.w(TAG, "live $kind ($msg) -> seek to the live edge and prepare again")
+                        exoPlayer.seekToDefaultPosition()
+                        exoPlayer.prepare()
+                        exoPlayer.playWhenReady = true
+                    }
+                    PluginLiveRecovery.RE_RESOLVE -> Log.w(TAG, "live $kind ($msg) -> the channel is resolved again")
+                    PluginLiveRecovery.GIVE_UP -> {
+                        Log.e(TAG, "live $kind gave up · errorCode=${error.errorCode} msg=$msg", error)
+                        // Only the definitive failure reaches Sentry: three hiccups in a row are one report, not three.
+                        com.arkiv.player.crash.Crash.report(error, "$crashTag-live-playback-${androidx.media3.common.PlaybackException.getErrorCodeName(error.errorCode)}")
+                    }
+                }
+            }
+
             override fun onPlayerError(error: PlaybackException) {
+                val msg = error.message ?: "Error de reproducción (${error.errorCode})"
+                // A live channel's playlist-level error (behind the live window, reset, stuck) is
+                // never an audio track's fault: it is fixed in place before anything is blamed.
+                val liveKind = if (onLiveError != null) liveErrorKind(error) else null
+                if (liveKind != null && liveKind.recoverableInPlace) { recoverLive(liveKind, msg, error); return }
                 // A MergingMediaSource is all-or-nothing (MergingMediaPeriod.maybeThrowPrepareError
                 // propagates the first child's failure and never prepares the rest), so while any of
                 // the stream's own audio tracks are still merged in, ANY error here is presumed
@@ -380,7 +416,8 @@ internal fun StreamExoPlayer(
                     applyAudioTracks(prepared, next, exoPlayer.currentPosition.coerceAtLeast(0L), playWhenReady = exoPlayer.playWhenReady)
                     return
                 }
-                val msg = error.message ?: "Error de reproducción (${error.errorCode})"
+                // Any other cut of a live channel: the reopen budget decides, never the dialog below.
+                if (liveKind != null) { recoverLive(liveKind, msg, error); return }
                 Log.e(TAG, "onPlayerError errorCode=${error.errorCode} msg=$msg", error)
                 // Also to Sentry: VOD playback failures (codec init, source, decoder) used to vanish
                 // into Logcat -- this is proactive signal on which content/devices can't play.

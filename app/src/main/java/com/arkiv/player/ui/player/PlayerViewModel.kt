@@ -15,7 +15,9 @@ import com.arkiv.player.data.plugin.blockedMessage
 import com.arkiv.player.playback.ArchiveCacheProxy
 import com.arkiv.player.playback.AdultContent
 import com.arkiv.player.playback.DituLive
+import com.arkiv.player.playback.LiveErrorKind
 import com.arkiv.player.playback.LiveLog
+import com.arkiv.player.playback.LiveReopenPolicy
 import com.arkiv.player.playback.MagisEphemeral
 import com.arkiv.player.playback.PlayerSource
 import com.arkiv.player.playback.SourceKind
@@ -486,6 +488,10 @@ class PlayerViewModel internal constructor(
             // (the same ViewModel survives, see the guard above): without this reset, `liveItem`
             // kept publishing the last channel and PlayerScreen (isLive/isLiveExo) still believed it.
             _liveItem.value = null
+            // A new title starts with a fresh plugin-live reopen budget, and a reopen scheduled
+            // for the previous channel must not fire into this one.
+            pluginLiveReopenJob?.cancel()
+            pluginLiveReopens.reset()
             playbackHiccup = false
             // If it's saved on the device, it wins over any streaming. Goes BEFORE branching by
             // source: no matter where the file came from, it's already here.
@@ -761,7 +767,7 @@ class PlayerViewModel internal constructor(
         }
         if (cutSince == 0L) cutSince = System.currentTimeMillis()
         liveReopens++
-        val wait = REOPEN_WAIT_MS shl (liveReopens - 1)
+        val wait = LiveReopenPolicy.waitMs(liveReopens)
         Log.w(
             PLAY,
             "live: ${channel.code} cut out → reopening in ${wait}ms " +
@@ -899,6 +905,60 @@ class PlayerViewModel internal constructor(
         }
         _error.value = "$label: $message"
     }
+
+    /** The reopen budget of the plugin live channel on screen ([PluginLiveReopens]); fresh on every [load]. */
+    private val pluginLiveReopens = PluginLiveReopens()
+    private var pluginLiveReopenJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * `StreamExoPlayer` failed while playing a plugin's live channel. The same shape as Magis live
+     * ([onLiveExoError]/[reopenLiveAfterCut]), not [onMagisExoError]'s VOD rule: a channel almost
+     * always comes back, so the first hiccups are never an error dialog, and `expiresInSeconds`
+     * plays no part. Falling behind the live window (or a playlist reset/stall) is fixed in place
+     * by the player (REJOIN_EDGE, a few times a minute); any other cut resolves the channel again
+     * through the plugin's `resolve()` with the same ref after 2 s, 4 s, 8 s ([LiveReopenPolicy]);
+     * only past the third failed reopen does the person read that the signal was cut. Returns the
+     * decision so the player can act on the in-place one; the other two are acted on here.
+     */
+    internal fun onPluginLiveError(kind: LiveErrorKind, message: String): PluginLiveRecovery {
+        val item = _magisItem.value
+        if (item == null) {
+            Log.w(PLAY, "plugin live: error with no item on screen ($kind: $message)")
+            return PluginLiveRecovery.GIVE_UP
+        }
+        val decision = pluginLiveReopens.decide(kind)
+        when (decision) {
+            PluginLiveRecovery.REJOIN_EDGE ->
+                Log.w(PLAY, "plugin live: ${item.episodeId} $kind ($message) → rejoining the live edge")
+            PluginLiveRecovery.RE_RESOLVE -> {
+                val wait = pluginLiveReopens.reopen()
+                Log.w(
+                    PLAY,
+                    "plugin live: ${item.episodeId} cut ($kind: $message) → resolving again in ${wait}ms " +
+                        "(attempt ${pluginLiveReopens.count}/${LiveReopenPolicy.MAX_REOPENS})",
+                )
+                pluginLiveReopenJob?.cancel()
+                pluginLiveReopenJob = viewModelScope.launch {
+                    delay(wait)
+                    // Leaving for another title during the wait wins: `load` replaced the item.
+                    if (_magisItem.value?.episodeId != item.episodeId) return@launch
+                    // Through null first: a re-resolve may bring back the exact same Stream, and an
+                    // equal PlayerData would be dropped by StateFlow (see [onMagisExoError]).
+                    _magisItem.value = null
+                    loadPlugin(item.episodeId)
+                }
+            }
+            PluginLiveRecovery.GIVE_UP -> {
+                Log.w(PLAY, "plugin live: ${item.episodeId} didn't come back after ${LiveReopenPolicy.MAX_REOPENS} reopens → warning")
+                _error.value = "Se cortó la señal de ${item.title} y no volvió. " +
+                    "Puede ser un problema del canal: prueba de nuevo o mira otro."
+            }
+        }
+        return decision
+    }
+
+    /** Every clock reading while a plugin's channel plays: replenishes its reopen budget once it really played. See [PluginLiveReopens.playing] and [liveIsPlaying]. */
+    fun pluginLiveIsPlaying(positionMs: Long) = pluginLiveReopens.playing(positionMs)
 
     /**
      * [DituExoPlayer] gave up: it exhausted its re-prepares, or the error wasn't one of the kind
@@ -1456,17 +1516,14 @@ class PlayerViewModel internal constructor(
     }
 
     private companion object {
-        /** How many times a cut live stream reopens before warning. See [reopenLiveAfterCut]. */
-        const val MAX_LIVE_REOPENS = 3
-
-        /** Wait for the FIRST reopen; each next one doubles it (2 s → 4 s → 8 s). */
-        const val REOPEN_WAIT_MS = 2_000L
+        /** How many times a cut live stream reopens before warning. See [reopenLiveAfterCut]; one policy with a plugin's channel ([LiveReopenPolicy]). */
+        const val MAX_LIVE_REOPENS = LiveReopenPolicy.MAX_REOPENS
 
         /**
          * How long a reopened channel has to play to be considered recovered and get its whole
          * reopen budget back. See [liveIsPlaying].
          */
-        const val MIN_HEALTHY_LIVE_MS = 5_000L
+        const val MIN_HEALTHY_LIVE_MS = LiveReopenPolicy.MIN_HEALTHY_MS
 
         /** Tag for the player's load/replay flow (filter with `adb logcat -s ArkivPlay`). */
         const val PLAY = "ArkivPlay"

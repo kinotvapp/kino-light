@@ -1965,7 +1965,12 @@ private fun PlayerContent(
                 // would still replenish all three reopens -- the cap never ran out and the on-screen
                 // warning could never appear. Replenishing only once it actually played for a while
                 // is what distinguishes "it recovered" from "it reopened and died again".
-                if (isMagisLive) vm.liveIsPlaying(mirror.positionMs)
+                if (isMagisLive) {
+                    vm.liveIsPlaying(mirror.positionMs)
+                } else if (isLive && magisItem != null) {
+                    // A plugin's channel replenishes its own reopen budget the same way.
+                    vm.pluginLiveIsPlaying(mirror.positionMs)
+                }
             }
             tracksState.syncSubsOn()
             // "Starts black with sound": while the player already lets the audio through but
@@ -2797,6 +2802,13 @@ private fun PlayerContent(
                 },
                 onTextureViewReady = { tv -> magisTextureView = tv },
                 onError = { msg -> vm.onMagisExoError(msg) },
+                // A plugin's live channel: errors go to the live recovery (rejoin the edge, resolve
+                // again, warn after three reopens), never to the VOD dialog. See onPluginLiveError.
+                onLiveError = if (com.arkiv.player.data.plugin.PluginIds.isLiveEpisode(mItem.episodeId)) {
+                    { kind, msg -> vm.onPluginLiveError(kind, msg) }
+                } else {
+                    null
+                },
                 // Nobody else watches for the end of a Magis episode: the screen's listener stays
                 // quiet while an ExoPlayer is active, on the grounds that its STATE_ENDED belongs
                 // to a local player holding nothing. True, but it left the end unhandled entirely.
