@@ -83,7 +83,7 @@ internal class CompositeSource(private val sources: () -> List<ContentSource>) :
     override suspend fun episodesWithSeries(ref: String): Pair<List<GatewayEpisode>, GatewaySeries?> =
         sourceFor(ref).episodesWithSeries(ref)
 
-    override suspend fun seasonsOf(ref: String): List<SeasonRef> = sourceFor(ref).seasonsOf(ref)
+    override suspend fun seriesListing(ref: String): SeriesListing = sourceFor(ref).seriesListing(ref)
 
     override suspend fun movieImdbId(ref: String): String? = sourceFor(ref).movieImdbId(ref)
 

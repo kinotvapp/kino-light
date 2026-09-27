@@ -10,21 +10,6 @@ import com.arkiv.player.ui.home.MagisDownloadActions
 import com.arkiv.player.ui.search.PlaybackResult
 import com.arkiv.player.ui.search.SearchPlayback
 
-/** Where a series' seasons come from. */
-sealed interface SeasonModel {
-    /**
-     * Every season is a separate title the source lists as a sibling (`ContentSource.seasonsOf`).
-     * Choosing one swaps the page's item for the one [itemFor] builds.
-     */
-    class Siblings(val itemFor: (current: CatalogItem, season: SeasonRef) -> CatalogItem) : SeasonModel
-
-    /**
-     * One chapter list holds every season (plugins): the seasons are read from the chapters and
-     * choosing one only changes which are shown.
-     */
-    data object InList : SeasonModel
-}
-
 /** What TMDB can be asked from: an id the source published, either may be empty. Never a title. */
 data class TmdbHint(val tmdbId: Int = 0, val imdbId: String = "")
 
@@ -36,9 +21,19 @@ data class TitleBadge(val label: String, val colorArgb: Long)
  * the two screens never name a source's ids or playback paths. `PluginTitleSource` is the one
  * implementation today (Xuper is a plugin; the native Magis source, and the title source that
  * wrapped it, are gone).
+ *
+ * Where a series' seasons come from is not the source's to declare: its listing says. When it names
+ * sibling seasons (`SeriesListing.seasons`, each a separate title), choosing one swaps the page's
+ * item for [siblingItem] and loads that title's chapters; when it names none, the seasons are read
+ * from the chapter list and choosing one only changes which chapters are shown.
  */
 interface TitleSource {
-    val seasons: SeasonModel
+    /**
+     * The item the page swaps to when the person picks [season], a sibling the listing named: the
+     * same card under that season's id, ref and title, so its chapters load and its progress reads
+     * under its own library id.
+     */
+    fun siblingItem(current: CatalogItem, season: SeasonRef): CatalogItem
 
     /** Null when the source cannot download; the screens then draw no download UI. */
     val downloads: MagisDownloadActions?

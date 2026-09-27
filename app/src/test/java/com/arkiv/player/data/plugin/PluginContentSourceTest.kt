@@ -114,6 +114,32 @@ class PluginContentSourceTest {
         assertEquals("Serie", series.title)
     }
 
+    @Test fun `a listing wraps each sibling season's ref as this plugin's series ref`() = runTest {
+        val caller = FakeCaller(
+            mapOf(
+                "episodes" to """{"episodes":[{"season":2,"number":1,"ref":"E1"}],
+                  "seasons":[{"id":"s1","ref":"S1","title":"Temporada 1","number":1},
+                             {"id":"s2","ref":"S2","title":"Temporada 2","number":2,"current":true}]}""",
+            ),
+        )
+        val listing = source(caller).seriesListing(PluginRef("demo", "s2", PluginRef.SERIES, "S2").encode())
+        assertEquals(listOf(2 to 1), listing.episodes.map { it.season to it.number })
+        assertEquals(listOf("s1", "s2"), listing.seasons.map { it.contentId })
+        assertEquals(listOf(1, 2), listing.seasons.map { it.number })
+        assertEquals(listOf("Temporada 1", "Temporada 2"), listing.seasons.map { it.label })
+        assertEquals(listOf(false, true), listing.seasons.map { it.current })
+        // The wrapped ref is what a search would give that season's series card: opening it asks the plugin with its own "S1".
+        assertEquals(PluginRef("demo", "s1", PluginRef.SERIES, "S1"), PluginRef.decode(listing.seasons[0].ref))
+        assertTrue(source(caller).recognizes(listing.seasons[0].ref))
+    }
+
+    @Test fun `a listing without seasons has none, and the chapters still come through the pair`() = runTest {
+        val caller = FakeCaller(mapOf("episodes" to """{"episodes":[{"season":1,"number":1,"ref":"E1"},{"season":2,"number":1,"ref":"E2"}]}"""))
+        val ref = PluginRef("demo", "s1", PluginRef.SERIES, "S1").encode()
+        assertEquals(emptyList<com.arkiv.player.data.gateway.SeasonRef>(), source(caller).seriesListing(ref).seasons)
+        assertEquals(2, source(caller).episodesWithSeries(ref).first.size)
+    }
+
     private class FakeAccess(val access: PluginAccess) : PluginPlayback {
         override fun accessFor(pluginId: String?) = access
         override fun nameOf(pluginId: String?) = access.name

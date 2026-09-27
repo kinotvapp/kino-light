@@ -14,6 +14,7 @@ import com.arkiv.player.data.gateway.GatewaySeries
 import com.arkiv.player.data.gateway.MAGIS_SERIES
 import com.arkiv.player.data.gateway.SearchEvent
 import com.arkiv.player.data.gateway.SeasonRef
+import com.arkiv.player.data.gateway.SeriesListing
 import com.arkiv.player.data.local.DownloadDisplayState
 import com.arkiv.player.data.local.EnqueueOutcome
 import com.arkiv.player.data.magis.MagisRef
@@ -64,14 +65,18 @@ class TitleInfoViewModelTest {
             episodeRequests += ref
             return episodesFor(ref)
         }
-        override suspend fun seasonsOf(ref: String): List<SeasonRef> = seasonsFor(ref)
+        /** One answer, as a plugin's `episodes` is: the chapters and the siblings it names (none = read the seasons from the chapters). */
+        override suspend fun seriesListing(ref: String): SeriesListing {
+            val (episodes, series) = episodesWithSeries(ref)
+            return SeriesListing(episodes, series, seasonsFor(ref))
+        }
         override suspend fun movieImdbId(ref: String): String? = imdbFor(ref)
     }
 
     /**
-     * A source whose seasons are siblings, shaped like the retired native Magis one (its ids, its
-     * `MagisRef` season refs, a `content_id` in the result), so the view model's sibling-season,
-     * download and IMDb-hint paths stay covered now that every real source lists seasons in-list.
+     * A source shaped like the retired native Magis one (its ids, its `MagisRef` season refs, a
+     * `content_id` in the result), so the view model's sibling-season, download and IMDb-hint
+     * paths stay covered by a source that is not the plugin one.
      */
     private class SiblingsSource(
         override val downloads: MagisDownloadActions?,
@@ -79,14 +84,12 @@ class TitleInfoViewModelTest {
         private val onPlayMovie: suspend (GatewayResult) -> PlaybackResult,
         private val onPlaySeason: suspend (GatewayResult, List<GatewayEpisode>, GatewayEpisode, GatewaySeries?) -> PlaybackResult,
     ) : TitleSource {
-        override val seasons: SeasonModel = SeasonModel.Siblings { current, season ->
-            current.copy(
-                id = season.contentId,
-                ref = MagisRef(season.contentId, current.type, 0).encode(),
-                title = seasonTitle(current.title, season.number),
-                episodeCount = 0,
-            )
-        }
+        override fun siblingItem(current: CatalogItem, season: SeasonRef): CatalogItem = current.copy(
+            id = season.contentId,
+            ref = MagisRef(season.contentId, current.type, 0).encode(),
+            title = seasonTitle(current.title, season.number),
+            episodeCount = 0,
+        )
         override fun itemId(item: CatalogItem): String = MagisEntities.itemIdFor(item.id)
         override fun movieEpisodeId(item: CatalogItem): String = MagisEntities.movieEpisodeId(itemId(item))
         override fun chapterEpisodeId(item: CatalogItem, chapter: GatewayEpisode): String =
@@ -351,22 +354,43 @@ class TitleInfoViewModelTest {
     }
 
     @Test
-    fun `a season whose sibling lookup fails keeps the selector it already had`() = runTest {
-        var down = false
+    fun `a sibling whose own listing names no seasons keeps the selector it already had`() = runTest {
+        var switched = false
         val vm = vm(
             show(),
             FakeContent(
                 episodesFor = { chapters(1) to series() },
-                seasonsFor = { if (down) throw GatewayException("caído") else listOf(SeasonRef("s1", 1), SeasonRef("s2", 2)) },
+                seasonsFor = { if (switched) emptyList() else listOf(SeasonRef("s1", 1), SeasonRef("s2", 2)) },
             ),
         )
         advanceUntilIdle()
         assertTrue(vm.state.value.showSeasonSelector)
-        down = true
+        switched = true
         vm.selectSeason(SeasonRef("s2", 2))
         advanceUntilIdle()
-        assertTrue("the seasons are already known: a failed refresh must not hide them", vm.state.value.showSeasonSelector)
+        assertTrue("the seasons are already known: an answer naming none must not hide them", vm.state.value.showSeasonSelector)
         assertEquals(2, vm.state.value.seasons.size)
+        assertTrue("and they stay siblings, never re-read from the new chapter list", vm.state.value.siblings)
+        assertTrue(vm.state.value.isCurrentSeason(SeasonRef("s2", 2)))
+    }
+
+    @Test
+    fun `a sibling whose listing fails keeps the selector and reports only the chapters`() = runTest {
+        var switched = false
+        val vm = vm(
+            show(),
+            FakeContent(
+                episodesFor = { if (switched) throw GatewayException("caído") else chapters(1) to series() },
+                seasonsFor = { listOf(SeasonRef("s1", 1), SeasonRef("s2", 2)) },
+            ),
+        )
+        advanceUntilIdle()
+        switched = true
+        vm.selectSeason(SeasonRef("s2", 2))
+        advanceUntilIdle()
+        assertTrue(vm.state.value.episodes is EpisodesState.Failed)
+        assertTrue(vm.state.value.showSeasonSelector)
+        assertEquals("s2", vm.state.value.item.id)
     }
 
     @Test
@@ -425,15 +449,53 @@ class TitleInfoViewModelTest {
     }
 
     @Test
-    fun `sibling seasons show a selector, a single season does not, and a failure is harmless`() = runTest {
+    fun `sibling seasons show a selector with this title selected, a single season shows none`() = runTest {
         val many = vm(show(), FakeContent(episodesFor = { chapters(1) to series() }, seasonsFor = { listOf(SeasonRef("s1", 1), SeasonRef("s2", 2)) }))
         val single = vm(show(), FakeContent(episodesFor = { chapters(1) to series() }, seasonsFor = { emptyList() }))
-        val broken = vm(show(), FakeContent(episodesFor = { chapters(1) to series() }, seasonsFor = { throw GatewayException("caído") }))
         advanceUntilIdle()
         assertTrue(many.state.value.showSeasonSelector)
+        assertTrue(many.state.value.siblings)
+        assertTrue(many.state.value.isCurrentSeason(SeasonRef("s1", 1)))
+        assertFalse(many.state.value.isCurrentSeason(SeasonRef("s2", 2)))
+        assertNull("siblings: no chapter-list season is being shown", many.state.value.currentSeason)
         assertFalse(single.state.value.showSeasonSelector)
-        assertFalse(broken.state.value.showSeasonSelector)
-        assertTrue(broken.state.value.episodes is EpisodesState.Loaded)
+        assertFalse(single.state.value.siblings)
+    }
+
+    @Test
+    fun `the source's current flag selects a sibling whose id is not the page's`() = runTest {
+        val vm = vm(
+            show(id = "portal-1"),
+            FakeContent(
+                episodesFor = { chapters(1) to series() },
+                seasonsFor = { listOf(SeasonRef("a", 1, title = "Primera"), SeasonRef("b", 2, title = "Segunda", current = true)) },
+            ),
+        )
+        advanceUntilIdle()
+        assertFalse(vm.state.value.isCurrentSeason(vm.state.value.seasons[0]))
+        assertTrue(vm.state.value.isCurrentSeason(vm.state.value.seasons[1]))
+        assertEquals(listOf("Primera", "Segunda"), vm.state.value.seasons.map { it.label })
+    }
+
+    @Test
+    fun `a listing naming no siblings reads the seasons from the chapter list and filters without asking again`() = runTest {
+        val twoSeasons = listOf(1, 2).flatMap { s -> (1..2).map { GatewayEpisode(number = it, title = "E$it", ref = "r$s-$it", season = s) } }
+        val content = FakeContent(episodesFor = { twoSeasons to series() }, seasonsFor = { emptyList() })
+        val vm = vm(show(), content)
+        advanceUntilIdle()
+        val state = vm.state.value
+        assertFalse(state.siblings)
+        assertEquals(listOf(SeasonRef("1", 1), SeasonRef("2", 2)), state.seasons)
+        assertTrue(state.showSeasonSelector)
+        assertEquals(1, state.currentSeason)
+        assertEquals(listOf("r1-1", "r1-2"), state.visibleChapters.map { it.ref })
+
+        vm.selectSeason(SeasonRef("2", 2))
+        advanceUntilIdle()
+        assertEquals(2, vm.state.value.currentSeason)
+        assertEquals(listOf("r2-1", "r2-2"), vm.state.value.visibleChapters.map { it.ref })
+        assertEquals("the item is the same: nothing to reload", 1, content.episodeRequests.size)
+        assertEquals("s1", vm.state.value.item.id)
     }
 
     @Test
@@ -489,19 +551,32 @@ class TitleInfoViewModelTest {
 
     @Test
     fun `a stale season answer is ignored`() = runTest {
-        val first = CompletableDeferred<Pair<List<GatewayEpisode>, GatewaySeries?>>()
-        val content = FakeContent(episodesFor = { ref -> if (ref.endsWith("s1")) first.await() else chapters(20, 21) to series(season = 2) })
+        // The siblings are known from the first listing; the second season's answer is slow and the
+        // person moves on to the third before it lands.
+        val second = CompletableDeferred<Pair<List<GatewayEpisode>, GatewaySeries?>>()
+        val content = FakeContent(
+            episodesFor = { ref ->
+                when {
+                    ref.endsWith("s2") -> second.await()
+                    ref.endsWith("s3") -> chapters(30, 31) to series(season = 3)
+                    else -> chapters(1) to series()
+                }
+            },
+            seasonsFor = { listOf(SeasonRef("s1", 1), SeasonRef("s2", 2), SeasonRef("s3", 3)) },
+        )
         val vm = vm(show(id = "s1"), content)
         advanceUntilIdle()
 
         vm.selectSeason(SeasonRef("s2", 2))
         advanceUntilIdle()
-        first.complete(chapters(1, 2, 3) to series(season = 1))
+        vm.selectSeason(SeasonRef("s3", 3))
+        advanceUntilIdle()
+        second.complete(chapters(20, 21) to series(season = 2))
         advanceUntilIdle()
 
         val loaded = vm.state.value.episodes as EpisodesState.Loaded
-        assertEquals("s2", vm.state.value.item.id)
-        assertEquals(listOf(20, 21), loaded.chapters.map { it.number })
+        assertEquals("s3", vm.state.value.item.id)
+        assertEquals(listOf(30, 31), loaded.chapters.map { it.number })
     }
 
     // ---- progress ----

@@ -61,7 +61,8 @@ class TitleInfoViewModelInListTest {
 
     private class ListSource(val hint: TmdbHint = TmdbHint()) : TitleSource {
         val played = mutableListOf<Triple<List<GatewayEpisode>, GatewayEpisode, GatewayResult>>()
-        override val seasons: SeasonModel = SeasonModel.InList
+        override fun siblingItem(current: CatalogItem, season: SeasonRef): CatalogItem =
+            error("the list holds every season: no sibling is ever named")
         override val downloads: MagisDownloadActions? = null
         override fun itemId(item: CatalogItem) = "lst:${item.id}"
         override fun movieEpisodeId(item: CatalogItem) = "lst:${item.id}::0"

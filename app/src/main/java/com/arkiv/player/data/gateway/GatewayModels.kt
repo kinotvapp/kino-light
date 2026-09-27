@@ -152,10 +152,36 @@ data class GatewaySeries(
 )
 
 /**
- * One season of a series as the portal lists it: its own item ([contentId]) and its number. Magis
- * treats every season as a separate item, so switching season means opening [contentId].
+ * One season of a series. A source that keeps every season as a separate title (Xuper, a plugin
+ * that lists `seasons`) names them as siblings in [SeriesListing.seasons], each with its own item
+ * ([contentId]) and the [ref] that opens it; a season read from one chapter list that holds them
+ * all has only its [number] (and no [ref]).
  */
-data class SeasonRef(val contentId: String, val number: Int)
+data class SeasonRef(
+    val contentId: String,
+    val number: Int,
+    /** The ref that opens this season's own title; "" for a season inside the chapter list. */
+    val ref: String = "",
+    /** The source's own name for the season, when it gave one; see [label]. */
+    val title: String = "",
+    /** The source flagged this as the season whose chapters were listed. */
+    val current: Boolean = false,
+) {
+    /** What the season selector shows: the source's name, else "Temporada N". */
+    val label: String get() = title.ifBlank { "Temporada $number" }
+}
+
+/**
+ * A series' chapters and TMDB block ([ContentSource.episodesWithSeries]) plus, when the source keeps
+ * each season as its own title, every season of the show as siblings ([seasons], this one included).
+ * Empty [seasons] when the source lists none: every season is already in [episodes], or there is
+ * only one.
+ */
+data class SeriesListing(
+    val episodes: List<GatewayEpisode>,
+    val series: GatewaySeries?,
+    val seasons: List<SeasonRef> = emptyList(),
+)
 
 /**
  * What the source emits while it searches. The event format is kept -instead of returning a

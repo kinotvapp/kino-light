@@ -117,6 +117,22 @@ class CompositeSourceTest {
         assertEquals(null, b.resolved)
     }
 
+    @Test fun `a series listing goes to the source that recognizes the ref, siblings included`() = runTest {
+        val a = FakeSource("a", "a:")
+        val b = object : ContentSource by FakeSource("b", "b:") {
+            override suspend fun seriesListing(ref: String) =
+                SeriesListing(listOf(GatewayEpisode(1, "Cap", ref)), null, listOf(SeasonRef("b:1", 1, ref = "b:1"), SeasonRef("b:2", 2, ref = "b:2")))
+        }
+
+        val listing = CompositeSource(listOf(a, b)).seriesListing("b:2")
+
+        assertEquals(listOf("b:1", "b:2"), listing.seasons.map { it.contentId })
+        assertEquals(null, a.resolved)
+        // A source that lists no siblings answers its chapters alone through the default.
+        assertEquals(emptyList<SeasonRef>(), CompositeSource(listOf(a, b)).seriesListing("a:9").seasons)
+        assertEquals("a:9", a.resolved)
+    }
+
     @Test fun `a ref nobody recognizes is a GatewayException`() = runTest {
         val composite = CompositeSource(listOf(FakeSource("a", "a:")))
 

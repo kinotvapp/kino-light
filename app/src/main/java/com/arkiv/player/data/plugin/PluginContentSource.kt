@@ -11,6 +11,8 @@ import com.arkiv.player.data.gateway.GatewaySearchQuery
 import com.arkiv.player.data.gateway.GatewaySeries
 import com.arkiv.player.data.gateway.GatewaySubtitle
 import com.arkiv.player.data.gateway.SearchEvent
+import com.arkiv.player.data.gateway.SeasonRef
+import com.arkiv.player.data.gateway.SeriesListing
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
@@ -139,7 +141,15 @@ class PluginContentSource(
         )
     }
 
-    override suspend fun episodesWithSeries(ref: String): Pair<List<GatewayEpisode>, GatewaySeries?> {
+    override suspend fun episodesWithSeries(ref: String): Pair<List<GatewayEpisode>, GatewaySeries?> =
+        seriesListing(ref).let { it.episodes to it.series }
+
+    /**
+     * The plugin's `episodes(ref)` answer, whole: its chapters, its series block and, for a plugin
+     * that keeps each season as its own title, the show's seasons as siblings, each one's [SeasonRef.ref]
+     * already wrapped as this plugin's series ref (so choosing it opens it like any series card).
+     */
+    override suspend fun seriesListing(ref: String): SeriesListing {
         val own = decodeOwn(ref)
         if (own.kind != PluginRef.SERIES || "episodes" !in caps) throw GatewayException("Esto no tiene capítulos")
         val out = callOrThrow("episodes", JSONObject.quote(own.ref), EPISODES_TIMEOUT_MS)
@@ -165,7 +175,13 @@ class PluginContentSource(
                 title = s.title, posterUrl = s.poster, backdropUrl = s.backdrop,
             )
         }
-        return episodes to series
+        val seasons = parsed.seasons.map { s ->
+            SeasonRef(
+                contentId = s.id, number = s.number, title = s.title, current = s.current,
+                ref = PluginRef(id, s.id, PluginRef.SERIES, s.ref).encode(),
+            )
+        }
+        return SeriesListing(episodes, series, seasons)
     }
 
     private suspend fun callOrThrow(function: String, argJson: String, timeoutMs: Long): String = try {

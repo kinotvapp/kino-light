@@ -5,6 +5,7 @@ import com.arkiv.player.data.gateway.CatalogItem
 import com.arkiv.player.data.gateway.GatewayEpisode
 import com.arkiv.player.data.gateway.GatewayResult
 import com.arkiv.player.data.gateway.GatewaySeries
+import com.arkiv.player.data.gateway.SeasonRef
 import com.arkiv.player.data.plugin.PluginColors
 import com.arkiv.player.data.plugin.PluginIds
 import com.arkiv.player.data.plugin.PluginRef
@@ -25,8 +26,9 @@ data class PluginTitleExtras(
 )
 
 /**
- * A title an installed plugin published. The plugin returns every episode of a series in ONE list,
- * each with its season, so seasons live inside the list ([SeasonModel.InList]); the library ids are
+ * A title an installed plugin published. A plugin either returns every episode of a series in ONE
+ * list, each with its season (the Internet Archive one), or keeps each season as its own title and
+ * names the others as siblings (Xuper); the page reads which from the listing. The library ids are
  * the `PluginEntities` ones, so progress and "Continuar viendo" read the same rows playback writes.
  * Plugin titles have no downloads (a v1 non-goal of the plugin system).
  */
@@ -36,7 +38,6 @@ class PluginTitleSource(
     private val onPlaySeason: suspend (GatewayResult, List<GatewayEpisode>, GatewayEpisode, GatewaySeries?) -> PlaybackResult,
 ) : TitleSource {
 
-    override val seasons: SeasonModel = SeasonModel.InList
     override val downloads: MagisDownloadActions? = null
     override val badge: TitleBadge? =
         extras.pluginName.takeIf { it.isNotBlank() }?.let { TitleBadge(it, PluginColors.parse(extras.color)) }
@@ -51,6 +52,18 @@ class PluginTitleSource(
         val id = if (item.type == "series") PluginEntities.seriesItemId(item.ref) else PluginEntities.movieItemId(item.ref)
         return id ?: "$UNKNOWN_ITEM:${item.id}"
     }
+
+    /**
+     * The sibling's own item id and wrapped series ref (`PluginContentSource` wrapped it, so the
+     * same plugin answers for it). The title follows the native Magis rule, "Show T1" -> "Show T2",
+     * when the plugin numbered the season; an unnumbered one keeps the current title.
+     */
+    override fun siblingItem(current: CatalogItem, season: SeasonRef): CatalogItem = current.copy(
+        id = season.contentId,
+        ref = season.ref,
+        title = if (season.number > 0) seasonTitle(current.title, season.number) else current.title,
+        episodeCount = 0,
+    )
 
     override fun movieEpisodeId(item: CatalogItem): String = PluginEntities.movieEpisodeId(itemId(item))
 

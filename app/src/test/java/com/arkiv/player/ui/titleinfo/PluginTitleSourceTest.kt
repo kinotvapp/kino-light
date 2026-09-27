@@ -3,6 +3,7 @@ package com.arkiv.player.ui.titleinfo
 import com.arkiv.player.data.PluginEntities
 import com.arkiv.player.data.gateway.CatalogItem
 import com.arkiv.player.data.gateway.GatewayEpisode
+import com.arkiv.player.data.gateway.SeasonRef
 import com.arkiv.player.data.plugin.PluginRef
 import com.arkiv.player.ui.search.PlaybackResult
 import kotlinx.coroutines.test.runTest
@@ -96,13 +97,34 @@ class PluginTitleSourceTest {
     // ---- capabilities ----
 
     @Test
-    fun `a plugin has no downloads, keeps seasons in the list and shows its badge`() {
+    fun `a plugin has no downloads and shows its badge`() {
         val s = source()
         assertNull(s.downloads)
         assertFalse(s.canDownload)
-        assertEquals(SeasonModel.InList, s.seasons)
         assertEquals(TitleBadge("Demo", 0xFFFF0000), s.badge)
         assertEquals("2021", s.initialYear)
+    }
+
+    // ---- sibling seasons ----
+
+    @Test
+    fun `a sibling season becomes the same card under its own id, wrapped ref and numbered title`() {
+        val siblingRef = PluginRef("demo", "s2", PluginRef.SERIES, "own-s2").encode()
+        val next = source().siblingItem(show().copy(title = "Show T1", episodeCount = 8), SeasonRef("s2", 2, ref = siblingRef, title = "Temporada 2"))
+        assertEquals("s2", next.id)
+        assertEquals(siblingRef, next.ref)
+        assertEquals("Show T2", next.title)
+        assertEquals("the count is the new season's to load", 0, next.episodeCount)
+        assertEquals("series", next.type)
+        // Its library id follows: progress reads under the sibling's own rows.
+        assertEquals("plugin:demo:s2", source().itemId(next))
+    }
+
+    @Test
+    fun `an unnumbered sibling keeps the current title`() {
+        val next = source().siblingItem(show().copy(title = "Show"), SeasonRef("sp", 0, ref = "r", title = "Especiales"))
+        assertEquals("Show", next.title)
+        assertEquals("sp", next.id)
     }
 
     @Test

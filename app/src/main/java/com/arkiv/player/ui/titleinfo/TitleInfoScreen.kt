@@ -393,7 +393,7 @@ private fun SeasonHeader(
                         DropdownMenuItem(
                             text = {
                                 Text(
-                                    "Temporada ${season.number}",
+                                    season.label,
                                     fontWeight = if (state.isCurrentSeason(season)) FontWeight.Bold else FontWeight.Normal,
                                 )
                             },

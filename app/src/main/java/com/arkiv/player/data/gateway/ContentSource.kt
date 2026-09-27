@@ -44,11 +44,14 @@ interface ContentSource {
     suspend fun episodes(ref: String): List<GatewayEpisode> = episodesWithSeries(ref).first
 
     /**
-     * Every season of the series [ref] belongs to, its own included, or empty when the source does
-     * not list them or the series has only one. A default, like [episodes], so a source that has
-     * no notion of sibling seasons (Caracol, plugins) keeps compiling and answers "none".
+     * [episodesWithSeries] plus the seasons of the series [ref] belongs to, when the source keeps
+     * each season as its own title (see [SeriesListing]): one answer, so the info page's chips cost
+     * no second request. A default, like [episodes], so a source with no notion of sibling seasons
+     * (Caracol) keeps compiling and answers the chapters alone. Only a plugin lists them today,
+     * from the `seasons` of its `episodes` answer.
      */
-    suspend fun seasonsOf(ref: String): List<SeasonRef> = emptyList()
+    suspend fun seriesListing(ref: String): SeriesListing =
+        episodesWithSeries(ref).let { (episodes, series) -> SeriesListing(episodes, series) }
 
     /**
      * The IMDb id (`tt1234567`) of the MOVIE [ref], when the source publishes one, else null. It is

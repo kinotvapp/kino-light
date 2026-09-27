@@ -300,7 +300,7 @@ fun TvTitleInfoScreen(
                     ) {
                         itemsIndexed(state.seasons, key = { _, season -> season.contentId }) { index, season ->
                             TvSourceChip(
-                                label = "Temporada ${season.number}",
+                                label = season.label,
                                 selected = state.isCurrentSeason(season),
                                 onClick = { vm.selectSeason(season) },
                                 modifier = if (index == 0) {
