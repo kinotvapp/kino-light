@@ -380,8 +380,13 @@ function stream(value, { manifest, servers, allowDrm }) {
   const subtitles = (Array.isArray(value.subtitles) ? value.subtitles : []).slice(0, o().maxSubtitles).filter((s) => {
     try { check(s && s.url, "El subtítulo"); return true; } catch { return false; }
   });
+  // One URL is one merged child in the app: a repeated URL is kept once, the first wins.
+  const audioUrls = new Set();
   const audioTracks = (Array.isArray(value.audioTracks) ? value.audioTracks : []).slice(0, o().maxAudioTracks).filter((a) => {
-    try { check(a && a.url, "El audio"); return true; } catch { return false; }
+    try { check(a && a.url, "El audio"); } catch { return false; }
+    if (audioUrls.has(a.url)) return false;
+    audioUrls.add(a.url);
+    return true;
   });
   return { ...value, headers: headersOf(value.headers), subtitles, audioTracks, expiresInSeconds: expires, drm };
 }

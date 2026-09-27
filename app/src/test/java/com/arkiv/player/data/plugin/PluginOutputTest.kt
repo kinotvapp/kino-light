@@ -414,6 +414,19 @@ class PluginOutputTest {
         assertEquals("https://ia8.us.archive.org/a-en.aac", ok.audioTracks.single().url)
     }
 
+    /** Two children for one URL would be two menu rows, and one failure would blame (and drop) both. */
+    @Test fun `an audio track URL given twice is kept once, the first wins`() {
+        val s = PluginOutput.stream(
+            """{"url":"https://archive.org/x.mp4",
+               "audioTracks":[{"lang":"es","url":"https://archive.org/a.aac","label":"Latino"},
+                              {"lang":"en","url":"https://archive.org/a.aac","label":"English"},
+                              {"lang":"fr","url":"https://archive.org/b.aac"}]}""",
+            hosts,
+        )
+        assertEquals(listOf("es", "fr"), s.audioTracks.map { it.lang })
+        assertEquals("Latino", s.audioTracks.first().label)
+    }
+
     @Test fun `audioTracks are capped at 8, lang defaults to und and long fields are cut`() {
         val many = (1..10).joinToString(",") { """{"lang":"en","url":"https://archive.org/a$it.aac"}""" }
         val s = PluginOutput.stream("""{"url":"https://archive.org/x.mp4","audioTracks":[$many]}""", hosts)

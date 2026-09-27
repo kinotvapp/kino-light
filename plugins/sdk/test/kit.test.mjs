@@ -482,6 +482,19 @@ test("checkOutput validates a stream's audioTracks like its subtitles", () => {
   assert.equal(many.value.audioTracks.length, contract.output.maxAudioTracks);
 });
 
+test("checkOutput keeps an audio track URL given twice once, the first wins, as the app does", () => {
+  const m = JSON.parse(manifest());
+  const r = checkOutput("resolve", {
+    url: "https://example.com/v.mp4",
+    audioTracks: [
+      { lang: "es", url: "https://example.com/a.aac", label: "Latino" },
+      { lang: "en", url: "https://example.com/a.aac" },
+      { lang: "fr", url: "https://example.com/b.aac" },
+    ],
+  }, m);
+  assert.deepEqual(r.value.audioTracks.map((a) => a.lang), ["es", "fr"]);
+});
+
 test("checkOutput accepts a widevine drm block only for a plugin that declares drm, and checks its license like the url", () => {
   const stream = {
     url: "https://example.com/v.mpd",

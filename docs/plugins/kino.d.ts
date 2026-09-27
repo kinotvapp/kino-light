@@ -134,7 +134,8 @@ interface KinoStream {
    * preference exactly like the container's own. `lang` is a short code like `subtitles`' (up to 16
    * characters; blank becomes `"und"`); `label`, if given (up to 40 characters), is shown verbatim
    * instead of a name guessed from `lang`. Checked the same way as `subtitles`: https on a declared
-   * host, or the person's own server exactly as typed; a bad entry is dropped and the rest survive.
+   * host, or the person's own server exactly as typed; a bad entry is dropped and the rest survive,
+   * and so is a `url` already listed (the first entry wins).
    */
   audioTracks?: { lang: string; url: string; label?: string }[];
   /** Ignored for a `live` item's stream: a channel has no length. */

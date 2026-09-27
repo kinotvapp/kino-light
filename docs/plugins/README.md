@@ -481,7 +481,7 @@ It does **not** add a poster, a backdrop or seasons from TMDB -- those stay exac
 - `audioTracks`: at most 8, each `{ lang, url, label? }` -- a dub or an alternate mix your source
   serves as its own file, separate from the video. Checked exactly like a subtitle: `url` must be
   `https` on a declared host, or the person's own server exactly as typed; a bad entry is dropped and
-  the rest of the stream still plays. `lang` up to 16 characters (blank becomes `"und"`); `label`, up
+  the rest of the stream still plays, and so is a `url` already listed (the first entry wins). `lang` up to 16 characters (blank becomes `"und"`); `label`, up
   to 40 characters, is shown in the audio menu verbatim when given, instead of a name guessed from
   `lang`. Kino merges each one into the video and offers it, auto-picked by the person's audio
   preference, in the same menu as the container's own embedded tracks. A stream with no `audioTracks`

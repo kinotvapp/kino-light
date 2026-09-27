@@ -336,6 +336,9 @@ object PluginOutput {
                 val a = arr.optJSONObject(i) ?: continue
                 val au = a.optString("url")
                 if (xuper?.headersFor(au) == null && runCatching { checkUrl(au, hosts, "El audio") }.isFailure) continue
+                // One URL is one merged child: twice would be two menu rows and, on a failure,
+                // `fallbackAudioTracks` would blame both. The first entry wins, as for item ids.
+                if (audioTracks.any { it.url == au }) continue
                 audioTracks += PluginAudioTrack(
                     text(a, "lang", MAX_AUDIO_LANG_CHARS).ifBlank { "und" }, au,
                     text(a, "label", MAX_AUDIO_LABEL_CHARS),
