@@ -34,6 +34,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withTimeout
 import org.junit.After
@@ -840,6 +841,21 @@ class PluginsViewModelTest {
         assertEquals(listOf("o/alfa"), provider.refreshCalls)
     }
 
+    @Test fun `a repo still being refreshed is not requested again when its row comes back`() {
+        val gate = CompletableDeferred<CatalogArt?>()
+        val provider = FakeArtProvider().apply { onRefresh = { gate.await() } }
+        val vm = vmWithArt(FakeCatalog(entry("alfa", "o/alfa")), provider)
+        // The first request is still pending while the row leaves (search), comes back, and Reintentar reloads.
+        vm.onQueryChange("nothing matches this")
+        vm.onQueryChange("")
+        vm.reloadCatalog()
+        assertEquals(listOf("o/alfa"), provider.refreshCalls)
+        assertTrue(vm.art.value.isEmpty())
+        gate.complete(alfaArt)
+        assertEquals(mapOf("o/alfa" to alfaArt), vm.art.value)
+        assertEquals(listOf("o/alfa"), provider.refreshCalls)
+    }
+
     @Test fun `clearing the view model cancels the refreshes still running`() {
         val never = CompletableDeferred<CatalogArt?>()
         val provider = FakeArtProvider().apply { onRefresh = { never.await() } }
@@ -899,6 +915,15 @@ class PluginsViewModelTest {
         assertEquals(listOf("o/alfa", "o/beta", "o/gamma"), provider.refreshCalls)
     }
 
+    // runTest fails the test on an exception that escapes a coroutine started inside it; a plain JVM test
+    // would only see it reach the thread's uncaught handler, while on a device it kills the process.
+    @Test fun `a provider whose refresh throws does not crash`() = runTest {
+        val provider = FakeArtProvider().apply { onRefresh = { throw IllegalStateException("boom") } }
+        val vm = vmWithArt(FakeCatalog(entry("alfa", "o/alfa")), provider)
+        assertEquals(listOf("o/alfa"), provider.refreshCalls)
+        assertTrue(vm.art.value.isEmpty())
+    }
+
     @Test fun `a provider whose disk read throws gives a view model with no art yet, and the refresh still lands`() {
         val provider = FakeArtProvider().apply {
             cachedFailure = IllegalStateException("disk")
@@ -908,10 +933,14 @@ class PluginsViewModelTest {
         assertEquals(mapOf("o/alfa" to alfaArt), vm.art.value)
     }
 
-    @Test fun `a view model built without an art provider shows no art and asks nobody`() {
+    @Test fun `a view model built without an art provider shows no art, and the default provider knows none`() {
         val vm = PluginsViewModel(FakeAdmin(), io = dispatcher, catalogProvider = FakeCatalog(*threeEntries()))
         assertTrue(vm.art.value.isEmpty())
         assertNull(NoCatalogArt.cached("o/alfa"))
         assertNull(runBlocking { NoCatalogArt.refresh("o/alfa") })
+        // The Plugins tab and Configurar pass neither provider: no rows are listed, so nothing is ever asked.
+        val plain = PluginsViewModel(FakeAdmin(), io = dispatcher)
+        assertTrue(plain.catalog.value.rows.isEmpty())
+        assertTrue(plain.art.value.isEmpty())
     }
 }
