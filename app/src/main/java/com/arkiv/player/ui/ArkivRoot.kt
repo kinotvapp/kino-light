@@ -1,5 +1,11 @@
 package com.arkiv.player.ui
 
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.clickable
 import android.net.Uri
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -97,6 +103,9 @@ private val TABS = listOf(
     Tab("caracol", "Caracol") { Icon(Icons.Default.Theaters, contentDescription = "Caracol") },
     Tab("settings", "Ajustes") { Icon(Icons.Default.Settings, contentDescription = "Ajustes") },
 )
+
+/** Whether tapping the top bar's logo goes to Inicio: on every section but Inicio itself. */
+internal fun logoGoesHome(currentRoute: String?): Boolean = currentRoute != null && currentRoute != "home"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -242,7 +251,22 @@ fun ArkivRoot(
                         }
                     },
                     title = {
-                        KinoWordmark(height = 24.dp)
+                        // Off Inicio the logo is the quick way home (the tab sections have no back arrow).
+                        if (logoGoesHome(currentRoute)) {
+                            Box(
+                                modifier = Modifier
+                                    .heightIn(min = 48.dp)
+                                    .clickable(onClickLabel = "Ir al inicio", role = Role.Button) {
+                                        tabs.firstOrNull { it.route == "home" }?.let(::goToTab)
+                                    }
+                                    .semantics { contentDescription = "Ir al inicio" },
+                                contentAlignment = Alignment.CenterStart,
+                            ) {
+                                KinoWordmark(height = 24.dp)
+                            }
+                        } else {
+                            KinoWordmark(height = 24.dp)
+                        }
                     },
                     actions = {
                         if (currentRoute == "home") {
