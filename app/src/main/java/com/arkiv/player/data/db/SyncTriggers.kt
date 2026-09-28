@@ -31,20 +31,25 @@ object SyncTriggers {
      * this says a column that isn't the PK, sealing ONE row seals every row sharing that value.
      * Happened to `skip_markers`, which said `itemId` when its PK was already `id`
      * (`"<itemId>|<episodeId>"`, one row per chapter): a new marker gave a fresh clock to every
-     * other chapter of the series too. When an entity's PK changes, this map changes with it.
+     * other chapter of the series too. When an entity's PK changes, this map changes with it --
+     * as it did in v33, when the live tables' keys became `(provider, code)`: a key of `code`
+     * alone would let sealing a plugin's `c1` reseal Xuper's `c1` too.
      *
      * These are the six that travel through sync. `live_channels_cache` is left out on purpose:
      * it's rebuildable catalog cache, not user data, and giving it sync triggers would send ~1000
      * rows between devices for nothing.
      */
-    private val TABLES = listOf(
-        "items" to "identifier",
-        "episodes" to "id",
-        "playback" to "episodeId",
-        "skip_markers" to "id",
-        "live_favorites" to "code",
-        "live_recents" to "code",
+    private val TABLES: List<Pair<String, List<String>>> = listOf(
+        "items" to listOf("identifier"),
+        "episodes" to listOf("id"),
+        "playback" to listOf("episodeId"),
+        "skip_markers" to listOf("id"),
+        "live_favorites" to listOf("provider", "code"),
+        "live_recents" to listOf("provider", "code"),
     )
+
+    /** The trigger's `WHERE`: every column of the (possibly composite) primary key. */
+    private fun rowOf(pk: List<String>): String = pk.joinToString(" AND ") { "$it = NEW.$it" }
 
     /** The time, in milliseconds, per SQLite's clock. */
     private const val NOW = "CAST(strftime('%s','now') AS INTEGER)*1000"
@@ -67,7 +72,7 @@ object SyncTriggers {
             // Local INSERT: the writer set no clock (it stayed at 0) -> seal.
             "DROP TRIGGER IF EXISTS trg_${table}_ins",
             "CREATE TRIGGER IF NOT EXISTS trg_${table}_ins AFTER INSERT ON $table WHEN NEW.updatedAt = 0 " +
-                "BEGIN UPDATE $table SET updatedAt = $NOW WHERE $pk = NEW.$pk; END",
+                "BEGIN UPDATE $table SET updatedAt = $NOW WHERE ${rowOf(pk)}; END",
             // Local UPDATE: the writer didn't move the clock -> seal. The merge does move it, and gets skipped.
             //
             // The internal sealing can't just be `$NOW` bare: `$NOW` has SECOND resolution, so if
@@ -84,7 +89,7 @@ object SyncTriggers {
             // and a value that goes backward would make a row stop uploading.
             "DROP TRIGGER IF EXISTS trg_${table}_upd",
             "CREATE TRIGGER IF NOT EXISTS trg_${table}_upd AFTER UPDATE ON $table WHEN NEW.updatedAt = OLD.updatedAt " +
-                "BEGIN UPDATE $table SET updatedAt = MAX($NOW, OLD.updatedAt + 1) WHERE $pk = NEW.$pk; END",
+                "BEGIN UPDATE $table SET updatedAt = MAX($NOW, OLD.updatedAt + 1) WHERE ${rowOf(pk)}; END",
         )
     }
 

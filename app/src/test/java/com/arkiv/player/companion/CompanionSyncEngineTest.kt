@@ -327,12 +327,12 @@ private class FakeLiveFavoriteDao : LiveFavoriteDao {
     val rows = mutableMapOf<String, LiveFavoriteEntity>()
 
     override fun flowAll(): Flow<List<LiveFavoriteEntity>> = MutableStateFlow(emptyList())
-    override suspend fun save(f: LiveFavoriteEntity) { rows[f.code] = f }
-    override suspend fun delete(code: String) {}
-    override suspend fun isFavorite(code: String): Boolean = false
+    override suspend fun save(f: LiveFavoriteEntity) { rows["${f.provider}|${f.code}"] = f }
+    override suspend fun delete(provider: String, code: String) {}
+    override suspend fun isFavorite(provider: String, code: String): Boolean = false
     override suspend fun getAll(): List<LiveFavoriteEntity> = rows.values.toList()
     override suspend fun getLiveFavoritesSince(cursor: Long): List<LiveFavoriteEntity> = emptyList()
-    override suspend fun get(code: String): LiveFavoriteEntity? = rows[code]
+    override suspend fun get(provider: String, code: String): LiveFavoriteEntity? = rows["$provider|$code"]
 }
 
 /** In-memory fake of [LiveRecentDao]. Exists only to satisfy [SyncApply]'s constructor. */
@@ -340,11 +340,11 @@ private class FakeLiveRecentDao : LiveRecentDao {
     val rows = mutableMapOf<String, LiveRecentEntity>()
 
     override fun flowRecent(limit: Int): Flow<List<LiveRecentEntity>> = MutableStateFlow(emptyList())
-    override suspend fun record(r: LiveRecentEntity) { rows[r.code] = r }
+    override suspend fun record(r: LiveRecentEntity) { rows["${r.provider}|${r.code}"] = r }
     override suspend fun getAll(): List<LiveRecentEntity> = rows.values.toList()
     override suspend fun getLiveRecentsSince(cursor: Long): List<LiveRecentEntity> = emptyList()
     override suspend fun deleteAll() { rows.clear() }
-    override suspend fun get(code: String): LiveRecentEntity? = rows[code]
+    override suspend fun get(provider: String, code: String): LiveRecentEntity? = rows["$provider|$code"]
 }
 
 /**

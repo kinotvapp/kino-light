@@ -527,11 +527,11 @@ interface LiveFavoriteDao {
     // trigger's guard (`WHEN NEW.updatedAt = OLD.updatedAt`) fire and reseal it with a fresh clock
     // -- same pattern as `softDeleteItem`. Nothing reads that clock anymore (see SyncTriggers),
     // but the trigger still runs on every local write.
-    @Query("UPDATE live_favorites SET deleted = 1 WHERE code = :code")
-    suspend fun delete(code: String)
+    @Query("UPDATE live_favorites SET deleted = 1 WHERE provider = :provider AND code = :code")
+    suspend fun delete(provider: String, code: String)
 
-    @Query("SELECT EXISTS(SELECT 1 FROM live_favorites WHERE code = :code AND deleted = 0)")
-    suspend fun isFavorite(code: String): Boolean
+    @Query("SELECT EXISTS(SELECT 1 FROM live_favorites WHERE provider = :provider AND code = :code AND deleted = 0)")
+    suspend fun isFavorite(provider: String, code: String): Boolean
 
     // --- Sync (same pattern as skip_markers) ---
     @Query("SELECT * FROM live_favorites")
@@ -542,8 +542,8 @@ interface LiveFavoriteDao {
     suspend fun getLiveFavoritesSince(cursor: Long): List<LiveFavoriteEntity>
 
     /** By-PK read, for [com.arkiv.player.data.sync.SyncApply]'s local-row lookup before merging. */
-    @Query("SELECT * FROM live_favorites WHERE code = :code")
-    suspend fun get(code: String): LiveFavoriteEntity?
+    @Query("SELECT * FROM live_favorites WHERE provider = :provider AND code = :code")
+    suspend fun get(provider: String, code: String): LiveFavoriteEntity?
 }
 
 /** See [QUERY_ITEMS_SINCE]. */
@@ -567,8 +567,8 @@ interface LiveRecentDao {
     suspend fun getLiveRecentsSince(cursor: Long): List<LiveRecentEntity>
 
     /** By-PK read, for [com.arkiv.player.data.sync.SyncApply]'s local-row lookup before merging. */
-    @Query("SELECT * FROM live_recents WHERE code = :code")
-    suspend fun get(code: String): LiveRecentEntity?
+    @Query("SELECT * FROM live_recents WHERE provider = :provider AND code = :code")
+    suspend fun get(provider: String, code: String): LiveRecentEntity?
 
     /**
      * One-time 2026-08-14 purge: adult channels that stayed recorded from BEFORE
@@ -585,29 +585,30 @@ interface LiveRecentDao {
 
 @Dao
 interface LiveChannelCacheDao {
-    @Query("SELECT * FROM live_channels_cache WHERE categoria = :category ORDER BY numero")
-    suspend fun byCategory(category: Int): List<LiveChannelCacheEntity>
+    @Query("SELECT * FROM live_channels_cache WHERE provider = :provider AND categoria = :category ORDER BY numero")
+    suspend fun byCategory(provider: String, category: String): List<LiveChannelCacheEntity>
 
     /**
-     * Cached rows of a specific list of channels (by `code`), with no category filter -- to
+     * Cached rows of a specific list of channels (by `code`) of ONE provider -- a code is only
+     * unique within its provider -- with no category filter -- to
      * enrich with logo/number data that arrives from another source that carries no category of
      * its own (the home row's "recents", see `recentChannelsForHome` in
      * `ui/live/RecentLiveChannels.kt`). Can return more than one row per `code` (a channel can be
      * cached in several of the portal's categories): logo/number don't change between categories,
      * so the caller doesn't care which one it gets.
      */
-    @Query("SELECT * FROM live_channels_cache WHERE code IN (:codes)")
-    suspend fun byCodes(codes: List<String>): List<LiveChannelCacheEntity>
+    @Query("SELECT * FROM live_channels_cache WHERE provider = :provider AND code IN (:codes)")
+    suspend fun byCodes(provider: String, codes: List<String>): List<LiveChannelCacheEntity>
 
-    @Query("DELETE FROM live_channels_cache WHERE categoria = :category")
-    suspend fun clear(category: Int)
+    @Query("DELETE FROM live_channels_cache WHERE provider = :provider AND categoria = :category")
+    suspend fun clear(provider: String, category: String)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun save(rows: List<LiveChannelCacheEntity>)
 
     @Transaction
-    suspend fun replace(category: Int, rows: List<LiveChannelCacheEntity>) {
-        clear(category)
+    suspend fun replace(provider: String, category: String, rows: List<LiveChannelCacheEntity>) {
+        clear(provider, category)
         save(rows)
     }
 }

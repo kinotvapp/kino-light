@@ -82,10 +82,10 @@ class RoomSyncSourceTest {
 
     @Test fun `live_favorites and live_recents dispatch`() = runTest {
         val favoriteDao = RssFakeLiveFavoriteDao().apply {
-            rows["c1"] = LiveFavoriteEntity(code = "c1", nombre = "Canal 1", numero = 1, logo = null, updatedAt = 10, deleted = false)
+            rows["xuper|c1"] = LiveFavoriteEntity(code = "c1", nombre = "Canal 1", numero = 1, logo = null, updatedAt = 10, deleted = false)
         }
         val recentDao = RssFakeLiveRecentDao().apply {
-            rows["c2"] = LiveRecentEntity(code = "c2", nombre = "Canal 2", vistoAt = 5, updatedAt = 10)
+            rows["xuper|c2"] = LiveRecentEntity(code = "c2", nombre = "Canal 2", vistoAt = 5, updatedAt = 10)
         }
         val source = RoomSyncSource(RssFakeItemDao(), RssFakePlaybackDao(), FakeSkipMarkerDao(), favoriteDao, recentDao)
 
@@ -163,23 +163,23 @@ private class RssFakeLiveFavoriteDao : LiveFavoriteDao {
     val rows = mutableMapOf<String, LiveFavoriteEntity>()
 
     override fun flowAll(): Flow<List<LiveFavoriteEntity>> = MutableStateFlow(emptyList())
-    override suspend fun save(f: LiveFavoriteEntity) { rows[f.code] = f }
-    override suspend fun delete(code: String) {}
-    override suspend fun isFavorite(code: String): Boolean = false
+    override suspend fun save(f: LiveFavoriteEntity) { rows["${f.provider}|${f.code}"] = f }
+    override suspend fun delete(provider: String, code: String) {}
+    override suspend fun isFavorite(provider: String, code: String): Boolean = false
     override suspend fun getAll(): List<LiveFavoriteEntity> = rows.values.toList()
     override suspend fun getLiveFavoritesSince(cursor: Long): List<LiveFavoriteEntity> =
         rows.values.filter { it.updatedAt > cursor }.sortedBy { it.updatedAt }
-    override suspend fun get(code: String): LiveFavoriteEntity? = rows[code]
+    override suspend fun get(provider: String, code: String): LiveFavoriteEntity? = rows["$provider|$code"]
 }
 
 private class RssFakeLiveRecentDao : LiveRecentDao {
     val rows = mutableMapOf<String, LiveRecentEntity>()
 
     override fun flowRecent(limit: Int): Flow<List<LiveRecentEntity>> = MutableStateFlow(emptyList())
-    override suspend fun record(r: LiveRecentEntity) { rows[r.code] = r }
+    override suspend fun record(r: LiveRecentEntity) { rows["${r.provider}|${r.code}"] = r }
     override suspend fun getAll(): List<LiveRecentEntity> = rows.values.toList()
     override suspend fun getLiveRecentsSince(cursor: Long): List<LiveRecentEntity> =
         rows.values.filter { it.updatedAt > cursor }.sortedBy { it.updatedAt }
     override suspend fun deleteAll() { rows.clear() }
-    override suspend fun get(code: String): LiveRecentEntity? = rows[code]
+    override suspend fun get(provider: String, code: String): LiveRecentEntity? = rows["$provider|$code"]
 }

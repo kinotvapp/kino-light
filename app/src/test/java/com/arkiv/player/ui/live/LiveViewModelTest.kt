@@ -7,6 +7,7 @@ import com.arkiv.player.data.db.LiveFavoriteEntity
 import com.arkiv.player.data.gateway.LiveCatalogGateway
 import com.arkiv.player.data.gateway.LiveCategory
 import com.arkiv.player.data.gateway.LiveChannel
+import com.arkiv.player.data.gateway.LiveChannelKeys
 import com.arkiv.player.data.gateway.LiveProgram
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -123,12 +124,13 @@ private class FakeFavoriteDao : LiveFavoriteDao {
     private val flow = MutableStateFlow<List<LiveFavoriteEntity>>(emptyList())
     override fun flowAll(): Flow<List<LiveFavoriteEntity>> = flow
     override suspend fun save(f: LiveFavoriteEntity) {
-        flow.value = flow.value.filterNot { it.code == f.code } + f
+        flow.value = flow.value.filterNot { it.provider == f.provider && it.code == f.code } + f
     }
-    override suspend fun delete(code: String) {
-        flow.value = flow.value.filterNot { it.code == code }
+    override suspend fun delete(provider: String, code: String) {
+        flow.value = flow.value.filterNot { it.provider == provider && it.code == code }
     }
-    override suspend fun isFavorite(code: String): Boolean = flow.value.any { it.code == code }
+    override suspend fun isFavorite(provider: String, code: String): Boolean =
+        flow.value.any { it.provider == provider && it.code == code }
     override suspend fun getAll(): List<LiveFavoriteEntity> = flow.value
     // Task 2 (companion sync push side) added this. No test in this file exercises it; minimal
     // implementation to satisfy the interface.
@@ -136,25 +138,28 @@ private class FakeFavoriteDao : LiveFavoriteDao {
         flow.value.filter { it.updatedAt > cursor }.sortedBy { it.updatedAt }
     // Task 3 (companion sync apply side) added this. No test in this file exercises it; minimal
     // implementation to satisfy the interface.
-    override suspend fun get(code: String): LiveFavoriteEntity? = flow.value.firstOrNull { it.code == code }
+    override suspend fun get(provider: String, code: String): LiveFavoriteEntity? =
+        flow.value.firstOrNull { it.provider == provider && it.code == code }
 }
 
 private class FakeCacheDao : LiveChannelCacheDao {
-    private val store = mutableMapOf<Int, List<LiveChannelCacheEntity>>()
+    /** Keyed by `provider to category`, like the real `(provider, code, categoria)` PK scopes a category. */
+    private val store = mutableMapOf<Pair<String, String>, List<LiveChannelCacheEntity>>()
 
-    /** Direct test setup, without going through save()/replace(). */
+    /** Direct test setup (Xuper's portal category), without going through save()/replace(). */
     fun preload(category: Int, rows: List<LiveChannelCacheEntity>) {
-        store[category] = rows
+        store[LiveChannelKeys.XUPER to category.toString()] = rows
     }
 
-    override suspend fun byCategory(category: Int): List<LiveChannelCacheEntity> = store[category].orEmpty()
+    override suspend fun byCategory(provider: String, category: String): List<LiveChannelCacheEntity> =
+        store[provider to category].orEmpty()
     // No test in this file exercises this (they're all about chooseCategory/byCategory);
     // minimal implementation to satisfy the interface.
-    override suspend fun byCodes(codes: List<String>): List<LiveChannelCacheEntity> =
-        store.values.flatten().filter { it.code in codes }
-    override suspend fun clear(category: Int) { store.remove(category) }
+    override suspend fun byCodes(provider: String, codes: List<String>): List<LiveChannelCacheEntity> =
+        store.filterKeys { it.first == provider }.values.flatten().filter { it.code in codes }
+    override suspend fun clear(provider: String, category: String) { store.remove(provider to category) }
     override suspend fun save(rows: List<LiveChannelCacheEntity>) {
-        rows.groupBy { it.categoria }.forEach { (cat, rows) -> store[cat] = rows }
+        rows.groupBy { it.provider to it.categoria }.forEach { (key, rows) -> store[key] = rows }
     }
     // replace() uses the interface's default body (clear + save), not needed here.
 }
@@ -216,7 +221,7 @@ class LiveViewModelAsyncTest {
         val cacheDao = FakeCacheDao().apply {
             // "c1" is already in the cache AND in the fresh response -- exactly the case that
             // duplicated the EPG request before the fix (same channel, two different load steps).
-            preload(category, listOf(LiveChannelCacheEntity("c1", category, "Canal 1", 1, null, 0L)))
+            preload(category, listOf(LiveChannelCacheEntity("c1", category.toString(), "Canal 1", 1, null, 0L)))
         }
 
         val vm = LiveViewModel(api, FakeFavoriteDao(), cacheDao)

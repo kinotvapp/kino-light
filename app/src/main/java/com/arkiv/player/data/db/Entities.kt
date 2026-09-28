@@ -4,6 +4,7 @@ import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.arkiv.player.data.ChapterMarker
+import com.arkiv.player.data.gateway.LiveChannelKeys
 
 @Entity(tableName = "items")
 data class ItemEntity(
@@ -223,23 +224,26 @@ data class DownloadEntity(
  * `updatedAt` is left over from this branch's two removed cloud-sync paths (see
  * [com.arkiv.player.data.db.SyncTriggers]) and has no reader today.
  */
-@Entity(tableName = "live_favorites")
+@Entity(tableName = "live_favorites", primaryKeys = ["provider", "code"])
 data class LiveFavoriteEntity(
-    @PrimaryKey val code: String,
+    val code: String,
     val nombre: String,
     val numero: Int,
     val logo: String?,
     val updatedAt: Long = 0,
     val deleted: Boolean = false,
+    /** See [LiveChannelKeys]; last so every positional constructor call predating providers stays Xuper's. */
+    val provider: String = LiveChannelKeys.XUPER,
 )
 
 /** Last channels watched. Carries no tombstone: it's pruned by age, not deleted by hand. */
-@Entity(tableName = "live_recents")
+@Entity(tableName = "live_recents", primaryKeys = ["provider", "code"])
 data class LiveRecentEntity(
-    @PrimaryKey val code: String,
+    val code: String,
     val nombre: String,
     val vistoAt: Long,
     val updatedAt: Long = 0,
+    val provider: String = LiveChannelKeys.XUPER,
 )
 
 /**
@@ -254,15 +258,23 @@ data class LiveRecentEntity(
  * -- and going back to A from cache (gateway down), those channels would disappear from the grid
  * (finding F5 of the final review). It self-healed as soon as the gateway answered again, but the
  * cache exists precisely for when it does NOT answer.
+ *
+ * Since v33 the key is `(provider, code, categoria)` (see [LiveChannelKeys]): a code is only
+ * unique within its provider. `categoria` is the provider's own category id as text (Xuper's is
+ * the portal's number as a string). `ref` holds a plugin channel's wrapped live ref, and this is
+ * the only place it is persisted: it lets a recent/companion channel reopen without re-listing,
+ * and it never syncs (always null for Xuper).
  */
-@Entity(tableName = "live_channels_cache", primaryKeys = ["code", "categoria"])
+@Entity(tableName = "live_channels_cache", primaryKeys = ["provider", "code", "categoria"])
 data class LiveChannelCacheEntity(
     val code: String,
-    val categoria: Int,
+    val categoria: String,
     val nombre: String,
     val numero: Int,
     val logo: String?,
     val guardadoAt: Long,
+    val provider: String = LiveChannelKeys.XUPER,
+    val ref: String? = null,
 )
 
 /**

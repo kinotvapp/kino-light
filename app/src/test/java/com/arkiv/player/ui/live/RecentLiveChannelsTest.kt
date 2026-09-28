@@ -29,7 +29,7 @@ class RecentLiveChannelsTest {
         val recent = listOf(LiveRecentEntity(code = "a", nombre = "Canal A", vistoAt = 100))
         val cache = mapOf(
             "a" to LiveChannelCacheEntity(
-                code = "a", categoria = 3, nombre = "Canal A", numero = 5,
+                code = "a", categoria = "3", nombre = "Canal A", numero = 5,
                 logo = "https://logo/a.png", guardadoAt = 0,
             ),
         )
@@ -51,7 +51,7 @@ class RecentLiveChannelsTest {
         val recent = listOf(LiveRecentEntity(code = "a", nombre = "Nombre actual", vistoAt = 100))
         val cache = mapOf(
             "a" to LiveChannelCacheEntity(
-                code = "a", categoria = 1, nombre = "Nombre viejo de la caché", numero = 9,
+                code = "a", categoria = "1", nombre = "Nombre viejo de la caché", numero = 9,
                 logo = null, guardadoAt = 0,
             ),
         )

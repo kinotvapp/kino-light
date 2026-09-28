@@ -9,6 +9,7 @@ import com.arkiv.player.data.db.LiveFavoriteEntity
 import com.arkiv.player.data.gateway.LiveCatalogGateway
 import com.arkiv.player.data.gateway.LiveCategory
 import com.arkiv.player.data.gateway.LiveChannel
+import com.arkiv.player.data.gateway.LiveChannelKeys
 import com.arkiv.player.data.gateway.LiveProgram
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -169,7 +170,7 @@ class LiveViewModel(
                 return@launch
             }
 
-            val cached = cacheDao.byCategory(category)
+            val cached = cacheDao.byCategory(LiveChannelKeys.XUPER, category.toString())
                 .map { LiveChannel(it.code, it.nombre, it.numero, it.logo) }
             if (cached.isNotEmpty() && _state.value.activeCategory == category) {
                 _state.update { it.copy(channels = cached, loading = false) }
@@ -184,8 +185,8 @@ class LiveViewModel(
                 api.channels(category, force)
             }.onSuccess { fresh ->
                 val nowMs = System.currentTimeMillis()
-                cacheDao.replace(category, fresh.map {
-                    LiveChannelCacheEntity(it.code, category, it.name, it.number, it.logo, nowMs)
+                cacheDao.replace(LiveChannelKeys.XUPER, category.toString(), fresh.map {
+                    LiveChannelCacheEntity(it.code, category.toString(), it.name, it.number, it.logo, nowMs)
                 })
                 if (_state.value.activeCategory == category) {
                     _state.update { it.copy(channels = fresh, loading = false, error = null) }
@@ -263,8 +264,8 @@ class LiveViewModel(
 
     fun toggleFavorite(c: LiveChannel) {
         viewModelScope.launch {
-            if (c.code in _state.value.favorites) favoriteDao.delete(c.code)
-            else favoriteDao.save(LiveFavoriteEntity(c.code, c.name, c.number, c.logo))
+            if (c.code in _state.value.favorites) favoriteDao.delete(c.provider, c.code)
+            else favoriteDao.save(LiveFavoriteEntity(c.code, c.name, c.number, c.logo, provider = c.provider))
         }
     }
 }

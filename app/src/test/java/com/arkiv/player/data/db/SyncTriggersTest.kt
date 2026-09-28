@@ -44,8 +44,8 @@ class SyncTriggersTest {
             // SyncTriggers.TABLES. `live_recents` carries no `deleted` on purpose -- see
             // LiveRecentEntity -- so neither does it here, so this test's schema stays faithful
             // to the real one.
-            it.executeUpdate("CREATE TABLE live_favorites (code TEXT PRIMARY KEY, updatedAt INTEGER NOT NULL DEFAULT 0, deleted INTEGER NOT NULL DEFAULT 0)")
-            it.executeUpdate("CREATE TABLE live_recents (code TEXT PRIMARY KEY, updatedAt INTEGER NOT NULL DEFAULT 0)")
+            it.executeUpdate("CREATE TABLE live_favorites (code TEXT NOT NULL, provider TEXT NOT NULL DEFAULT 'xuper', updatedAt INTEGER NOT NULL DEFAULT 0, deleted INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(provider, code))")
+            it.executeUpdate("CREATE TABLE live_recents (code TEXT NOT NULL, provider TEXT NOT NULL DEFAULT 'xuper', updatedAt INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(provider, code))")
         }
     }
 
@@ -194,5 +194,16 @@ class SyncTriggersTest {
         apply(SyncTriggers.sealRowsWithNoClock())
         assertTrue(clockOf("items", "identifier", "vieja") > 0)
         assertEquals("an already-sealed row isn't touched", 42L, clockOf("items", "identifier", "ok"))
+    }
+
+    @Test fun `sealing one provider's favourite leaves the same code of another provider alone`() {
+        apply(SyncTriggers.ddl())
+        execute("INSERT INTO live_favorites (code, provider, updatedAt) VALUES ('c1', 'xuper', 5)")
+        execute("INSERT INTO live_favorites (code, provider) VALUES ('c1', 'plugin:own-server')")
+        execute("UPDATE live_favorites SET deleted = 1 WHERE provider = 'plugin:own-server' AND code = 'c1'")
+        val xuper = db.createStatement().use { st ->
+            st.executeQuery("SELECT updatedAt FROM live_favorites WHERE provider = 'xuper' AND code = 'c1'").use { it.getLong(1) }
+        }
+        assertEquals(5L, xuper)
     }
 }

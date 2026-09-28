@@ -7,13 +7,14 @@ import com.arkiv.player.data.db.LiveFavoriteEntity
 import com.arkiv.player.data.db.LiveRecentEntity
 import com.arkiv.player.data.db.PlaybackEntity
 import com.arkiv.player.data.db.SkipMarkerEntity
+import com.arkiv.player.data.gateway.LiveChannelKeys
 import org.json.JSONObject
 
 /**
  * Entity (Room) <-> JSON mapping for the companion LAN sync. Pure (no Android, no coroutines):
  * only the six user-data tables that travel between paired devices. Natural keys per table:
  * items=identifier, episodes=epId(=EpisodeEntity.id), playback=episodeId,
- * skip_markers=markerId(=SkipMarkerEntity.id), live_favorites/live_recents=code.
+ * skip_markers=markerId(=SkipMarkerEntity.id), live_favorites/live_recents=(provider, code).
  *
  * Every mapper below selects SYNCED FIELDS ONLY: identity + shared metadata + `updatedAt` (+
  * `deleted` where the table has a tombstone). Device-local columns (download/thumbnail paths,
@@ -184,6 +185,8 @@ fun liveFavoriteToJson(entity: LiveFavoriteEntity): JSONObject = JSONObject().ap
     put("logo", entity.logo)
     put("updatedAt", entity.updatedAt)
     put("deleted", entity.deleted)
+    // Absent on an older device's rows: those are Xuper's (see jsonToLiveFavorite).
+    put("provider", entity.provider)
 }
 
 fun jsonToLiveFavorite(json: JSONObject): LiveFavoriteEntity = LiveFavoriteEntity(
@@ -193,6 +196,7 @@ fun jsonToLiveFavorite(json: JSONObject): LiveFavoriteEntity = LiveFavoriteEntit
     logo = json.optStringOrNull("logo"),
     updatedAt = json.optLong("updatedAt"),
     deleted = json.optBoolean("deleted"),
+    provider = json.optStringOrNull("provider") ?: LiveChannelKeys.XUPER,
 )
 
 // ---- live_recents <-> LiveRecentEntity ----
@@ -204,6 +208,8 @@ fun liveRecentToJson(entity: LiveRecentEntity): JSONObject = JSONObject().apply 
     put("nombre", entity.nombre)
     put("vistoAt", entity.vistoAt)
     put("updatedAt", entity.updatedAt)
+    // Absent on an older device's rows: those are Xuper's (see jsonToLiveRecent).
+    put("provider", entity.provider)
 }
 
 fun jsonToLiveRecent(json: JSONObject): LiveRecentEntity = LiveRecentEntity(
@@ -211,4 +217,5 @@ fun jsonToLiveRecent(json: JSONObject): LiveRecentEntity = LiveRecentEntity(
     nombre = json.optString("nombre"),
     vistoAt = json.optLong("vistoAt"),
     updatedAt = json.optLong("updatedAt"),
+    provider = json.optStringOrNull("provider") ?: LiveChannelKeys.XUPER,
 )

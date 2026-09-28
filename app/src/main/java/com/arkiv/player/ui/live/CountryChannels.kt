@@ -7,6 +7,7 @@ import com.arkiv.player.data.db.LiveChannelCacheDao
 import com.arkiv.player.data.db.LiveChannelCacheEntity
 import com.arkiv.player.data.gateway.LiveCatalogGateway
 import com.arkiv.player.data.gateway.LiveChannel
+import com.arkiv.player.data.gateway.LiveChannelKeys
 import java.util.Locale
 import java.util.TimeZone
 
@@ -138,7 +139,7 @@ suspend fun countryChannelsForHome(
     }
 
     if (savedId != null) {
-        val cached = cacheDao.byCategory(savedId)
+        val cached = cacheDao.byCategory(LiveChannelKeys.XUPER, savedId.toString())
         val fresh = cached.isNotEmpty() && cached.all { nowMs - it.guardadoAt < FRESHNESS_MS }
         if (fresh) return cached.map { LiveChannel(it.code, it.nombre, it.numero, it.logo) }
     }
@@ -149,8 +150,8 @@ suspend fun countryChannelsForHome(
             ?: return emptyList()
         val channels = api.channels(id)
         if (channels.isNotEmpty()) {
-            cacheDao.replace(id, channels.map {
-                LiveChannelCacheEntity(it.code, id, it.name, it.number, it.logo, nowMs)
+            cacheDao.replace(LiveChannelKeys.XUPER, id.toString(), channels.map {
+                LiveChannelCacheEntity(it.code, id.toString(), it.name, it.number, it.logo, nowMs)
             })
             prefs.edit().putString(KEY_COUNTRY_ISO, iso).putInt(KEY_COUNTRY_CATEGORY, id).apply()
         }
@@ -162,7 +163,7 @@ suspend fun countryChannelsForHome(
     // No network: the old cache still works -- an outdated channel catalog beats a half-empty row,
     // and channels that no longer exist will fail on opening, like any other.
     val id = savedId ?: return emptyList()
-    return cacheDao.byCategory(id).map { LiveChannel(it.code, it.nombre, it.numero, it.logo) }
+    return cacheDao.byCategory(LiveChannelKeys.XUPER, id.toString()).map { LiveChannel(it.code, it.nombre, it.numero, it.logo) }
 }
 
 private const val KEY_COUNTRY_ISO = "live_pais_iso"

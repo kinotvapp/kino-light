@@ -101,35 +101,33 @@ private class FakePlaybackDao : PlaybackDao {
     override suspend fun getPlaybackSince(cursor: Long): List<PlaybackEntity> = emptyList()
 }
 
-/** In-memory fake of [LiveFavoriteDao]. Not exercised by any test case below; exists only to
- * satisfy [SyncApply]'s constructor. */
+/** In-memory fake of [LiveFavoriteDao], keyed by `"<provider>|<code>"` like the real `(provider, code)` PK. */
 private class FakeLiveFavoriteDao : LiveFavoriteDao {
     val rows = mutableMapOf<String, LiveFavoriteEntity>()
 
     override fun flowAll(): Flow<List<LiveFavoriteEntity>> =
         MutableStateFlow(rows.values.filter { !it.deleted }.sortedBy { it.numero })
-    override suspend fun save(f: LiveFavoriteEntity) { rows[f.code] = f }
-    override suspend fun delete(code: String) { rows[code]?.let { rows[code] = it.copy(deleted = true) } }
-    override suspend fun isFavorite(code: String): Boolean = rows[code]?.let { !it.deleted } ?: false
+    override suspend fun save(f: LiveFavoriteEntity) { rows["${f.provider}|${f.code}"] = f }
+    override suspend fun delete(provider: String, code: String) { rows["$provider|$code"]?.let { rows["$provider|$code"] = it.copy(deleted = true) } }
+    override suspend fun isFavorite(provider: String, code: String): Boolean = rows["$provider|$code"]?.let { !it.deleted } ?: false
     override suspend fun getAll(): List<LiveFavoriteEntity> = rows.values.toList()
     override suspend fun getLiveFavoritesSince(cursor: Long): List<LiveFavoriteEntity> =
         rows.values.filter { it.updatedAt > cursor }.sortedBy { it.updatedAt }
-    override suspend fun get(code: String): LiveFavoriteEntity? = rows[code]
+    override suspend fun get(provider: String, code: String): LiveFavoriteEntity? = rows["$provider|$code"]
 }
 
-/** In-memory fake of [LiveRecentDao]. Not exercised by any test case below; exists only to
- * satisfy [SyncApply]'s constructor. */
+/** In-memory fake of [LiveRecentDao], keyed by `"<provider>|<code>"` like the real `(provider, code)` PK. */
 private class FakeLiveRecentDao : LiveRecentDao {
     val rows = mutableMapOf<String, LiveRecentEntity>()
 
     override fun flowRecent(limit: Int): Flow<List<LiveRecentEntity>> =
         MutableStateFlow(rows.values.sortedByDescending { it.vistoAt }.take(limit))
-    override suspend fun record(r: LiveRecentEntity) { rows[r.code] = r }
+    override suspend fun record(r: LiveRecentEntity) { rows["${r.provider}|${r.code}"] = r }
     override suspend fun getAll(): List<LiveRecentEntity> = rows.values.toList()
     override suspend fun getLiveRecentsSince(cursor: Long): List<LiveRecentEntity> =
         rows.values.filter { it.updatedAt > cursor }.sortedBy { it.updatedAt }
     override suspend fun deleteAll() { rows.clear() }
-    override suspend fun get(code: String): LiveRecentEntity? = rows[code]
+    override suspend fun get(provider: String, code: String): LiveRecentEntity? = rows["$provider|$code"]
 }
 
 private fun playbackJson(
@@ -274,5 +272,24 @@ class SyncApplyTest {
         assertEquals("New title", stored?.title)
         assertEquals(20L, stored?.updatedAt)
         assertEquals(7, stored?.episodiosVistosEnLista)
+    }
+
+    @Test fun `a plugin favourite never overwrites the xuper one with the same code, and a bad provider is ignored`() = runTest {
+        val favs = FakeLiveFavoriteDao()
+        favs.save(LiveFavoriteEntity("c1", "RCN", 5, null, updatedAt = 10))
+        val sync = SyncApply(FakeItemDao(), FakePlaybackDao(), FakeSkipMarkerDao(), favs, FakeLiveRecentDao())
+        sync.apply("live_favorites", JSONObject().put("code", "c1").put("nombre", "Canal Uno").put("numero", 1).put("updatedAt", 20).put("deleted", false).put("provider", "plugin:own-server"))
+        sync.apply("live_favorites", JSONObject().put("code", "c9").put("nombre", "X").put("numero", 1).put("updatedAt", 20).put("deleted", false).put("provider", "plugin:"))
+        assertEquals("RCN", favs.get("xuper", "c1")!!.nombre)
+        assertEquals("Canal Uno", favs.get("plugin:own-server", "c1")!!.nombre)
+        assertEquals(2, favs.rows.size)
+    }
+
+    @Test fun `a recent with a malformed provider is skipped, never stored as xuper's`() = runTest {
+        val recents = FakeLiveRecentDao()
+        val sync = SyncApply(FakeItemDao(), FakePlaybackDao(), FakeSkipMarkerDao(), FakeLiveFavoriteDao(), recents)
+        sync.apply("live_recents", JSONObject().put("code", "c1").put("nombre", "X").put("vistoAt", 3).put("updatedAt", 20).put("provider", "ditu"))
+        sync.apply("live_recents", JSONObject().put("code", "c2").put("nombre", "RCN").put("vistoAt", 3).put("updatedAt", 20))
+        assertEquals(listOf("xuper|c2"), recents.rows.keys.toList())
     }
 }

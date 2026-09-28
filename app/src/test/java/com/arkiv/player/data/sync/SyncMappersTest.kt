@@ -1,9 +1,13 @@
 package com.arkiv.player.data.sync
 
+import com.arkiv.player.data.gateway.LiveChannelKeys
 import com.arkiv.player.data.db.EpisodeEntity
+import com.arkiv.player.data.db.LiveFavoriteEntity
+import com.arkiv.player.data.db.LiveRecentEntity
 import com.arkiv.player.data.db.PlaybackEntity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.json.JSONObject
 import org.junit.Test
 
 private fun sampleEpisodeWithLocalPaths(): EpisodeEntity = EpisodeEntity(
@@ -41,5 +45,20 @@ class SyncMappersTest {
         assertTrue(LwwMerge.pickWinner(localUpdatedAt = 5, remoteUpdatedAt = 6))
         assertTrue(!LwwMerge.pickWinner(localUpdatedAt = 6, remoteUpdatedAt = 6))
         assertTrue(!LwwMerge.pickWinner(localUpdatedAt = 7, remoteUpdatedAt = 6))
+    }
+
+    @Test fun `a live row from an older device has no provider and is xuper's`() {
+        val fav = jsonToLiveFavorite(JSONObject().put("code", "c1").put("nombre", "RCN").put("numero", 5).put("updatedAt", 9L).put("deleted", false))
+        assertEquals(LiveChannelKeys.XUPER, fav.provider)
+        val recent = jsonToLiveRecent(JSONObject().put("code", "c1").put("nombre", "RCN").put("vistoAt", 3L).put("updatedAt", 9L))
+        assertEquals(LiveChannelKeys.XUPER, recent.provider)
+    }
+
+    @Test fun `provider travels with favourites and recents`() {
+        val p = LiveChannelKeys.pluginProvider("own-server")
+        val fav = LiveFavoriteEntity("c1", "Canal Uno", 1, null, 7L, false, provider = p)
+        assertEquals(fav, jsonToLiveFavorite(liveFavoriteToJson(fav)))
+        val recent = LiveRecentEntity("c1", "Canal Uno", 3L, 7L, provider = p)
+        assertEquals(recent, jsonToLiveRecent(liveRecentToJson(recent)))
     }
 }

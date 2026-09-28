@@ -88,6 +88,7 @@ import com.arkiv.player.data.db.RecommendationEntity
 import com.arkiv.player.data.gateway.GatewayResult
 import com.arkiv.player.data.plugin.PluginHomeRow
 import com.arkiv.player.data.gateway.LiveChannel
+import com.arkiv.player.data.gateway.LiveChannelKeys
 import com.arkiv.player.thumbnails.ThumbnailChoice
 import com.arkiv.player.ui.home.HomeViewModel
 import com.arkiv.player.ui.home.pluginHeroPick
@@ -358,7 +359,7 @@ fun TvHomeScreen(
     var liveCacheByCode by remember { mutableStateOf<Map<String, LiveChannelCacheEntity>>(emptyMap()) }
     LaunchedEffect(liveRawRecents) {
         if (liveRawRecents.isNotEmpty()) {
-            liveCacheByCode = liveCacheDao.byCodes(liveRawRecents.map { it.code }).associateBy { it.code }
+            liveCacheByCode = liveCacheDao.byCodes(LiveChannelKeys.XUPER, liveRawRecents.map { it.code }).associateBy { it.code }
         }
     }
     val recentChannels = remember(liveRawRecents, liveCacheByCode) {

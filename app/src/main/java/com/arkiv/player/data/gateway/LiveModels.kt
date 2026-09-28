@@ -30,7 +30,50 @@ data class LiveChannel(
      * `PlayerViewModel.loadLive`'s zapping fallback) don't pass it and are left with the default.
      */
     val adult: Boolean = false,
+    /**
+     * Which provider of the En vivo module this channel belongs to ([LiveChannelKeys]): `"xuper"`
+     * (the native portal channels, the default for every path that predates providers) or
+     * `"plugin:<pluginId>"`. Channel identity is `provider + code` everywhere; [liveCode] is that
+     * pair as one string.
+     */
+    val provider: String = LiveChannelKeys.XUPER,
+    /** A plugin channel's wrapped `plg1:` live ref, when known; always null for Xuper. Never persisted outside the channel cache. */
+    val ref: String? = null,
 )
+
+/** This channel's identity as one string: see [LiveChannelKeys.liveCode]. */
+val LiveChannel.liveCode: String get() = LiveChannelKeys.liveCode(provider, code)
+
+/**
+ * Channel identity across providers. A Xuper channel keeps its bare portal code as its live code
+ * (so `live:<code>` routes, companion sends and existing rows are unchanged); a plugin channel's is
+ * `plugin:<pluginId>:<code>`. Neither a plugin id (`ManifestParser.ID`) nor a plugin channel id
+ * (`PluginOutput.ID`) can contain ':', so [parse] is unambiguous.
+ */
+object LiveChannelKeys {
+    const val XUPER = "xuper"
+    const val PLUGIN_PREFIX = "plugin:"
+
+    fun pluginProvider(pluginId: String): String = PLUGIN_PREFIX + pluginId
+
+    fun pluginIdOf(provider: String): String? =
+        provider.takeIf { it.startsWith(PLUGIN_PREFIX) }?.removePrefix(PLUGIN_PREFIX)?.takeIf { it.isNotEmpty() && ':' !in it }
+
+    fun isValidProvider(provider: String): Boolean = provider == XUPER || pluginIdOf(provider) != null
+
+    fun liveCode(provider: String, code: String): String = if (provider == XUPER) code else "$provider:$code"
+
+    /** Inverse of [liveCode]: provider to code, or null for an empty value or a malformed plugin form. */
+    fun parse(liveCode: String): Pair<String, String>? {
+        if (liveCode.isEmpty()) return null
+        if (!liveCode.startsWith(PLUGIN_PREFIX)) return XUPER to liveCode
+        val rest = liveCode.removePrefix(PLUGIN_PREFIX)
+        val pluginId = rest.substringBefore(':', "")
+        val code = rest.substringAfter(':', "")
+        if (pluginId.isEmpty() || code.isEmpty() || ':' in code) return null
+        return pluginProvider(pluginId) to code
+    }
+}
 
 /** Times in epoch **seconds**, as the portal sends them. */
 data class LiveProgram(val title: String, val start: Long, val end: Long, val synopsis: String)
