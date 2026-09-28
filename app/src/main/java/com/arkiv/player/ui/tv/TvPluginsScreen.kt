@@ -506,7 +506,8 @@ private fun RecommendedTab(
                 onClick = { runCatalogAction(vm, row) },
             )
         }
-        if (rows.isEmpty() && !catalog.loading) {
+        // Both lists are filtered by the same query: "no match" only when neither has a card to show.
+        if (rows.isEmpty() && community.rows.isEmpty() && !catalog.loading) {
             item(key = "no-match", span = FULL_WIDTH) {
                 Text("No hay plugins que coincidan.", style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary)
             }
