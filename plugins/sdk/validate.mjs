@@ -18,9 +18,10 @@ import { createKino } from "./kino-shim.mjs";
 import { call, parseArgs, resolveFirstLiveRef } from "./run.mjs";
 import { loadPlaylist } from "./live-playlist.mjs";
 
-// Every return carries { ok, problems, drops, output } — even the early ones, before a `kino` even
-// exists — so a caller (this file's own CLI included) never has to guess which fields are present.
-const refused = (problems) => ({ ok: false, problems, drops: [], output: null, consent: [] });
+// Every return carries { ok, problems, drops, output, consent, notes } — even the early ones, before
+// a `kino` even exists — so a caller (this file's own CLI included) never has to guess which fields
+// are present.
+const refused = (problems) => ({ ok: false, problems, drops: [], output: null, consent: [], notes: [] });
 
 /**
  * The consent sheet's lines beyond the host list, as the app's PluginConsent.extraLines builds them
@@ -49,8 +50,9 @@ export async function validate(dirArg, { run = null, args = [], config = {}, rep
   if (!checked.ok) return refused([`kino-plugin.json: ${checked.field}: ${checked.message}`]);
   const m = checked.manifest;
   const consent = consentLines(m);
+  const notes = m.discoverable ? [] : ["No aparecerá en la búsqueda de Kino"];
   const entry = join(dir, m.entry);
-  if (!existsSync(entry)) return { ...refused([`entry ${m.entry} not found`]), consent };
+  if (!existsSync(entry)) return { ...refused([`entry ${m.entry} not found`]), consent, notes };
   if (statSync(entry).size > contract.manifest.entryMaxBytes) problems.push(`${m.entry} is bigger than ${kb(contract.manifest.entryMaxBytes)}: Kino refuses it`);
   if (m.icon && existsSync(join(dir, m.icon)) && statSync(join(dir, m.icon)).size > contract.manifest.iconMaxBytes) problems.push(`${m.icon} is bigger than ${kb(contract.manifest.iconMaxBytes)}: Kino skips it`);
   const scratch = mkdtempSync(join(tmpdir(), "kino-validate-"));
@@ -98,7 +100,7 @@ export async function validate(dirArg, { run = null, args = [], config = {}, rep
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
-  return { ok: problems.length === 0, problems, drops, output, consent };
+  return { ok: problems.length === 0, problems, drops, output, consent, notes };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -123,6 +125,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     }
     result.drops.forEach((d) => console.error(`[dropped by Kino] ${d}`));
     result.problems.forEach((p) => console.error(`✗ ${p}`));
+    result.notes.forEach((n) => console.error(`· ${n}`));
     if (result.ok) console.error("✓ Kino would accept this plugin" + (result.drops.length ? ` (${result.drops.length} entries dropped, see above)` : ""));
     process.exitCode = result.ok ? 0 : 1;
   }

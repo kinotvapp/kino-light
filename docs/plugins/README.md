@@ -157,6 +157,7 @@ names the field.
 | `permissions` | Optional. A list of names from the closed list in `contract.json`. **The list is empty in this version**: any name is refused with "permiso desconocido: …". It exists so a later version can add permissions (each one shown on the consent screen) without a new `apiVersion`. |
 | `color` | Optional `#RRGGBB`: the accent of your plugin's tab and chips. A neutral color by default. |
 | `icon` | Optional relative path to a square `.png`, at most 128 KB. An icon that is missing or too big is skipped without failing the install. |
+| `discoverable` | Optional `true` or `false` (default `true`), at every `apiVersion`. `false` keeps the plugin out of Kino's community search (see [Get found](#get-found)); people can still install it by typing its address. Any other value is refused with "El campo \"discoverable\" debe ser true o false". |
 | `description`, `author`, `homepage` | Optional strings. Trimmed and cut to 300, 60 and 200 characters. Kino shows the name, author, version and description when it asks the person to install. |
 
 Other keys are ignored. `hosts` does three jobs: it is what the person approves, it is the only set
@@ -1169,6 +1170,23 @@ Before you publish, check that:
 - your file uses none of the missing globals of [section 6](#6-limits-and-engine-quirks);
 - you installed it in Kino and it searches, lists episodes and plays.
 
+### Get found
+
+Kino lists community plugins by searching GitHub for public repositories with the topic
+`kino-plugin` (forks are left out). To be listed:
+
+1. On your repository's GitHub page, add the topic `kino-plugin` (About ▸ ⚙ ▸ Topics).
+2. Keep `kino-plugin.json` at the root of the repository: Kino reads it to show your plugin's name,
+   description, colour and icon, and skips a repository whose manifest is missing or invalid, needs a
+   newer `apiVersion` than the person's Kino, or says `"discoverable": false`. A plugin in a subfolder
+   can be installed by address but is not searched.
+3. Kino keeps the 30 most-starred matches, searches at most every 12 hours per device (and when the
+   person taps "Actualizar"), and shows them after the recommended plugins, labelled "De la comunidad".
+   Installing one goes through the same consent sheet as any other plugin.
+
+To stay out of the search while keeping the topic, set `"discoverable": false`;
+`node sdk/validate.mjs .` then prints "No aparecerá en la búsqueda de Kino".
+
 ## 9. What people see
 
 - **The consent sheet.** When someone types your address, Kino shows "Instalar <name>", your version
@@ -1191,7 +1209,8 @@ Before you publish, check that:
   that declares `download` can be saved for offline viewing ([section 3](#downloads-apiversion-2));
   Chromecast and DLNA are not available for plugin titles in this version. A `live` item's card
   says "EN VIVO" and plays on tap, with no info page; a channel never enters "Continuar viendo" or
-  the library ([Live channels](#live-channels-apiversion-2)).
+  the library ([Live channels](#live-channels-apiversion-2)). A plugin found through the `kino-plugin`
+  topic carries the label "De la comunidad" on its card.
 - **Status of each plugin** in Ajustes > Plugins: "Activo", "Desactivado", "Falta configurar", "No
   responde — actívalo para volver a intentar" (three timeouts in a row; the person can re-enable it),
   "Actualización

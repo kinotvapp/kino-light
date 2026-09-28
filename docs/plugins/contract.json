@@ -30,7 +30,8 @@
     "versionPattern": "^(0|[1-9]\\d{0,5})\\.(0|[1-9]\\d{0,5})\\.(0|[1-9]\\d{0,5})$",
     "pathSegmentPattern": "^[A-Za-z0-9._-]+$",
     "maxPathChars": 200,
-    "liveStreamHosts": { "value": "any", "apiVersion": 3, "requires": "channels" }
+    "liveStreamHosts": { "value": "any", "apiVersion": 3, "requires": "channels" },
+    "discoverable": { "default": true }
   },
   "hostRules": {
     "labelPattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
@@ -114,6 +115,7 @@
     "playlistFormats": ["m3u"],
     "epgFormats": ["xmltv"]
   },
+  "discovery": { "topic": "kino-plugin", "maxResults": 30 },
   "search": {
     "types": ["movie", "series", "any"],
     "maxAltTitles": 5,

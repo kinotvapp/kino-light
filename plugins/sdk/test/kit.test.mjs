@@ -838,6 +838,33 @@ test("liveStreamHosts any is read only on v3, and needs channels there", () => {
   assert.deepEqual(contract.manifest.liveStreamHosts, { value: "any", apiVersion: 3, requires: "channels" });
 });
 
+test("discoverable: an optional boolean at every apiVersion; false is a note, not a problem", async () => {
+  assert.equal(validateManifest(manifest()).manifest.discoverable, true);
+  for (const apiVersion of [1, 2, 3]) {
+    assert.equal(validateManifest(manifest({ apiVersion, discoverable: false })).manifest.discoverable, false);
+  }
+  for (const value of ["no", 0, null, []]) {
+    assert.deepEqual(validateManifest(manifest({ discoverable: value })), { ok: false, field: "discoverable", message: 'El campo "discoverable" debe ser true o false' });
+  }
+  assert.deepEqual(contract.discovery, { topic: "kino-plugin", maxResults: 30 });
+  assert.deepEqual(contract.manifest.discoverable, { default: true });
+  const dir = mkdtempSync(join(tmpdir(), "kino-discoverable-"));
+  try {
+    writeFileSync(join(dir, "plugin.js"), "export async function search(){ return { items: [] } }\nexport async function resolve(){ return { url: 'https://example.com/a.m3u8' } }");
+    writeFileSync(join(dir, "kino-plugin.json"), manifest());
+    assert.deepEqual((await validate(dir)).notes, []);
+    writeFileSync(join(dir, "kino-plugin.json"), manifest({ discoverable: false }));
+    const r = await validate(dir);
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.notes, ["No aparecerá en la búsqueda de Kino"]);
+    const cli = spawnSync(process.execPath, [join(here, "..", "validate.mjs"), dir], { encoding: "utf8" });
+    assert.equal(cli.status, 0);
+    assert.match(cli.stderr, /No aparecerá en la búsqueda de Kino/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // ---------- live channels: the kit's own M3U/XMLTV readers (apiVersion 3) ----------
 
 // The shared corpus the app's JVM tests read too. It lives only in Kino's repo

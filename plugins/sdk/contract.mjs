@@ -129,6 +129,9 @@ export function validateManifest(text, { knownPermissions = contract.permissions
     if (!caps.includes(lsh.requires)) return bad("liveStreamHosts", `"liveStreamHosts" necesita la capacidad "${lsh.requires}"`);
     liveStreamHostsAny = true;
   }
+  // Only discovery reads it (never the runtime): valid at every apiVersion, exactly true or false.
+  if (o.discoverable !== undefined && typeof o.discoverable !== "boolean") return bad("discoverable", 'El campo "discoverable" debe ser true o false');
+  const discoverable = o.discoverable === undefined ? m.discoverable.default : o.discoverable;
   if (o.color !== undefined && o.color !== "" && !re(m.colorPattern).test(o.color)) return bad("color", 'El campo "color" debe ser del tipo #RRGGBB');
   if (o.icon !== undefined && o.icon !== "" && (!isSafeRelativePath(o.icon) || !o.icon.endsWith(".png"))) return bad("icon", 'El campo "icon" debe ser una ruta relativa a un .png');
   if (o.permissions !== undefined && !Array.isArray(o.permissions)) return bad("permissions", 'El campo "permissions" debe ser una lista');
@@ -142,7 +145,7 @@ export function validateManifest(text, { knownPermissions = contract.permissions
   if (hosts.length === 0 && !(o.settings || []).some((x) => x.type === "url")) {
     return bad("hosts", 'El campo "hosts" solo puede estar vacío si el plugin tiene un ajuste de tipo "url"');
   }
-  return { ok: true, manifest: { ...o, hosts: [...new Set(hosts)], capabilities: caps, permissions: o.permissions || [], settings: o.settings || [], insecureHosts, liveStreamHostsAny } };
+  return { ok: true, manifest: { ...o, hosts: [...new Set(hosts)], capabilities: caps, permissions: o.permissions || [], settings: o.settings || [], insecureHosts, liveStreamHostsAny, discoverable } };
 }
 
 function validateSettings(list) {

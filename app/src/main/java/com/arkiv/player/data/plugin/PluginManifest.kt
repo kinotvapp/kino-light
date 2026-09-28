@@ -29,6 +29,12 @@ data class PluginManifest(
      * copy ([InstalledRecord.liveStreamHostsAny]), the one the person approved in red.
      */
     val liveStreamHostsAny: Boolean = false,
+    /**
+     * `"discoverable": false` keeps the plugin out of Kino's community search (Recomendados ▸ "De la
+     * comunidad" and "Elige tus fuentes"). Only discovery reads it, never the runtime, so it is valid at
+     * every apiVersion. Default [ManifestParser.DISCOVERABLE_DEFAULT].
+     */
+    val discoverable: Boolean = true,
 )
 
 sealed interface ManifestResult {
@@ -57,6 +63,9 @@ object ManifestParser {
     const val LIVE_STREAM_HOSTS_ANY = "any"
     /** `liveStreamHosts` arrived with apiVersion 3 (and needs [CHANNELS]). */
     const val LIVE_STREAM_HOSTS_API_VERSION = 3
+    /** What a manifest without `discoverable` means: listed when its repo carries the `kino-plugin` topic. */
+    const val DISCOVERABLE_DEFAULT = true
+    const val DISCOVERABLE_NOT_BOOLEAN = "El campo \"discoverable\" debe ser true o false"
     const val MAX_BYTES = 16 * 1024
     const val MIN_HOSTS = 1
     /**
@@ -179,6 +188,13 @@ object ManifestParser {
             true
         }
 
+        // Only discovery reads it (never the runtime), so it is valid at every apiVersion (ruling R2).
+        val discoverable = when (val d = o.opt("discoverable")) {
+            null -> DISCOVERABLE_DEFAULT
+            is Boolean -> d
+            else -> return invalid("discoverable", DISCOVERABLE_NOT_BOOLEAN)
+        }
+
         val color = o.optString("color").takeIf { it.isNotEmpty() }
         if (color != null && !COLOR.matches(color)) return invalid("color", "El campo \"color\" debe ser del tipo #RRGGBB")
 
@@ -210,7 +226,7 @@ object ManifestParser {
                 description = text(o, "description", MAX_DESCRIPTION_CHARS), author = text(o, "author", MAX_AUTHOR_CHARS),
                 homepage = text(o, "homepage", MAX_HOMEPAGE_CHARS), hosts = hosts, capabilities = caps,
                 color = color?.uppercase(), icon = icon, permissions = permissions, settings = settings,
-                insecureHosts = insecureHosts, liveStreamHostsAny = liveStreamHostsAny,
+                insecureHosts = insecureHosts, liveStreamHostsAny = liveStreamHostsAny, discoverable = discoverable,
             ),
         )
     }

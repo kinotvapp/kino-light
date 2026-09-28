@@ -1,5 +1,6 @@
 package com.arkiv.player.data.plugin
 
+import com.arkiv.player.data.plugin.discovery.DiscoveryRules
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -58,6 +59,7 @@ class PluginContractParityTest {
         assertEquals(ManifestParser.LIVE_STREAM_HOSTS_ANY, lsh.getString("value"))
         assertEquals(ManifestParser.LIVE_STREAM_HOSTS_API_VERSION, lsh.getInt("apiVersion"))
         assertEquals(ManifestParser.CHANNELS, lsh.getString("requires"))
+        assertEquals(ManifestParser.DISCOVERABLE_DEFAULT, m.getJSONObject("discoverable").getBoolean("default"))
     }
 
     @Test fun `host rules`() {
@@ -196,9 +198,15 @@ class PluginContractParityTest {
 
     @Test fun `every section of the contract is checked here`() {
         assertEquals(
-            setOf("\$comment", "apiVersion", "maxApiVersion", "capabilities", "manifest", "hostRules", "permissions", "settings", "output", "live", "search", "timeoutsMs", "runtime", "fetch", "cookies", "storage", "crypto", "sleep", "errors"),
+            setOf("\$comment", "apiVersion", "maxApiVersion", "capabilities", "manifest", "hostRules", "permissions", "settings", "output", "live", "discovery", "search", "timeoutsMs", "runtime", "fetch", "cookies", "storage", "crypto", "sleep", "errors"),
             c.keys().asSequence().toSet(),
         )
+    }
+
+    @Test fun `discovery`() {
+        val d = obj("discovery")
+        assertEquals(DiscoveryRules.TOPIC, d.getString("topic"))
+        assertEquals(DiscoveryRules.MAX_RESULTS, d.getInt("maxResults"))
     }
 
     @Test fun `live channels`() {

@@ -216,4 +216,19 @@ class ManifestParserTest {
         }
         assertEquals(false, (ManifestParser.parse(base().toString()) as ManifestResult.Valid).manifest.liveStreamHostsAny)
     }
+
+    @Test fun `discoverable is an optional boolean at every apiVersion, true by default`() {
+        assertTrue((ManifestParser.parse(base().toString()) as ManifestResult.Valid).manifest.discoverable)
+        for (api in 1..ManifestParser.SUPPORTED_API) {
+            val m = (ManifestParser.parse(base().put("apiVersion", api).put("discoverable", false).toString()) as ManifestResult.Valid).manifest
+            assertEquals(false, m.discoverable)
+            val t = (ManifestParser.parse(base().put("apiVersion", api).put("discoverable", true).toString()) as ManifestResult.Valid).manifest
+            assertEquals(true, t.discoverable)
+        }
+        listOf<Any>("no", 0, JSONObject.NULL, JSONArray()).forEach { value ->
+            val r = ManifestParser.parse(base().put("discoverable", value).toString()) as ManifestResult.Invalid
+            assertEquals("discoverable", r.field)
+            assertEquals("El campo \"discoverable\" debe ser true o false", r.message)
+        }
+    }
 }
