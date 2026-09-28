@@ -43,6 +43,8 @@ class DefaultPluginAdmin(
     private val afterSessionClosed: (pluginId: String) -> Unit = {},
     /** Uninstall only: the plugin's rows in the En vivo channel cache go, so search never lists them. */
     private val forgetLiveChannels: (pluginId: String) -> Unit = {},
+    /** Uninstall only, FIRST: closes the plugin's En vivo provider while its data dir still exists (`LiveCatalog.forget`). */
+    private val closeLive: (pluginId: String) -> Unit = {},
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : PluginAdmin {
     override val plugins: StateFlow<List<InstalledPlugin>> get() = registry.plugins
@@ -82,6 +84,8 @@ class DefaultPluginAdmin(
      * the data dir is gone: its own delete catches a write that landed before the jar retired.
      */
     override fun uninstall(id: String) {
+        // Before the store deletes the data dir: a live download cancelled only after it would re-create `live/`.
+        closeLive(id)
         val settings = registry.find(id)?.manifest?.settings.orEmpty()
         forgetHomeCache(id)
         registry.uninstall(id)

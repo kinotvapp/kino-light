@@ -130,6 +130,21 @@ class LiveCatalogTest {
         assertEquals(emptyList<LiveChannelProvider>(), catalog.providers.value)
     }
 
+    @Test fun `forget closes a plugin's provider at once, before the registry drops it, and only once`() = runTest {
+        val registry = MutableStateFlow(listOf(plugin("tv1"), plugin("tv2")))
+        val catalog = LiveCatalog(registry, backgroundScope, xuperProvider = { Fake("xuper") }, pluginProvider = { p -> Fake("plugin:${p.id}") })
+        val tv1 = catalog.provider("plugin:tv1") as Fake
+        val tv2 = catalog.provider("plugin:tv2") as Fake
+        catalog.forget("tv1")
+        assertEquals(1, tv1.closed)
+        assertEquals(0, tv2.closed)
+        registry.value = listOf(plugin("tv2"))
+        runCurrent()
+        assertEquals(1, tv1.closed)
+        assertEquals(listOf("plugin:tv2"), catalog.providers.value.map { it.id })
+        catalog.forget("nothing")
+    }
+
     @Test fun `only plugin providers have a notice`() = runTest {
         val catalog = LiveCatalog(MutableStateFlow(listOf(xuper())), backgroundScope, xuperProvider = { Fake("xuper", MutableStateFlow("x")) }, pluginProvider = { Fake("plugin:${it.id}") })
         assertEquals(null, catalog.noticeFor("tv1").first())

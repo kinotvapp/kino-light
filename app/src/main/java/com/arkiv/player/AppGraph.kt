@@ -678,6 +678,7 @@ class AppGraph(context: Context) {
             forgetHomeCache = ::forgetPluginHomeCache,
             forgetSession = ::forgetPluginSession,
             afterSessionClosed = ::bumpPluginSessionRevision,
+            closeLive = { id -> liveModule.forget(id) },
             forgetLiveChannels = { id ->
                 applicationScope.launch {
                     runCatching { database.liveChannelCacheDao().clearProvider(com.arkiv.player.data.gateway.LiveChannelKeys.pluginProvider(id)) }

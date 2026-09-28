@@ -91,6 +91,17 @@ class LiveCatalog(
         }
     }
 
+    /**
+     * Uninstall, BEFORE the store deletes the plugin's data: closes its provider now instead of when
+     * the registry reload drops it, so a playlist download still running cancels at its next step
+     * rather than re-creating `plugin-data/<id>/live` after the delete. Closed once: the next [build]
+     * no longer finds it.
+     */
+    fun forget(pluginId: String) {
+        val gone = synchronized(built) { built.remove(LiveChannelKeys.pluginProvider(pluginId)) }
+        gone?.second?.close()
+    }
+
     override val providers: StateFlow<List<LiveChannelProvider>> =
         plugins.map(::build).stateIn(scope, SharingStarted.Eagerly, build(plugins.value))
 

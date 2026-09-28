@@ -39,6 +39,8 @@ class PluginAdminTest {
     private val secrets = mutableMapOf<String, String>()
     private val forgotten = mutableListOf<String>()
     private val liveForgotten = mutableListOf<String>()
+    /** What the store held when the live provider was closed: the plugin's data dir must still be there. */
+    private val liveClosedWithData = mutableListOf<Boolean>()
     private lateinit var config: PluginConfigStore
     private lateinit var installer: PluginInstaller
 
@@ -64,7 +66,9 @@ class PluginAdminTest {
         installer = PluginInstaller(store, fetcher, probe = { setOf("search", "resolve") }, clock = { 1_000L })
         admin = DefaultPluginAdmin(
             registry, installer, pool, config, forgetSession = { forgotten += it },
-            forgetLiveChannels = { liveForgotten += it }, io = Dispatchers.Unconfined,
+            forgetLiveChannels = { liveForgotten += it },
+            closeLive = { liveClosedWithData += store.get(it) != null },
+            io = Dispatchers.Unconfined,
         )
     }
 
@@ -113,6 +117,12 @@ class PluginAdminTest {
         assertEquals(emptyList<String>(), liveForgotten)
         admin.uninstall("demo")
         assertEquals(listOf("demo"), liveForgotten)
+    }
+
+    @Test fun `uninstall closes the plugin's live provider before the store deletes its data`() {
+        installAndOpen("1.0.0")
+        admin.uninstall("demo")
+        assertEquals(listOf(true), liveClosedWithData)
     }
 
     /**
