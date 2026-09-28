@@ -60,4 +60,14 @@ class TvHomeRestoreRowTest {
         // Only 2 items in the list but 3 rows plus the pad: the list is not laid out yet.
         assertNull(homeRowIndexOf("plugin-p-r1-x", plugin, totalItems = 2))
     }
+
+    @Test
+    fun `skeleton rows after the plugin rows are trailing items, not rows`() {
+        // Same list plus one skeleton row between the last plugin row and the pad: indexes 0-1 lead,
+        // 2-4 plugin, 5 skeleton, 6 pad. The plugin rows keep their indexes.
+        assertEquals(2, tvHomeTrailingItems(skeletonRows = 1))
+        assertEquals(1, tvHomeTrailingItems(skeletonRows = 0))
+        assertEquals(2, homeRowIndexOf("plugin-p-r1-x", plugin, totalItems = 7, trailingItems = tvHomeTrailingItems(1)))
+        assertEquals(4, homeRowIndexOf("plugin-q-r1-w", plugin, totalItems = 7, trailingItems = tvHomeTrailingItems(1)))
+    }
 }

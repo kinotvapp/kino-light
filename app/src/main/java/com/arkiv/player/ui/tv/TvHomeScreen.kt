@@ -100,8 +100,17 @@ import com.arkiv.player.ui.home.TvHomeLanding
 import com.arkiv.player.ui.home.emptyStateNeedsRefocus
 import com.arkiv.player.ui.home.homeEmptyCopy
 import com.arkiv.player.ui.home.homeShowsEmptyState
-import com.arkiv.player.ui.home.homeShowsLoading
 import com.arkiv.player.ui.home.HOME_LOADING_LINE
+import com.arkiv.player.ui.home.TV_HOME_VISIBLE_ROWS
+import com.arkiv.player.ui.home.homePluginRowsLoading
+import com.arkiv.player.ui.home.homeSkeletonKey
+import com.arkiv.player.ui.home.homeSkeletonRowCount
+import com.arkiv.player.ui.home.tvHeroShowsSkeleton
+import com.arkiv.player.ui.components.rememberSkeletonShimmer
+import com.arkiv.player.ui.components.skeleton
+import androidx.compose.runtime.State
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import com.arkiv.player.ui.home.pluginHeroPick
 import com.arkiv.player.ui.home.tvHomeDefaultLanding
 import com.arkiv.player.ui.home.tvHomeLandingHeld
@@ -288,6 +297,13 @@ internal fun homeRowIndexOf(
     if (pluginBase < 0) return null
     return pluginCards.indexOfFirst { cardKey in it }.takeIf { it >= 0 }?.let { pluginBase + it }
 }
+
+/**
+ * The items after the last plugin row in the TV Home list: the skeleton rows still holding a place for
+ * rows to come ([skeletonRows], see `homeSkeletonRowCount`), then the bottom pad. What
+ * [homeRowIndexOf] takes as `trailingItems`.
+ */
+internal fun tvHomeTrailingItems(skeletonRows: Int): Int = skeletonRows + 1
 
 /**
  * What the hero shows on focusing a "Para ti" card: the "why" the gateway brings goes in
@@ -486,15 +502,13 @@ fun TvHomeScreen(
     val channelsRow = remember(recentChannels, countryChannels, liveOn, liveTabs) {
         homeLiveRow(liveOn, recentChannels, countryChannels, available = liveTabs.map { it.id }.toSet()).orEmpty()
     }
-    // Plugins still answering and nothing else to show (the library feeds the hero): a centered spinner
-    // instead of a black Home. It holds no focus; the default landing stays on the top bar.
-    val homeLoading = homeShowsLoading(
-        installedPlugins,
-        pluginRows.size,
-        pluginRowsSettled,
-        hasOtherContent = continueWatching.isNotEmpty() || channelsRow.isNotEmpty() ||
-            showForYouRow(recommendations) || library.isNotEmpty(),
-    )
+    // Plugins still answering: grey skeleton rows fill whatever the two-row zone has free below the real
+    // rows (homeSkeletonRowCount), instead of a black gap. They hold no focus, so the default landing,
+    // the card restore and Back behave as without them.
+    val pluginRowsLoading = homePluginRowsLoading(installedPlugins, pluginRowsSettled)
+    val rowsAbovePlugins = listOf(continueWatching.isNotEmpty(), showForYouRow(recommendations), channelsRow.isNotEmpty()).count { it }
+    val skeletonRows = homeSkeletonRowCount(pluginRowsLoading, rowsAbovePlugins, pluginRows.size, TV_HOME_VISIBLE_ROWS)
+    val skeletonRowsNow by rememberUpdatedState(skeletonRows)
 
     // The row GROWS after being painted: recents come from Room (instant) and the country's may
     // come from the network. With a fresh cache (24h, see FRESHNESS_MS) they arrive fast enough
@@ -773,7 +787,7 @@ fun TvHomeScreen(
                     // row is only prefetched takes it without being seen. The row's index counts back from
                     // the end of the list; while the list lags behind the rows it is null or stale, and
                     // the next try (after the delay) gets it.
-                    homeRowIndexOf(cardToRestore, pluginCards(), rowsListState.layoutInfo.totalItemsCount)
+                    homeRowIndexOf(cardToRestore, pluginCards(), rowsListState.layoutInfo.totalItemsCount, tvHomeTrailingItems(skeletonRowsNow))
                         ?.let { runCatching { rowsListState.scrollToItem(homeRowScrollTarget(it)) } }
                     if (runCatching { returnFocus.requestFocus() }.isSuccess) cardRestored = true else delay(60)
                 }
@@ -798,6 +812,9 @@ fun TvHomeScreen(
     // a slow device gets judged, because it's the screen with the most going on.
     val reducedEffects = rememberReducedEffects()
     EffectsAutoTune(reducedEffects)
+    val heroSkeleton = tvHeroShowsSkeleton(hasFeatured = featured != null, loading = pluginRowsLoading)
+    // Only while a skeleton is on screen: the shimmer's transition keeps the frame clock ticking.
+    val skeletonShimmer = if (skeletonRows > 0 || heroSkeleton) rememberSkeletonShimmer(reducedEffects) else null
 
     // Back deep in the rows goes back to the top first ([tvHomeBackAction]); from the top, the nav
     // host's double-Back-to-exit runs as before. This handler is registered after the nav host's, so
@@ -1000,6 +1017,11 @@ fun TvHomeScreen(
                             modifier = Modifier.padding(top = 8.dp).fillMaxWidth(0.55f),
                         )
                     }
+                }
+                // Nothing featured yet while the plugins answer: grey title and subtitle bars, not black.
+                if (heroSkeleton) {
+                    Box(Modifier.fillMaxWidth(0.4f).height(36.dp).skeleton(skeletonShimmer, RoundedCornerShape(6.dp)))
+                    Box(Modifier.padding(top = 12.dp).fillMaxWidth(0.25f).height(18.dp).skeleton(skeletonShimmer, RoundedCornerShape(4.dp)))
                 }
             }
 
@@ -1265,25 +1287,57 @@ fun TvHomeScreen(
                         }
                     }
 
+                    // Rows still to come: after the real plugin rows (so the rows' indexes and the Back
+                    // rule stay as they are, see tvHomeTrailingItems), one rowUnit tall each so the
+                    // two-row snapping holds, and never focusable: the D-pad stops at the last real row.
+                    items(skeletonRows, key = { homeSkeletonKey(it) }) { index ->
+                        TvSkeletonRow(
+                            labelHeight = labelHeight,
+                            cardHeight = cardHeight,
+                            rowGap = rowGap,
+                            shimmer = skeletonShimmer,
+                            announce = index == 0,
+                        )
+                    }
+
                     item(key = "rows_bottom_pad") { Spacer(Modifier.height(rowGap)) }
                 } // end of the rows' scrollable zone
             }
         }
 
-        // Plugins still answering (homeShowsLoading): centered over the whole screen, below the top bar's
-        // line of sight, and not focusable, so D-pad focus stays on the top bar.
-        if (homeLoading) {
-            Column(
-                Modifier.align(Alignment.Center).padding(top = 48.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                androidx.compose.material3.CircularProgressIndicator(color = ArkivRed, modifier = Modifier.size(40.dp))
-                Text(HOME_LOADING_LINE, style = MaterialTheme.typography.titleMedium, color = ArkivTextSecondary)
+    }
+}
+
+/**
+ * A placeholder for a plugin row that has not arrived: a grey label bar and a line of grey landscape
+ * cards the size of [TvLandscapeCard], one rowUnit tall in all. Draws only (no focus, no click, and a
+ * row that does not scroll); with [announce] a screen reader hears "Cargando tus fuentes…" once.
+ */
+@Composable
+private fun TvSkeletonRow(labelHeight: Dp, cardHeight: Dp, rowGap: Dp, shimmer: State<Float>?, announce: Boolean) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .height(labelHeight + cardHeight + rowGap)
+            .clearAndSetSemantics { if (announce) contentDescription = HOME_LOADING_LINE },
+    ) {
+        Box(Modifier.fillMaxWidth().height(labelHeight).padding(start = 48.dp), contentAlignment = Alignment.CenterStart) {
+            Box(Modifier.width(180.dp).height(12.dp).skeleton(shimmer, RoundedCornerShape(4.dp)))
+        }
+        LazyRow(
+            userScrollEnabled = false,
+            contentPadding = PaddingValues(horizontal = 48.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            items(TV_SKELETON_CARDS) {
+                Box(Modifier.height(cardHeight).aspectRatio(16f / 9f).skeleton(shimmer))
             }
         }
     }
 }
+
+/** Enough landscape placeholders to run past the right edge of a TV screen. */
+private const val TV_SKELETON_CARDS = 8
 
 /** Height of the channel name under each circle on the "Canales en vivo" row. */
 private val TV_CHANNEL_NAME_HEIGHT = 18.dp

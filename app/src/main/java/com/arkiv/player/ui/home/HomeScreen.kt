@@ -66,6 +66,11 @@ import com.arkiv.player.data.gateway.liveCode
 import com.arkiv.player.thumbnails.ThumbnailChoice
 import com.arkiv.player.ui.components.ContinueCard
 import com.arkiv.player.ui.components.SectionHeader
+import com.arkiv.player.ui.components.rememberSkeletonShimmer
+import com.arkiv.player.ui.components.skeleton
+import androidx.compose.runtime.State
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import com.arkiv.player.data.SettingsStore
 import com.arkiv.player.ui.live.LiveZappingSource
 import com.arkiv.player.ui.live.countryChannelsForHome
@@ -211,13 +216,17 @@ fun HomeScreen(
         homeLiveRow(liveOn, recentChannels, countryChannels, available = liveTabs.map { it.id }.toSet())
     }
     val channelsRow = liveRow.orEmpty()
-    // Plugins still answering and nothing else on screen: a spinner instead of a blank Home (see homeShowsLoading).
-    val homeLoading = homeShowsLoading(
-        installedPlugins,
-        pluginRows.size,
-        pluginRowsSettled,
-        hasOtherContent = continueWatching.isNotEmpty() || channelsRow.isNotEmpty() || orderedLibrary.isNotEmpty(),
+    // Plugins still answering: grey skeleton rows hold the place of the plugin rows to come, each real row
+    // taking one's place (homeSkeletonRowCount), instead of a blank gap or a spinner.
+    val skeletonRows = homeSkeletonRowCount(
+        loading = homePluginRowsLoading(installedPlugins, pluginRowsSettled),
+        rowsAbove = 0,
+        pluginRowCount = pluginRows.size,
+        slots = PHONE_HOME_SKELETON_SLOTS,
     )
+    val reducedEffects = com.arkiv.player.ui.rememberReducedEffects()
+    // Only while a skeleton is on screen: the shimmer's transition keeps the frame clock ticking.
+    val skeletonShimmer = if (skeletonRows > 0) rememberSkeletonShimmer(reducedEffects) else null
     // Belt-and-braces: when the row's first channel changes (it appears, or a new recent lands
     // first), start from it. LazyRow otherwise keeps its key-anchored first visible item and can
     // open scrolled to the end, the first card cut at the left edge (measured on the phone).
@@ -500,20 +509,6 @@ fun HomeScreen(
             }
         }
 
-        // 5b. Plugins still answering with nothing else to show (homeShowsLoading). Always-present, keyed item.
-        item(key = "loading_sources") {
-            if (homeLoading) {
-                Column(
-                    Modifier.fillMaxWidth().padding(vertical = 96.dp),
-                    horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                ) {
-                    androidx.compose.material3.CircularProgressIndicator(color = ArkivRed)
-                    Text(HOME_LOADING_LINE, style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary)
-                }
-            }
-        }
-
         // 6. Plugin rows (Xuper's among them): each titled by the plugin's row with the plugin as a chip.
         pluginRows.forEach { row ->
             item(key = "plugin-${row.pluginId}-${row.id}") {
@@ -522,6 +517,11 @@ fun HomeScreen(
                     onSeeMore = row.ref?.let { ref -> { onBrowsePluginRow(com.arkiv.player.ui.plugin.PluginMoreTarget.Browse(row.pluginId, row.title, ref)) } },
                 )
             }
+        }
+        // 7. Plugin rows still to come: placeholders after the real ones, stable keys so a real row
+        // replacing one does not move the list. Not clickable; a screen reader hears the first once.
+        items(skeletonRows, key = { homeSkeletonKey(it) }) { index ->
+            PhoneSkeletonRow(sizes = sizes, shimmer = skeletonShimmer, announce = index == 0)
         }
     }
 }
@@ -758,3 +758,45 @@ private fun SeeMorePosterCard(width: Dp = 120.dp, onClick: () -> Unit) {
         }
     }
 }
+
+/**
+ * A placeholder for a plugin row that has not arrived: a grey title bar and a line of grey poster cards
+ * the size of the real ones ([PluginRow]'s). Draws only: no click, and a row that does not scroll.
+ */
+@Composable
+private fun PhoneSkeletonRow(sizes: HomeSizes, shimmer: State<Float>?, announce: Boolean) {
+    Column(
+        Modifier
+            .padding(top = 16.dp)
+            .clearAndSetSemantics { if (announce) contentDescription = HOME_LOADING_LINE },
+    ) {
+        Box(
+            Modifier
+                .padding(start = 16.dp, top = 4.dp, bottom = 12.dp)
+                .width(160.dp)
+                .height(16.dp)
+                .skeleton(shimmer, RoundedCornerShape(4.dp)),
+        )
+        LazyRow(
+            userScrollEnabled = false,
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            items(PHONE_SKELETON_CARDS) {
+                Column(Modifier.width(sizes.posterWidth)) {
+                    Box(Modifier.fillMaxWidth().aspectRatio(2f / 3f).skeleton(shimmer))
+                    Box(
+                        Modifier
+                            .padding(top = 8.dp)
+                            .fillMaxWidth(0.7f)
+                            .height(10.dp)
+                            .skeleton(shimmer, RoundedCornerShape(3.dp)),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Enough poster placeholders to run past the right edge of a phone or tablet. */
+private const val PHONE_SKELETON_CARDS = 8

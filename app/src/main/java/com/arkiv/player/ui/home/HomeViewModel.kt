@@ -71,7 +71,7 @@ class HomeViewModel(
     /**
      * Whether the current plugin Home pass is over: every plugin answered, failed or timed out. False
      * from the start (and again on a reload or plugin change) until then; drives Home's loading state
-     * (see [homeShowsLoading]), so a pass that ends with nothing never leaves a spinner behind.
+     * (see [homePluginRowsLoading]), so a pass that ends with nothing never leaves skeleton rows behind.
      */
     val pluginRowsSettled: StateFlow<Boolean> =
         pluginLoad.map { it.settled }.stateIn(viewModelScope, SharingStarted.Lazily, false)
