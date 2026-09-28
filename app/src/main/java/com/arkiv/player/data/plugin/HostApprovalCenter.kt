@@ -35,12 +35,13 @@ class HostApprovalCenter : HostApprovalRequester {
 
     override suspend fun request(pluginId: String, pluginName: String, host: String): Boolean = mutex.withLock {
         suspendCancellableCoroutine { cont ->
-            val req = HostApprovalRequest(pluginId, pluginName, host) { approved ->
-                _pending.value = null
+            var req: HostApprovalRequest? = null
+            req = HostApprovalRequest(pluginId, pluginName, host) { approved ->
+                _pending.compareAndSet(req, null)
                 if (cont.isActive) cont.resume(approved) {}
             }
-            cont.invokeOnCancellation { _pending.value = null }
-            _pending.value = req
+            cont.invokeOnCancellation { _pending.compareAndSet(req, null) }
+            if (cont.isActive) _pending.value = req
         }
     }
 }
