@@ -798,6 +798,9 @@ test("checkOutput reads inline streams and playlist declarations as the app does
   ], m);
   assert.deepEqual(cats.value.categories.map((c) => c.id), ["news"]);
   assert.deepEqual(cats.value.playlists.map((p) => [p.url, p.epgUrl, p.refreshHours]), [["https://cdn.example.com/l.m3u", "https://cdn.example.com/g.xml", 12]]);
+  // Strict like the app: only the boolean true, never the string "true"; an array epg is ignored.
+  const stringy = checkOutput("liveCategories", { playlist: { url: "https://cdn.example.com/l.m3u", format: "m3u", resolve: "true", epg: [] } }, m);
+  assert.deepEqual(stringy.value.playlists.map((p) => [p.resolve, p.epgUrl]), [[false, ""]]);
 });
 
 test("run.mjs builds the live arguments the app sends", async () => {

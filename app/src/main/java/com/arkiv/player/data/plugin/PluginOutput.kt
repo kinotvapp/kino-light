@@ -393,7 +393,7 @@ object PluginOutput {
             (0 until minOf(a.length(), PluginLiveContract.MAX_HIDE_GROUPS))
                 .mapNotNull { (a.opt(it) as? String)?.trim()?.lowercase()?.take(100)?.takeIf(String::isNotEmpty) }.toSet()
         } ?: emptySet()
-        return PluginPlaylist(url, headersOf(p.optJSONObject("headers")), epg, hours, hide, p.optBoolean("resolve"))
+        return PluginPlaylist(url, headersOf(p.optJSONObject("headers")), epg, hours, hide, p.opt("resolve") == true)
     }
 
     /** Whether [url] passes the stream URL check ([checkUrl]): a declared host or a typed server, with the scheme rule. */

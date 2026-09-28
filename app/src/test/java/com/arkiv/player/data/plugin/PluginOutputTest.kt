@@ -539,6 +539,8 @@ class PluginOutputTest {
         )
         val single = PluginOutput.liveCategories("""{"playlist":{"url":"https://lists.example.com/a.m3u","format":"m3u"}}""", hosts)
         assertEquals(listOf("https://lists.example.com/a.m3u"), single.playlists.map { it.url })
+        val stringy = PluginOutput.liveCategories("""{"playlist":{"url":"https://lists.example.com/a.m3u","format":"m3u","resolve":"true"}}""", hosts)
+        assertEquals(false, stringy.playlists.single().resolve)
         val tooMany = (1..15).joinToString(",", "[", "]") { """{"playlist":{"url":"https://lists.example.com/$it.m3u","format":"m3u"}}""" }
         assertEquals(PluginLiveContract.MAX_PLAYLISTS, PluginOutput.liveCategories(tooMany, hosts).playlists.size)
     }

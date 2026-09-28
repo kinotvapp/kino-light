@@ -421,7 +421,7 @@ function playlistOf(p, { manifest, servers }, drop) {
   // Strict on purpose: the list and its guide are downloaded by the app, never under liveStreamHosts "any".
   if (!allows(url)) { drop(`playlist: ${url.slice(0, 100)} is not a declared host`); return null; }
   let epgUrl = "";
-  if (p.epg !== null && typeof p.epg === "object" && live().epgFormats.includes(p.epg.format)) {
+  if (p.epg !== null && typeof p.epg === "object" && !Array.isArray(p.epg) && live().epgFormats.includes(p.epg.format)) {
     const e = typeof p.epg.url === "string" ? p.epg.url : "";
     if (allows(e)) epgUrl = e; else drop("playlist: epg host not declared, guide dropped");
   }
