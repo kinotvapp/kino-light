@@ -85,7 +85,7 @@ class MagisHomeClassifierTest {
     }
 
     @Test
-    fun `releases come from the newest year section`() {
+    fun `recent movie uploads come from the newest plain year section`() {
         val result = MagisHomeClassifier.classify(
             mapOf(
                 "peliculas" to listOf(
@@ -97,17 +97,30 @@ class MagisHomeClassifierTest {
             ),
         )
 
-        val releases = result.row("magis_new_peliculas")
-        assertEquals("Estrenos 2026 · Películas", releases.title)
-        assertEquals(listOf("new1", "new2"), releases.shown.map { it.id })
-        // Series have no year section: no releases row for them.
+        val recent = result.row("magis_recent_peliculas")
+        assertEquals("Recién agregadas · Películas", recent.title)
+        assertEquals(listOf("new1", "new2"), recent.shown.map { it.id })
+        // No theatrical section: no cinema row, and the plain year isn't reused for it.
+        assertFalse(result.any { it.id == "magis_new_peliculas" })
+        // Series have no year section: no row for them.
         assertFalse(result.any { it.id == "magis_new_series" })
     }
 
-    /** Measured 2026-09-19: the portal's plain "2026" movie section is just the latest uploads
-     *  (small titles, scores 4-8); "2026 Peliculas teatrales" holds the year's cinema releases. */
+    /** Measured 2026-09-28: plain "2026" is strictly newest-first by shelveTime (~3 uploads a day),
+     *  so its portal order IS "latest uploads" and must never be re-sorted by score. */
     @Test
-    fun `movie releases come from the year's theatrical section, not the plain year one`() {
+    fun `recent uploads keep the portal's order`() {
+        val upload = listOf(item("u1", score = 4.0), item("u2", score = 9.0), item("u3", score = 6.0))
+        val result = MagisHomeClassifier.classify(mapOf("peliculas" to listOf(section("2026", upload))))
+
+        assertEquals(listOf("u1", "u2", "u3"), result.row("magis_recent_peliculas").shown.map { it.id })
+        assertEquals(listOf("u1", "u2", "u3"), result.row("magis_recent_peliculas").all.map { it.id })
+    }
+
+    /** Measured 2026-09-28: "2026 Peliculas teatrales" hasn't moved since 2026-01-22, so it's kept,
+     *  but as the cinema-releases row, not the year's "Estrenos". */
+    @Test
+    fun `the theatrical section is its own cinema row, next to the recent uploads one`() {
         val result = MagisHomeClassifier.classify(
             mapOf(
                 "peliculas" to listOf(
@@ -117,9 +130,20 @@ class MagisHomeClassifierTest {
             ),
         )
 
-        val releases = result.row("magis_new_peliculas")
-        assertEquals("Estrenos 2026 · Películas", releases.title)
-        assertEquals(listOf("cinema1", "cinema2"), releases.shown.map { it.id })
+        assertEquals(listOf("upload1", "upload2", "upload3"), result.row("magis_recent_peliculas").shown.map { it.id })
+        val cinema = result.row("magis_new_peliculas")
+        assertEquals("Estrenos de cine", cinema.title)
+        assertEquals(listOf("cinema1", "cinema2"), cinema.shown.map { it.id })
+    }
+
+    @Test
+    fun `a theatrical section alone makes the cinema row and no recent row`() {
+        val result = MagisHomeClassifier.classify(
+            mapOf("peliculas" to listOf(section("2026 Peliculas teatrales", many("cinema", 2, "Action")))),
+        )
+
+        assertEquals(listOf("cinema1", "cinema2"), result.row("magis_new_peliculas").shown.map { it.id })
+        assertFalse(result.any { it.id == "magis_recent_peliculas" })
     }
 
     @Test
@@ -142,9 +166,49 @@ class MagisHomeClassifierTest {
             ),
         )
 
-        val releases = result.row("magis_new_peliculas")
-        assertEquals("Estrenos 2026 · Películas", releases.title)
-        assertEquals(listOf("new1", "new2"), releases.shown.map { it.id })
+        val cinema = result.row("magis_new_peliculas")
+        assertEquals("Estrenos de cine", cinema.title)
+        assertEquals(listOf("new1", "new2"), cinema.shown.map { it.id })
+    }
+
+    /** The year rolls over: nothing is pinned to 2026 or to a columnId. */
+    @Test
+    fun `next year's plain section takes over once it has titles`() {
+        val result = MagisHomeClassifier.classify(
+            mapOf(
+                "peliculas" to listOf(section("2026", many("old", 2, "Drama")), section("2027", many("new", 2, "Drama"))),
+                "series" to listOf(section("2026", many("so", 2, "Drama", type = "teleplay")), section(" 2027 ", many("sn", 2, "Drama", type = "teleplay"))),
+            ),
+        )
+
+        assertEquals(listOf("new1", "new2"), result.row("magis_recent_peliculas").shown.map { it.id })
+        assertEquals(listOf("sn1", "sn2"), result.row("magis_new_series").shown.map { it.id })
+    }
+
+    @Test
+    fun `an empty new year section falls back to the previous year`() {
+        val trailer = item("t", type = "trailer")
+        val result = MagisHomeClassifier.classify(
+            mapOf(
+                "peliculas" to listOf(section("2027", listOf(trailer)), section("2026", many("old", 2, "Drama"))),
+                "series" to listOf(section("2027", emptyList()), section("2026", many("so", 2, "Drama", type = "teleplay"))),
+            ),
+        )
+
+        assertEquals(listOf("old1", "old2"), result.row("magis_recent_peliculas").shown.map { it.id })
+        assertEquals(listOf("so1", "so2"), result.row("magis_new_series").shown.map { it.id })
+    }
+
+    /** Measured 2026-09-28: the portal re-shelves a series on every new episode, so its plain year
+     *  section is "shows updated most recently", not new series. */
+    @Test
+    fun `the plain year series section is the shows with new episodes, in portal order`() {
+        val shows = listOf(item("s1", score = 5.0, type = "teleplay"), item("s2", score = 9.0, type = "teleplay"))
+        val result = MagisHomeClassifier.classify(mapOf("series" to listOf(section("2026", shows))))
+
+        val updated = result.row("magis_new_series")
+        assertEquals("Series con capítulos nuevos", updated.title)
+        assertEquals(listOf("s1", "s2"), updated.shown.map { it.id })
     }
 
     @Test
@@ -198,9 +262,68 @@ class MagisHomeClassifierTest {
         )
 
         assertEquals(
-            listOf("magis_new_peliculas", "magis_top_peliculas", "magis_g_peliculas_action"),
+            listOf("magis_recent_peliculas", "magis_top_peliculas", "magis_g_peliculas_action"),
             result.map { it.id },
         )
+    }
+
+    @Test
+    fun `recent uploads lead the home and the cinema row closes the featured rows`() {
+        val result = MagisHomeClassifier.classify(
+            mapOf(
+                "peliculas" to listOf(
+                    section("2026", many("n", 2, "Action")),
+                    section("2026 Peliculas teatrales", many("c", 2, "Action")),
+                    section("All", many("a", 6, "Action")),
+                ),
+                "series" to listOf(section("2026", many("s", 6, "Drama", type = "teleplay"))),
+            ),
+        )
+
+        assertEquals(
+            listOf(
+                "magis_recent_peliculas", "magis_new_series", "magis_top_peliculas", "magis_top_series",
+                "magis_new_peliculas", "magis_g_peliculas_action", "magis_g_series_drama",
+            ),
+            result.map { it.id },
+        )
+    }
+
+    /** `PluginOutput.MAX_ROWS` keeps the first 20 rows: the featured ones must all survive it and
+     *  the rows it drops must be the tail of the genre round-robin (the smallest genres). */
+    @Test
+    fun `under the twenty row cap every featured row survives and only small genres drop`() {
+        val genres = listOf("Action", "Comedy", "Drama", "Thriller", "Crime", "Sci-Fi", "Fantasy", "Romance", "Mystery", "Horror")
+        // Movie genre i has 20 - i titles: Action is the biggest, Horror the smallest.
+        val movies = genres.flatMapIndexed { i, g -> many("m$i-", 20 - i, g) }
+        val series = genres.flatMapIndexed { i, g -> many("s$i-", 20 - i, g, type = "teleplay") }
+        val result = MagisHomeClassifier.classify(
+            mapOf(
+                "peliculas" to listOf(
+                    section("2026", many("n", 3, "Drama")),
+                    section("2026 Peliculas teatrales", many("c", 3, "Drama")),
+                    section("All", movies),
+                ),
+                "series" to listOf(section("2026", many("u", 3, "Drama", type = "teleplay")), section("All", series)),
+            ),
+        )
+
+        val kept = result.take(20).map { it.id }
+        val dropped = result.drop(20).map { it.id }
+        assertTrue(kept.containsAll(listOf("magis_recent_peliculas", "magis_new_series", "magis_top_peliculas", "magis_top_series", "magis_new_peliculas")))
+        assertTrue(dropped.isNotEmpty())
+        assertTrue(dropped.all { it.startsWith("magis_g_") })
+        assertTrue("magis_g_peliculas_horror" in dropped)
+        assertTrue("magis_g_peliculas_action" in kept)
+    }
+
+    @Test
+    fun `featured ids are the recent, release and top rated rows, never a genre`() {
+        assertTrue(MagisHomeClassifier.isFeatured("magis_recent_peliculas"))
+        assertTrue(MagisHomeClassifier.isFeatured("magis_new_series"))
+        assertTrue(MagisHomeClassifier.isFeatured("magis_top_peliculas"))
+        assertFalse(MagisHomeClassifier.isFeatured("magis_g_peliculas_action"))
+        assertFalse(MagisHomeClassifier.isFeatured("continue_watching"))
     }
 
     @Test
@@ -217,7 +340,7 @@ class MagisHomeClassifierTest {
     }
 
     @Test
-    fun `releases keep the root's year section even for titles another root claims`() {
+    fun `recent uploads keep the root's year section even for titles another root claims`() {
         val shared = item("x", "Action")
         val result = MagisHomeClassifier.classify(
             mapOf(
@@ -229,8 +352,8 @@ class MagisHomeClassifierTest {
             ),
         )
 
-        // "x" is in peliculas' year section: it belongs in Estrenos · Películas.
-        assertTrue(result.row("magis_new_peliculas").shown.any { it.id == "x" })
+        // "x" is in peliculas' year section: it belongs in Recién agregadas · Películas.
+        assertTrue(result.row("magis_recent_peliculas").shown.any { it.id == "x" })
         // "x" is an anime title (precedence): it's NOT in top-rated movies.
         assertFalse(result.row("magis_top_peliculas").all.any { it.id == "x" })
     }

@@ -47,6 +47,7 @@ import coil.compose.AsyncImage
 import com.arkiv.player.ui.backdropFadeSpec
 import com.arkiv.player.ui.home.CategoriesViewModel
 import com.arkiv.player.ui.home.CategorySpec
+import com.arkiv.player.ui.home.MagisHomeClassifier
 import com.arkiv.player.ui.rememberGraph
 import com.arkiv.player.ui.rememberHeroDrift
 import com.arkiv.player.ui.rememberReducedEffects
@@ -111,7 +112,7 @@ fun TvCategoriesScreen(
     // Group sections once to pass them as atomic items to the LazyColumn.
     data class Section(val key: String, val label: String, val suffix: String, val specs: List<CategorySpec>)
     val sections = buildList {
-        val fixed = rows.filter { it.id.startsWith("magis_new_") || it.id.startsWith("magis_top_") }
+        val fixed = rows.filter { MagisHomeClassifier.isFeatured(it.id) }
         if (fixed.isNotEmpty()) add(Section("destacadas", "Destacadas", "", fixed))
         val movies = rows.filter { it.id.startsWith("magis_g_peliculas_") }
         if (movies.isNotEmpty()) add(Section("pelis", "Géneros · Películas", " · Películas", movies))

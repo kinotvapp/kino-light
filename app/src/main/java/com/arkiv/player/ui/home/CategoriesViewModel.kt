@@ -97,8 +97,8 @@ class CategoriesViewModel(
             val specs = withContext(Dispatchers.Default) {
                 runCatching { magisHome.rows() }
                     .getOrDefault(emptyList())
-                    // Genre rows (magis_g_*) plus the featured "Estrenos"/"mejor valoradas" rows.
-                    .filter { it.id.startsWith("magis_g_") || it.id.startsWith("magis_new_") || it.id.startsWith("magis_top_") }
+                    // Genre rows (magis_g_*) plus the featured ones (recent uploads, releases, top rated).
+                    .filter { it.id.startsWith("magis_g_") || MagisHomeClassifier.isFeatured(it.id) }
                     .map { row ->
                         val item = row.shown.firstOrNull()
                         val preview = item?.let { it.backdrop?.ifBlank { null } ?: it.poster?.ifBlank { null } }

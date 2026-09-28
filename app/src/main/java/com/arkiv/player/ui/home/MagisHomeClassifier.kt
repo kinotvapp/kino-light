@@ -38,7 +38,7 @@ object MagisHomeClassifier {
     /** When a title is in several roots, the most specific one wins. */
     private val PRECEDENCE = listOf(MagisKind.ANIME, MagisKind.INFANTIL, MagisKind.SERIES, MagisKind.PELICULAS)
 
-    /** Kinds that get "Estrenos" and "mejor valoradas" rows. */
+    /** Kinds that get "mejor valoradas" rows (and, from their year sections, the recent/release rows). */
     private val FEATURED = listOf(MagisKind.PELICULAS, MagisKind.SERIES)
 
     /** Portal tag → (key for the row id, Spanish label). Any tag not here is ignored. */
@@ -76,6 +76,12 @@ object MagisHomeClassifier {
 
     fun genreLabels(item: CatalogItem): List<String> = genresOf(item).map { it.second }
 
+    /** Row id prefixes of the featured (non-genre) rows: recent uploads, releases, top rated. */
+    private val FEATURED_PREFIXES = listOf("magis_recent_", "magis_new_", "magis_top_")
+
+    /** Whether [rowId] is a featured row (Categorías' "Destacadas"), as opposed to a genre row. */
+    fun isFeatured(rowId: String): Boolean = FEATURED_PREFIXES.any { rowId.startsWith(it) }
+
     fun classify(roots: Map<String, List<CatalogSection>>): List<MagisHomeRow> {
         val sectionsOf = MagisKind.entries.associateWith { roots[it.root].orEmpty() }
         val kindOf = LinkedHashMap<String, Pair<MagisKind, CatalogItem>>()
@@ -89,56 +95,82 @@ object MagisHomeClassifier {
         val byKind = MagisKind.entries.associateWith { kind ->
             kindOf.values.filter { it.first == kind }.map { it.second }
         }
-        return releaseRows(sectionsOf) + topRatedRows(byKind) + genreRows(byKind)
+        // Order (measured 2026-09-28, see .superpowers/magis-portal-measure.md): the latest movie
+        // uploads and the shows with new episodes lead; the theatrical row, frozen since January,
+        // closes the featured block -- still inside PluginOutput.MAX_ROWS, so the cap only ever
+        // drops the tail of the genre round-robin.
+        return listOfNotNull(recentMoviesRow(sectionsOf), updatedSeriesRow(sectionsOf)) +
+            topRatedRows(byKind) +
+            listOfNotNull(cinemaRow(sectionsOf)) +
+            genreRows(byKind)
     }
 
     private fun genresOf(item: CatalogItem): List<Pair<String, String>> =
         item.genres.mapNotNull { GENRES[it.trim()] }.distinctBy { it.first }
 
     /**
-     * Builds "Estrenos" rows from each root's release section as the portal publishes it.
-     * Deliberately does NOT apply cross-root kind precedence: a 2026 anime film listed under
-     * Películas' release section belongs in "Estrenos · Películas", not hidden from it by Anime's
-     * claim. There is no Estrenos row for Anime/Infantil -- not because they lack year sections in
-     * the portal, but because [FEATURED] (which this iterates over) only lists Películas/Series.
-     * A title can appear in Estrenos under one root and in top-rated under another (winning root
-     * by precedence there).
+     * "Recién agregadas · Películas": the newest plain-year movie section ("2026") as the portal
+     * orders it. Measured 2026-09-28: strictly newest-first by `shelveTime`, about 3 uploads a day,
+     * so the portal's order IS the upload order and is never re-sorted.
+     *
+     * Release rows deliberately do NOT apply cross-root kind precedence: a 2026 anime film listed
+     * in Películas' year section belongs here, not hidden by Anime's claim. Anime/Infantil get no
+     * such rows (only [FEATURED] kinds do).
      */
-    private fun releaseRows(sectionsOf: Map<MagisKind, List<CatalogSection>>): List<MagisHomeRow> =
-        FEATURED.mapNotNull { kind ->
-            val (year, section) = releaseSection(kind, sectionsOf.getValue(kind)) ?: return@mapNotNull null
-            val items = section.items.filter { it.type != TRAILER }.distinctBy { it.id }
-            if (items.isEmpty()) return@mapNotNull null
-            MagisHomeRow(
-                id = "magis_new_${kind.root}",
-                title = "Estrenos $year · ${kind.label}",
-                shown = items.take(MAX_ROW_SIZE),
-                all = items,
-            )
+    private fun recentMoviesRow(sectionsOf: Map<MagisKind, List<CatalogSection>>): MagisHomeRow? =
+        plainYearSection(sectionsOf.getValue(MagisKind.PELICULAS))?.let { items ->
+            row("magis_recent_${MagisKind.PELICULAS.root}", "Recién agregadas · ${MagisKind.PELICULAS.label}", items)
         }
 
     /**
-     * Which section holds a kind's releases, and its year.
-     *
-     * Movies prefer the newest "<year> … teatrales" section: measured 2026-09-19, the portal's
-     * plain "2026" movie section is just its latest uploads (small titles, mostly the same as the
-     * top of "All"), while "2026 Peliculas teatrales" holds the year's cinema releases (F1, Tron:
-     * Ares, The Running Man…). The plain year section is the fallback. Series use the plain year
-     * section, which does hold new seasons (MobLand T2, Strange New Worlds T4…).
+     * "Series con capítulos nuevos": the newest plain-year series section. Measured 2026-09-28: the
+     * portal re-shelves a series each time it gets new episodes, so this is "shows updated most
+     * recently" (often a batch of anime seasons), not new series. The id stays `magis_new_series`
+     * so snapshots and "Ver más" refs from older versions still resolve.
      */
-    private fun releaseSection(kind: MagisKind, sections: List<CatalogSection>): Pair<String, CatalogSection>? {
-        val byYear = sections.mapNotNull { s ->
-            val m = YEAR_SECTION.matchEntire(s.name.trim()) ?: return@mapNotNull null
-            Triple(m.groupValues[1], plain(m.groupValues[2]), s)
+    private fun updatedSeriesRow(sectionsOf: Map<MagisKind, List<CatalogSection>>): MagisHomeRow? =
+        plainYearSection(sectionsOf.getValue(MagisKind.SERIES))?.let { items ->
+            row("magis_new_${MagisKind.SERIES.root}", "Series con capítulos nuevos", items)
         }
-        val theatrical = if (kind == MagisKind.PELICULAS) {
-            byYear.filter { "teatral" in it.second }.maxByOrNull { it.first.toInt() }
-        } else {
-            null
-        }
-        val chosen = theatrical ?: byYear.filter { it.second.isBlank() }.maxByOrNull { it.first.toInt() }
-        return chosen?.let { it.first to it.third }
+
+    /**
+     * "Estrenos de cine": the newest "<year> … teatrales" movie section. Kept, but no longer the
+     * lead row: measured 2026-09-28 its newest title was shelved 2026-01-22. Never falls back to
+     * the plain year section -- that one is already [recentMoviesRow].
+     */
+    private fun cinemaRow(sectionsOf: Map<MagisKind, List<CatalogSection>>): MagisHomeRow? {
+        val items = yearSections(sectionsOf.getValue(MagisKind.PELICULAS))
+            .filter { "teatral" in it.suffix }
+            .map { playable(it.section) }
+            .firstOrNull { it.isNotEmpty() } ?: return null
+        return row("magis_new_${MagisKind.PELICULAS.root}", "Estrenos de cine", items)
     }
+
+    private fun row(id: String, title: String, items: List<CatalogItem>) =
+        MagisHomeRow(id = id, title = title, shown = items.take(MAX_ROW_SIZE), all = items)
+
+    /** A section named after a year: the year, the rest of its name ([plain]ed) and the section. */
+    private class YearSection(val year: Int, val suffix: String, val section: CatalogSection)
+
+    /** The year sections, newest year first. Found by name, never by columnId: the year rolls over. */
+    private fun yearSections(sections: List<CatalogSection>): List<YearSection> =
+        sections.mapNotNull { s ->
+            val m = YEAR_SECTION.matchEntire(s.name.trim()) ?: return@mapNotNull null
+            YearSection(m.groupValues[1].toInt(), plain(m.groupValues[2]), s)
+        }.sortedByDescending { it.year }
+
+    /**
+     * The playable items of the newest year-only section ("2026") that has any, in portal order.
+     * A brand-new year's section that is still empty (or only trailers) falls back to last year's.
+     */
+    private fun plainYearSection(sections: List<CatalogSection>): List<CatalogItem>? =
+        yearSections(sections)
+            .filter { it.suffix.isEmpty() }
+            .map { playable(it.section) }
+            .firstOrNull { it.isNotEmpty() }
+
+    private fun playable(section: CatalogSection): List<CatalogItem> =
+        section.items.filter { it.type != TRAILER }.distinctBy { it.id }
 
     /** Lowercase, no accents, trimmed: "PELÍCULAS TEATRALES" → "peliculas teatrales". */
     private fun plain(text: String): String =

@@ -80,7 +80,7 @@ fun CategoriesScreen(
         else rows.filter { it.title.contains(query.trim(), ignoreCase = true) }
     }
 
-    val fixed = displayRows.filter { it.id.startsWith("magis_new_") || it.id.startsWith("magis_top_") }
+    val fixed = displayRows.filter { MagisHomeClassifier.isFeatured(it.id) }
     val movieGenres = displayRows.filter { it.id.startsWith("magis_g_peliculas_") }
     val seriesGenres = displayRows.filter { it.id.startsWith("magis_g_series_") }
     val animeGenres = displayRows.filter { it.id.startsWith("magis_g_anime_") }
