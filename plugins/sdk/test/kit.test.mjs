@@ -15,7 +15,7 @@ import { filterRelevant, shortQuery, sortBySimilarity } from "../kino-rank.mjs";
 import { validate } from "../validate.mjs";
 import { scaffold } from "../init.mjs";
 import { call } from "../run.mjs";
-import { ADULT_GROUPS, normaliseName, parseM3u, parseXmltv, parseXmltvTime, summarisePlaylist } from "../live-playlist.mjs";
+import { ADULT_GROUPS, loadPlaylist, normaliseName, parseM3u, parseXmltv, parseXmltvTime, summarisePlaylist } from "../live-playlist.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const archive = join(here, "..", "..", "archive-org");
@@ -847,6 +847,10 @@ const fixturesDir = join(here, "..", "..", "..", "docs", "plugins", "fixtures", 
 const fixtures = existsSync(fixturesDir) ? fixturesDir : null;
 const needFixtures = (t) => { if (!fixtures) t.skip("no shared live fixtures around this kit"); return !!fixtures; };
 const M3U_FIXTURES = ["basic", "bom-crlf", "latin1", "broken", "headers", "unterminated-quote", "huge-line"];
+// Whole-playlist fixtures: their .expected.json holds the manifest, the typed servers, the
+// declaration and the grouped counts, checked here through loadPlaylist and in the app's
+// PluginLivePlaylistTest through PluginLiveProvider.
+const PLAYLIST_FIXTURES = ["any-hosts"];
 
 test("the kit's M3U reader gives the app's exact answer on every shared fixture", (t) => {
   if (!needFixtures(t)) return;
@@ -860,8 +864,25 @@ test("the kit's M3U reader gives the app's exact answer on every shared fixture"
 test("every .m3u in the shared corpus has its .expected.json and is checked here", (t) => {
   if (!needFixtures(t)) return;
   const m3u = readdirSync(fixtures).filter((f) => f.endsWith(".m3u")).map((f) => f.slice(0, -4)).sort();
-  assert.deepEqual(m3u, [...M3U_FIXTURES].sort());
+  assert.deepEqual(m3u, [...M3U_FIXTURES, ...PLAYLIST_FIXTURES].sort());
   for (const name of m3u) assert.ok(existsSync(join(fixtures, `${name}.expected.json`)), name);
+});
+
+test("loadPlaylist keeps, skips and hides exactly what the app does (README live recipe 1)", async (t) => {
+  if (!needFixtures(t)) return;
+  for (const name of PLAYLIST_FIXTURES) {
+    const want = JSON.parse(readFileSync(join(fixtures, `${name}.expected.json`), "utf8"));
+    const m = validateManifest(manifest({ apiVersion: 3, capabilities: ["home", "resolve", "channels"], ...want.manifest }));
+    assert.equal(m.ok, true, name);
+    const bytes = readFileSync(join(fixtures, `${name}.m3u`));
+    const fetchImpl = async (url) => (String(url) === want.playlist.url ? new Response(bytes, { status: 200 }) : new Response("no", { status: 404 }));
+    // Read as the app reads the liveCategories answer (strict hosts, hideGroups normalised) first.
+    const declared = checkOutput("liveCategories", [{ playlist: want.playlist }], m.manifest, want.servers).value.playlists;
+    assert.equal(declared.length, 1, name);
+    const s = await loadPlaylist(declared[0], { manifest: m.manifest, servers: want.servers, fetchImpl });
+    assert.deepEqual([s.channels, s.skipped, s.hidden], [want.kept, want.skipped, want.hidden], name);
+    assert.deepEqual(s.entries.map((e) => e.name), want.channels, name);
+  }
 });
 
 test("the kit's M3U reader keeps the cap and counts the rest", () => {

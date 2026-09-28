@@ -380,10 +380,11 @@ object PluginOutput {
     }
 
     /** A `{ playlist: {...} }` declaration (see [PluginPlaylist]), or null (logged) when it can't be used. */
-    private fun playlistOf(p: JSONObject, hosts: EffectiveHosts, log: (String) -> Unit): PluginPlaylist? {
+    private fun playlistOf(p: JSONObject, given: EffectiveHosts, log: (String) -> Unit): PluginPlaylist? {
+        // Strict on purpose: the list and its guide are downloaded by the app, never under liveStreamHosts "any".
+        val hosts = given.strict
         val url = p.optString("url")
         if (p.optString("format") !in PluginLiveContract.PLAYLIST_FORMATS) { log("playlist: unknown format"); return null }
-        // Strict on purpose: the list and its guide are downloaded by the app, never under liveStreamHosts "any".
         if (!allowsUrl(url, hosts)) { log("playlist: ${url.take(100)} is not a declared host"); return null }
         val epg = p.optJSONObject("epg")?.takeIf { it.optString("format") in PluginLiveContract.EPG_FORMATS }?.optString("url")
             ?.takeIf { allowsUrl(it, hosts).also { ok -> if (!ok) log("playlist: epg host not declared, guide dropped") } }.orEmpty()
@@ -396,8 +397,13 @@ object PluginOutput {
         return PluginPlaylist(url, headersOf(p.optJSONObject("headers")), epg, hours, hide, p.opt("resolve") == true)
     }
 
-    /** Whether [url] passes the stream URL check ([checkUrl]): a declared host or a typed server, with the scheme rule. */
-    internal fun allowsUrl(url: String, hosts: EffectiveHosts): Boolean = runCatching { checkUrl(url, hosts.strict, "") }.isSuccess
+    /**
+     * Whether [url] passes the stream URL check ([checkUrl]) against exactly [hosts]: a declared host
+     * or a typed server with the scheme rule, or, when [hosts] carry [EffectiveHosts.anyPublicLiveHost]
+     * (a playlist entry's stream, `plugin.liveHosts`), any public host. Pass [EffectiveHosts.strict]
+     * for anything the app downloads itself (a playlist, its guide).
+     */
+    internal fun allowsUrl(url: String, hosts: EffectiveHosts): Boolean = runCatching { checkUrl(url, hosts, "") }.isSuccess
 
     /**
      * `liveChannels({ categoryId, cursor })` (apiVersion 3): a `{ items, next? }` page or a plain

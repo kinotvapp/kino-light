@@ -1,0 +1,13 @@
+{
+  "about": "README §11 live recipe 1 (a list the person types, liveStreamHosts any), grouped by the app and by the kit's loadPlaylist: identical counts",
+  "manifest": {
+    "hosts": [], "liveStreamHosts": "any",
+    "settings": [{ "key": "lista", "label": "Lista M3U", "type": "url", "required": true }]
+  },
+  "servers": ["https://lists.example.net/co.m3u"],
+  "playlist": { "url": "https://lists.example.net/co.m3u", "format": "m3u", "hideGroups": ["Compras"] },
+  "kept": 3,
+  "skipped": 5,
+  "hidden": 2,
+  "channels": ["Uno", "Dos", "Tres"]
+}

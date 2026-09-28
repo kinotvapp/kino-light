@@ -643,7 +643,9 @@ class PluginOutputTest {
             assertThrows(u, PluginContractException::class.java) { PluginOutput.stream("""{"url":"$u"}""", any) }
         }
         // The app downloads a playlist and its guide itself: never under "any".
-        assertEquals(false, PluginOutput.allowsUrl("https://lists.elsewhere.org/a.m3u", any))
+        // allowsUrl judges against the hosts it is given: a playlist entry's stream passes under "any", the download not.
+        assertEquals(true, PluginOutput.allowsUrl("https://lists.elsewhere.org/a.m3u", any))
+        assertEquals(false, PluginOutput.allowsUrl("https://lists.elsewhere.org/a.m3u", any.strict))
         val catalog = PluginOutput.liveCategories("""[{"playlist":{"url":"https://lists.elsewhere.org/a.m3u","format":"m3u"}}]""", any)
         assertEquals(0, catalog.playlists.size)
     }

@@ -1,0 +1,21 @@
+#EXTM3U
+#EXTINF:-1 tvg-id="uno.co" group-title="Noticias",Uno
+https://iptv.example.org/uno/index.m3u8
+#EXTINF:-1 tvg-id="dos.co" group-title="Noticias",Dos
+http://203.0.113.5/dos.m3u8
+#EXTINF:-1 tvg-id="tres.co" group-title="Cine",Tres
+https://lists.example.net/tres.m3u8
+#EXTINF:-1 group-title="Cine",Casa
+http://192.168.1.10/casa.m3u8
+#EXTINF:-1 group-title="Cine",Seis
+http://[2001:db8::1]/seis.m3u8
+#EXTINF:-1 group-title="Cine",Otro puerto
+http://lists.example.net:8080/otro.m3u8
+#EXTINF:-1 group-title="Cine",Nombre local
+http://tv.local/local.m3u8
+#EXTINF:-1 group-title="XXX",Adulto
+https://iptv.example.org/xxx.m3u8
+#EXTINF:-1 group-title="Compras",Tienda
+https://iptv.example.org/tienda.m3u8
+#EXTINF:-1,Radio
+rtmp://iptv.example.org/radio

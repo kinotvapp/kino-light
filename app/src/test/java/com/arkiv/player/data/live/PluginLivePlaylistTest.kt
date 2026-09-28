@@ -5,7 +5,9 @@ import com.arkiv.player.data.gateway.liveCode
 import com.arkiv.player.data.plugin.InstalledPlugin
 import com.arkiv.player.data.plugin.InstalledRecord
 import com.arkiv.player.data.plugin.PluginCaller
+import com.arkiv.player.data.plugin.PluginHosts
 import com.arkiv.player.data.plugin.PluginManifest
+import org.json.JSONObject
 import java.io.File
 import java.io.IOException
 import java.time.Instant
@@ -219,6 +221,57 @@ class PluginLivePlaylistTest {
         now += 13 * 3600 * 1000L
         p.playlistReadHook = { it.delete() }
         assertEquals(listOf("Noticias propias", "Noticias", "Infantil"), p.categories(false).map { it.name })
+    }
+
+    /** A plugin like README live recipe 1: no declared hosts, a typed list server, `liveStreamHosts: "any"` approved. */
+    private fun anyHostsPlugin(declared: List<String>, typed: List<String>) = InstalledPlugin(
+        PluginManifest("demo", "Demo", "1.0.0", 3, "plugin.js", "", "", "", declared, setOf("home", "resolve", "channels"), null, null),
+        InstalledRecord("o/demo", "1.0.0", "x", declared, 0L, liveStreamHostsAny = true),
+        null,
+        userHosts = typed.map { PluginHosts.userHostOf(it)!! },
+    )
+
+    @Test fun `under liveStreamHosts any a playlist keeps public entries and refuses local ones`() = runBlocking {
+        val m3u = "#EXTM3U\n" +
+            "#EXTINF:-1,Foreign\nhttps://evil.example.org/a.m3u8\n" +
+            "#EXTINF:-1,Public IP\nhttp://203.0.113.5/b.m3u8\n" +
+            "#EXTINF:-1,LAN\nhttp://192.168.1.10/c.m3u8\n" +
+            "#EXTINF:-1,IPv6\nhttp://[2001:db8::1]/d.m3u8\n" +
+            "#EXTINF:-1,Typed other port\nhttp://lists.example.net:8080/e.m3u8\n"
+        val p = PluginLiveProvider(anyHostsPlugin(emptyList(), listOf("https://lists.example.net/co.m3u")),
+            PluginCaller { _, _, _, _ -> """[{"playlist":{"url":"https://lists.example.net/co.m3u","format":"m3u"}}]""" },
+            fetcher = { _, _, _ -> m3u.toByteArray() }, cacheDir = tmp.newFolder(), clock = { now }, log = {})
+        assertEquals(listOf("Foreign", "Public IP"), p.channels(p.categories(false).single().id).map { it.name })
+    }
+
+    @Test fun `a playlist and its guide stay on strict hosts even when read with the live hosts`() {
+        val hosts = anyHostsPlugin(emptyList(), listOf("https://lists.example.net/co.m3u")).liveHosts
+        val answer = """[{"playlist":{"url":"https://evil.example.org/l.m3u","format":"m3u"}},
+            {"playlist":{"url":"https://lists.example.net/co.m3u","format":"m3u","epg":{"url":"https://evil.example.org/g.xml","format":"xmltv"}}}]"""
+        val lists = com.arkiv.player.data.plugin.PluginOutput.liveCategories(answer, hosts).playlists
+        assertEquals(listOf("https://lists.example.net/co.m3u"), lists.map { it.url })
+        assertEquals("", lists.single().epgUrl)
+    }
+
+    @Test fun `README live recipe 1 groups the shared fixture exactly as the kit's loadPlaylist`() = runBlocking {
+        for (name in listOf("any-hosts")) {
+            val want = JSONObject(File(fixtures, "$name.expected.json").readText())
+            val m = want.getJSONObject("manifest")
+            val declared = m.getJSONArray("hosts").let { a -> (0 until a.length()).map { a.getString(it) } }
+            val typed = want.getJSONArray("servers").let { a -> (0 until a.length()).map { a.getString(it) } }
+            assertEquals("any", m.optString("liveStreamHosts"))
+            val logs = mutableListOf<String>()
+            val p = PluginLiveProvider(anyHostsPlugin(declared, typed),
+                PluginCaller { _, _, _, _ -> "[{\"playlist\":${want.getJSONObject("playlist")}}]" },
+                fetcher = { url, _, _ -> if (url == want.getJSONObject("playlist").getString("url")) File(fixtures, "$name.m3u").readBytes() else throw IOException("no") },
+                cacheDir = tmp.newFolder(), clock = { now }, log = { logs += it })
+            val channels = p.categories(false).flatMap { p.channels(it.id) }
+            val counts = logs.firstNotNullOfOrNull { Regex("playlist .*: (\\d+) kept, (\\d+) skipped, (\\d+) hidden").find(it) }
+                ?.groupValues?.drop(1)?.map(String::toInt)
+            assertEquals(name, listOf(want.getInt("kept"), want.getInt("skipped"), want.getInt("hidden")), counts)
+            val names = want.getJSONArray("channels").let { a -> (0 until a.length()).map { a.getString(it) } }
+            assertEquals(name, names, channels.map { it.name })
+        }
     }
 
     @Test fun `every parsed playlist entry is a known channel, without listing its categories`() = runBlocking {
