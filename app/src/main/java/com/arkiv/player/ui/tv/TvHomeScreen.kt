@@ -105,6 +105,8 @@ import com.arkiv.player.ui.rememberReducedEffects
 import com.arkiv.player.data.SettingsStore
 import com.arkiv.player.ui.live.LiveZappingSource
 import com.arkiv.player.ui.live.countryChannelsForHome
+import com.arkiv.player.ui.player.WAIT_BETWEEN_FOCUS_ATTEMPTS_MS
+import com.arkiv.player.ui.player.retryFocus
 import com.arkiv.player.ui.live.recentChannelsForHome
 import com.arkiv.player.ui.live.homeChannelsRow
 import com.arkiv.player.ui.rememberGraph
@@ -157,6 +159,15 @@ private const val HERO_DRIFT_MS = 14_000
  * Compose.
  */
 internal fun showForYouRow(recommendations: List<RecommendationEntity>): Boolean = recommendations.isNotEmpty()
+
+/**
+ * Whether the TV Home must hand focus back to its top bar: the Xuper live gate just closed
+ * ([wasOn] → not [isOn]), which can remove the focused "En vivo"/"Xuper" button or channel card, and
+ * nothing on the screen holds focus any more ([screenHasFocus]) -- Compose clears focus instead of
+ * moving it, which strands the D-pad.
+ */
+internal fun liveGateNeedsRefocus(wasOn: Boolean, isOn: Boolean, screenHasFocus: Boolean): Boolean =
+    wasOn && !isOn && !screenHasFocus
 
 /** The key a Home card is restored by (`returnKey`): one format for the card and the row lookup. */
 internal fun pluginCardKey(pluginId: String, rowId: String, itemId: String?) = "plugin-$pluginId-$rowId-$itemId"
@@ -552,19 +563,22 @@ fun TvHomeScreen(
     // Compose then clears focus instead of moving it, and the D-pad is stranded. A per-node latch
     // can't catch it (the removed node reports "unfocused" before any effect runs), so this watches
     // the whole screen: right after the gate closes, if nothing here holds focus, "Mi biblioteca"
-    // takes it.
+    // takes it ([liveGateNeedsRefocus]). Retried through `retryFocus` against the button's OWN
+    // focus state: `FocusRequester.requestFocus()` never reports failure (see its KDoc).
     var screenHasFocus by remember { mutableStateOf(false) }
+    var libraryFocused by remember { mutableStateOf(false) }
     var lastXuperLive by remember { mutableStateOf(xuperLive) }
     LaunchedEffect(xuperLive) {
-        val justClosed = lastXuperLive && !xuperLive
+        val wasOn = lastXuperLive
         lastXuperLive = xuperLive
-        if (!justClosed) return@LaunchedEffect
-        delay(100)
-        if (screenHasFocus) return@LaunchedEffect
-        repeat(20) {
-            if (runCatching { barFocus.requestFocus() }.isSuccess) return@LaunchedEffect
-            delay(50)
-        }
+        // One frame for the removed node to clear focus before asking who holds it.
+        delay(WAIT_BETWEEN_FOCUS_ATTEMPTS_MS)
+        if (!liveGateNeedsRefocus(wasOn, xuperLive, screenHasFocus)) return@LaunchedEffect
+        retryFocus(
+            isAlreadyFocused = { libraryFocused },
+            wait = { delay(WAIT_BETWEEN_FOCUS_ATTEMPTS_MS) },
+            request = { barFocus.requestFocus() },
+        )
     }
     val firstFocusKey = continueWatching.firstOrNull()?.episodeId
     // True once focus is back on the card `cardToRestore` names: from then on the default landing
@@ -727,7 +741,7 @@ fun TvHomeScreen(
                         icon = Icons.Default.VideoLibrary,
                         label = "Mi biblioteca",
                         onClick = onOpenLibrary,
-                        modifier = Modifier.focusRequester(barFocus),
+                        modifier = Modifier.focusRequester(barFocus).onFocusChanged { libraryFocused = it.isFocused },
                     )
                     if (xuperLive) {
                         TvNavButton(
