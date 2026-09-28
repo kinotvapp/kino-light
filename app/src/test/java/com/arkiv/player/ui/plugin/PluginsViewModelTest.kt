@@ -1119,7 +1119,8 @@ class PluginsViewModelTest {
         private val download: suspend (force: Boolean) -> DiscoveryResult,
     ) : PluginDiscoveryProvider {
         val forceFlags = mutableListOf<Boolean>()
-        override fun cached(): DiscoveryResult = onDisk
+        var cachedReads = 0
+        override fun cached(): DiscoveryResult { cachedReads++; return onDisk }
         override suspend fun load(force: Boolean): DiscoveryResult { forceFlags += force; return download(force) }
     }
 
@@ -1208,6 +1209,23 @@ class PluginsViewModelTest {
         assertFalse(vm.community.value.loading)
         assertTrue(vm.community.value.refreshing)
         gate.complete(DiscoveryResult.NONE)
+    }
+
+    @Test fun `the community disk copy is read on io, never while the screen composes`() {
+        val io = kotlinx.coroutines.test.StandardTestDispatcher(dispatcher.scheduler)
+        val gate = CompletableDeferred<DiscoveryResult>()
+        val discovery = FakeDiscovery(DiscoveryResult(listOf(xuper), DiscoveryOrigin.CACHE)) { gate.await() }
+        val vm = PluginsViewModel(FakeAdmin(), io = io, discovery = discovery)
+        // First frame: nothing read yet, shown as loading (never as an error or an empty result).
+        assertEquals(0, discovery.cachedReads)
+        assertTrue(vm.community.value.loading)
+        assertTrue(vm.community.value.rows.isEmpty())
+        dispatcher.scheduler.advanceUntilIdle()
+        assertEquals(1, discovery.cachedReads)
+        assertEquals(listOf("kinotvapp/kino-plugin-xuper"), vm.community.value.rows.map { it.entry.repo })
+        assertTrue(vm.community.value.refreshing)
+        gate.complete(DiscoveryResult.NONE)
+        dispatcher.scheduler.advanceUntilIdle()
     }
 
     @Test fun `the search box filters community rows too`() {

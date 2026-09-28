@@ -245,7 +245,10 @@ class PluginsViewModel(
             catalogUiState(loaded.value, refreshing.value, query.value, admin.plugins.value),
         )
 
-    private val discovered = MutableStateFlow(diskDiscovery())
+    // Empty until [loadCommunity] reads the disk copy on [io]: the view model is built while the screen
+    // composes, and the discovery file is read and parsed there. [discovering] is true meanwhile, so the
+    // first frame says "loading", never "nothing found".
+    private val discovered = MutableStateFlow(DiscoveryResult.NONE)
     private val discovering = MutableStateFlow(true)
     private var communityLoad: Job? = null
 
@@ -279,7 +282,7 @@ class PluginsViewModel(
 
     init {
         loadCatalog(force = false)
-        loadCommunity(force = false)
+        loadCommunity(force = false, diskFirst = true)
         // Follows the rows as they are listed (the search filter, a reload, the download replacing the
         // disk copy), so a row that shows up later gets its art too.
         viewModelScope.launch {
@@ -315,14 +318,17 @@ class PluginsViewModel(
         }
 
     /**
+     * [diskFirst] (the first load only) shows the disk copy, read on [io], before searching.
      * One load at a time: while one runs, another request is ignored (the screens disable "Actualizar"
      * meanwhile). GitHub never breaks the screen: a failure keeps what is shown.
      */
-    private fun loadCommunity(force: Boolean) {
+    private fun loadCommunity(force: Boolean, diskFirst: Boolean = false) {
         if (communityLoad?.isActive == true) return
         discovering.value = true
         communityLoad = viewModelScope.launch {
             try {
+                // The disk copy first (see [discovered]), so it is on screen while the search runs.
+                if (diskFirst) discovered.value = withContext(io) { diskDiscovery() }
                 discovered.value = withContext(io) { discovery.load(force) }
             } catch (e: CancellationException) {
                 throw e
