@@ -4,7 +4,9 @@ import com.arkiv.player.data.plugin.InstalledPlugin
 import com.arkiv.player.data.plugin.ManifestParser
 import com.arkiv.player.data.plugin.ManifestResult
 import com.arkiv.player.data.plugin.PluginAddress
+import com.arkiv.player.data.plugin.PluginFetchStatusException
 import com.arkiv.player.data.plugin.PluginFetcher
+import com.arkiv.player.data.plugin.PluginFileTooBigException
 import com.arkiv.player.data.plugin.PluginStore
 import com.arkiv.player.data.plugin.writeFileAtomically
 import kotlinx.coroutines.CancellationException
@@ -131,7 +133,9 @@ class PluginDiscovery(
         val now = clock()
         val state = readState() ?: DiskState(0, 0, emptyList())
         val cache = state.asResult()
-        if (now < state.blockedUntil) return cache
+        // A backoff further away than any GitHub could set (a clock that ran ahead when the 403/429
+        // arrived, a cache restored from another device) is ignored, never a block until some far date.
+        if (now < state.blockedUntil && state.blockedUntil - now <= MAX_BACKOFF_MS) return cache
         // A copy dated in the future (the clock moved backwards) is stale, never fresh forever.
         if (!force && state.fetchedAt > 0 && now - state.fetchedAt in 0L until intervalMs) return cache
         lastAttemptAt?.let { if (now - it in 0L until MIN_ATTEMPT_SPACING_MS) return cache }
@@ -160,7 +164,10 @@ class PluginDiscovery(
             repos.map { r -> async { manifestPermits.withPermit { pluginOf(r, previous[r.key]) } } }.awaitAll().filterNotNull()
         }
 
-    /** Ruling R7: a transient failure keeps [previous] (with today's stars); a verdict about the repo drops it. */
+    /**
+     * Ruling R7: a transient failure (offline, timeout, 5xx) keeps [previous] with today's stars; a
+     * verdict about the repo (404, 410, 451, too big, invalid, too new, `discoverable: false`) drops it.
+     */
     private suspend fun pluginOf(r: DiscoveredRepo, previous: DiscoveredPlugin?): DiscoveredPlugin? {
         val bytes = try {
             withTimeout(MANIFEST_TIMEOUT_MS) {
@@ -172,6 +179,11 @@ class PluginDiscovery(
             throw e
         } catch (e: FileNotFoundException) {
             return null
+        } catch (e: PluginFileTooBigException) {
+            return null
+        } catch (e: PluginFetchStatusException) {
+            // 410 Gone and 451 Unavailable For Legal Reasons are verdicts; 5xx, 429 and the rest may pass.
+            return if (e.code == 410 || e.code == 451) null else previous?.copy(stars = r.stars)
         } catch (e: IOException) {
             return previous?.copy(stars = r.stars)
         } catch (e: Exception) {
@@ -233,8 +245,12 @@ class PluginDiscovery(
          * [MIN_BACKOFF_MS]..[MAX_BACKOFF_MS] of [now]. [headers] names are lowercase.
          */
         fun backoffUntil(now: Long, headers: Map<String, String>): Long {
-            val retryAfter = headers["retry-after"]?.trim()?.toLongOrNull()
+            // Clamped in seconds first, so an absurd value can never overflow the millisecond maths.
+            val maxSeconds = MAX_BACKOFF_MS / 1000
+            val nowSeconds = now / 1000
+            val retryAfter = headers["retry-after"]?.trim()?.toLongOrNull()?.coerceIn(0L, maxSeconds)
             val reset = headers["x-ratelimit-reset"]?.trim()?.toLongOrNull()
+                ?.coerceIn(nowSeconds - maxSeconds, nowSeconds + maxSeconds)
             val candidate = when {
                 retryAfter != null -> now + retryAfter * 1000
                 reset != null -> reset * 1000

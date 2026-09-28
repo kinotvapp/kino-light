@@ -1,6 +1,8 @@
 package com.arkiv.player.data.plugin.discovery
 
+import com.arkiv.player.data.plugin.PluginFetchStatusException
 import com.arkiv.player.data.plugin.PluginFetcher
+import com.arkiv.player.data.plugin.PluginFileTooBigException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
@@ -194,5 +196,48 @@ class PluginDiscoveryTest {
         now -= 2 * hour
         discovery().load(force = false)
         assertEquals(2, github.calls)
+    }
+
+    @Test fun `a persisted backoff further away than the maximum is ignored (clock skew, restored backup)`() = runBlocking {
+        file.parentFile!!.mkdirs()
+        file.writeText(JSONObject().put("schema", 1).put("fetchedAt", 0).put("blockedUntil", now + 10 * 24 * hour).put("plugins", JSONArray()).toString())
+        assertEquals(DiscoveryOrigin.FRESH, discovery().load(force = false).origin)
+        assertEquals(1, github.calls)
+    }
+
+    @Test fun `a 403 received while the clock ran ahead does not block beyond the maximum once it is corrected`() = runBlocking {
+        discovery().load(force = false)
+        val trueNow = now
+        now += 30 * 24 * hour
+        github.answer = { GithubResponse(403, null, mapOf("retry-after" to "3600")) }
+        discovery().load(force = false)
+        assertEquals(2, github.calls)
+        now = trueNow + 2 * 60_000
+        github.answer = { ok(repo("a", "one", 5)) }
+        assertEquals(DiscoveryOrigin.FRESH, discovery().load(force = true).origin)
+        assertEquals(3, github.calls)
+    }
+
+    @Test fun `absurd backoff headers are clamped, never overflow to the minimum`() {
+        val t = 1_000_000_000_000L
+        assertEquals(t + 24 * hour, PluginDiscovery.backoffUntil(t, mapOf("retry-after" to "${Long.MAX_VALUE}")))
+        assertEquals(t + 24 * hour, PluginDiscovery.backoffUntil(t, mapOf("retry-after" to "${Long.MAX_VALUE / 999}")))
+        assertEquals(t + 24 * hour, PluginDiscovery.backoffUntil(t, mapOf("x-ratelimit-reset" to "${Long.MAX_VALUE}")))
+        assertEquals(t + 24 * hour, PluginDiscovery.backoffUntil(t, mapOf("x-ratelimit-reset" to "${Long.MAX_VALUE / 999}")))
+        assertEquals(t + 60_000, PluginDiscovery.backoffUntil(t, mapOf("retry-after" to "-5")))
+        assertEquals(t + 60_000, PluginDiscovery.backoffUntil(t, mapOf("x-ratelimit-reset" to "${Long.MIN_VALUE}")))
+    }
+
+    @Test fun `a manifest too big or gone for good (410, 451) is a verdict, a 5xx or offline is transient`() = runBlocking {
+        github.answer = { ok(repo("a", "one", 5), repo("b", "big", 4), repo("c", "gone", 3), repo("d", "legal", 2), repo("e", "down", 1)) }
+        listOf("b/big", "c/gone", "d/legal", "e/down").forEach { raw.manifests[it] = manifest(it.substringAfter('/')) }
+        assertEquals(5, discovery().load(force = false).plugins.size)
+        now += 13 * hour
+        raw.failures["a/one"] = IOException("offline")
+        raw.failures["b/big"] = PluginFileTooBigException()
+        raw.failures["c/gone"] = PluginFetchStatusException(410)
+        raw.failures["d/legal"] = PluginFetchStatusException(451)
+        raw.failures["e/down"] = PluginFetchStatusException(503)
+        assertEquals(listOf("one", "down"), discovery().load(force = false).plugins.map { it.id })
     }
 }

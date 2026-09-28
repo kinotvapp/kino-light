@@ -1,6 +1,5 @@
 package com.arkiv.player.data.plugin
 
-import java.io.IOException
 
 /**
  * A [PluginFetcher] that answers Xuper's own files from the APK's assets instead of GitHub, so
@@ -27,7 +26,7 @@ class BundledPluginFetcher(
         val bytes = file?.let(assets)
             ?: return delegate.fetch(url, maxBytes)
         // The same limit the network path enforces, so a bundled file cannot bypass the installer's caps.
-        if (bytes.size > maxBytes) throw IOException("archivo demasiado grande")
+        if (bytes.size > maxBytes) throw PluginFileTooBigException()
         return bytes
     }
 

@@ -35,10 +35,19 @@ sealed interface UpdateOutcome {
     data class Failed(val message: String) : UpdateOutcome
 }
 
-/** Reads a plugin file. Throws [FileNotFoundException] on 404, [IOException] otherwise. */
+/**
+ * Reads a plugin file. Throws [FileNotFoundException] on 404, [PluginFetchStatusException] on any other
+ * non-2xx, [PluginFileTooBigException] past `maxBytes`, [IOException] otherwise (offline, timeout).
+ */
 fun interface PluginFetcher {
     suspend fun fetch(url: String, maxBytes: Int): ByteArray
 }
+
+/** The server answered [code] (not 404, not 2xx). */
+class PluginFetchStatusException(val code: Int) : IOException("GitHub respondió $code")
+
+/** The file is bigger than the caller allowed. */
+class PluginFileTooBigException : IOException("archivo demasiado grande")
 
 /** [PluginFetcher] for raw.githubusercontent.com only (destination #6 in `.claude/reglas.md`). */
 class RawGithubFetcher(base: OkHttpClient) : PluginFetcher {
@@ -49,9 +58,9 @@ class RawGithubFetcher(base: OkHttpClient) : PluginFetcher {
         require(u.scheme == "https" && u.host == "raw.githubusercontent.com") { "not a raw GitHub URL: $url" }
         client.newCall(Request.Builder().url(u).build()).execute().use { r ->
             if (r.code == 404) throw FileNotFoundException(u.encodedPath)
-            if (!r.isSuccessful) throw IOException("GitHub respondió ${r.code}")
+            if (!r.isSuccessful) throw PluginFetchStatusException(r.code)
             val source = r.body?.source() ?: throw IOException("respuesta vacía")
-            if (source.request(maxBytes + 1L)) throw IOException("archivo demasiado grande")
+            if (source.request(maxBytes + 1L)) throw PluginFileTooBigException()
             source.buffer.readByteArray()
         }
     }
