@@ -915,6 +915,7 @@ class AppGraph(context: Context) {
                     ),
                     // Its live/ dir: uninstalling deletes it with the rest of the plugin's data (PluginStore.remove).
                     cacheDir = pluginStore.dataDir(p.id),
+                    allCachesRoot = pluginStore.dataDir(p.id).parentFile,
                     syncCache = { rows -> database.liveChannelCacheDao().replacePlaylistRows(provider, rows) },
                 )
             },

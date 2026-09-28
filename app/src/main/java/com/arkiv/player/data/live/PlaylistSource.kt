@@ -32,7 +32,8 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
  * - The M3U parse drops hidden/adult groups and entries [entryAllowed] refuses as it goes, so the
  *   channel cap holds only channels that can be shown.
  * - With no [cacheDir] there is nowhere to stream to: no playlist ([entries] is null).
- * - After every save, `live/` is kept under [cacheBudgetBytes] ([pruneLiveDir]).
+ * - After every save, `live/` is kept under [cacheBudgetBytes] ([pruneLiveDir]), then every plugin's
+ *   `live/` together under [allCachesBudgetBytes] ([pruneAllLiveDirs]) when [allCachesRoot] is given.
  *
  * Not safe for concurrent [entries] calls: `PluginLiveProvider` serialises them under its
  * playlist lock. [guide] touches only the `.epg` file and may run alongside [entries]; the
@@ -47,6 +48,9 @@ internal class PlaylistSource(
     private val entryAllowed: (String) -> Boolean = { true },
     private val parseGate: Semaphore = PARSE_GATE,
     private val cacheBudgetBytes: Long = MAX_LIVE_CACHE_BYTES,
+    /** The folder holding EVERY plugin's data dir (`plugin-data`); null = no global ceiling ([pruneAllLiveDirs]). */
+    private val allCachesRoot: File? = null,
+    private val allCachesBudgetBytes: Long = MAX_ALL_LIVE_CACHES_BYTES,
 ) {
     /** The current declaration. A new token in its URL keeps this source (and its key and parsed list): see [adopt]. */
     @Volatile var playlist: PluginPlaylist = playlist
@@ -168,6 +172,7 @@ internal class PlaylistSource(
                 if (!tmp.renameTo(file)) { tmp.delete(); throw java.io.IOException("could not replace the saved copy") }
                 file.setLastModified(now)
                 pruneLiveDir(cacheDir!!, keepKeys = null, budgetBytes = cacheBudgetBytes, justWritten = file, log = log)
+                allCachesRoot?.let { pruneAllLiveDirs(it, allCachesBudgetBytes, justWritten = file, log = log) }
             }
             Refresh.DOWNLOADED
         } catch (e: CancellationException) {
@@ -185,6 +190,8 @@ internal class PlaylistSource(
         const val RETRY_MS = 10 * 60 * 1000L
         /** All of one plugin's saved playlists and guides together. */
         const val MAX_LIVE_CACHE_BYTES = 150L * 1024 * 1024
+        /** Every plugin's saved playlists and guides together. */
+        const val MAX_ALL_LIVE_CACHES_BYTES = 300L * 1024 * 1024
         private const val LIVE_DIR = "live"
 
         /** One playlist or guide parse at a time, across every provider of the process. */
@@ -237,6 +244,30 @@ internal class PlaylistSource(
                 if (f == justWritten || isInUse(f)) continue
                 val size = f.length()
                 if (f.delete()) { total -= size; log("live cache over ${budgetBytes / (1024 * 1024)} MB: ${f.name} evicted") }
+            }
+        }
+
+        /**
+         * The global ceiling over `<root>/<plugin>/live` (blocking IO). While the complete files of every
+         * plugin add up to more than [budgetBytes], the least recently used plugin cache loses its files
+         * first, oldest first. A cache's recency is its newest download (`lastModified`: the files are
+         * never touched on read, their date is their freshness), so a plugin nobody opens stops being
+         * refreshed and ages to the front. [justWritten], files in use, temp files and anything outside
+         * `live/` are never evicted.
+         */
+        fun pruneAllLiveDirs(root: File, budgetBytes: Long, justWritten: File? = null, log: (String) -> Unit) {
+            val caches = root.listFiles()?.mapNotNull { plugin ->
+                File(plugin, LIVE_DIR).listFiles()?.filter { it.isFile && !it.name.endsWith(".tmp") }?.takeIf { it.isNotEmpty() }
+            } ?: return
+            var total = caches.sumOf { files -> files.sumOf { it.length() } }
+            if (total <= budgetBytes) return
+            for (files in caches.sortedBy { fs -> fs.maxOf { it.lastModified() } }) {
+                for (f in files.sortedBy { it.lastModified() }) {
+                    if (total <= budgetBytes) return
+                    if (f == justWritten || isInUse(f)) continue
+                    val size = f.length()
+                    if (f.delete()) { total -= size; log("live caches over ${budgetBytes / (1024 * 1024)} MB: ${f.parentFile?.parentFile?.name}/${f.name} evicted") }
+                }
             }
         }
     }

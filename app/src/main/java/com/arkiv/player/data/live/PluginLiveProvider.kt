@@ -89,6 +89,8 @@ class PluginLiveProvider(
     private val fetcher: LivePlaylistFetcher = LivePlaylistFetcher { _, _, _ -> throw java.io.IOException("sin descargas") },
     /** The plugin's data dir; playlists are kept under `live/`. Null = memory only. */
     private val cacheDir: java.io.File? = null,
+    /** Every plugin's data dir lives here (`plugin-data`): the live caches of all of them share one ceiling. Null = none. */
+    private val allCachesRoot: java.io.File? = null,
     private val clock: () -> Long = System::currentTimeMillis,
     private val log: (String) -> Unit = { android.util.Log.w("KinoPlugin", it) },
     /**
@@ -204,6 +206,7 @@ class PluginLiveProvider(
             kept[key] = sources[key]?.takeIf { it.adopt(pl) } ?: PlaylistSource(
                 pl, fetcher, cacheDir, clock, { log("[$pluginId] $it") },
                 entryAllowed = { PluginOutput.allowsUrl(it, liveHosts) },
+                allCachesRoot = allCachesRoot,
             ).also { s -> s.beforeRead = { f -> playlistReadHook(f) } }
         }
         val keys = kept.keys

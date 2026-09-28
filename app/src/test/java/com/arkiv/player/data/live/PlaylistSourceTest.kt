@@ -70,6 +70,51 @@ class PlaylistSourceTest {
         assertEquals(1, dir.list()!!.count { it.endsWith(".m3u") })
     }
 
+    @Test fun `all plugins' live caches stay under one ceiling, the least recently refreshed plugin goes first`() {
+        val root = File(tmp.root, "plugin-data")
+        fun put(plugin: String, name: String, size: Int, at: Long) =
+            File(root, "$plugin/live/$name").apply { parentFile!!.mkdirs(); writeBytes(ByteArray(size)); setLastModified(at) }
+        // Plugin a refreshed last at 1000, c at 2000, b at 3000: a is the least recently used cache.
+        put("a", "aaaaaaaa.m3u", 300, 500)
+        put("a", "aaaaaaaa.epg", 300, 1000)
+        put("b", "bbbbbbbb.m3u", 300, 3000)
+        put("c", "cccccccc.m3u", 300, 100)
+        put("c", "cccccccc.epg", 300, 2000)
+        put("c", "cccccccc.m3u.tmp", 900, 2500)
+        val home = File(root, "a/home.json").apply { writeBytes(ByteArray(5000)) }
+        PlaylistSource.pruneAllLiveDirs(root, budgetBytes = 700) {}
+        assertFalse(File(root, "a/live/aaaaaaaa.m3u").exists())
+        assertFalse(File(root, "a/live/aaaaaaaa.epg").exists())
+        // c's older file goes next; then the total (600) fits.
+        assertFalse(File(root, "c/live/cccccccc.m3u").exists())
+        assertTrue(File(root, "c/live/cccccccc.epg").exists())
+        assertTrue(File(root, "b/live/bbbbbbbb.m3u").exists())
+        // Temp files being written and anything outside live/ are never evicted for size.
+        assertTrue(File(root, "c/live/cccccccc.m3u.tmp").exists())
+        assertTrue(home.exists())
+    }
+
+    @Test fun `the global ceiling never evicts the copy just written`() {
+        val root = File(tmp.root, "plugin-data")
+        val old = File(root, "a/live/aaaaaaaa.m3u").apply { parentFile!!.mkdirs(); writeBytes(ByteArray(400)); setLastModified(1000) }
+        val fresh = File(root, "b/live/bbbbbbbb.m3u").apply { parentFile!!.mkdirs(); writeBytes(ByteArray(400)); setLastModified(500) }
+        PlaylistSource.pruneAllLiveDirs(root, budgetBytes = 100, justWritten = fresh) {}
+        assertFalse(old.exists())
+        assertTrue(fresh.exists())
+    }
+
+    @Test fun `a download past the global ceiling evicts another plugin's copies`() = runBlocking {
+        val root = File(tmp.root, "plugin-data")
+        val other = File(root, "other/live/zzzzzzzz.epg").apply { parentFile!!.mkdirs(); writeBytes(ByteArray(500)); setLastModified(now - 1000) }
+        val mine = File(root, "mine")
+        PlaylistSource(
+            PluginPlaylist("https://lists.example.com/a.m3u"), fetcher, mine, { now }, {},
+            parseGate = Semaphore(1), allCachesRoot = root, allCachesBudgetBytes = 100,
+        ).entries(false)
+        assertFalse(other.exists())
+        assertEquals(1, File(mine, "live").list()!!.count { it.endsWith(".m3u") })
+    }
+
     @Test fun `parsing waits for the shared gate`() = runBlocking {
         val gate = Semaphore(1)
         val s = source("https://lists.example.com/a.m3u", gate = gate)
