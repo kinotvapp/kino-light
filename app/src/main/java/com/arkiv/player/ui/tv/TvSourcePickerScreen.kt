@@ -51,7 +51,7 @@ import com.arkiv.player.ui.plugin.PICKER_INSTALLED_TITLE
 import com.arkiv.player.ui.plugin.PluginConsentDialog
 import com.arkiv.player.ui.plugin.RECOMMENDED_TITLE
 import com.arkiv.player.ui.plugin.SOURCE_PICKER_DONE
-import com.arkiv.player.ui.plugin.SOURCE_PICKER_LINE
+import com.arkiv.player.ui.plugin.sourcePickerLine
 import com.arkiv.player.ui.plugin.SOURCE_PICKER_TITLE
 import com.arkiv.player.ui.plugin.installedCardArt
 import com.arkiv.player.ui.plugin.legacyFirst
@@ -173,7 +173,7 @@ fun TvSourcePickerScreen(onFinish: () -> Unit, onBack: () -> Unit) {
             .onFocusChanged { screenHasFocus = it.hasFocus },
     ) {
         Text(SOURCE_PICKER_TITLE, style = MaterialTheme.typography.headlineMedium, color = Color.White)
-        Text(SOURCE_PICKER_LINE, style = MaterialTheme.typography.bodyLarge, color = ArkivTextSecondary, modifier = Modifier.padding(top = 8.dp))
+        Text(sourcePickerLine(isTv = true), style = MaterialTheme.typography.bodyLarge, color = ArkivTextSecondary, modifier = Modifier.padding(top = 8.dp))
         if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp), color = ArkivRed)
         state.message?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = Color.White, modifier = Modifier.padding(top = 8.dp)) }
         CompositionLocalProvider(LocalBringIntoViewSpec provides bringIntoView) {

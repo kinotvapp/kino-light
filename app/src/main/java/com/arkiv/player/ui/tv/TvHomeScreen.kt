@@ -438,7 +438,7 @@ fun TvHomeScreen(
     val liveOn by graph.liveModule.available.collectAsStateWithLifecycle()
     val installedPlugins by graph.pluginAdmin.plugins.collectAsStateWithLifecycle()
     val homeEmpty = homeShowsEmptyState(installedPlugins, pluginRows.size, liveOn)
-    val emptyCopy = homeEmptyCopy(installedPlugins)
+    val emptyCopy = homeEmptyCopy(installedPlugins, isTv = true)
     val homeEmptyNow by rememberUpdatedState(homeEmpty)
     val emptySourcesFocus = remember { FocusRequester() }
     // Real focus on the "Agregar plugin" button: the default landing only counts it once this is true.

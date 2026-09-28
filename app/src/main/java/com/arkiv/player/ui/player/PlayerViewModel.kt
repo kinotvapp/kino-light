@@ -308,11 +308,18 @@ internal sealed interface PluginLoadFailure {
     data class Generic(val message: String) : PluginLoadFailure
 
     companion object {
-        /** [pluginDisplayName] is only used for the two messages that don't already name the plugin. */
-        fun from(failure: Throwable?, pluginDisplayName: String): PluginLoadFailure = when (failure) {
+        /**
+         * [pluginDisplayName] is only used for the two messages that don't already name the plugin; [place] is
+         * where the Plugins screen lives on this device (`PluginsPlace`).
+         */
+        fun from(
+            failure: Throwable?,
+            pluginDisplayName: String,
+            place: String = com.arkiv.player.data.plugin.PluginsPlace.current,
+        ): PluginLoadFailure = when (failure) {
             is GatewayBlockedException -> Blocked(failure.message.orEmpty())
             is com.arkiv.player.data.plugin.PluginSetupRequiredException ->
-                SetupRequired(failure.pluginId, failure.message ?: "Configura $pluginDisplayName en Ajustes ▸ Plugins")
+                SetupRequired(failure.pluginId, failure.message ?: "Configura $pluginDisplayName en $place")
             // PluginContentSource already words these for the person ("<plugin>: …", "<plugin> no respondió a tiempo").
             else -> Generic(failure?.message?.takeIf { it.isNotBlank() } ?: "No se pudo abrir esto con $pluginDisplayName")
         }
@@ -862,7 +869,7 @@ class PlayerViewModel internal constructor(
                     Log.w(PLAY, "openPluginChannel() ${channel.liveCode} failed: ${result.error.message}")
                     if (zapping?.current?.liveCode == channel.liveCode) {
                         _magisItem.value = null
-                        when (val outcome = PluginLoadFailure.from(result.error, result.providerName)) {
+                        when (val outcome = PluginLoadFailure.from(result.error, result.providerName, com.arkiv.player.data.plugin.PluginsPlace.of(isTv))) {
                             is PluginLoadFailure.Blocked -> _blocked.value = outcome.message
                             is PluginLoadFailure.SetupRequired -> _pluginSetup.value = PluginSetupPrompt(outcome.pluginId, outcome.message)
                             is PluginLoadFailure.Generic -> _error.value = outcome.message
@@ -1572,7 +1579,7 @@ class PlayerViewModel internal constructor(
             val failure = resolved.exceptionOrNull()
             Log.w(PLAY, "loadPlugin() failed: ${failure?.message}", failure)
             // geo_blocked: the same dialog as a portal-side region block (spec §3.6).
-            when (val outcome = PluginLoadFailure.from(failure, name)) {
+            when (val outcome = PluginLoadFailure.from(failure, name, com.arkiv.player.data.plugin.PluginsPlace.of(isTv))) {
                 is PluginLoadFailure.Blocked -> _blocked.value = outcome.message
                 is PluginLoadFailure.SetupRequired -> _pluginSetup.value = PluginSetupPrompt(outcome.pluginId, outcome.message)
                 is PluginLoadFailure.Generic -> _error.value = outcome.message

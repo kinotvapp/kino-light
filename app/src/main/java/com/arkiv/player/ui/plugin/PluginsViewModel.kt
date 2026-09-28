@@ -197,7 +197,7 @@ private fun catalogUiState(result: CatalogResult, refreshing: Boolean, query: St
     )
 
 /**
- * The Plugins screen on phone and TV (Ajustes ▸ Plugins): the same state, two layouts.
+ * The Plugins screen on phone (a drawer item) and TV (Ajustes ▸ Plugins): the same state, two layouts.
  *
  * [io] runs [PluginAdmin.setEnabled] and [PluginAdmin.uninstall]: they are plain functions that
  * write (uninstall deletes a directory tree), so they never run on Main.

@@ -36,8 +36,15 @@ fun liveProviderIds(plugins: List<InstalledPlugin>): List<String> = buildList {
     plugins.filter(::addsChannels).forEach { add(LiveChannelKeys.pluginProvider(it.id)) }
 }
 
-/** What the player shows for a channel whose provider is not in [liveProviderIds]. Pure. */
-fun liveBlockedMessage(providerId: String, plugins: List<InstalledPlugin>): String {
+/**
+ * What the player shows for a channel whose provider is not in [liveProviderIds]. Pure. [place] is where
+ * the Plugins screen lives on this device ([PluginsPlace]).
+ */
+fun liveBlockedMessage(
+    providerId: String,
+    plugins: List<InstalledPlugin>,
+    place: String = com.arkiv.player.data.plugin.PluginsPlace.current,
+): String {
     if (providerId == LiveChannelKeys.XUPER) return XuperLiveGate.blockedMessage(plugins) ?: UNAVAILABLE
     val p = LiveChannelKeys.pluginIdOf(providerId)?.let { id -> plugins.firstOrNull { it.id == id } }
         ?: return "Este canal venía de un plugin que ya no está instalado"
@@ -45,8 +52,8 @@ fun liveBlockedMessage(providerId: String, plugins: List<InstalledPlugin>): Stri
     return when {
         p.record.damaged -> "El plugin $name tiene archivos dañados, reinstálalo"
         !p.record.enabled -> "Activa el plugin $name para ver este canal"
-        p.record.unresponsive -> "El plugin $name no responde ahora; revísalo en Ajustes ▸ Plugins"
-        p.needsSetup -> "Configura $name en Ajustes ▸ Plugins"
+        p.record.unresponsive -> "El plugin $name no responde ahora; revísalo en $place"
+        p.needsSetup -> "Configura $name en $place"
         !addsChannels(p) -> "El plugin $name ya no ofrece canales en vivo"
         else -> UNAVAILABLE
     }
@@ -115,7 +122,7 @@ class LiveCatalog(
         .stateIn(scope, SharingStarted.Eagerly, providers.value.isNotEmpty())
 
     /**
-     * A plugin's "Lista recortada: …" line for Ajustes ▸ Plugins (see `PluginLiveProvider.notice`),
+     * A plugin's "Lista recortada: …" line for the Plugins screen (see `PluginLiveProvider.notice`),
      * null while it has none or adds no channels. Follows the plugin's CURRENT provider: a
      * replaced instance (settings change) or a dropped one never leaves a stale line behind.
      */

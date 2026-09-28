@@ -20,7 +20,8 @@ class SourcePickerTest {
     @Test fun `the copy is the spec's`() {
         assertEquals("sources", SOURCE_PICKER_ROUTE)
         assertEquals("Elige tus fuentes", SOURCE_PICKER_TITLE)
-        assertEquals("Instala las fuentes que quieras usar. Puedes cambiarlas cuando quieras en Ajustes ▸ Plugins.", SOURCE_PICKER_LINE)
+        assertEquals("Instala las fuentes que quieras usar. Puedes cambiarlas cuando quieras en Plugins, en el menú.", sourcePickerLine(isTv = false))
+        assertEquals("Instala las fuentes que quieras usar. Puedes cambiarlas cuando quieras en Ajustes ▸ Plugins.", sourcePickerLine(isTv = true))
         assertEquals("Listo", SOURCE_PICKER_DONE)
         assertEquals("Recomendados", RECOMMENDED_TITLE)
     }

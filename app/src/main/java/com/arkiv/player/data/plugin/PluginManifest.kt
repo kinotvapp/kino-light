@@ -19,7 +19,7 @@ data class PluginManifest(
     val icon: String?,
     /** From the closed list in [PluginSettings.PERMISSIONS] (empty in SDK v1); shown on the consent sheet. */
     val permissions: List<String> = emptyList(),
-    /** What the plugin asks the person to configure (Ajustes ▸ Plugins ▸ Configurar). */
+    /** What the plugin asks the person to configure (Plugins ▸ Configurar). */
     val settings: List<PluginSetting> = emptyList(),
     /** The subset of [hosts] the manifest marked `{ "host", "insecureHttp": true }` (apiVersion 2 only). */
     val insecureHosts: Set<String> = emptySet(),

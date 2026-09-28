@@ -8,11 +8,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
@@ -32,20 +30,19 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.arkiv.player.data.magis.MagisAccountState
-import com.arkiv.player.ui.plugin.PluginsContent
 import com.arkiv.player.ui.readingWidth
 import com.arkiv.player.ui.rememberGraph
 
 /**
  * The Settings drawers. "Reproducción" was dropped from this row (its controls -- quality/source
  * pickers -- were all pruned from this branch; see the deleted `ReproduccionTab.kt`), so today
- * "Subtítulos" opens the screen.
+ * "Subtítulos" opens the screen. Plugins is not one of them on the phone: it is its own drawer item
+ * (`PluginsDrawerScreen`); the TV's Ajustes keeps it as a tab (`TvSettingsTab`).
  */
-private enum class SettingsTab(val label: String) {
+internal enum class SettingsTab(val label: String) {
     SUBTITLES("Subtítulos"),
     ACCOUNT("Cuenta"),
     APP("App"),
-    PLUGINS("Plugins"),
     CONNECT("Conectar"),
 }
 
@@ -100,15 +97,11 @@ fun SettingsScreen(contentPadding: PaddingValues, onOpenDownloads: () -> Unit = 
                 .fillMaxSize()
                 .padding(top = contentPadding.calculateTopPadding()),
         ) {
-            // Hidden while Plugins is the selected tab: its own content has very little height to spare
-            // (see PluginsContent's KDoc), and the chip row already says which tab is open.
-            if (tab != SettingsTab.PLUGINS) {
-                Text(
-                    "Ajustes",
-                    style = MaterialTheme.typography.headlineMedium,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
-                )
-            }
+            Text(
+                "Ajustes",
+                style = MaterialTheme.typography.headlineMedium,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
+            )
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -121,45 +114,25 @@ fun SettingsScreen(contentPadding: PaddingValues, onOpenDownloads: () -> Unit = 
                 }
             }
 
-            if (tab == SettingsTab.PLUGINS) {
-                // The Plugins screen itself, not a section of it: its tabs are lazy lists that scroll on their own, so
-                // it takes the height the chips leave (a lazy list inside the scroll below would be measured with an
-                // infinite height and crash). It keeps its own 16 dp gutter, 4 dp inside the 20 dp of the rest of Ajustes.
-                // The keyboard lifts it by what it covers beyond the system bar.
-                val bottomInset = contentPadding.calculateBottomPadding()
-                PluginsContent(
-                    bottomInset = bottomInset,
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .padding(horizontal = 4.dp)
-                        .consumeWindowInsets(PaddingValues(bottom = bottomInset))
-                        .imePadding(),
-                )
-            } else {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(scroll)
-                        .padding(horizontal = 20.dp),
-                ) {
-                    when (tab) {
-                        SettingsTab.SUBTITLES -> SubtitlesTab()
-                        SettingsTab.ACCOUNT -> AccountSection(
-                            magisAccount,
-                            onLink = { linkingMagis = true },
-                            accountUnavailable = regionGeoBlocked,
-                        )
-                        SettingsTab.APP -> AppTab(onOpenDownloads = onOpenDownloads)
-                        SettingsTab.CONNECT -> CompanionSettings()
-                        // Never reached: Plugins has its own branch above, since it needs a bounded height,
-                        // not a scroll. The compiler still requires this `when` to be exhaustive.
-                        SettingsTab.PLUGINS -> Unit
-                    }
-                    // The bottom shell adds the air below: the tabs don't need to know there's a
-                    // navigation bar under them.
-                    Spacer(Modifier.height(contentPadding.calculateBottomPadding() + 32.dp))
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(scroll)
+                    .padding(horizontal = 20.dp),
+            ) {
+                when (tab) {
+                    SettingsTab.SUBTITLES -> SubtitlesTab()
+                    SettingsTab.ACCOUNT -> AccountSection(
+                        magisAccount,
+                        onLink = { linkingMagis = true },
+                        accountUnavailable = regionGeoBlocked,
+                    )
+                    SettingsTab.APP -> AppTab(onOpenDownloads = onOpenDownloads)
+                    SettingsTab.CONNECT -> CompanionSettings()
                 }
+                // The bottom shell adds the air below: the tabs don't need to know there's a
+                // navigation bar under them.
+                Spacer(Modifier.height(contentPadding.calculateBottomPadding() + 32.dp))
             }
         }
     }

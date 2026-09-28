@@ -59,7 +59,7 @@ fun SourcePickerScreen(onFinish: () -> Unit, onBack: () -> Unit) {
     Column(Modifier.fillMaxSize().background(ArkivBlack).systemBarsPadding()) {
         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(SOURCE_PICKER_TITLE, style = MaterialTheme.typography.headlineSmall, color = Color.White)
-            Text(SOURCE_PICKER_LINE, style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary)
+            Text(sourcePickerLine(isTv = false), style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary)
         }
         if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth(), color = ArkivRed)
         state.message?.let {

@@ -51,7 +51,7 @@ import com.arkiv.player.ui.theme.ArkivRed
 import com.arkiv.player.ui.theme.ArkivTextSecondary
 
 /**
- * Ajustes ▸ Plugins ▸ <plugin> ▸ Configurar, phone and TV: one field per setting of the manifest.
+ * Plugins ▸ <plugin> ▸ Configurar (the phone's drawer item, the TV's Ajustes tab): one field per setting of the manifest.
  * The URL field uses the URI keyboard, the password is masked with a show/hide toggle (and hidden
  * from the accessibility tree while masked, see [PasswordField]). On TV, D-pad Down always leaves
  * a text field, since a closed keyboard would otherwise trap the focus in it. Configurar is the
@@ -139,7 +139,7 @@ private fun SettingField(s: PluginSetting, draft: PluginConfigDraft, modifier: M
     }
 }
 
-/** The Configurar screen over Ajustes ▸ Plugins, full screen. */
+/** The Configurar screen over the Plugins screen, full screen. */
 @Composable
 fun PluginConfigDialog(draft: PluginConfigDraft, isTv: Boolean, vm: PluginsViewModel) {
     Dialog(onDismissRequest = vm::closeSettings, properties = DialogProperties(usePlatformDefaultWidth = false)) {

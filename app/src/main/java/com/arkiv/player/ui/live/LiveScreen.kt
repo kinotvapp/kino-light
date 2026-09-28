@@ -212,7 +212,7 @@ fun LiveScreen(
             // Defensive: ArkivRoot already leaves the tab when the module empties.
             EmptyState(
                 "Sin canales en vivo",
-                "Instala un plugin con canales o activa Xuper en Ajustes ▸ Plugins.",
+                "Instala un plugin con canales o activa Xuper en ${com.arkiv.player.data.plugin.PluginsPlace.PHONE}.",
                 modifier = Modifier.fillMaxSize(),
             )
             return@Column

@@ -78,7 +78,7 @@ class PluginMorePager(
         const val MAX_ITEMS = 1000
 
         fun messageOf(e: Exception): String = when (e) {
-            is PluginSetupRequiredException -> e.message ?: "Configura el plugin en Ajustes ▸ Plugins"
+            is PluginSetupRequiredException -> e.message ?: "Configura el plugin en ${com.arkiv.player.data.plugin.PluginsPlace.current}"
             is GatewayBlockedException -> e.message ?: "Este contenido no está disponible en tu región"
             is GatewayException -> e.message ?: "No se pudo cargar, vuelve a intentarlo"
             else -> "No se pudo cargar, vuelve a intentarlo"

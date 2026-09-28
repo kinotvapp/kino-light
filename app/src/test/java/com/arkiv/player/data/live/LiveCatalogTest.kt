@@ -5,6 +5,7 @@ import com.arkiv.player.data.gateway.LiveProgram
 import com.arkiv.player.data.plugin.InstalledPlugin
 import com.arkiv.player.data.plugin.InstalledRecord
 import com.arkiv.player.data.plugin.PluginManifest
+import com.arkiv.player.data.plugin.PluginsPlace
 import com.arkiv.player.data.plugin.XuperPrivilege
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -79,8 +80,10 @@ class LiveCatalogTest {
         assertEquals("Instala el plugin Xuper para ver este canal", liveBlockedMessage("xuper", emptyList()))
         assertEquals("Activa el plugin TV1 para ver este canal", liveBlockedMessage("plugin:tv1", listOf(plugin("tv1", enabled = false))))
         assertEquals("El plugin TV1 tiene archivos dañados, reinstálalo", liveBlockedMessage("plugin:tv1", listOf(plugin("tv1", damaged = true))))
-        assertEquals("Configura TV1 en Ajustes ▸ Plugins", liveBlockedMessage("plugin:tv1", listOf(plugin("tv1", missing = listOf("server")))))
-        assertEquals("El plugin TV1 no responde ahora; revísalo en Ajustes ▸ Plugins", liveBlockedMessage("plugin:tv1", listOf(plugin("tv1", unresponsive = true))))
+        assertEquals("Configura TV1 en Ajustes ▸ Plugins", liveBlockedMessage("plugin:tv1", listOf(plugin("tv1", missing = listOf("server"))), PluginsPlace.TV))
+        assertEquals("El plugin TV1 no responde ahora; revísalo en Ajustes ▸ Plugins", liveBlockedMessage("plugin:tv1", listOf(plugin("tv1", unresponsive = true)), PluginsPlace.TV))
+        assertEquals("Configura TV1 en Plugins, en el menú", liveBlockedMessage("plugin:tv1", listOf(plugin("tv1", missing = listOf("server"))), PluginsPlace.PHONE))
+        assertEquals("El plugin TV1 no responde ahora; revísalo en Plugins, en el menú", liveBlockedMessage("plugin:tv1", listOf(plugin("tv1", unresponsive = true)), PluginsPlace.PHONE))
         assertEquals("El plugin TV1 ya no ofrece canales en vivo", liveBlockedMessage("plugin:tv1", listOf(plugin("tv1", caps = setOf("home", "resolve")))))
         assertEquals("Este canal venía de un plugin que ya no está instalado", liveBlockedMessage("plugin:tv1", emptyList()))
     }

@@ -74,7 +74,7 @@ private val MIN_TARGET = 48.dp
 private val ADD_CONTAINER = ArkivRed.copy(alpha = 0.30f)
 
 /**
- * What the Plugins screen shows on the phone, hosted by Ajustes ▸ Plugins under its own header: no title,
+ * What the Plugins screen shows on the phone, hosted by the drawer's Plugins ([PluginsDrawerScreen]) under its heading: no title,
  * no back arrow and no Back handling of its own, and no insets (the host pads the top and the keyboard;
  * [bottomInset] is the system bar it leaves at the bottom, which the lists keep clear). From top to bottom:
  * what an action answers (the progress bar and, on its own line, the message), ONE row with the two tabs
@@ -84,9 +84,8 @@ private val ADD_CONTAINER = ArkivRed.copy(alpha = 0.30f)
  * ([AddCustomPluginModal]). Installing always goes through the consent sheet, whichever tab or modal it
  * starts from.
  *
- * "Agregar" is icon-only (a plus, no label): hosted in Ajustes ▸ Plugins this content has very little
- * height to spare (Ajustes' own chip row sits above it), so every dp the header can give back to the lists
- * matters. The tab row scrolls ([PrimaryScrollableTabRow]) rather than splitting the width evenly, so
+ * "Agregar" is icon-only (a plus, no label): on a phone this content has little height to spare (the top bar
+ * and the heading sit above it), so every dp the header can give back to the lists matters. The tab row scrolls ([PrimaryScrollableTabRow]) rather than splitting the width evenly, so
  * "Recomendados" and "Instalados (n)" never wrap or clip at a large font, whatever `n` is.
  *
  * The message sits on its own line, full width, ONLY while there is one: no space is reserved for it when
@@ -193,8 +192,8 @@ internal fun PluginsContent(bottomInset: Dp, modifier: Modifier = Modifier) {
 
 /**
  * The "Agregar" button: icon-only, [MIN_TARGET] square, dimmed and inert while an action runs. It used to
- * carry the word "Agregar" on a line of its own above the tabs; both cost more height than Ajustes ▸ Plugins
- * can spare, so it moved into the tab row and dropped its label (the plus is enough, and the content
+ * carry the word "Agregar" on a line of its own above the tabs; both cost more height than the phone's Plugins
+ * screen can spare, so it moved into the tab row and dropped its label (the plus is enough, and the content
  * description keeps it named for accessibility).
  */
 @Composable

@@ -29,9 +29,12 @@ object PluginErrors {
         return PluginErrorException(m.groupValues[1], m.groupValues[2].take(MAX_MESSAGE_CHARS))
     }
 
-    /** What the person reads for [code] from the plugin called [pluginName]; null = the generic handling. */
-    fun userMessage(code: String, pluginName: String): String? = when (code) {
-        AUTH_REQUIRED -> "Configura $pluginName en Ajustes ▸ Plugins"
+    /**
+     * What the person reads for [code] from the plugin called [pluginName]; null = the generic handling.
+     * [place] is where the Plugins screen lives on this device ([PluginsPlace]).
+     */
+    fun userMessage(code: String, pluginName: String, place: String = PluginsPlace.current): String? = when (code) {
+        AUTH_REQUIRED -> "Configura $pluginName en $place"
         NOT_FOUND -> "No se encontró en $pluginName"
         GEO_BLOCKED -> "Este contenido no está disponible en tu región"
         RATE_LIMITED -> "$pluginName está limitando las peticiones; intenta en unos minutos"

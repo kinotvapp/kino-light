@@ -201,7 +201,7 @@ fun HomeScreen(
     val liveOn by graph.liveModule.available.collectAsStateWithLifecycle()
     val installedPlugins by graph.pluginAdmin.plugins.collectAsStateWithLifecycle()
     val homeEmpty = homeShowsEmptyState(installedPlugins, pluginRows.size, liveOn)
-    val emptyCopy = homeEmptyCopy(installedPlugins)
+    val emptyCopy = homeEmptyCopy(installedPlugins, isTv = false)
     val liveTabs by graph.liveModule.tabs.collectAsStateWithLifecycle()
     // null = no row (empty module, or no channel to list yet); never just "Ver más canales".
     val liveRow = remember(recentChannels, countryChannels, liveOn, liveTabs) {

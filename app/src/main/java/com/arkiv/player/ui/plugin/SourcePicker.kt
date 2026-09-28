@@ -31,7 +31,7 @@ import com.arkiv.player.ui.rememberGraph
 
 /*
  * "Elige tus fuentes" (spec 2026-09-28 §3): the recommended catalog and the community list, with the same
- * cards, consent, install and Configurar as Ajustes ▸ Plugins ▸ Recomendados. Phone and TV share this file.
+ * cards, consent, install and Configurar as the Plugins screen's Recomendados. Phone and TV share this file.
  * Mandatory since the 2026-09-28 amendment: there is no way past it but "Listo" with a source installed;
  * Back on the picker opened at start leaves the app ([onSourcePickerBack]).
  */
@@ -40,7 +40,9 @@ import com.arkiv.player.ui.rememberGraph
 const val SOURCE_PICKER_ROUTE = "sources"
 
 internal const val SOURCE_PICKER_TITLE = "Elige tus fuentes"
-internal const val SOURCE_PICKER_LINE = "Instala las fuentes que quieras usar. Puedes cambiarlas cuando quieras en Ajustes ▸ Plugins."
+/** The line under the title: where the sources can be changed later, the drawer's Plugins on the phone, Ajustes ▸ Plugins on the TV. */
+internal fun sourcePickerLine(isTv: Boolean): String =
+    "Instala las fuentes que quieras usar. Puedes cambiarlas cuando quieras en ${com.arkiv.player.data.plugin.PluginsPlace.of(isTv)}."
 internal const val SOURCE_PICKER_DONE = "Listo"
 internal const val RECOMMENDED_TITLE = "Recomendados"
 

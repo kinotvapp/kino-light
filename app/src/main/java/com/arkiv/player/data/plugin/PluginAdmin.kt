@@ -8,7 +8,7 @@ import kotlinx.coroutines.withContext
 /** The Configurar screen's data: the plugin (its manifest's settings) and the current values, passwords included. */
 data class PluginSettingsForm(val plugin: InstalledPlugin, val values: Map<String, Any>)
 
-/** Everything Ajustes ▸ Plugins does, behind one interface the ViewModel can fake. */
+/** Everything the Plugins screen does, behind one interface the ViewModel can fake. */
 interface PluginAdmin {
     val plugins: StateFlow<List<InstalledPlugin>>
     suspend fun preview(input: String): InstallPreview

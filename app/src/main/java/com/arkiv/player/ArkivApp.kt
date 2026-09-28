@@ -24,6 +24,9 @@ class ArkivApp : Application(), ImageLoaderFactory {
 
     override fun onCreate() {
         super.onCreate()
+        // Where messages worded off-screen send the person for their plugins; MainActivity refines it
+        // with the root it actually composes (the `force_tv` extra).
+        com.arkiv.player.data.plugin.PluginsPlace.onTv = DeviceType.isTelevision(this)
         // Off the first-frame critical path: SentryAndroid.init does ~100-300ms of main-thread work
         // (manifest read, integration wiring, ANR watchdog, outbox disk cache) that used to run
         // before anything else -- costly on a weak device, every launch. Posted so it lands after

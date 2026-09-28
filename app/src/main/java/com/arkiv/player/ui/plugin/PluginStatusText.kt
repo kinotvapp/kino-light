@@ -7,7 +7,7 @@ import com.arkiv.player.data.plugin.PluginStatus
 import com.arkiv.player.data.plugin.PluginTimeoutException
 import java.io.IOException
 
-/** How a plugin's state reads in Ajustes ▸ Plugins. */
+/** How a plugin's state reads in the Plugins screen. */
 fun pluginStatusText(status: PluginStatus): String = when (status) {
     PluginStatus.ACTIVE -> "Activo"
     PluginStatus.DISABLED -> "Desactivado"
@@ -18,7 +18,7 @@ fun pluginStatusText(status: PluginStatus): String = when (status) {
 }
 
 /**
- * What the person reads when an Ajustes ▸ Plugins action throws. Only [InstallException] carries a
+ * What the person reads when a Plugins screen action throws. Only [InstallException] carries a
  * message written for the screen (the installer builds it in Spanish); every other exception's
  * message is an engine/network detail -- [PluginTimeoutException]'s even embeds the capability's
  * English name ("search no respondió…") -- so it is replaced, never shown.

@@ -21,11 +21,11 @@ class VisibleTabsTest {
 
     @Test fun `the rest of the tabs never move`() {
         assertEquals(
-            listOf("home", "categorias_home", "library", "downloads", "settings"),
+            listOf("home", "categorias_home", "library", "downloads", "plugins", "settings"),
             visibleTabRoutes(isColombia = false, liveModule = false),
         )
         assertEquals(
-            listOf("home", "categorias_home", "library", "downloads", "live", "caracol", "settings"),
+            listOf("home", "categorias_home", "library", "downloads", "live", "caracol", "plugins", "settings"),
             visibleTabRoutes(isColombia = true, liveModule = true),
         )
     }

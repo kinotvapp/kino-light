@@ -8,17 +8,19 @@ internal const val EMPTY_HOME_TITLE = "Aún no tienes fuentes de contenido"
 internal const val EMPTY_HOME_LINE = "Agrega un plugin para ver películas, series o canales en vivo."
 internal const val EMPTY_HOME_ACTION = "Agregar plugin"
 internal const val BROKEN_HOME_TITLE = "Tus fuentes no están funcionando"
-internal const val BROKEN_HOME_LINE = "Revisa tus plugins en Ajustes ▸ Plugins o agrega otro."
+internal const val BROKEN_HOME_LINE_PHONE = "Revisa tus plugins en Plugins, en el menú, o agrega otro."
+internal const val BROKEN_HOME_LINE_TV = "Revisa tus plugins en Ajustes ▸ Plugins o agrega otro."
 
 data class HomeEmptyCopy(val title: String, val line: String, val action: String)
 
 /**
  * What the empty state says. With plugins installed (all disabled, damaged or unresponsive) "you have no
- * sources yet" is false: it points the person at the plugins they already have instead.
+ * sources yet" is false: it points the person at the plugins they already have instead: the drawer's Plugins
+ * item on the phone, Ajustes ▸ Plugins on the TV ([isTv]).
  */
-fun homeEmptyCopy(plugins: List<InstalledPlugin>): HomeEmptyCopy =
+fun homeEmptyCopy(plugins: List<InstalledPlugin>, isTv: Boolean): HomeEmptyCopy =
     if (plugins.isEmpty()) HomeEmptyCopy(EMPTY_HOME_TITLE, EMPTY_HOME_LINE, EMPTY_HOME_ACTION)
-    else HomeEmptyCopy(BROKEN_HOME_TITLE, BROKEN_HOME_LINE, EMPTY_HOME_ACTION)
+    else HomeEmptyCopy(BROKEN_HOME_TITLE, if (isTv) BROKEN_HOME_LINE_TV else BROKEN_HOME_LINE_PHONE, EMPTY_HOME_ACTION)
 
 /**
  * Ruling R15: nothing can fill Home. No plugin is usable, no plugin row is on screen and the live module

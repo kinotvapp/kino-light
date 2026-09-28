@@ -105,7 +105,7 @@ internal fun cardStatusLines(): Int = 1
  * intentar" is "No responde", "Actualización disponible — requiere tu aprobación" is "Actualización
  * pendiente"; the card's own action, or its "Gestionar"/actions dialog, already says what to do). Every other
  * status, including one added later, reads as [pluginStatusText] says, which is also what the installed list
- * and Ajustes ▸ Plugins keep using.
+ * and the Plugins screen keep using.
  *
  * Every [PluginStatus] can reach a card now: the catalog's own cards only show one for a plugin whose action
  * isn't "Instalado" ([cardStatus]), but an installed plugin's own card (the Instalados tab) shows its status

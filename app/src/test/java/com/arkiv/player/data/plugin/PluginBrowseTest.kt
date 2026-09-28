@@ -83,7 +83,7 @@ class PluginBrowseTest {
         val ref = PluginRef("demo", "m1", PluginRef.MOVIE, "R1").encode()
         val auth = assertThrows(PluginSetupRequiredException::class.java) { kotlinx.coroutines.runBlocking { failing("auth_required").resolve(ref) } }
         assertEquals("demo", auth.pluginId)
-        assertEquals("Configura Demo en Ajustes ▸ Plugins", auth.message)
+        assertEquals("Configura Demo en Plugins, en el menú", auth.message) // The default place is the phone's.
         assertEquals("Este contenido no está disponible en tu región", assertThrows(GatewayBlockedException::class.java) { kotlinx.coroutines.runBlocking { failing("geo_blocked").resolve(ref) } }.message)
         assertEquals("No se encontró en Demo", assertThrows(GatewayException::class.java) { kotlinx.coroutines.runBlocking { failing("not_found").browse("x", null) } }.message)
         assertEquals("Demo: detalle", assertThrows(GatewayException::class.java) { kotlinx.coroutines.runBlocking { failing("network").resolve(ref) } }.message)

@@ -175,7 +175,7 @@ object PluginSettings {
 data class UserHost(val scheme: String, val host: String, val port: Int) {
     fun matches(url: okhttp3.HttpUrl): Boolean = url.scheme == scheme && url.host == host && url.port == port
 
-    /** How it's shown in Ajustes ▸ Plugins ("Se conectará a: …"). */
+    /** How it's shown in the Plugins screen ("Se conectará a: …"). */
     val label: String get() = "$scheme://" + (if (':' in host) "[$host]" else host) + ":$port"
 }
 

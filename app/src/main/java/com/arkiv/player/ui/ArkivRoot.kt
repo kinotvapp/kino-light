@@ -19,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Home
@@ -104,6 +105,8 @@ private val TABS = listOf(
     Tab("downloads", "Descargas") { Icon(Icons.Default.Download, contentDescription = "Descargas") },
     Tab("live", "En vivo") { Icon(Icons.Default.LiveTv, contentDescription = "En vivo") },
     Tab("caracol", "Caracol") { Icon(Icons.Default.Theaters, contentDescription = "Caracol") },
+    // The phone's Plugins is a drawer item of its own; the TV keeps it as a tab of Ajustes.
+    Tab(com.arkiv.player.ui.plugin.PLUGINS_ROUTE, "Plugins") { Icon(Icons.Default.Extension, contentDescription = "Plugins") },
     Tab("settings", "Ajustes") { Icon(Icons.Default.Settings, contentDescription = "Ajustes") },
 )
 
@@ -430,6 +433,9 @@ fun ArkivRoot(
         onOpenDownloads = { goToTab(TABS.first { it.route == "downloads" }) },
     )
 }
+            composable(com.arkiv.player.ui.plugin.PLUGINS_ROUTE) {
+                com.arkiv.player.ui.plugin.PluginsDrawerScreen(contentPadding = padding)
+            }
             composable("categorias_home") {
                 com.arkiv.player.ui.home.CategoriesScreen(
                     contentPadding = padding,
