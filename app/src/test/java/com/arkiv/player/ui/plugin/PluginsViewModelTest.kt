@@ -1145,6 +1145,29 @@ class PluginsViewModelTest {
         assertFalse(vm.catalog.value.rows.any { it.community })
     }
 
+    @Test fun `a Xuper installed from the legacy address shows the discovered official Xuper as installed`() {
+        val legacy = InstalledPlugin(manifest.copy(id = "xuper"), InstalledRecord("kinotvapp/kino-plugin-xuper", "1.0.0", "x", emptyList(), 0L), null)
+        val official = DiscoveredPlugin("xuper-plugin", "kino-plugin-xuper", "xuper", "Xuper", "", 5)
+        val admin = FakeAdmin().apply { plugins.value = listOf(legacy) }
+        val vm = PluginsViewModel(admin, io = dispatcher, discovery = FakeDiscovery { DiscoveryResult(listOf(official), DiscoveryOrigin.FRESH) })
+        val row = vm.community.value.rows.single()
+        assertEquals("xuper-plugin/kino-plugin-xuper", row.entry.repo)
+        assertEquals(legacy, row.installed)
+        assertEquals(catalogActionOf(CatalogRow(row.entry, legacy)), catalogActionOf(row))
+        assertFalse(catalogActionOf(row) == CatalogAction.INSTALL)
+    }
+
+    @Test fun `community state tells a search whose finds are all in Recomendados from one that found nothing`() {
+        val archive = entry("internet-archive", "kinotvapp/kino-plugin-archive")
+        val found = listOf(DiscoveredPlugin("KinoTvApp", "Kino-Plugin-Archive", "internet-archive", "Internet Archive", "", 9))
+        val all = communityUiState(DiscoveryResult(found, DiscoveryOrigin.FRESH), false, listOf(archive), "", emptyList())
+        assertTrue(all.rows.isEmpty())
+        assertTrue(all.allRecommended)
+        assertFalse(communityUiState(DiscoveryResult.NONE, false, listOf(archive), "", emptyList()).allRecommended)
+        val impostor = listOf(DiscoveredPlugin("evil", "xuper", "xuper", "Xuper", "", 9))
+        assertFalse(communityUiState(DiscoveryResult(impostor, DiscoveryOrigin.FRESH), false, listOf(archive), "", emptyList()).allRecommended)
+    }
+
     // Fix round 1: a damaged plugin is reinstalled from the address it was installed from, never from the
     // row's catalog address: a legacy Xuper (kinotvapp) on a row naming the new repo would be refused on the id clash.
     @Test fun `reinstalling a damaged legacy Xuper from its catalog row previews the legacy address`() {

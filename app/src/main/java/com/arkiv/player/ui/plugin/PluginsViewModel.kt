@@ -96,6 +96,11 @@ data class CommunityUiState(
     val loading: Boolean = true,
     val refreshing: Boolean = false,
     val rows: List<CatalogRow> = emptyList(),
+    /**
+     * The search found plugins, but every one is already listed in Recomendados: an empty section then says
+     * so, instead of the neutral "nothing to show" of a search that found nothing or could not run.
+     */
+    val allRecommended: Boolean = false,
 )
 
 /** The default discovery: knows nothing and never searches, for the screens that show no community list. */
@@ -119,9 +124,17 @@ internal fun communityRows(
         CatalogEntry(id = d.id, repo = d.address, name = d.name, description = d.description, tags = listOf("por ${d.owner}"))
     }
     return filterCatalog(entries, query).map { e ->
-        CatalogRow(e, installed.firstOrNull { ownerRepoKey(it.record.address) == e.repo.lowercase() }, community = true)
+        // Any spelling of the same repo, and Xuper's legacy install on the new official repo ([sameAddress]).
+        val match = installed.firstOrNull { ownerRepoKey(it.record.address) == e.repo.lowercase() || sameAddress(it.record.address, e.repo) }
+        CatalogRow(e, match, community = true)
     }
 }
+
+/** Whether [discovered] is not empty and every plugin in it is a repo [catalog] already lists (any spelling; Xuper's two repos as one). */
+internal fun allInCatalog(discovered: List<DiscoveredPlugin>, catalog: List<CatalogEntry>): Boolean =
+    discovered.isNotEmpty() && discovered.all { d ->
+        catalog.any { ownerRepoKey(it.repo) == d.address.lowercase() || sameAddress(it.repo, d.address) }
+    }
 
 internal fun communityUiState(
     result: DiscoveryResult,
@@ -133,6 +146,7 @@ internal fun communityUiState(
     loading = refreshing && result.plugins.isEmpty(),
     refreshing = refreshing,
     rows = communityRows(result.plugins, catalog, installed, query),
+    allRecommended = allInCatalog(result.plugins, catalog),
 )
 
 /** What the seed line of the screen says and does; the phone and the TV screen both draw it. */

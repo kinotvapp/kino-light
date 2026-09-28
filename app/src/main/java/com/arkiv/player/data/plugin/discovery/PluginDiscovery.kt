@@ -74,7 +74,8 @@ fun ownerRepoKey(address: String): String? = PluginAddress.parse(address)?.let {
  * a repo the [catalog] already recommends (case-insensitive; Xuper's new and legacy repo count as one); an impostor, meaning a plugin whose
  * manifest id belongs to a [catalog] entry or to [ReservedPluginIds] but whose repo is not that one
  * (dropped whatever its stars, so it can never hide the real plugin); a plugin whose manifest id is
- * taken by an installed plugin from ANOTHER repo (its install would be refused); and repeats by address
+ * taken by an installed plugin from ANOTHER repo (its install would be refused; Xuper's official new and
+ * legacy repos count as one, so a legacy install keeps the new repo listed as installed); and repeats by address
  * or id (first, most stars, wins). A discovered repo that is itself installed stays: its card shows
  * "Instalado".
  */
@@ -99,10 +100,15 @@ fun dedupeDiscovered(
         val key = d.address.lowercase()
         if (key in catalogKeys) return@filter false
         if (idOwners[d.id]?.contains(key) == false) return@filter false
-        if (installed.any { it.id == d.id && ownerRepoKey(it.record.address) != key }) return@filter false
+        // Xuper's new and legacy repos are one plugin here too: an updating person with the legacy install
+        // still sees the new official repo (its card shows "Instalado"), never an empty section.
+        if (installed.any { it.id == d.id && !sameRepo(ownerRepoKey(it.record.address), key, xuperKeys) }) return@filter false
         seenKeys.add(key) && seenIds.add(d.id)
     }
 }
+
+/** Whether two lowercased `owner/repo` keys name the same plugin: equal, or both official Xuper repos ([xuperKeys]). */
+private fun sameRepo(a: String?, b: String, xuperKeys: Set<String>): Boolean = a == b || (a in xuperKeys && b in xuperKeys)
 
 /**
  * Finds community plugins (spec 2026-09-28 §1): one GitHub search through [transport] (the only call

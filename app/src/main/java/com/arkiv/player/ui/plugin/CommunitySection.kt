@@ -28,6 +28,7 @@ fun communityHeader(state: CommunityUiState): CommunityHeader = CommunityHeader(
     actionEnabled = !state.refreshing,
     line = when {
         state.loading -> "Buscando plugins de la comunidad…"
+        state.rows.isEmpty() && state.allRecommended -> "Todos los plugins de la comunidad que encontramos ya están en Recomendados."
         state.rows.isEmpty() -> "Por ahora no hay plugins de la comunidad para mostrar."
         else -> null
     },

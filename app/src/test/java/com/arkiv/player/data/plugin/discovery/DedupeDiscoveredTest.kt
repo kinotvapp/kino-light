@@ -88,8 +88,28 @@ class DedupeDiscoveredTest {
         assertEquals(emptyList<DiscoveredPlugin>(), dedupeDiscovered(listOf(legacy), newCatalog, emptyList()))
     }
 
-    @Test fun `someone with Xuper from the legacy address is not offered the new one as a second Xuper`() {
+    // An updating person has Xuper from the legacy address: the new official repo is the same plugin, so it
+    // stays listed (its card shows "Instalado"), instead of vanishing and leaving "De la comunidad" empty.
+    @Test fun `someone with Xuper from the legacy address still sees the new official Xuper`() {
         val kept = dedupeDiscovered(listOf(realXuper), emptyList(), listOf(installed(XuperPrivilege.MANIFEST_ID, "kinotvapp/kino-plugin-xuper")))
+        assertEquals(listOf(realXuper), kept)
+    }
+
+    @Test fun `someone with Xuper from the new address sees it listed too`() {
+        val kept = dedupeDiscovered(listOf(realXuper), emptyList(), listOf(installed(XuperPrivilege.MANIFEST_ID, XuperPrivilege.SOURCE_REPO)))
+        assertEquals(listOf(realXuper), kept)
+    }
+
+    @Test fun `with Xuper installed from either address, a look-alike claiming its id is still dropped`() {
+        val impostor = DiscoveredPlugin("evil", "kino-plugin-xuper", XuperPrivilege.MANIFEST_ID, "Xuper", "", 500)
+        listOf("kinotvapp/kino-plugin-xuper", XuperPrivilege.SOURCE_REPO).forEach { address ->
+            val kept = dedupeDiscovered(listOf(impostor, realXuper), emptyList(), listOf(installed(XuperPrivilege.MANIFEST_ID, address)))
+            assertEquals(listOf(realXuper), kept)
+        }
+    }
+
+    @Test fun `an installed look-alike (not official) still hides a discovered plugin of the same id from another repo`() {
+        val kept = dedupeDiscovered(listOf(DiscoveredPlugin("o", "demo", "demo", "Demo", "", 1)), emptyList(), listOf(installed("demo", "someone/demo")))
         assertEquals(emptyList<DiscoveredPlugin>(), kept)
     }
 }

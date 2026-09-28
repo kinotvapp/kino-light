@@ -15,6 +15,16 @@ class CommunitySectionTest {
         assertEquals("De la comunidad", COMMUNITY_TITLE)
     }
 
+    @Test fun `a search that found only what Recomendados already lists says so, a failure keeps the neutral line`() {
+        assertEquals(
+            CommunityHeader("Actualizar", true, "Todos los plugins de la comunidad que encontramos ya están en Recomendados."),
+            communityHeader(CommunityUiState(loading = false, allRecommended = true)),
+        )
+        assertEquals("Por ahora no hay plugins de la comunidad para mostrar.", communityHeader(CommunityUiState(loading = false)).line)
+        val row = CatalogRow(CatalogEntry("x", "o/x", "X", ""), null, community = true)
+        assertEquals(null, communityHeader(CommunityUiState(loading = false, rows = listOf(row), allRecommended = true)).line)
+    }
+
     @Test fun `a community card key never collides with a catalog card key`() {
         val sameId = CatalogRow(CatalogEntry("internet-archive", "Someone/Copy", "Copy", ""), null, community = true)
         assertEquals("community-someone/copy", communityCardKey(sameId))
