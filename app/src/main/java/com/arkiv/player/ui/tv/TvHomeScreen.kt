@@ -686,19 +686,19 @@ fun TvHomeScreen(
     //
     // With no "Continuar viendo", focus goes to the TOP BAR, the only deterministic zone: it
     // doesn't live inside the LazyColumn, so it's always composed and focusing it can't scroll
-    // anything. And it leaves the user one click from their library, which is what they'll want if
-    // nothing's been started.
+    // anything. Within the bar it lands on "Buscar": looking something up is the first thing a
+    // person reaches for, and the rest of the bar is one D-pad press to the right.
     val barFocus = remember { FocusRequester() }
     // A live surface can take away the node that holds focus while this screen is showing: the
     // "Xuper" button (the Xuper gate closes, e.g. its plugin gets marked damaged), the "En vivo"
     // button (the live module empties) or the channels row (its last channel's provider went).
     // Compose then clears focus instead of moving it, and the D-pad is stranded. A per-node latch
     // can't catch it (the removed node reports "unfocused" before any effect runs), so this watches
-    // the whole screen: right after a surface vanishes, if nothing here holds focus, "Mi biblioteca"
+    // the whole screen: right after a surface vanishes, if nothing here holds focus, "Buscar"
     // takes it ([homeLiveNeedsRefocus]). Retried through `retryFocus` against the button's OWN
     // focus state: `FocusRequester.requestFocus()` never reports failure (see its KDoc).
     var screenHasFocus by remember { mutableStateOf(false) }
-    var libraryFocused by remember { mutableStateOf(false) }
+    var barLandingFocused by remember { mutableStateOf(false) }
     val liveSurfaces = HomeLiveSurfaces(xuperButton = xuperLive, liveButton = liveOn, channelsRow = channelsRow.isNotEmpty())
     var lastLiveSurfaces by remember { mutableStateOf(liveSurfaces) }
     LaunchedEffect(liveSurfaces) {
@@ -708,7 +708,7 @@ fun TvHomeScreen(
         delay(WAIT_BETWEEN_FOCUS_ATTEMPTS_MS)
         if (!homeLiveNeedsRefocus(was, liveSurfaces, screenHasFocus)) return@LaunchedEffect
         retryFocus(
-            isAlreadyFocused = { libraryFocused },
+            isAlreadyFocused = { barLandingFocused },
             wait = { delay(WAIT_BETWEEN_FOCUS_ATTEMPTS_MS) },
             request = { barFocus.requestFocus() },
         )
@@ -721,7 +721,7 @@ fun TvHomeScreen(
         lastHomeEmpty = homeEmpty
         delay(WAIT_BETWEEN_FOCUS_ATTEMPTS_MS)
         if (emptyStateNeedsRefocus(was, homeEmpty, screenHasFocus)) {
-            retryFocus(isAlreadyFocused = { libraryFocused }, wait = { delay(WAIT_BETWEEN_FOCUS_ATTEMPTS_MS) }, request = { barFocus.requestFocus() })
+            retryFocus(isAlreadyFocused = { barLandingFocused }, wait = { delay(WAIT_BETWEEN_FOCUS_ATTEMPTS_MS) }, request = { barFocus.requestFocus() })
         }
     }
     val firstFocusKey = continueWatching.firstOrNull()?.episodeId
@@ -835,7 +835,7 @@ fun TvHomeScreen(
             val landingFocused = when (tvHomeDefaultLanding(homeEmptyNow, hasContinueNow)) {
                 TvHomeLanding.FIRST_CARD -> firstCardFocused
                 TvHomeLanding.ADD_SOURCES -> emptySourcesFocused
-                TvHomeLanding.TOP_BAR -> libraryFocused
+                TvHomeLanding.TOP_BAR -> barLandingFocused
             }
             tvHomeBackAction(
                 listAtTop = rowsListState.firstVisibleItemIndex == 0 && rowsListState.firstVisibleItemScrollOffset == 0,
@@ -943,7 +943,12 @@ fun TvHomeScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     KinoWordmark(height = 34.dp, modifier = Modifier.padding(end = 16.dp))
-                    TvNavButton(icon = Icons.Default.Search, label = "Buscar", onClick = onOpenSearch)
+                    TvNavButton(
+                        icon = Icons.Default.Search,
+                        label = "Buscar",
+                        onClick = onOpenSearch,
+                        modifier = Modifier.focusRequester(barFocus).onFocusChanged { barLandingFocused = it.isFocused },
+                    )
                     TvNavButton(icon = Icons.Default.Refresh, label = "Recargar", onClick = { graph.reloadHomeCatalog() })
                     TvNavButton(
                         icon = Icons.Default.GridView,
@@ -963,7 +968,6 @@ fun TvHomeScreen(
                         icon = Icons.Default.VideoLibrary,
                         label = "Mi biblioteca",
                         onClick = onOpenLibrary,
-                        modifier = Modifier.focusRequester(barFocus).onFocusChanged { libraryFocused = it.isFocused },
                     )
                     // The live guide follows the whole module: Xuper or any plugin with channels.
                     if (liveOn) {
