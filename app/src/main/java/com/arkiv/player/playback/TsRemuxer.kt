@@ -4,7 +4,12 @@ import android.content.Context
 import android.util.Log
 import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.common.util.Clock
+import androidx.media3.datasource.DataSourceBitmapLoader
+import androidx.media3.transformer.AssetLoader
 import androidx.media3.transformer.Composition
+import androidx.media3.transformer.DefaultAssetLoaderFactory
+import androidx.media3.transformer.DefaultDecoderFactory
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.InAppFragmentedMp4Muxer
@@ -24,6 +29,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import com.arkiv.player.cast.CastAudioChoice
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.resume
@@ -117,20 +123,38 @@ class TsRemuxer(
      * Transformer needs a Looper, so the export is driven on the main thread; the actual work
      * happens on its own threads, so this does not block the UI.
      */
-    suspend fun remux(inputUri: String, key: String): RemuxResult {
+    suspend fun remux(inputUri: String, key: String, audio: CastAudioChoice? = null): RemuxResult {
         alreadyDone(key)?.let {
             Log.i(TAG, "already remuxed: ${it.name} (${it.length()}B), reusing it")
             return RemuxResult.Done(it)
         }
         val job = activeExports.computeIfAbsent(key) {
-            scope.async { export(inputUri, key) }
-                .also { j -> j.invokeOnCompletion { activeExports.remove(key) } }
+            scope.async { export(inputUri, key, audio) }
+                .also { j -> j.invokeOnCompletion { activeExports.remove(key, j) } }
         }
         return job.await()
     }
 
+    /**
+     * Where Transformer reads the input from: its default, except that with an [audio] choice the
+     * audio track is picked by [AudioPinnedTrackSelector] instead of by Transformer's own selector.
+     * Null keeps the default factory untouched.
+     */
+    private fun assetLoaderFactory(audio: CastAudioChoice?): AssetLoader.Factory? {
+        audio ?: return null
+        return DefaultAssetLoaderFactory(
+            context,
+            DefaultDecoderFactory.Builder(context).build(),
+            Clock.DEFAULT,
+            // Null = the media source Transformer builds by itself (ExoPlayerAssetLoader.Factory).
+            null,
+            DataSourceBitmapLoader.Builder(context).build(),
+            { ctx -> AudioPinnedTrackSelector(ctx, audio) },
+        )
+    }
+
     /** The export itself. One per key at a time; see [remux]. */
-    private suspend fun export(inputUri: String, key: String): RemuxResult {
+    private suspend fun export(inputUri: String, key: String, audio: CastAudioChoice?): RemuxResult {
         if (!folder.exists() && !folder.mkdirs()) {
             return RemuxResult.Failed("could not create ${folder.path}")
         }
@@ -140,7 +164,7 @@ class TsRemuxer(
         runCatching { partial.delete() }
 
         val t0 = System.currentTimeMillis()
-        Log.w(TAG, "remux starts → ${destination.name}")
+        Log.w(TAG, "remux starts → ${destination.name} · audio=${audio?.let { "#${it.ordinal} ${it.id}/${it.language}" } ?: "default"}")
 
         return withContext(Dispatchers.Main) {
             suspendCancellableCoroutine { cont ->
@@ -161,6 +185,7 @@ class TsRemuxer(
                         // receiver can start on the first while the rest is still arriving.
                         InAppFragmentedMp4Muxer.Factory(FRAGMENT_MS),
                     )
+                    .apply { assetLoaderFactory(audio)?.let { setAssetLoaderFactory(it) } }
                     .addListener(object : Transformer.Listener {
                         override fun onCompleted(composition: Composition, result: ExportResult) {
                             val ok = runCatching { partial.renameTo(destination) }.getOrDefault(false)

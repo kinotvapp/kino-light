@@ -91,8 +91,19 @@ object RemuxPolicy {
      * for another. The rounding goes BACKWARDS on purpose: starting a few seconds early is
      * harmless, starting late skips content.
      */
-    fun keyFrom(originKey: String, fromMs: Long): String {
-        if (fromMs <= 0L) return originKey
+    fun keyFrom(originKey: String, fromMs: Long, audioOrdinal: Int? = null): String {
+        // The audio track goes INTO the key: a remux carries exactly one audio track, so the same
+        // title with another audio is another file. Placed before the `#from` part, which
+        // [fromInKey] reads from the end.
+        val base = if (audioOrdinal != null && audioOrdinal >= 0) "$originKey$AUDIO_MARK$audioOrdinal" else originKey
+        if (fromMs <= 0L) return base
+        return keyFromExact(base, fromMs)
+    }
+
+    /** Marks the audio-track part of a key (see [keyFrom]); never contains `#`. */
+    private const val AUDIO_MARK = "|audio="
+
+    private fun keyFromExact(originKey: String, fromMs: Long): String {
         // EXACT milliseconds, no rounding. Rounding here was a real bug: the keyframe is found to
         // the millisecond and then this filed it under the nearest 30 s, so the remux was clipped
         // 583 ms away from the keyframe and the tracks went back to starting at different instants

@@ -314,7 +314,13 @@ class DlnaController(
      * source that needed this detour (the renderer can't take its direct URL). Returns true if it
      * could start; on false, [lastError] says why.
      */
-    suspend fun setUrlAndPlay(device: DlnaDevice, archiveUrl: String, title: String): Boolean {
+    suspend fun setUrlAndPlay(
+        device: DlnaDevice,
+        archiveUrl: String,
+        title: String,
+        /** The audio the phone has on, for the remux to carry; null = the file's default. */
+        audio: com.arkiv.player.cast.CastAudioChoice? = null,
+    ): Boolean {
         // A file:// (a download) can't be proxied: OkHttp only speaks http(s), so the TV would get a
         // connection that closes with nothing, silently. Say so instead.
         if (!archiveUrl.startsWith("http", ignoreCase = true)) {
@@ -345,8 +351,10 @@ class DlnaController(
             // on-disk cache (see RemuxPolicy/TsRemuxer) -- a title already remuxed for the Chromecast
             // bar is reused here too, instead of lying about the container like this used to.
             val c = beginCast(device, kind = "vod-remux", mime = com.arkiv.player.playback.Container.MP4.mime, title = title, source = archiveUrl)
-            val key = com.arkiv.player.playback.RemuxPolicy.keyFrom(archiveUrl, 0L)
-            return when (val result = tsRemuxer.remux(archiveUrl, key)) {
+            // Keyed and remuxed with the phone's audio: a remux carries ONE audio track, and
+            // without this it was Transformer's pick, whatever the phone's menu said.
+            val key = com.arkiv.player.playback.RemuxPolicy.keyFrom(archiveUrl, 0L, audio?.ordinal)
+            return when (val result = tsRemuxer.remux(archiveUrl, key, audio)) {
                 is com.arkiv.player.playback.TsRemuxer.RemuxResult.Failed ->
                     failPreflight(c, "remux_failed", "No se pudo preparar el video para la TV", "reason=${result.reason}")
                 is com.arkiv.player.playback.TsRemuxer.RemuxResult.Done -> {

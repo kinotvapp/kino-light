@@ -27,6 +27,8 @@ import androidx.media3.common.TrackGroup
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import com.arkiv.player.AppGraph
+import com.arkiv.player.cast.AudioTrackRef
+import com.arkiv.player.cast.CastAudioChoice
 import com.arkiv.player.playback.LangPromotion
 import com.arkiv.player.playback.LangTokens
 import com.arkiv.player.playback.SubtitleDecision
@@ -88,12 +90,29 @@ internal class TracksState(
     // TrackGroups ExoPlayer detected, to select with setOverrideForType.
     private var exoAudioGroups: List<TrackGroup> = emptyList()
     private var exoSubGroups: List<TrackGroup> = emptyList()
+    // How many of [exoAudioGroups] are the container's own; the rest are a stream's side audio
+    // merged in after them (see [audioMenu]), which no cast can carry.
+    private var embeddedAudioCount = 0
 
     /** The preferred language was already applied for this playback. See [autoPickLanguageExo]. */
     private var alreadyAutoPickedExo = false
 
     /** Notices an audio-track fallback's rebuild under this playback. See [AudioFallbackRepick]. */
     private val fallbackRepick = AudioFallbackRepick()
+
+    /**
+     * The audio on the phone, in the shape a cast remux can carry, or null when there is none it
+     * could: no tracks yet, or the one on is a stream's side audio (a separate file merged in by
+     * `StreamExoPlayer`), which is not inside the transport stream the remux reads.
+     *
+     * Reads [curAudio] and [audioTracks], both snapshot state, so a composable reading this
+     * recomposes when the person picks another audio -- that is what re-remuxes a cast.
+     */
+    val castAudioChoice: CastAudioChoice?
+        get() = castAudioChoiceOf(curAudio, audioTracks.size, embeddedAudioCount) { i ->
+            exoAudioGroups.getOrNull(i)?.takeIf { it.length > 0 }?.getFormat(0)
+                ?.let { AudioTrackRef(it.id, it.language, it.label) }
+        }
 
     /** An embedded subtitle is on. Read by the controls' CC icon. */
     var subsOn by mutableStateOf(false)
@@ -139,6 +158,7 @@ internal class TracksState(
     private fun forgetTracks() {
         exoAudioGroups = emptyList()
         exoSubGroups = emptyList()
+        embeddedAudioCount = 0
         audioTracks = emptyList()
         spuTracks = emptyList()
         curAudio = -1
@@ -188,6 +208,7 @@ internal class TracksState(
         val subGroups   = tracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }
         exoAudioGroups = audioGroups.map { it.mediaTrackGroup }
         exoSubGroups   = subGroups.map { it.mediaTrackGroup }
+        embeddedAudioCount = (audioGroups.size - pluginAudioTracks.size).coerceAtLeast(0)
 
         // Use the index as the id (for setOverrideForType).
         audioTracks = audioMenu(
@@ -414,6 +435,22 @@ internal fun rememberTracksState(local: Player?, graph: AppGraph, episodeId: Str
 }
 
 /**
+ * [TracksState.castAudioChoice], pure: the selected audio [selected] as a [CastAudioChoice], when it
+ * is one of the container's own [embeddedCount] tracks (of [menuSize] in the menu) and [formatOf]
+ * knows it.
+ */
+internal fun castAudioChoiceOf(
+    selected: Int,
+    menuSize: Int,
+    embeddedCount: Int,
+    formatOf: (Int) -> AudioTrackRef?,
+): CastAudioChoice? {
+    if (selected < 0 || selected >= menuSize || selected >= embeddedCount) return null
+    val ref = formatOf(selected) ?: return null
+    return CastAudioChoice(selected, ref.id, ref.language, ref.label)
+}
+
+/**
  * Whether the local player's tracks describe the episode this screen opened.
  *
  * The service player keeps playing the previous download while a new screen resolves its own item
@@ -552,6 +589,8 @@ internal fun AudioAndSubtitlesDialog(
     state: TracksState,
     isMagis: Boolean,
     declaredLanguages: List<String>,
+    /** While casting: what the choices here do on the TV (see [castTracksNote]); null otherwise. */
+    castNote: String? = null,
 ) {
     if (!state.pickerOpen) return
     // Only turns off the flag: focus is handled by the screen's LaunchedEffect(pickerOpen), the
@@ -562,6 +601,9 @@ internal fun AudioAndSubtitlesDialog(
         title = { Text("Audio y subtítulos") },
         text = {
             Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
+                if (castNote != null) {
+                    Text(castNote, color = ArkivTextSecondary, modifier = Modifier.padding(bottom = 4.dp))
+                }
                 // AUDIO (dual releases: Latin American / English).
                 if (state.audioTracks.realTracks().size > 1) {
                     SectionTitle("Audio", first = true)
@@ -610,4 +652,21 @@ private fun SectionTitle(text: String, first: Boolean = false) {
         color = ArkivRed,
         modifier = Modifier.padding(top = if (first) 8.dp else 12.dp, bottom = 2.dp),
     )
+}
+
+/**
+ * The line the audio and subtitles menu shows while casting, so the person knows what a choice does
+ * on the TV and not only on the phone. Null when not casting.
+ *
+ * The TV never gets subtitles: the cast carries no text tracks (a remux writes none, and the
+ * request sent to the receiver lists none).
+ */
+internal fun castTracksNote(casting: Boolean, route: com.arkiv.player.cast.CastAudioRoute): String? = when {
+    !casting -> null
+    route == com.arkiv.player.cast.CastAudioRoute.REMUX ->
+        "En la TV: si cambias el audio, se prepara de nuevo y el video vuelve a empezar desde el inicio. " +
+            "Los subtítulos solo se ven en el teléfono."
+    else ->
+        "En la TV: este video no permite cambiar el audio, suena el que trae por defecto. " +
+            "Los subtítulos solo se ven en el teléfono."
 }

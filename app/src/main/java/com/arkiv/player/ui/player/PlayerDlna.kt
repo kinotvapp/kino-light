@@ -169,6 +169,11 @@ internal suspend fun sendToRenderer(
     ep: PlayerData?,
     lanIp: () -> String?,
     liveHlsProxy: LiveHlsProxy,
+    /**
+     * The audio the phone has on. Only a remuxed MPEG-TS can honour it (the remux carries exactly
+     * one audio track); a renderer handed the file as-is plays its own default.
+     */
+    audio: com.arkiv.player.cast.CastAudioChoice? = null,
 ): Boolean = when (ep?.kind) {
     null -> {
         DlnaLog.w("sendToRenderer: nothing is playing (no item)")
@@ -208,7 +213,7 @@ internal suspend fun sendToRenderer(
             "sendToRenderer: kind=${ep.kind} title='${ep.title.take(40)}' chose=${if (source == ep.mediaUrl) "mediaUrl" else "castUrl"} " +
                 "source=${DlnaXml.safeUrl(source)} (castUrl=${DlnaXml.safeUrl(ep.castUrl)})",
         )
-        withContext(Dispatchers.IO) { dlna.setUrlAndPlay(device, source, ep.title) }
+        withContext(Dispatchers.IO) { dlna.setUrlAndPlay(device, source, ep.title, audio) }
     }
 }
 

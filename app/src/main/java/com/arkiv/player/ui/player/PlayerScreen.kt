@@ -584,14 +584,22 @@ private fun PlayerContent(
         remember { mutableStateMapOf() }
 
     /**
-     * Which episode is on the receiver AS A REMUX, as opposed to as HLS segments.
+     * Which REMUX is on the receiver -- its key (`RemuxPolicy.keyFrom`, which names the title, where
+     * it starts and which audio track it carries) -- or null when what the receiver has is not a
+     * remux (HLS segments, an mp4 as it is, a live channel). Set by [castRequestFor], the one place
+     * that decides what goes to the TV.
      *
      * Separate from [castToReceiver] because they answer different questions, and conflating
      * them broke the upgrade: the HLS cast goes out first and marks the episode as cast, so the
      * loop waiting for the remux saw "already cast" and gave up -- the TV stayed on the stuttering
-     * segments forever while a perfectly good mp4 finished behind it.
+     * segments forever while a perfectly good mp4 finished behind it. It is the KEY and not the
+     * episode because the same episode with another audio track is another remux: keyed by episode,
+     * a new audio found "already cast" and the TV kept the old one.
      */
     var castAsRemux by remember { mutableStateOf<String?>(null) }
+
+    /** Key of the remux this screen last asked for while casting; see the remux effect. */
+    var remuxInFlight by remember { mutableStateOf<String?>(null) }
 
     // The player we're driving right now: the Chromecast's while there's a session, the local one
     // if not. Both implement Player, so the controls don't need to know which one it is.
@@ -723,6 +731,25 @@ private fun PlayerContent(
     // local (service) player through `controller`. The whole block lives in `PlayerTracks.kt`; from
     // here only `hasSubtitle` is checked, for the CC icon.
     val tracksState = rememberTracksState(controller, graph, episodeId)
+
+    /**
+     * The key the remux of a Magis item is filed under: its CDN url, where it starts, and the audio
+     * track the phone has on -- a remux carries exactly ONE audio track, so each audio is its own
+     * file (see [com.arkiv.player.cast.CastAudioChoice]). Null without a CDN url. Every lookup of a
+     * Magis remux goes through here, so the key always matches the one it was filed under.
+     */
+    fun magisRemuxKey(item: PlayerData): String? =
+        item.castUrl?.takeIf { it.isNotBlank() }?.let { cdn ->
+            com.arkiv.player.playback.RemuxPolicy.keyFrom(
+                cdn,
+                remuxStartPoint[item.episodeId] ?: 0L,
+                tracksState.castAudioChoice?.ordinal,
+            )
+        }
+
+    /** [magisRemuxKey] for a downloaded file: keyed by its path, always from the start. */
+    fun localRemuxKey(item: PlayerData): String =
+        com.arkiv.player.playback.RemuxPolicy.keyFrom(item.mediaUrl, 0L, tracksState.castAudioChoice?.ordinal)
 
 
     // Night mode: level of the black veil over the video, 0..DIM_MAX_LEVEL. Persisted in
@@ -965,12 +992,7 @@ private fun PlayerContent(
                 // The same key the remux was filed under: the one that says where it begins.
                 // The SAME key the remux was filed under: the keyframe-aligned point, not the
                 // raw position, which drifts as the local player keeps its own time.
-                graph.tsRemuxer.inProgress(
-                    com.arkiv.player.playback.RemuxPolicy.keyFrom(
-                        cdn,
-                        remuxStartPoint[item.episodeId] ?: 0L,
-                    ),
-                )?.let { (file, complete) ->
+                graph.tsRemuxer.inProgress(magisRemuxKey(item) ?: cdn)?.let { (file, complete) ->
                     // ALWAYS chunked, finished or not. Measured 2026-09-12, and it is the
                     // difference between playing and not: served while it grew -- chunked, no
                     // Content-Length, no ranges -- the receiver had nothing to do but play from
@@ -1029,7 +1051,7 @@ private fun PlayerContent(
         // original as HLS segments. The remux itself is kicked off by the effect below -- this
         // function stays synchronous because every cast path calls it.
         val remuxLocal = if (item.kind == SourceKind.LOCAL) {
-            graph.tsRemuxer.alreadyDone(item.mediaUrl)?.let {
+            graph.tsRemuxer.alreadyDone(localRemuxKey(item))?.let {
                 graph.localFileServer.growing = true
                 graph.localFileServer.serve(it)
             }
@@ -1153,6 +1175,14 @@ private fun PlayerContent(
             "ArkivCast",
             "castRequestFor → ${if (request == null) "NULL" else "uri=${request.uri.take(120)} mime=${request.mimeType}"}",
         )
+        // Every caller hands a non-null request straight to the receiver, so this is what it has.
+        if (request != null) {
+            castAsRemux = when {
+                remuxMagis != null -> magisRemuxKey(item)
+                remuxLocal != null -> localRemuxKey(item)
+                else -> null
+            }
+        }
         return request
     }
 
@@ -1215,8 +1245,12 @@ private fun PlayerContent(
      * be finalised (the index lands at the end), which is the wait a fragmented MP4 exists to
      * avoid; that path is separate.
      */
-    LaunchedEffect(casting, d?.episodeId, d?.kind, magisItem?.episodeId) {
+    // The audio the phone has on, as the remux sees it: a key of the effect below, so picking
+    // another audio while casting remuxes again with it and reloads the receiver.
+    val castAudioOrdinal = tracksState.castAudioChoice?.ordinal
+    LaunchedEffect(casting, d?.episodeId, d?.kind, magisItem?.episodeId, castAudioOrdinal) {
         if (!casting || castSession == null) return@LaunchedEffect
+        val audio = tracksState.castAudioChoice
         // Magis travels in `magisItem`, everything else in the playlist. `castMagis` is that item in
         // its cast shape (an official-Xuper plugin title included), null for any other plugin.
         val item = castMagis?.takeIf { it.kind == SourceKind.MAGIS } ?: d ?: return@LaunchedEffect
@@ -1231,7 +1265,7 @@ private fun PlayerContent(
                 if (!file.exists()) return@LaunchedEffect
                 Triple(
                     item.mediaUrl,
-                    item.mediaUrl,
+                    localRemuxKey(item),
                     runCatching { com.arkiv.player.playback.VideoContainer.ofFile(file).mime }.getOrNull(),
                 )
             }
@@ -1274,7 +1308,7 @@ private fun PlayerContent(
                 }
                 Triple(
                     item.mediaUrl,
-                    com.arkiv.player.playback.RemuxPolicy.keyFrom(cdn, aligned),
+                    com.arkiv.player.playback.RemuxPolicy.keyFrom(cdn, aligned, audio?.ordinal),
                     com.arkiv.player.cast.CastRequestBuilder.mimeForUrl(cdn),
                 )
             }
@@ -1303,7 +1337,29 @@ private fun PlayerContent(
             android.util.Log.i("ArkivCast", "${item.kind} is $mime, no remux needed")
             return@LaunchedEffect
         }
-        if (graph.tsRemuxer.alreadyDone(key) != null) return@LaunchedEffect
+        // Another audio than the one on the TV: the export for the previous one stops (it covers
+        // the whole title, so leaving it running pulls the rest of it down for nothing). What it
+        // wrote is kept, so switching back is immediate.
+        remuxInFlight?.takeIf { it != key }?.let { previous ->
+            android.util.Log.w("ArkivCast", "audio changed while casting → stopping the remux of the previous audio")
+            graph.tsRemuxer.stop(previous)
+        }
+        remuxInFlight = key
+        if (graph.tsRemuxer.alreadyDone(key) != null) {
+            // Already on disk. Nothing to do on a first cast -- the cast effect's `castRequestFor`
+            // picks it up -- but when the receiver already has THIS title as something else (another
+            // audio's remux, or the segments a download starts on) it has to be reloaded with this
+            // one, or the TV keeps the audio the phone just moved away from.
+            if (castToReceiver == item.episodeId && castAsRemux != key) {
+                val pl = PlaylistData(listOf(item), 0, 0L, requested = item.episodeId)
+                castRequestFor(pl, 0, 0L)?.let {
+                    android.util.Log.w("ArkivCast", "audio changed while casting → reloading the receiver with the remux already on disk")
+                    castSession.setMedia(it)
+                    castToReceiver = item.episodeId
+                }
+            }
+            return@LaunchedEffect
+        }
 
         // One growing fragmented mp4, announced as LIVE.
         //
@@ -1323,7 +1379,10 @@ private fun PlayerContent(
                 repeat(600) {
                     delay(1000)
                     if (!casting || castSession == null) return@launch
-                    if (castAsRemux == item.episodeId) return@launch
+                    if (castAsRemux == key) return@launch
+                    // The person picked another audio meanwhile: this remux is no longer wanted,
+                    // and casting it would put the audio they moved away from on the TV.
+                    if (remuxInFlight != key) return@launch
                     val partial = graph.tsRemuxer.inProgress(key) ?: return@repeat
                     // 40 MB, not 12. Measured 2026-09-12: casting at 14 MB stalled seven times
                     // in the first forty-five seconds and then never again -- the remux is still
@@ -1340,13 +1399,12 @@ private fun PlayerContent(
                     )
                     castSession.setMedia(retryReq)
                     castToReceiver = item.episodeId
-                    castAsRemux = item.episodeId
                     return@launch
                 }
             }
         }
 
-        val res = graph.tsRemuxer.remux(input, key)
+        val res = graph.tsRemuxer.remux(input, key, audio)
         if (res !is com.arkiv.player.playback.TsRemuxer.RemuxResult.Done) {
             // Remember the failure so this title stops waiting for a remux that will not come, and
             // fall back to the segments NOW. For Magis that fallback is the only thing standing
@@ -1365,6 +1423,8 @@ private fun PlayerContent(
         }
         // Still casting the same thing? The export takes a while and the person may have moved on.
         if (!casting || castSession == null) return@LaunchedEffect
+        // Or picked another audio, whose own run of this effect casts that one.
+        if (remuxInFlight != key) return@LaunchedEffect
         val from = runCatching { contentPositionMs() }.getOrDefault(0L).coerceAtLeast(0L)
         // Magis has no playlist -- same synthetic one-item PlaylistData the rest of this screen
         // uses for it, so castRequestFor stays the single place that decides what goes to the TV.
@@ -1378,7 +1438,6 @@ private fun PlayerContent(
         android.util.Log.w("ArkivCast", "remux ready → re-casting as mp4 from ${from}ms")
         castSession.setMedia(req)
         castToReceiver = item.episodeId
-        castAsRemux = item.episodeId
     }
 
     /**
@@ -1391,7 +1450,9 @@ private fun PlayerContent(
      */
     val remuxProgress by graph.tsRemuxer.progress.collectAsStateWithLifecycle()
     val preparingForTv = casting &&
-        castMagis?.let { magisIsTs(it) && graph.tsRemuxer.alreadyDone(it.castUrl.orEmpty()) == null } == true
+        castMagis?.let { mg ->
+            magisIsTs(mg) && magisRemuxKey(mg)?.let { key -> key !in remuxFailed && graph.tsRemuxer.alreadyDone(key) == null } == true
+        } == true
     if (preparingForTv) {
         Box(
             Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.75f)),
@@ -2238,10 +2299,12 @@ private fun PlayerContent(
             // connections to the origin, a broken pipe, the export stalled and the receiver frozen
             // at `state=2`. Reading it once, then casting the result, is the whole point of
             // waiting. The effect below does the preparing; this one stays quiet until it lands.
+            val mgKey = mg?.let { magisRemuxKey(it) }
             val waitingForRemux = mg != null &&
                 magisIsTs(mg) &&
-                mg.castUrl.orEmpty() !in remuxFailed &&
-                graph.tsRemuxer.alreadyDone(mg.castUrl.orEmpty()) == null
+                mgKey != null &&
+                mgKey !in remuxFailed &&
+                graph.tsRemuxer.alreadyDone(mgKey) == null
             if (waitingForRemux) {
                 android.util.Log.w("ArkivCast", "magis ts: preparing the mp4 before casting, nothing sent yet")
             }
@@ -2288,7 +2351,9 @@ private fun PlayerContent(
             // Stop converting what nobody is going to watch. The remux covers the whole title, so
             // a cast that ends after ten minutes would otherwise keep pulling the other hour and
             // fifty down the person's connection.
-            castMagis?.castUrl?.takeIf { it.isNotBlank() }?.let { graph.tsRemuxer.stop(it) }
+            castMagis?.let { magisRemuxKey(it) }?.let { graph.tsRemuxer.stop(it) }
+            remuxInFlight?.let { graph.tsRemuxer.stop(it) }
+            remuxInFlight = null
             // If the session ended because the user pressed "stop" (the bar's button), it must NOT
             // resume here: they asked for silence, and the local one was already left paused since
             // casting started (branch above) — resuming it would be exactly the opposite of what
@@ -2585,8 +2650,63 @@ private fun PlayerContent(
      * and trying to skip forward made it worse".
      */
     fun castIsLive(): Boolean =
-        casting && magisItem != null && magisIsTs(magisItem!!) &&
-            magisItem!!.castUrl?.let { graph.tsRemuxer.alreadyDone(it) == null } == true
+        casting && castMagis?.let { mg ->
+            magisIsTs(mg) && magisRemuxKey(mg)?.let { graph.tsRemuxer.alreadyDone(it) == null } == true
+        } == true
+
+    /**
+     * How what is being cast gets its audio, and so whether the phone's audio menu reaches the TV
+     * (see [com.arkiv.player.cast.CastAudioRoute]): only a title remuxed on this phone -- a Magis or
+     * downloaded MPEG-TS whose remux has not failed -- can change audio. Same item precedence as the
+     * remux effect: the Magis/Xuper item first, then the playlist.
+     */
+    fun castAudioRoute(): com.arkiv.player.cast.CastAudioRoute {
+        val remux = com.arkiv.player.cast.CastAudioRoute.REMUX
+        val fixed = com.arkiv.player.cast.CastAudioRoute.FIXED
+        val mg = castMagis?.takeIf { it.kind == SourceKind.MAGIS }
+        if (mg != null) {
+            val key = magisRemuxKey(mg)
+            return if (magisIsTs(mg) && key != null && key !in remuxFailed) remux else fixed
+        }
+        if (liveItem != null) return fixed
+        val item = playlistRef.value?.items?.getOrNull(currentIndex) ?: return fixed
+        if (item.kind != SourceKind.LOCAL) return fixed
+        val mime = runCatching {
+            com.arkiv.player.playback.VideoContainer.ofFile(java.io.File(item.mediaUrl.removePrefix("file://"))).mime
+        }.getOrNull()
+        return if (com.arkiv.player.playback.RemuxPolicy.needsRemux(mime) && localRemuxKey(item) !in remuxFailed) remux else fixed
+    }
+
+    /**
+     * Says what picking another audio while casting does on the TV. The work itself happens in the
+     * remux effect (the audio is one of its keys); this only tells the person, because the answer
+     * is not obvious: a remuxed title starts over from the beginning with the new audio (a remux
+     * has no index to seek by, see `CastAudio.reloadStartMs`), and anything else cannot change at all.
+     *
+     * The first audio seen in a cast is only recorded: the tracks arriving after the cast began is
+     * not a change the person made.
+     */
+    var lastCastAudio by remember { mutableStateOf<Int?>(null) }
+    LaunchedEffect(casting, castAudioOrdinal) {
+        if (!casting) {
+            lastCastAudio = null
+            return@LaunchedEffect
+        }
+        val previous = lastCastAudio
+        lastCastAudio = castAudioOrdinal
+        if (previous == null) return@LaunchedEffect
+        val message = when (
+            com.arkiv.player.cast.CastAudio.onChoiceChanged(casting, castAudioRoute(), previous, castAudioOrdinal)
+        ) {
+            com.arkiv.player.cast.CastAudioSwitch.REMUX_AND_RELOAD ->
+                "Preparando el nuevo audio para la TV: el video va a empezar desde el inicio"
+            com.arkiv.player.cast.CastAudioSwitch.PHONE_ONLY ->
+                "El audio cambió solo en el teléfono: en la TV este video no permite cambiarlo"
+            com.arkiv.player.cast.CastAudioSwitch.NONE -> null
+        }
+        android.util.Log.w("ArkivCast", "audio while casting: #$previous → #$castAudioOrdinal · ${message ?: "nothing to do"}")
+        message?.let { android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_LONG).show() }
+    }
 
     fun seekTo(targetMs: Long) {
         if (castIsLive()) {
@@ -4231,7 +4351,7 @@ private fun PlayerContent(
             ?: liveItem
         controller.pause()
         scope.launch {
-            val ok = sendToRenderer(dlna, device, ep, { graph.lanIp() }, graph.liveHlsProxy)
+            val ok = sendToRenderer(dlna, device, ep, { graph.lanIp() }, graph.liveHlsProxy, tracksState.castAudioChoice)
             if (ok) {
                 dlnaState.markActive(device)
             } else {
@@ -4253,6 +4373,8 @@ private fun PlayerContent(
         state = tracksState,
         isMagis = PlayerSource.kindFor(episodeId) == SourceKind.MAGIS,
         declaredLanguages = webExtras?.subtitles?.map { it.lang }.orEmpty(),
+        // Only while the menu is open and casting: the route may read a downloaded file's header.
+        castNote = if (casting && tracksState.pickerOpen) castTracksNote(true, castAudioRoute()) else null,
     )
 }
 
