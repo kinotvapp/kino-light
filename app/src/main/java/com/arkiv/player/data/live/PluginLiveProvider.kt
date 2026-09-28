@@ -7,6 +7,7 @@ import com.arkiv.player.data.gateway.LiveChannel
 import com.arkiv.player.data.gateway.LiveChannelKeys
 import com.arkiv.player.data.gateway.LiveProgram
 import com.arkiv.player.data.gateway.liveCode
+import com.arkiv.player.data.plugin.BackgroundPluginCall
 import com.arkiv.player.data.plugin.InstalledPlugin
 import com.arkiv.player.data.plugin.PluginCaller
 import com.arkiv.player.data.plugin.PluginCalls
@@ -20,6 +21,11 @@ import com.arkiv.player.data.plugin.PluginOutput
 import com.arkiv.player.data.plugin.PluginRef
 import com.arkiv.player.playback.PluginLiveChannel
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
@@ -38,12 +44,18 @@ import org.json.JSONObject
  * EPG declarations in `liveCategories`, a stream's side files -- against the strict `plugin.hosts`.
  *
  * Categories and channel lists are kept [LIST_TTL_MS] in memory and the guide [GUIDE_TTL_MS] per
- * channel. Low-end TVs must not pay for a plugin call on every screen. A failing `guide` (absent,
+ * channel. Low-end TVs must not pay for a plugin call on every screen, and one instance serves
+ * every screen at once (Home row, TV drawer, the tab): a cold listing asked twice at the same
+ * time is ONE plugin call whose result (or failure) both get; a failure is never cached. An
+ * inline stream lives exactly as long as the channel list it came in. A failing `guide` (absent,
  * throwing, timing out) is not asked again for [GUIDE_TTL_MS]: the guide is optional and channels
- * must keep listing. Paging stops after [PluginLiveContract.MAX_PAGES_PER_CATEGORY] pages, on a
- * repeated cursor or on a page with nothing new. One instance lives as long as the plugin's
- * `changeKey()` (see `LiveCatalog`). A channel's wrapped ref is only ever kept here and in the
- * Room channel cache, never in favourites, recents or sync.
+ * must keep listing. Guide calls are background calls ([BackgroundPluginCall]): their timeouts
+ * never mark the whole plugin "No responde". One guide pass asks at most
+ * [MAX_GUIDE_CHUNKS_PER_PASS] chunks; the rest come back as "ask later". Paging stops after
+ * [PluginLiveContract.MAX_PAGES_PER_CATEGORY] pages, on a repeated cursor or on a page with
+ * nothing new. One instance lives as long as the plugin's `changeKey()` (see `LiveCatalog`). A
+ * channel's wrapped ref is only ever kept here and in the Room channel cache, never in
+ * favourites, recents or sync.
  */
 class PluginLiveProvider(
     private val plugin: InstalledPlugin,
@@ -60,35 +72,63 @@ class PluginLiveProvider(
     override val name: String = plugin.manifest.name
     override val color: Long = PluginColors.parse(plugin.manifest.color)
 
+    /** One category's listing: its channels and their inline streams by code, gone together at [expiresAt]. */
+    private class ChannelList(val expiresAt: Long, val channels: List<LiveChannel>, val direct: Map<String, GatewayPlayable>)
+
     private val lock = Mutex()
     /** The whole `liveCategories` answer; its playlists are Task 8's. */
     private var catalogCache: Pair<Long, PluginLiveCatalog>? = null
-    private val channelsCache = HashMap<String, Pair<Long, List<LiveChannel>>>()
-    /** Inline streams by channel code, as last listed. */
-    private val direct = HashMap<String, GatewayPlayable>()
+    private val channelsCache = HashMap<String, ChannelList>()
     private val guideCache = HashMap<String, Pair<Long, List<LiveProgram>>>()
     private var guideOffUntil = 0L
+    /** Listings being fetched, by key: a second asker waits for the same answer. */
+    private val inFlight = HashMap<String, CompletableDeferred<Any?>>()
+    /** Channel codes a guide pass is asking for right now, and that pass's completion. */
+    private val guideInFlight = HashMap<String, CompletableDeferred<Unit>>()
 
     override fun initialCategory(): String? = catalogCache?.second?.categories?.firstOrNull()?.id
 
     override fun hasGuide(): Boolean = "guide" in plugin.record.exports
 
+    /**
+     * [includeAdults] is unused: a plugin's own adult categories and channels never reach here
+     * (`PluginOutput` drops every `adult` entry), so there is nothing behind the 18+ lock to show.
+     */
     override suspend fun categories(includeAdults: Boolean): List<ProviderCategory> =
         catalog().categories.map { ProviderCategory(it.id, it.title) }
 
     private suspend fun catalog(): PluginLiveCatalog {
-        lock.withLock { catalogCache?.takeIf { clock() < it.first }?.let { return it.second } }
-        val out = PluginCalls.callOrThrow(caller, pluginId, name, "liveCategories", "null", PluginLiveContract.CATEGORIES_TIMEOUT_MS)
-        // Strict hosts: a declared playlist and its guide are downloaded by the app, never under "any".
-        val catalog = PluginOutput.liveCategories(out, plugin.hosts) { log("[$pluginId] $it") }
-        if (catalog.categories.isNotEmpty() || catalog.playlists.isNotEmpty()) {
-            lock.withLock { catalogCache = (clock() + LIST_TTL_MS) to catalog }
+        lock.withLock { freshCatalog()?.let { return it } }
+        return shared(CATALOG_KEY) {
+            lock.withLock { freshCatalog()?.let { return@shared it } }
+            val out = PluginCalls.callOrThrow(caller, pluginId, name, "liveCategories", "null", PluginLiveContract.CATEGORIES_TIMEOUT_MS)
+            // Strict hosts: a declared playlist and its guide are downloaded by the app, never under "any".
+            val catalog = PluginOutput.liveCategories(out, plugin.hosts) { log("[$pluginId] $it") }
+            if (catalog.categories.isNotEmpty() || catalog.playlists.isNotEmpty()) {
+                lock.withLock { catalogCache = (clock() + LIST_TTL_MS) to catalog }
+            }
+            catalog
         }
-        return catalog
     }
 
+    private fun freshCatalog(): PluginLiveCatalog? = catalogCache?.takeIf { clock() < it.first }?.second
+
     override suspend fun channels(categoryId: String, force: Boolean): List<LiveChannel> {
-        if (!force) lock.withLock { channelsCache[categoryId]?.takeIf { clock() < it.first }?.let { return it.second } }
+        if (!force) lock.withLock { freshList(categoryId)?.let { return it.channels } }
+        return shared(CHANNELS_KEY + categoryId) {
+            if (!force) lock.withLock { freshList(categoryId)?.let { return@shared it.channels } }
+            fetchChannels(categoryId)
+        }
+    }
+
+    private fun freshList(categoryId: String): ChannelList? {
+        val entry = channelsCache[categoryId] ?: return null
+        if (clock() < entry.expiresAt) return entry
+        channelsCache.remove(categoryId)
+        return null
+    }
+
+    private suspend fun fetchChannels(categoryId: String): List<LiveChannel> {
         val items = ArrayList<PluginLiveChannelItem>()
         val seenIds = HashSet<String>()
         val seenCursors = HashSet<String>()
@@ -106,40 +146,105 @@ class PluginLiveProvider(
             cursor = next
         }
         val all = items.map { it.toChannel() }
+        val direct = items.mapNotNull { item -> item.stream?.let { item.id to PluginContentSource.livePlayable(it) } }.toMap()
         lock.withLock {
-            items.forEach { item ->
-                val stream = item.stream
-                if (stream != null) direct[item.id] = PluginContentSource.livePlayable(stream) else direct.remove(item.id)
-            }
-            if (all.isNotEmpty()) channelsCache[categoryId] = (clock() + LIST_TTL_MS) to all
+            if (all.isNotEmpty()) channelsCache[categoryId] = ChannelList(clock() + LIST_TTL_MS, all, direct)
+            else channelsCache.remove(categoryId)
         }
         return all
+    }
+
+    /**
+     * Runs [fetch] once for everyone asking [key] at the same time: the first asker fetches, the
+     * others wait for its value or its failure. Nothing is kept once it ends, so the next call after
+     * a failure asks again. A cancelled first asker hands the fetch to a waiter still interested.
+     */
+    @Suppress("UNCHECKED_CAST")
+    private suspend fun <T> shared(key: String, fetch: suspend () -> T): T {
+        while (true) {
+            val (flight, owner) = lock.withLock {
+                inFlight[key]?.let { it to false } ?: (CompletableDeferred<Any?>().also { inFlight[key] = it } to true)
+            }
+            if (!owner) {
+                try {
+                    return flight.await() as T
+                } catch (e: CancellationException) {
+                    // The fetcher was cancelled, not us (else ensureActive throws): take it over.
+                    currentCoroutineContext().ensureActive()
+                    lock.withLock { if (inFlight[key] === flight) inFlight.remove(key) }
+                    continue
+                }
+            }
+            try {
+                return fetch().also { flight.complete(it) }
+            } catch (e: CancellationException) {
+                flight.cancel()
+                throw e
+            } catch (e: Throwable) {
+                flight.completeExceptionally(e)
+                throw e
+            } finally {
+                withContext(NonCancellable) { lock.withLock { if (inFlight[key] === flight) inFlight.remove(key) } }
+            }
+        }
     }
 
     override suspend fun guide(channels: List<LiveChannel>): Pair<Map<String, List<LiveProgram>>, List<String>> {
         val now = clock()
         val out = HashMap<String, List<LiveProgram>>()
-        val ask = ArrayList<LiveChannel>()
+        val ask: List<LiveChannel>
+        val waiting = ArrayList<Pair<LiveChannel, CompletableDeferred<Unit>>>()
+        val later: List<String>
+        val pass = CompletableDeferred<Unit>()
         lock.withLock {
+            val missing = ArrayList<LiveChannel>()
             channels.filter { it.provider == id }.distinctBy { it.code }.forEach { c ->
                 val hit = guideCache[c.code]?.takeIf { now < it.first }
-                if (hit != null) out[c.liveCode] = hit.second else ask += c
+                val running = guideInFlight[c.code]
+                when {
+                    hit != null -> out[c.liveCode] = hit.second
+                    running != null -> waiting += c to running
+                    else -> missing += c
+                }
             }
             if (now < guideOffUntil) return out to emptyList()
+            val cap = MAX_GUIDE_CHUNKS_PER_PASS * PluginLiveContract.MAX_GUIDE_CHANNELS
+            ask = missing.take(cap)
+            later = missing.drop(cap).map { it.liveCode }
+            ask.forEach { guideInFlight[it.code] = pass }
         }
+        try {
+            askGuide(ask, now, out)
+        } finally {
+            pass.complete(Unit)
+            withContext(NonCancellable) { lock.withLock { ask.forEach { if (guideInFlight[it.code] === pass) guideInFlight.remove(it.code) } } }
+        }
+        // Another pass was already asking for these: take what it got (nothing, if it failed).
+        waiting.map { it.second }.distinct().forEach { it.await() }
+        lock.withLock {
+            waiting.forEach { (c, _) -> guideCache[c.code]?.takeIf { now < it.first }?.let { out[c.liveCode] = it.second } }
+        }
+        // Beyond this pass's cap: worth LiveViewModel's delayed retry. What the plugin answered is final.
+        return out to later
+    }
+
+    private suspend fun askGuide(ask: List<LiveChannel>, now: Long, out: MutableMap<String, List<LiveProgram>>) {
         val from = now - GUIDE_BEHIND_MS
         val to = from + PluginLiveContract.MAX_GUIDE_WINDOW_MS
         for (chunk in ask.chunked(PluginLiveContract.MAX_GUIDE_CHANNELS)) {
             val ids = chunk.map { it.code }
             val arg = JSONObject().put("channelIds", JSONArray(ids)).put("from", from).put("to", to).toString()
             val answer = try {
-                PluginCalls.callOrThrow(caller, pluginId, name, "guide", arg, PluginLiveContract.GUIDE_TIMEOUT_MS)
+                // Background: the guide is optional, its timeouts must not switch the plugin off for search, Home and play.
+                withContext(BackgroundPluginCall) {
+                    PluginCalls.callOrThrow(caller, pluginId, name, "guide", arg, PluginLiveContract.GUIDE_TIMEOUT_MS)
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 log("[$pluginId] guide unavailable for ${GUIDE_TTL_MS / 60_000} min: ${e.message}")
                 lock.withLock { guideOffUntil = now + GUIDE_TTL_MS }
-                break
+                return
             }
             val byId = PluginOutput.guide(answer, ids.toSet(), from, to) { log("[$pluginId] $it") }.groupBy { it.channelId }
             lock.withLock {
@@ -150,8 +255,6 @@ class PluginLiveProvider(
                 }
             }
         }
-        // A plugin answers what it has: nothing is worth LiveViewModel's delayed retry (that exists for Xuper).
-        return out to emptyList()
     }
 
     override suspend fun open(channel: LiveChannel): LiveOpening {
@@ -184,10 +287,17 @@ class PluginLiveProvider(
         )
     }
 
-    private suspend fun directOf(code: String): GatewayPlayable? = lock.withLock { direct[code] }
+    private suspend fun directOf(code: String): GatewayPlayable? = lock.withLock { liveLists().firstNotNullOfOrNull { it.direct[code] } }
 
     private suspend fun inMemory(code: String): LiveChannel? = lock.withLock {
-        channelsCache.values.firstNotNullOfOrNull { (_, list) -> list.firstOrNull { it.code == code } }
+        liveLists().firstNotNullOfOrNull { list -> list.channels.firstOrNull { it.code == code } }
+    }
+
+    /** The channel lists still within their TTL; expired ones (and their inline streams) are dropped. Under [lock]. */
+    private fun liveLists(): Collection<ChannelList> {
+        val now = clock()
+        channelsCache.values.removeAll { now >= it.expiresAt }
+        return channelsCache.values
     }
 
     /** Last resort for a channel known only by code: list at most [MAX_RESCAN_CATEGORIES] categories. */
@@ -211,5 +321,9 @@ class PluginLiveProvider(
         /** The guide window starts this far back, so the programme on air now is in it. */
         const val GUIDE_BEHIND_MS = 2 * 60 * 60 * 1000L
         const val MAX_RESCAN_CATEGORIES = 10
+        /** Chunks of [PluginLiveContract.MAX_GUIDE_CHANNELS] one guide pass asks at most (200 channels). */
+        const val MAX_GUIDE_CHUNKS_PER_PASS = 4
+        private const val CATALOG_KEY = "catalog"
+        private const val CHANNELS_KEY = "channels:"
     }
 }

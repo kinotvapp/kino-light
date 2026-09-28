@@ -14,7 +14,15 @@ import com.arkiv.player.data.plugin.PluginLiveContract
 import com.arkiv.player.data.plugin.PluginManifest
 import com.arkiv.player.data.plugin.PluginRef
 import com.arkiv.player.data.plugin.PluginSetupRequiredException
+import com.arkiv.player.data.plugin.PluginRuntimePool
+import com.arkiv.player.data.plugin.PluginTimeoutException
+import com.arkiv.player.data.plugin.ScriptRuntime
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.yield
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
@@ -29,10 +37,15 @@ class PluginLiveProviderTest {
     )
     private val provider = LiveChannelKeys.pluginProvider("demo")
 
-    private class Caller(val answer: (function: String, arg: String) -> String) : PluginCaller {
+    private class Caller(
+        /** When set, every call waits for it: lets a test hold a call in flight. */
+        val gate: CompletableDeferred<Unit>? = null,
+        val answer: (function: String, arg: String) -> String,
+    ) : PluginCaller {
         val calls = mutableListOf<Pair<String, String>>()
         override suspend fun call(pluginId: String, function: String, argJson: String, timeoutMs: Long): String {
             calls += function to argJson
+            gate?.await()
             return answer(function, argJson)
         }
     }
@@ -186,6 +199,127 @@ class PluginLiveProviderTest {
         val relaxed = PluginLiveProvider(any, Caller { _, _ -> page }, clock = { now }, log = {})
         val a = relaxed.channels("news").first { it.code == "a" }
         assertEquals("https://tv.elsewhere.org/a.m3u8", (relaxed.open(a) as LiveOpening.Plugin).channel.direct!!.url)
+    }
+
+    @Test fun `concurrent cold listings share one plugin call and one result`() = runBlocking {
+        val gate = CompletableDeferred<Unit>()
+        val caller = Caller(gate) { function, _ ->
+            if (function == "liveCategories") """[{"id":"news","title":"Noticias"}]""" else """{"items":[{"id":"c1","title":"Uno","ref":"r1"}]}"""
+        }
+        val p = live(caller)
+        val lists = listOf(async { p.channels("news") }, async { p.channels("news") })
+        val cats = listOf(async { p.categories(false) }, async { p.categories(false) })
+        repeat(3) { yield() }
+        assertEquals(listOf("liveChannels", "liveCategories"), caller.calls.map { it.first })
+        gate.complete(Unit)
+        val (a, b) = lists.awaitAll()
+        assertEquals(a, b)
+        assertEquals(1, a.size)
+        val (x, y) = cats.awaitAll()
+        assertEquals(listOf(ProviderCategory("news", "Noticias")), x)
+        assertEquals(x, y)
+        assertEquals(2, caller.calls.size)
+    }
+
+    @Test fun `a failing shared call fails every waiter, and the next call asks again`() = runBlocking {
+        val gate = CompletableDeferred<Unit>()
+        var fail = true
+        val caller = Caller(gate) { _, _ ->
+            if (fail) throw IllegalStateException("caído")
+            """{"items":[{"id":"c1","title":"Uno","ref":"r1"}]}"""
+        }
+        val p = live(caller)
+        val both = listOf(async { runCatching { p.channels("news") } }, async { runCatching { p.channels("news") } })
+        repeat(3) { yield() }
+        gate.complete(Unit)
+        val results = both.awaitAll()
+        assertEquals(1, caller.calls.size)
+        results.forEach { assertEquals("Demo: caído", it.exceptionOrNull()?.message) }
+        fail = false
+        assertEquals(1, p.channels("news").size)
+        assertEquals(2, caller.calls.size)
+    }
+
+    @Test fun `concurrent guide passes ask each channel once`() = runBlocking {
+        val gate = CompletableDeferred<Unit>()
+        val caller = Caller(gate) { _, arg ->
+            val o = JSONObject(arg)
+            val ids = o.getJSONArray("channelIds")
+            (0 until ids.length()).joinToString(",", "[", "]") {
+                """{"channelId":"${ids.getString(it)}","title":"T","start":${o.getLong("from") + 60_000},"end":${o.getLong("from") + 120_000}}"""
+            }
+        }
+        val p = live(caller)
+        val c = listOf(LiveChannel("c1", "Uno", 1, null, provider = provider))
+        val both = listOf(async { p.guide(c) }, async { p.guide(c) })
+        repeat(3) { yield() }
+        gate.complete(Unit)
+        val (a, b) = both.awaitAll()
+        assertEquals(1, caller.calls.size)
+        assertEquals(a.first, b.first)
+        assertEquals(1, a.first.getValue("plugin:demo:c1").size)
+    }
+
+    private class TimingOut : ScriptRuntime {
+        override val exports = setOf("guide", "liveCategories", "liveChannels", "resolve")
+        override var isDiscarded = false
+        override suspend fun call(function: String, argJson: String, timeoutMs: Long): String {
+            isDiscarded = true
+            throw PluginTimeoutException(function, timeoutMs)
+        }
+        override fun close() { isDiscarded = true }
+    }
+
+    @Test fun `guide timeouts never mark the plugin unresponsive`() = runTest {
+        val flagged = mutableListOf<String>()
+        val pool = PluginRuntimePool(open = { TimingOut() }, onUnresponsive = { flagged += it }, scope = backgroundScope)
+        val p = PluginLiveProvider(plugin, pool, clock = { now }, log = {})
+        val c = listOf(LiveChannel("c1", "Uno", 1, null, provider = provider))
+        repeat(5) {
+            assertEquals(emptyMap<String, Any>(), p.guide(c).first)
+            now += PluginLiveProvider.GUIDE_TTL_MS
+        }
+        assertEquals(emptyList<String>(), flagged)
+    }
+
+    @Test fun `one guide pass asks at most four chunks, and reports the rest for the next pass`() = runBlocking {
+        val caller = Caller { _, arg ->
+            val o = JSONObject(arg)
+            val ids = o.getJSONArray("channelIds")
+            (0 until ids.length()).joinToString(",", "[", "]") {
+                """{"channelId":"${ids.getString(it)}","title":"T","start":${o.getLong("from") + 60_000},"end":${o.getLong("from") + 120_000}}"""
+            }
+        }
+        val p = live(caller)
+        val channels = (1..250).map { LiveChannel("c$it", "C$it", it, null, provider = provider) }
+        val (guide, later) = p.guide(channels)
+        assertEquals(PluginLiveProvider.MAX_GUIDE_CHUNKS_PER_PASS, caller.calls.size)
+        assertEquals(200, guide.size)
+        assertEquals((201..250).map { "plugin:demo:c$it" }, later)
+        val (next, none) = p.guide(channels)
+        assertEquals(5, caller.calls.size)
+        assertEquals(250, next.size)
+        assertEquals(emptyList<String>(), none)
+    }
+
+    @Test fun `an inline stream lives only as long as its channel list`() = runBlocking {
+        var withStream = true
+        val caller = Caller { function, _ ->
+            when {
+                function == "liveCategories" -> """[{"id":"news","title":"N"}]"""
+                withStream -> """{"items":[{"id":"a","title":"A","ref":"ra","stream":{"url":"https://cdn.example.com/a.m3u8"}}]}"""
+                else -> """{"items":[{"id":"a","title":"A","ref":"ra"}]}"""
+            }
+        }
+        val p = live(caller)
+        val a = p.channels("news").single()
+        assertEquals("https://cdn.example.com/a.m3u8", (p.open(a) as LiveOpening.Plugin).channel.direct!!.url)
+        withStream = false
+        now += PluginLiveProvider.LIST_TTL_MS
+        // The list expired: its stream is gone with it, and a new listing no longer has one.
+        val opened = p.open(a) as LiveOpening.Plugin
+        assertEquals(null, opened.channel.direct)
+        assertEquals(PluginRef("demo", "a", PluginRef.LIVE, "ra").encode(), opened.channel.ref)
     }
 
     @Test fun `a channel with both a ref and a stream plays the stream, and a stream-only one carries no ref`() = runBlocking {
