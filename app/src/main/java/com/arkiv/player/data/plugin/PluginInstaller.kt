@@ -48,6 +48,18 @@ fun interface PluginFetcher {
 /** The server answered [code] (not 404, not 2xx). */
 class PluginFetchStatusException(val code: Int) : IOException("GitHub respondió $code")
 
+/**
+ * What the person reads when a plugin's files can't be read from GitHub: the kind of failure in plain
+ * Spanish, never the exception's own (English, technical) text.
+ */
+internal fun installReadFailureMessage(e: IOException): String = when (e) {
+    is java.net.UnknownHostException, is java.net.ConnectException ->
+        "No hay conexión a internet. Revisa tu conexión y vuelve a intentar."
+    is java.net.SocketTimeoutException -> "GitHub tardó demasiado en responder. Intenta de nuevo en un rato."
+    is PluginFetchStatusException -> "GitHub respondió con un error (${e.code}). Intenta de nuevo en un rato."
+    else -> "No se pudo leer el plugin de GitHub. Intenta de nuevo en un rato."
+}
+
 /** The file is bigger than the caller allowed. */
 class PluginFileTooBigException : IOException("archivo demasiado grande")
 
@@ -211,7 +223,7 @@ class PluginInstaller(
         } catch (e: FileNotFoundException) {
             throw InstallException("No encontré kino-plugin.json en ${address.canonical}")
         } catch (e: IOException) {
-            throw InstallException("No se pudo leer el plugin de GitHub: ${e.message}")
+            throw InstallException(installReadFailureMessage(e))
         }
         val json = bytes.toString(Charsets.UTF_8)
         val manifest = when (val r = ManifestParser.parse(json, knownPermissions)) {
