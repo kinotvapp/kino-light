@@ -6,7 +6,6 @@ import com.arkiv.player.data.db.LiveFavoriteDao
 import com.arkiv.player.data.db.LiveRecentDao
 import com.arkiv.player.data.db.PlaybackDao
 import com.arkiv.player.data.db.SkipMarkerDao
-import com.arkiv.player.data.gateway.LiveChannelKeys
 import org.json.JSONObject
 
 /**
@@ -107,18 +106,16 @@ class SyncApply(
     }
 
     private suspend fun applyLiveFavorite(row: JSONObject) {
-        val incoming = jsonToLiveFavorite(row)
-        // A provider this build can't read (a newer peer's, or garbage) is skipped, never stored as Xuper's.
-        if (!LiveChannelKeys.isValidProvider(incoming.provider)) return
+        // A live code this build can't read (garbage, or a newer peer's form) is skipped, never stored as Xuper's.
+        val incoming = jsonToLiveFavorite(row) ?: return
         val local = liveFavoriteDao.get(incoming.provider, incoming.code)
         if (!LwwMerge.pickWinner(local?.updatedAt ?: Long.MIN_VALUE, incoming.updatedAt)) return
         liveFavoriteDao.save(incoming)
     }
 
     private suspend fun applyLiveRecent(row: JSONObject) {
-        val incoming = jsonToLiveRecent(row)
-        // Same rule as applyLiveFavorite: an unreadable provider is skipped, never stored as Xuper's.
-        if (!LiveChannelKeys.isValidProvider(incoming.provider)) return
+        // Same rule as applyLiveFavorite: an unreadable live code is skipped, never stored as Xuper's.
+        val incoming = jsonToLiveRecent(row) ?: return
         val local = liveRecentDao.get(incoming.provider, incoming.code)
         if (!LwwMerge.pickWinner(local?.updatedAt ?: Long.MIN_VALUE, incoming.updatedAt)) return
         liveRecentDao.record(incoming)

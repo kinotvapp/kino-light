@@ -274,22 +274,26 @@ class SyncApplyTest {
         assertEquals(7, stored?.episodiosVistosEnLista)
     }
 
-    @Test fun `a plugin favourite never overwrites the xuper one with the same code, and a bad provider is ignored`() = runTest {
+    @Test fun `a plugin favourite never overwrites the xuper one with the same code, and a malformed code is ignored`() = runTest {
         val favs = FakeLiveFavoriteDao()
         favs.save(LiveFavoriteEntity("c1", "RCN", 5, null, updatedAt = 10))
         val sync = SyncApply(FakeItemDao(), FakePlaybackDao(), FakeSkipMarkerDao(), favs, FakeLiveRecentDao())
-        sync.apply("live_favorites", JSONObject().put("code", "c1").put("nombre", "Canal Uno").put("numero", 1).put("updatedAt", 20).put("deleted", false).put("provider", "plugin:own-server"))
-        sync.apply("live_favorites", JSONObject().put("code", "c9").put("nombre", "X").put("numero", 1).put("updatedAt", 20).put("deleted", false).put("provider", "plugin:"))
+        // No provider field: the live code alone says whose row it is.
+        sync.apply("live_favorites", JSONObject().put("code", "plugin:own-server:c1").put("nombre", "Canal Uno").put("numero", 1).put("updatedAt", 20).put("deleted", true))
+        sync.apply("live_favorites", JSONObject().put("code", "plugin::c9").put("nombre", "X").put("numero", 1).put("updatedAt", 20).put("deleted", false))
+        sync.apply("live_favorites", JSONObject().put("code", "").put("nombre", "X").put("numero", 1).put("updatedAt", 20).put("deleted", false))
         assertEquals("RCN", favs.get("xuper", "c1")!!.nombre)
+        assertEquals(false, favs.get("xuper", "c1")!!.deleted)
         assertEquals("Canal Uno", favs.get("plugin:own-server", "c1")!!.nombre)
         assertEquals(2, favs.rows.size)
     }
 
-    @Test fun `a recent with a malformed provider is skipped, never stored as xuper's`() = runTest {
+    @Test fun `a recent with a malformed live code is skipped, never stored as xuper's`() = runTest {
         val recents = FakeLiveRecentDao()
         val sync = SyncApply(FakeItemDao(), FakePlaybackDao(), FakeSkipMarkerDao(), FakeLiveFavoriteDao(), recents)
-        sync.apply("live_recents", JSONObject().put("code", "c1").put("nombre", "X").put("vistoAt", 3).put("updatedAt", 20).put("provider", "ditu"))
+        sync.apply("live_recents", JSONObject().put("code", "plugin:own-server:a:b").put("nombre", "X").put("vistoAt", 3).put("updatedAt", 20))
+        sync.apply("live_recents", JSONObject().put("code", "plugin:own-server:c1").put("nombre", "Canal Uno").put("vistoAt", 3).put("updatedAt", 20))
         sync.apply("live_recents", JSONObject().put("code", "c2").put("nombre", "RCN").put("vistoAt", 3).put("updatedAt", 20))
-        assertEquals(listOf("xuper|c2"), recents.rows.keys.toList())
+        assertEquals(setOf("plugin:own-server|c1", "xuper|c2"), recents.rows.keys)
     }
 }

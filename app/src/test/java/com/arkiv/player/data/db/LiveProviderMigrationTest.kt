@@ -107,6 +107,8 @@ class LiveProviderMigrationTest {
                 "BEGIN UPDATE live_favorites SET updatedAt = MAX(CAST(strftime('%s','now') AS INTEGER)*1000, OLD.updatedAt + 1) WHERE code = NEW.code; END",
             "CREATE TRIGGER trg_live_recents_ins AFTER INSERT ON live_recents WHEN NEW.updatedAt = 0 " +
                 "BEGIN UPDATE live_recents SET updatedAt = CAST(strftime('%s','now') AS INTEGER)*1000 WHERE code = NEW.code; END",
+            "CREATE TRIGGER trg_live_recents_upd AFTER UPDATE ON live_recents WHEN NEW.updatedAt = OLD.updatedAt " +
+                "BEGIN UPDATE live_recents SET updatedAt = MAX(CAST(strftime('%s','now') AS INTEGER)*1000, OLD.updatedAt + 1) WHERE code = NEW.code; END",
             "INSERT INTO live_favorites VALUES ('c1', 'RCN', 5, 'https://l/1.png', 111, 0)",
             "INSERT INTO live_favorites VALUES ('c2', 'Caracol', 6, NULL, 222, 1)",
             "INSERT INTO live_recents VALUES ('c1', 'RCN', 999, 333)",

@@ -14,7 +14,7 @@ import org.json.JSONObject
  * Entity (Room) <-> JSON mapping for the companion LAN sync. Pure (no Android, no coroutines):
  * only the six user-data tables that travel between paired devices. Natural keys per table:
  * items=identifier, episodes=epId(=EpisodeEntity.id), playback=episodeId,
- * skip_markers=markerId(=SkipMarkerEntity.id), live_favorites/live_recents=(provider, code).
+ * skip_markers=markerId(=SkipMarkerEntity.id), live_favorites/live_recents=(provider, code), sent as one live code in `code`.
  *
  * Every mapper below selects SYNCED FIELDS ONLY: identity + shared metadata + `updatedAt` (+
  * `deleted` where the table has a tombstone). Device-local columns (download/thumbnail paths,
@@ -177,45 +177,57 @@ fun jsonToMarker(json: JSONObject): SkipMarkerEntity {
 
 // ---- live_favorites <-> LiveFavoriteEntity ----
 // Same shape as markers: LWW by updatedAt + tombstone (deleted).
+//
+// Identity travels as the channel's live code in `code` (`LiveChannelKeys.liveCode`): a Xuper row
+// keeps its bare portal code, exactly as before v33, and a plugin row is `plugin:<pluginId>:<code>`.
+// There is deliberately no separate `provider` field. A pre-v33 peer ignores unknown fields and
+// keys its tables by `code` alone, so with a separate field it would store a plugin's `c1` over
+// its own Xuper `c1` and echo that back as Xuper's. With the live code in `code`, it stores a
+// harmless row under a code no portal channel has, and its echo (no provider, v32 keys only)
+// decodes back to the same plugin row. Decoding keys on the parsed code only.
 
 fun liveFavoriteToJson(entity: LiveFavoriteEntity): JSONObject = JSONObject().apply {
-    put("code", entity.code)
+    put("code", LiveChannelKeys.liveCode(entity.provider, entity.code))
     put("nombre", entity.nombre)
     put("numero", entity.numero)
     put("logo", entity.logo)
     put("updatedAt", entity.updatedAt)
     put("deleted", entity.deleted)
-    // Absent on an older device's rows: those are Xuper's (see jsonToLiveFavorite).
-    put("provider", entity.provider)
 }
 
-fun jsonToLiveFavorite(json: JSONObject): LiveFavoriteEntity = LiveFavoriteEntity(
-    code = json.optString("code"),
-    nombre = json.optString("nombre"),
-    numero = json.optInt("numero"),
-    logo = json.optStringOrNull("logo"),
-    updatedAt = json.optLong("updatedAt"),
-    deleted = json.optBoolean("deleted"),
-    provider = json.optStringOrNull("provider") ?: LiveChannelKeys.XUPER,
-)
+/** Null when `code` is missing, empty or a malformed plugin live code: the row is skipped, never stored as Xuper's. */
+fun jsonToLiveFavorite(json: JSONObject): LiveFavoriteEntity? {
+    val (provider, code) = LiveChannelKeys.parse(json.optString("code")) ?: return null
+    return LiveFavoriteEntity(
+        code = code,
+        nombre = json.optString("nombre"),
+        numero = json.optInt("numero"),
+        logo = json.optStringOrNull("logo"),
+        updatedAt = json.optLong("updatedAt"),
+        deleted = json.optBoolean("deleted"),
+        provider = provider,
+    )
+}
 
 // ---- live_recents <-> LiveRecentEntity ----
 // No `deleted`: this table carries no tombstone (pruned by age, not deleted by hand) -- see
-// LiveRecentEntity's KDoc in data/db/Entities.kt.
+// LiveRecentEntity's KDoc in data/db/Entities.kt. Identity on the wire: same as live_favorites.
 
 fun liveRecentToJson(entity: LiveRecentEntity): JSONObject = JSONObject().apply {
-    put("code", entity.code)
+    put("code", LiveChannelKeys.liveCode(entity.provider, entity.code))
     put("nombre", entity.nombre)
     put("vistoAt", entity.vistoAt)
     put("updatedAt", entity.updatedAt)
-    // Absent on an older device's rows: those are Xuper's (see jsonToLiveRecent).
-    put("provider", entity.provider)
 }
 
-fun jsonToLiveRecent(json: JSONObject): LiveRecentEntity = LiveRecentEntity(
-    code = json.optString("code"),
-    nombre = json.optString("nombre"),
-    vistoAt = json.optLong("vistoAt"),
-    updatedAt = json.optLong("updatedAt"),
-    provider = json.optStringOrNull("provider") ?: LiveChannelKeys.XUPER,
-)
+/** Null when `code` is missing, empty or a malformed plugin live code (see [jsonToLiveFavorite]). */
+fun jsonToLiveRecent(json: JSONObject): LiveRecentEntity? {
+    val (provider, code) = LiveChannelKeys.parse(json.optString("code")) ?: return null
+    return LiveRecentEntity(
+        code = code,
+        nombre = json.optString("nombre"),
+        vistoAt = json.optLong("vistoAt"),
+        updatedAt = json.optLong("updatedAt"),
+        provider = provider,
+    )
+}

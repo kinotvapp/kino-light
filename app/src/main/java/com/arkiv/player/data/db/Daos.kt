@@ -589,8 +589,8 @@ interface LiveChannelCacheDao {
     suspend fun byCategory(provider: String, category: String): List<LiveChannelCacheEntity>
 
     /**
-     * Cached rows of a specific list of channels (by `code`) of ONE provider -- a code is only
-     * unique within its provider -- with no category filter -- to
+     * Cached rows of a specific list of channels of ONE provider, by `code` and with no category
+     * filter. A code is only unique within its provider, hence the provider argument. Used to
      * enrich with logo/number data that arrives from another source that carries no category of
      * its own (the home row's "recents", see `recentChannelsForHome` in
      * `ui/live/RecentLiveChannels.kt`). Can return more than one row per `code` (a channel can be
