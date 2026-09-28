@@ -73,19 +73,20 @@ class CategoriesViewModel(
         // usable later (installed or re-enabled while this screen lives). Never while it isn't.
         plugins.map { xuperPluginId(it) != null }
             .distinctUntilChanged()
-            .onEach { usable -> if (usable) refresh(force = false) else _loading.value = false }
+            .onEach { usable -> if (usable) refresh() else _loading.value = false }
             .launchIn(viewModelScope)
-        // The top-bar reload refetches the shared catalog, bypassing the cache.
-        reload.onEach { refresh(force = true) }.launchIn(viewModelScope)
+        // The top-bar reload: AppGraph has already invalidated the shared catalog, so its next
+        // pass asks the portal past the caches (once, even with Home re-reading it at the same time).
+        reload.onEach { refresh() }.launchIn(viewModelScope)
     }
 
     /**
-     * (Re)builds the category tiles. [force] bypasses the 6 h cache and asks the portal (the reload
-     * button); otherwise it's cache-first. A refetch that comes back empty keeps the current tiles
+     * (Re)builds the category tiles, cache-first ([MagisHomeCatalog.rows]; after "Recargar" the
+     * catalog itself was invalidated, so that read asks the portal). A refetch that comes back empty keeps the current tiles
      * instead of blanking them -- unless there were none to begin with. Does nothing (no portal
      * read) while there's no usable Xuper plugin, the same check that hides the tiles.
      */
-    private fun refresh(force: Boolean) {
+    private fun refresh() {
         viewModelScope.launch {
             if (xuperPluginId(plugins.first()) == null) {
                 _loading.value = false
@@ -94,7 +95,7 @@ class CategoriesViewModel(
             _loading.value = true
             // Fetch + classification + tile building run off the main thread (weak-device jank).
             val specs = withContext(Dispatchers.Default) {
-                runCatching { if (force) magisHome.load().rows else magisHome.rows() }
+                runCatching { magisHome.rows() }
                     .getOrDefault(emptyList())
                     // Genre rows (magis_g_*) plus the featured "Estrenos"/"mejor valoradas" rows.
                     .filter { it.id.startsWith("magis_g_") || it.id.startsWith("magis_new_") || it.id.startsWith("magis_top_") }

@@ -30,9 +30,10 @@ data class PluginHomeLoad(val rows: List<PluginHomeRow>, val settled: Boolean)
 
 /**
  * Home rows from every usable plugin with the `home` capability, asked in parallel. Each plugin's
- * raw answer is cached in its data dir for [ttlMs] (6 h) once it parsed into at least one row and
- * fits in [MAX_CACHE_BYTES]: the cached rows are emitted first, even stale, then the fresh ones. A plugin whose `home()` fails contributes nothing and never blocks
- * the rest. Items are built with [PluginContentSource.resultFrom], so a Home card reaches
+ * raw answer is cached in its data dir for [ttlMs] (6 h; see [cacheTtlFor] for the Xuper plugin) once
+ * it parsed into at least one row and fits in [MAX_CACHE_BYTES]: the cached rows are emitted first,
+ * even stale, then the fresh ones. A plugin whose `home()` fails or times out keeps the cached rows
+ * it had just painted (none if it had none) and never blocks the rest. Items are built with [PluginContentSource.resultFrom], so a Home card reaches
  * `SearchPlayback` exactly like a search result.
  */
 class PluginHomeRows(
@@ -77,6 +78,17 @@ class PluginHomeRows(
     companion object {
         /** A cache file bigger than this is neither written nor read (it's deleted instead). */
         const val MAX_CACHE_BYTES = 2 * 1024 * 1024
+
+        /**
+         * How long [p]'s `home.json` spares a `home()` call. 0 for the recognized Xuper plugin
+         * ([XuperPrivilege.grants]): its `home()` is served by the native `MagisHomeCatalog`, which
+         * already keeps the one persisted, TTL'd copy (the Room snapshot) -- a second TTL here only
+         * stacked on top (a 6 h-old snapshot re-stamped "fresh" for 6 h more) and hid Recargar. So
+         * for Xuper this file is only the instant paint, and asking again costs a Room read, never
+         * a portal call. Every other plugin: [defaultTtlMs].
+         */
+        fun cacheTtlFor(p: InstalledPlugin, defaultTtlMs: Long): Long =
+            if (XuperPrivilege.grants(p.record)) 0L else defaultTtlMs
     }
 
     fun rows(): Flow<List<PluginHomeRow>> = load().map { it.rows }
@@ -85,8 +97,12 @@ class PluginHomeRows(
      * [rows] plus whether the pass is over: the instant paint (cached rows, possibly none) is unsettled,
      * the fresh rows after every plugin answered, failed or timed out ([PluginContentSource.HOME_TIMEOUT_MS])
      * are settled. With no plugin to ask, a single settled empty step.
+     *
+     * [force] ("Recargar") asks every plugin even if its `home.json` is within the TTL; the instant
+     * paint is the same. A plugin whose call fails or times out keeps its instant-paint rows in the
+     * settled step instead of blanking them.
      */
-    fun load(): Flow<PluginHomeLoad> = flow {
+    fun load(force: Boolean = false): Flow<PluginHomeLoad> = flow {
         // A plugin that still needs setup isn't asked: its calls would only fail with auth_required.
         val targets = plugins().filter { "home" in it.manifest.capabilities && !it.needsSetup }
         if (targets.isEmpty()) {
@@ -97,26 +113,25 @@ class PluginHomeRows(
         // The instant-paint pass shows even a stale-by-TTL cache, but never one stamped with EITHER
         // revision no longer matching: that isn't "old", it's a DIFFERENT session's data -- and
         // configRevision is what still catches that across a process restart (fix round 3).
-        emit(
-            PluginHomeLoad(
-                assemble(targets) { p ->
-                    cached[p.id]?.takeIf { it.sessionRevision == sessionRevision(p.id) && it.configRevision == p.configRevision && it.version == p.record.version }
-                        ?.let { parse(p, it.json) }.orEmpty()
-                },
-                settled = false,
-            ),
-        )
-        val fresh = coroutineScope {
-            targets.map { p -> async { p.id to refresh(p, cached[p.id]) } }.awaitAll().toMap()
+        val painted = targets.associate { p ->
+            p.id to cached[p.id]?.takeIf { it.sessionRevision == sessionRevision(p.id) && it.configRevision == p.configRevision && it.version == p.record.version }
+                ?.let { parse(p, it.json) }.orEmpty()
         }
-        emit(PluginHomeLoad(assemble(targets) { fresh[it.id].orEmpty() }, settled = true))
+        emit(PluginHomeLoad(assemble(targets) { painted[it.id].orEmpty() }, settled = false))
+        val fresh = coroutineScope {
+            targets.map { p -> async { p.id to refresh(p, cached[p.id], force) } }.awaitAll().toMap()
+        }
+        // null = the call failed or timed out: what was just painted stays (it passed the same
+        // revision checks), so a slow portal pass never wipes a Home that was already showing.
+        emit(PluginHomeLoad(assemble(targets) { fresh[it.id] ?: painted[it.id].orEmpty() }, settled = true))
     }
 
-    private suspend fun refresh(p: InstalledPlugin, cached: Cached?): List<PluginRow> {
+    /** The plugin's rows now, or null when its `home()` failed or timed out (see [load]). */
+    private suspend fun refresh(p: InstalledPlugin, cached: Cached?, force: Boolean): List<PluginRow>? {
         // `version` too: rows cached by an older version of the plugin (e.g. without a browse `ref`)
         // must not outlive an update for the rest of the TTL.
-        if (cached != null && cached.sessionRevision == sessionRevision(p.id) && cached.configRevision == p.configRevision &&
-            cached.version == p.record.version && clock() - cached.fetchedAt < ttlMs
+        if (!force && cached != null && cached.sessionRevision == sessionRevision(p.id) && cached.configRevision == p.configRevision &&
+            cached.version == p.record.version && clock() - cached.fetchedAt < cacheTtlFor(p, ttlMs)
         ) {
             return parse(p, cached.json)
         }
@@ -140,7 +155,7 @@ class PluginHomeRows(
             throw e
         } catch (e: Exception) {
             log("[${p.id}] home failed: ${e.message}")
-            emptyList()
+            null
         }
     }
 

@@ -140,8 +140,16 @@ fun HomeScreen(
     val graph = rememberGraph()
     val sizes = homeSizes()
     val vm: HomeViewModel = viewModel(
-        factory = viewModelFactory { initializer { HomeViewModel(graph.repository, graph.settings, graph.homeReloads, graph.pluginHomeRows, graph.pluginsChanged) } },
+        factory = viewModelFactory {
+            initializer {
+                HomeViewModel(
+                    graph.repository, graph.settings, graph.homeReloads, graph.pluginHomeRows, graph.pluginsChanged,
+                    online = graph.hasInternet, onBackOnline = { graph.magisHomeCatalog.forgetFailedPass() },
+                )
+            }
+        },
     )
+    HomeFreshnessEffect(vm)
     // This screen doesn't collect `vm.library` (ordered by addedAt): that subscription only lives
     // in the VM's `init`, for `ensureArtwork`/the TV home's hero. The "Mi biblioteca" row uses
     // `orderedLibrary` to match the grid's order (same rule, see LibraryOrder).

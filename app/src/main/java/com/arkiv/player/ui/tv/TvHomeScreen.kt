@@ -95,6 +95,7 @@ import com.arkiv.player.data.plugin.PluginHomeRow
 import com.arkiv.player.data.gateway.LiveChannel
 import com.arkiv.player.data.gateway.liveCode
 import com.arkiv.player.thumbnails.ThumbnailChoice
+import com.arkiv.player.ui.home.HomeFreshnessEffect
 import com.arkiv.player.ui.home.HomeViewModel
 import com.arkiv.player.ui.home.TvHomeLanding
 import com.arkiv.player.ui.home.emptyStateNeedsRefocus
@@ -422,8 +423,16 @@ fun TvHomeScreen(
 ) {
     val graph = rememberGraph()
     val vm: HomeViewModel = viewModel(
-        factory = viewModelFactory { initializer { HomeViewModel(graph.repository, graph.settings, graph.homeReloads, graph.pluginHomeRows, graph.pluginsChanged) } },
+        factory = viewModelFactory {
+            initializer {
+                HomeViewModel(
+                    graph.repository, graph.settings, graph.homeReloads, graph.pluginHomeRows, graph.pluginsChanged,
+                    online = graph.hasInternet, onBackOnline = { graph.magisHomeCatalog.forgetFailedPass() },
+                )
+            }
+        },
     )
+    HomeFreshnessEffect(vm)
     val hasInternet by graph.hasInternet.collectAsStateWithLifecycle()
     val library by vm.library.collectAsStateWithLifecycle()
     val continueWatching by vm.continueWatching.collectAsStateWithLifecycle()

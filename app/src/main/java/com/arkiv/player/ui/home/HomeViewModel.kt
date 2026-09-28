@@ -7,7 +7,10 @@ import com.arkiv.player.data.SettingsStore
 import com.arkiv.player.data.db.ArtworkEntity
 import com.arkiv.player.data.db.ContinueRow
 import com.arkiv.player.data.db.LibraryRow
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.Dispatchers
@@ -30,6 +33,11 @@ class HomeViewModel(
     private val pluginHome: com.arkiv.player.data.plugin.PluginHomeRows,
     /** `AppGraph.pluginsChanged`: install/enable/disable/uninstall/update re-asks for plugin rows. */
     pluginsChanged: Flow<*>,
+    /** `AppGraph.hasInternet`: coming back online re-asks (never forced), see [HomeFreshness.backOnline]. */
+    online: Flow<Boolean> = emptyFlow(),
+    /** Runs before that back-online re-ask (the app: drop the catalog's remembered partial pass). */
+    private val onBackOnline: () -> Unit = {},
+    private val clock: () -> Long = System::currentTimeMillis,
 ) : ViewModel() {
 
     val library: StateFlow<List<LibraryRow>> = repo.observeLibrary()
@@ -58,10 +66,18 @@ class HomeViewModel(
      * first collector, not in `init`: the library screen builds this ViewModel too and never draws
      * these rows.
      */
+    /** Non-forced re-asks: resume / visible-Home timer ([refreshIfStale]) and back online. */
+    private val refreshes = MutableSharedFlow<Boolean>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+
+    /** When the last plugin pass settled; null while one is in flight (see [HomeFreshness.shouldReloadOnResume]). */
+    @Volatile private var lastSettledAt: Long? = null
+
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     private val pluginLoad: StateFlow<com.arkiv.player.data.plugin.PluginHomeLoad> =
-        merge(pluginsChanged.map { }, reload)
-            .flatMapLatest { pluginHome.load() }
+        // Only "Recargar" (already debounced by AppGraph) forces; everything else goes through the TTLs.
+        merge(pluginsChanged.map { false }, reload.map { true }, refreshes)
+            .flatMapLatest { force -> lastSettledAt = null; pluginHome.load(force) }
+            .onEach { if (it.settled) lastSettledAt = clock() }
             .flowOn(Dispatchers.IO)
             .stateIn(viewModelScope, SharingStarted.Lazily, com.arkiv.player.data.plugin.PluginHomeLoad(emptyList(), settled = false))
 
@@ -76,7 +92,27 @@ class HomeViewModel(
     val pluginRowsSettled: StateFlow<Boolean> =
         pluginLoad.map { it.settled }.stateIn(viewModelScope, SharingStarted.Lazily, false)
 
+    /**
+     * Called on resume and periodically while Home is visible ([HomeFreshnessEffect]): re-asks for
+     * the plugin rows, never forced, once the last settled pass is older than
+     * [HomeFreshness.RESUME_STALE_AFTER_MS]. A TV left on Home for days refreshes by itself this way;
+     * the portal is still only reached when the catalog's own TTL says so.
+     */
+    fun refreshIfStale() {
+        if (HomeFreshness.shouldReloadOnResume(lastSettledAt, clock())) {
+            lastSettledAt = null
+            refreshes.tryEmit(false)
+        }
+    }
+
     init {
+        HomeFreshness.backOnline(online)
+            .onEach {
+                onBackOnline()
+                refreshes.tryEmit(false)
+            }
+            .launchIn(viewModelScope)
+
         // Every time the library changes, resolves the art of the items that don't have it yet.
         // ensureArtwork ignores the ones already resolved, so re-emissions are cheap.
         library

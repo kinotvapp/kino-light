@@ -306,4 +306,53 @@ class PluginHomeRowsTest {
         )
         assertEquals("a fresh call must have been made instead of trusting the stale cache", 1, secondCaller.calls)
     }
+
+    // --- freshness (Recargar, no stacked TTL, keep rows on failure) --------------------------------
+
+    private fun xuper() = plugin("xuper").let { it.copy(record = it.record.copy(address = XuperPrivilege.SOURCE_REPO)) }
+
+    @Test fun `a forced load skips the home json TTL`() = runTest {
+        val caller = CountingCaller { rowJson }
+        home(listOf(plugin("a")), caller).rows().toList()
+        now += 60_000L
+        home(listOf(plugin("a")), caller).load(force = true).toList()
+        assertEquals(2, caller.calls)
+    }
+
+    @Test fun `a forced load still paints the cached rows first`() = runTest {
+        home(listOf(plugin("a")), CountingCaller { rowJson }).rows().toList()
+        val emissions = home(listOf(plugin("a")), CountingCaller { rowJson }).load(force = true).toList()
+        assertEquals(listOf("top"), emissions.first().rows.map { it.id })
+    }
+
+    @Test fun `the Xuper plugin's home json never gates a refresh, only a third-party plugin's does`() {
+        assertEquals(0L, PluginHomeRows.cacheTtlFor(xuper(), 6 * 3_600_000L))
+        assertEquals(6 * 3_600_000L, PluginHomeRows.cacheTtlFor(plugin("a"), 6 * 3_600_000L))
+    }
+
+    @Test fun `the Xuper plugin is asked on every pass, its cached rows painted meanwhile`() = runTest {
+        val caller = CountingCaller { rowJson }
+        home(listOf(xuper()), caller).rows().toList()
+        now += 60_000L
+        val emissions = home(listOf(xuper()), caller).rows().toList()
+        assertEquals("the native Room snapshot is its only TTL: no second one stacked on top", 2, caller.calls)
+        assertEquals("the instant paint still comes from home json", listOf("top"), emissions.first().map { it.id })
+    }
+
+    @Test fun `a timed out refresh keeps the rows already painted instead of blanking them`() = runTest {
+        home(listOf(plugin("a")), CountingCaller { rowJson }).rows().toList()
+        now += 7 * 3_600_000L
+        val caller = CountingCaller { throw PluginTimeoutException("home", 20_000) }
+        val last = home(listOf(plugin("a")), caller).load().toList().last()
+        assertEquals(1, caller.calls)
+        assertTrue(last.settled)
+        assertEquals(listOf("top"), last.rows.map { it.id })
+    }
+
+    @Test fun `a failed refresh keeps one plugin's rows without touching the others`() = runTest {
+        home(listOf(plugin("a"), plugin("b")), CountingCaller { rowJson }).rows().toList()
+        val caller = CountingCaller { id -> if (id == "a") throw IllegalStateException("boom") else rowJson.replace("\"top\"", "\"nuevo\"") }
+        val last = home(listOf(plugin("a"), plugin("b")), caller).load(force = true).toList().last()
+        assertEquals(listOf("a" to "top", "b" to "nuevo"), last.rows.map { it.pluginId to it.id })
+    }
 }

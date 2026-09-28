@@ -62,10 +62,19 @@ class AppGraph(context: Context) {
         extraBufferCapacity = 1,
         onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
     )
-    /** Manual "recargar catálogo" pulses from the top bar's reload button; whoever is collecting
-     *  (the home, the Categorías screen) refetches the shared catalog, bypassing the 6 h cache. */
+    /** Manual "recargar catálogo" pulses from the top bar's reload button. Before each pulse the
+     *  shared Magis catalog is invalidated ([com.arkiv.player.ui.home.MagisHomeCatalog.invalidate]:
+     *  its next pass asks the portal past both caches, the Room snapshot kept as the fallback); the
+     *  collectors (Home's plugin rows with `force`, which also skips `home.json`'s TTL, and the
+     *  Categorías screen) then re-read it. Presses within 60 s of the last accepted one are ignored
+     *  ([com.arkiv.player.ui.home.ForcedReloadGate]), so repeated presses never pace the portal. */
     val homeReloads: kotlinx.coroutines.flow.SharedFlow<Unit> = _homeReloads
-    fun reloadHomeCatalog() { _homeReloads.tryEmit(Unit) }
+    private val homeReloadGate = com.arkiv.player.ui.home.ForcedReloadGate()
+    fun reloadHomeCatalog() {
+        if (!homeReloadGate.tryAcquire()) return
+        magisHomeCatalog.invalidate()
+        _homeReloads.tryEmit(Unit)
+    }
 
     private val networkMonitor: android.net.ConnectivityManager.NetworkCallback by lazy {
         object : android.net.ConnectivityManager.NetworkCallback() {
@@ -780,6 +789,7 @@ class AppGraph(context: Context) {
         com.arkiv.player.ui.home.MagisHomeCatalog(
             tree = { root -> liveCatalog.tree(root) },
             store = com.arkiv.player.ui.home.HomeCatalogStore(database.homeCatalogCacheDao()),
+            freshTree = { root -> liveCatalog.tree(root, force = true) },
         )
     }
 
