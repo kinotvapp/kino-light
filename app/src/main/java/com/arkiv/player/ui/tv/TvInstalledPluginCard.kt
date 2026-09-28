@@ -40,7 +40,10 @@ import com.arkiv.player.ui.theme.ArkivTextSecondary
  * which is where every management action lives on the TV (there is no separate switch on the card face, as
  * there never was on the deleted `TvInstalledPluginRows`' own "activado/desactivado" row). [message] is this plugin's own
  * line (see [com.arkiv.player.ui.plugin.rowMessagePluginId]); [reserveMessageLines] leaves the same room for
- * it in a card that has none, so every card of the same grid line ends at the same height.
+ * it in a card that has none, so every card of the same grid line ends at the same height. [liveNotice] is a
+ * live plugin's "Lista recortada: …" line (`LiveCatalog.noticeFor`), under the status, and
+ * [reserveNoticeLines] its room in a card of the same grid line without one
+ * ([com.arkiv.player.ui.plugin.installedGridLinesReserving]) -- the same as the phone's card.
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -50,10 +53,13 @@ internal fun TvInstalledPluginCard(
     message: String?,
     reserveMessageLines: Boolean,
     modifier: Modifier = Modifier,
+    liveNotice: String? = null,
+    reserveNoticeLines: Boolean = false,
     onClick: () -> Unit,
 ) {
     val model = installedCardModel(plugin, art)
-    val label = "${model.nameLine} — ${model.statusLabel}"
+    // The notice is drawn inside the cleared column below, so the card's description carries it.
+    val label = listOfNotNull("${model.nameLine} — ${model.statusLabel}", liveNotice).joinToString(". ")
     Card(
         onClick = onClick,
         // The description of the whole card is the heading the old row had; what is drawn inside is
@@ -67,13 +73,20 @@ internal fun TvInstalledPluginCard(
     ) {
         Column(Modifier.clearAndSetSemantics { }) {
             CardTile(name = model.name, iconFile = model.iconFile, tileColorArgb = model.tileColorArgb, legacyDefault = false)
-            CardTexts(plugin = plugin, model = model, message = message, reserveMessageLines = reserveMessageLines)
+            CardTexts(plugin, model, message, reserveMessageLines, liveNotice, reserveNoticeLines)
         }
     }
 }
 
 @Composable
-private fun CardTexts(plugin: InstalledPlugin, model: InstalledCardModel, message: String?, reserveMessageLines: Boolean) {
+private fun CardTexts(
+    plugin: InstalledPlugin,
+    model: InstalledCardModel,
+    message: String?,
+    reserveMessageLines: Boolean,
+    liveNotice: String?,
+    reserveNoticeLines: Boolean,
+) {
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -86,6 +99,16 @@ private fun CardTexts(plugin: InstalledPlugin, model: InstalledCardModel, messag
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+        if (liveNotice != null || reserveNoticeLines) {
+            Text(
+                liveNotice ?: " ",
+                style = MaterialTheme.typography.bodySmall,
+                color = ArkivTextSecondary,
+                minLines = installedMessageLines(),
+                maxLines = installedMessageLines(),
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
         Text(
             pluginConsentHostLine(address = plugin.record.address, hostsLabel = plugin.hosts.labels.joinToString(", ")),
             style = MaterialTheme.typography.bodySmall,

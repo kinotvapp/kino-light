@@ -47,4 +47,13 @@ class LiveSearchViewTest {
         assertEquals(null, selectedProviderChip(s, recentView = true))
         assertEquals(null, selectedProviderChip(s.copy(activeCategory = CATEGORY_FAVORITES), recentView = false))
     }
+
+    /** What a click zaps through: the merged results while they are on screen, else the per-provider list; nothing while waiting. */
+    @Test fun `the list on screen follows the search view`() {
+        val base = listOf(cnn)
+        assertEquals(base, listOnScreen(LiveSearchView.Off, base))
+        assertEquals(listOf(cnnPlugin), listOnScreen(LiveSearchView.Results(listOf(cnnPlugin), note = null), base))
+        assertEquals(emptyList<LiveChannel>(), listOnScreen(LiveSearchView.Searching, base))
+        assertEquals(emptyList<LiveChannel>(), listOnScreen(LiveSearchView.NoResults(note = null), base))
+    }
 }

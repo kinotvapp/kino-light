@@ -79,8 +79,10 @@ fun ArkivTvRoot(
     // longer block on a linked account up front -- we TRY. Only if the portal refuses THIS channel
     // (a premium one) does the player show the "link your Xuper account" message
     // (PlayerViewModel.liveErrorMessage + MagisLive maps aaa100028 -> live_no_account).
-    fun goToLiveChannel(code: String) {
-        goToPlayer("${com.arkiv.player.playback.PlayerSource.LIVE_PREFIX}$code")
+    // [liveCode]: a channel's identity across providers (`LiveChannel.liveCode`), so a plugin's
+    // channel opens on its own provider.
+    fun goToLiveChannel(liveCode: String) {
+        goToPlayer("${com.arkiv.player.playback.PlayerSource.LIVE_PREFIX}$liveCode")
     }
 
     LaunchedEffect(deepLinkEpisodeId) {
@@ -111,7 +113,7 @@ fun ArkivTvRoot(
             TvHomeScreen(
                 onOpenItem = { navController.navigate("detail/${Uri.encode(it)}") },
                 onPlayEpisode = { goToPlayer(it) },
-                onPlayLive = { code -> goToLiveChannel(code) },
+                onPlayLive = { liveCode -> goToLiveChannel(liveCode) },
                 onOpenSettings = { navController.navigate("settings") },
                 onOpenSearch = { navController.navigate("search") },
                 onOpenLibrary = { navController.navigate("library") },
@@ -222,10 +224,11 @@ fun ArkivTvRoot(
             )
         }
         composable("live") {
-            // Guard, same as "categorias": no live guide (no LiveViewModel, no portal call) while
-            // the Xuper plugin is off.
-            val xuperOn by graph.xuperLive.collectAsStateWithLifecycle()
-            if (!xuperOn) {
+            // Guard: no live guide (no LiveViewModel, no provider call) while the live module is
+            // empty (no Xuper, no plugin with channels). Its nav button is gone then; this covers a
+            // route reached anyway, or the last provider going while the guide is on screen.
+            val liveOn by graph.liveModule.available.collectAsStateWithLifecycle()
+            if (!liveOn) {
                 LaunchedEffect(Unit) { navController.popBackStack() }
                 return@composable
             }

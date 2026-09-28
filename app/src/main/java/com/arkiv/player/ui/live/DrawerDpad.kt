@@ -1,6 +1,8 @@
 package com.arkiv.player.ui.live
 
 import android.view.KeyEvent
+import com.arkiv.player.data.gateway.LiveChannel
+import com.arkiv.player.data.gateway.LiveChannelKeys
 
 /** Where the focus is inside the drawer. */
 enum class DrawerFocus {
@@ -84,3 +86,42 @@ object DrawerDpad {
         }
     }
 }
+
+/** Where the TV guide puts focus: when it opens, and when the row holding it went away. */
+enum class TvGuideFocus {
+    PROVIDERS,
+    CATEGORIES,
+
+    /** Only while a search is on screen: the provider and category rows are hidden then. */
+    KEYBOARD,
+}
+
+/**
+ * The provider row exists only with more than one provider (spec §4). When it does, it is the
+ * first thing the remote lands on, so choosing a source is one press away. Otherwise focus goes
+ * to "Favoritos", as before providers existed.
+ */
+fun tvGuideFirstFocus(showProviders: Boolean): TvGuideFocus =
+    if (showProviders) TvGuideFocus.PROVIDERS else TvGuideFocus.CATEGORIES
+
+/**
+ * Where the guide lands right now: a non-blank search replaces the provider and category rows with
+ * the merged results (Amendment A1), so the keyboard is the only row left to land on.
+ */
+fun tvGuideFocusTarget(showProviders: Boolean, searching: Boolean): TvGuideFocus =
+    if (searching) TvGuideFocus.KEYBOARD else tvGuideFirstFocus(showProviders)
+
+/**
+ * Whether the guide moves focus now: always on opening; afterwards only when nothing on the screen
+ * holds it any more (a provider chip or category that held it vanished with its provider, or "Borrar
+ * búsqueda" removed itself). Compose clears focus instead of moving it then, which strands the D-pad.
+ * A row appearing later (a second provider arriving) never yanks focus from where the person is.
+ */
+fun tvGuideShouldLand(landedOnce: Boolean, screenHasFocus: Boolean): Boolean = !landedOnce || !screenHasFocus
+
+/**
+ * The provider the TV channel drawer is locked to (R6): the on-screen channel's, so its categories,
+ * favourites and search never cross into another provider. With no channel known yet, Xuper's, as
+ * before providers existed.
+ */
+fun drawerProviderFor(currentChannel: LiveChannel?): String = currentChannel?.provider ?: LiveChannelKeys.XUPER

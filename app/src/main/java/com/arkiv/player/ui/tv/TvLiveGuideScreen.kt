@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.History
@@ -58,11 +59,21 @@ import androidx.tv.material3.Text
 import coil.compose.AsyncImage
 import com.arkiv.player.data.gateway.LiveChannel
 import com.arkiv.player.data.gateway.liveCode
+import com.arkiv.player.data.live.LiveProviderTab
 import com.arkiv.player.ui.live.CATEGORY_FAVORITES
+import com.arkiv.player.ui.live.LiveSearchView
 import com.arkiv.player.ui.live.LiveViewModel
 import com.arkiv.player.ui.live.LiveZappingSource
-import com.arkiv.player.ui.live.filterChannels
+import com.arkiv.player.ui.live.ProviderBadge
+import com.arkiv.player.ui.live.TvGuideFocus
+import com.arkiv.player.ui.live.listOnScreen
+import com.arkiv.player.ui.live.liveSearchView
 import com.arkiv.player.ui.live.recentsForScreen
+import com.arkiv.player.ui.live.selectedProviderChip
+import com.arkiv.player.ui.live.tvGuideFocusTarget
+import com.arkiv.player.ui.live.tvGuideShouldLand
+import com.arkiv.player.ui.player.WAIT_BETWEEN_FOCUS_ATTEMPTS_MS
+import com.arkiv.player.ui.player.retryFocus
 import com.arkiv.player.ui.rememberGraph
 import com.arkiv.player.ui.theme.ArkivBlack
 import com.arkiv.player.ui.theme.ArkivRed
@@ -110,19 +121,25 @@ private enum class TvLocalView { NONE, RECENT }
  * - Left/Right: between the keyboard panel (fixed column on the left) and the chips+rows panel
  *   (on the right) -- same 2D search mechanism `TvSearchScreen` already uses to move between its
  *   keyboard and its results grid, with no extra code.
- * The initial focus is the first chip ("Favoritos"): entering the screen must show something
- * navigable right away, not start parked on the keyboard.
+ * The initial focus is the first provider chip, or "Favoritos" with one provider: entering the
+ * screen must show something navigable right away, not start parked on the keyboard.
  *
  * Playing: the ROW is the focusable and clickable element (not a sub-block inside it). Pressing
  * OK on a row calls `onWatchChannel` directly -- works whether there's programming or not,
  * because it no longer depends on programming existing.
  *
- * Search: reuses `TvKeyboard` (same visual and focus pattern as `TvSearchScreen`) and
- * `filterChannels` (`LiveViewModel.kt`, already filters by name without accents/case and by exact
- * number -- the same function the phone's guide uses). Unlike `TvSearchScreen` (which searches
- * TMDB over the network and so waits for the "Buscar" button), here the filter is over the
- * ALREADY loaded in-memory channel list -- it filters on every key, with no network round trip to
- * justify a button.
+ * Search: reuses `TvKeyboard` (same visual and focus pattern as `TvSearchScreen`). A non-blank
+ * query searches EVERY provider (Amendment A1, [LiveViewModel.crossSearch], the same merged search
+ * the phone shows): the provider and category rows give way to one results list, each row with its
+ * provider's badge, and the note of providers not fully loaded. Nothing asks the network per key:
+ * the search runs over the channels each provider already holds.
+ *
+ * Providers (spec §4): with more than one, a provider row sits above the categories and is where
+ * the remote lands on opening ([com.arkiv.player.ui.live.tvGuideFirstFocus]); down reaches the
+ * categories, down again the list -- plain Compose focus search in a `Column`. Any row can vanish
+ * under focus (a provider switched off, the search cleared by its own button): Compose then clears
+ * focus instead of moving it, so a screen-wide watch hands it back to the row to land on
+ * ([tvGuideShouldLand], [tvGuideFocusTarget]), retried against that row's OWN focus state.
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -157,34 +174,65 @@ fun TvLiveGuideScreen(onWatchChannel: (LiveChannel) -> Unit, onBack: () -> Unit)
 
     val baseChannels = if (view == TvLocalView.RECENT) recents else state.channels
 
-    // Search filters on top of the active category/view, same as LiveScreen (mobile): searching
-    // doesn't replace the chosen category, it narrows it.
-    var search by remember { mutableStateOf("") }
-    val channels = remember(baseChannels, search) { filterChannels(baseChannels, search) }
+    // Amendment A1: a non-blank query is one merged list over every provider, not a filter of the
+    // chosen category. It lives in the model (vm.search), which feeds the cross-provider search.
+    val search = state.search
+    val cross by vm.crossSearch.collectAsStateWithLifecycle()
+    val searchView = remember(search, cross) { liveSearchView(search, cross) }
+    val searching = searchView != LiveSearchView.Off
+    val channels = listOnScreen(searchView, baseChannels)
 
-    // Watch the channel now: sets in LiveZappingSource the FILTERED list (the one the user is
-    // looking at right now) BEFORE delegating to `onWatchChannel` -- it's the one the player's
-    // zapping goes through. Same criterion as `LiveScreen.open` (mobile): if there's an active
-    // search, zapping goes through the search results, not the whole category.
+    // Watch the channel now: sets in LiveZappingSource the list on screen BEFORE delegating to
+    // `onWatchChannel` -- it's the one the player's zapping goes through. Search results mix
+    // providers: the player narrows them to the opened channel's provider (zappingListFor).
     fun watchChannel(channel: LiveChannel) {
         LiveZappingSource.list = channels
         onWatchChannel(channel)
     }
 
-    // Screen's initial focus: the first chip ("Favoritos"), so entering the screen shows
-    // something navigable right away instead of starting parked on the keyboard.
+    // Focus: lands on opening on the provider row (with more than one provider) or on "Favoritos",
+    // never parked on the keyboard; with a search on screen (it survives a trip to the player), on
+    // the keyboard. Afterwards it only moves when a row that held it vanished and nothing on the
+    // screen holds focus (tvGuideShouldLand). `FocusRequester.requestFocus()` never reports
+    // failure, so success is each target's OWN focus state (see retryFocus).
+    val providersFocus = remember { FocusRequester() }
     val chipsFocus = remember { FocusRequester() }
-    LaunchedEffect(Unit) {
-        var landed = false
-        repeat(20) {
-            if (landed) return@repeat
-            landed = runCatching { chipsFocus.requestFocus() }.isSuccess
-            if (!landed) delay(50)
-        }
+    val keyboardFocus = remember { FocusRequester() }
+    var providersFocused by remember { mutableStateOf(false) }
+    var chipsFocused by remember { mutableStateOf(false) }
+    var keyboardFocused by remember { mutableStateOf(false) }
+    var screenHasFocus by remember { mutableStateOf(false) }
+    var landedOnce by remember { mutableStateOf(false) }
+    val focusTarget = tvGuideFocusTarget(state.showProviders, searching)
+    // Keyed on every row that can vanish under focus: the providers, the categories, the list.
+    LaunchedEffect(focusTarget, state.providers.map { it.id }, state.categories.map { it.id }, channels) {
+        // One frame for a removed node to clear focus before asking who holds it.
+        if (landedOnce) delay(WAIT_BETWEEN_FOCUS_ATTEMPTS_MS)
+        if (!tvGuideShouldLand(landedOnce, screenHasFocus)) return@LaunchedEffect
+        landedOnce = true
+        retryFocus(
+            attempts = 20,
+            isAlreadyFocused = {
+                when (focusTarget) {
+                    TvGuideFocus.PROVIDERS -> providersFocused
+                    TvGuideFocus.CATEGORIES -> chipsFocused
+                    TvGuideFocus.KEYBOARD -> keyboardFocused
+                }
+            },
+            wait = { delay(50) },
+            request = {
+                when (focusTarget) {
+                    TvGuideFocus.PROVIDERS -> providersFocus
+                    TvGuideFocus.CATEGORIES -> chipsFocus
+                    TvGuideFocus.KEYBOARD -> keyboardFocus
+                }.requestFocus()
+            },
+        )
     }
 
     Column(
         modifier = Modifier.fillMaxSize().background(ArkivBlack)
+            .onFocusChanged { screenHasFocus = it.hasFocus }
             .padding(start = 48.dp, end = 24.dp, top = 24.dp, bottom = 16.dp),
     ) {
         Text(
@@ -205,7 +253,12 @@ fun TvLiveGuideScreen(onWatchChannel: (LiveChannel) -> Unit, onBack: () -> Unit)
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(bottom = 12.dp),
                 )
-                TvKeyboardWithNative(text = search, onTextChange = { search = it })
+                TvKeyboardWithNative(
+                    text = search,
+                    onTextChange = vm::search,
+                    modifier = Modifier.onFocusChanged { keyboardFocused = it.hasFocus },
+                    firstKeyFocus = keyboardFocus,
+                )
                 Spacer(Modifier.height(12.dp))
                 Surface(
                     onClick = { vm.reload() },
@@ -221,7 +274,8 @@ fun TvLiveGuideScreen(onWatchChannel: (LiveChannel) -> Unit, onBack: () -> Unit)
                 if (search.isNotBlank()) {
                     Spacer(Modifier.height(12.dp))
                     Surface(
-                        onClick = { search = "" },
+                        // Removes this very button: the focus watch above hands focus to the rows.
+                        onClick = { vm.search("") },
                         modifier = Modifier.fillMaxWidth().height(48.dp),
                         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
                         colors = arkivTvSurfaceColors(),
@@ -234,11 +288,39 @@ fun TvLiveGuideScreen(onWatchChannel: (LiveChannel) -> Unit, onBack: () -> Unit)
                 }
             }
 
-            // --- Right panel: category chips + channel list. ---
+            // --- Right panel: provider chips + category chips + channel list. ---
             Column(Modifier.weight(1f).fillMaxHeight()) {
+                if (state.moduleEmpty) {
+                    // Defensive: ArkivTvRoot already leaves the route when the module empties.
+                    TvGuideMessage("Sin canales en vivo", "Instala un plugin con canales o activa Xuper en Ajustes ▸ Plugins.")
+                    return@Column
+                }
+                if (searching) {
+                    TvSearchResults(searchView, state::tabOf, ::watchChannel)
+                    return@Column
+                }
+                if (state.showProviders) {
+                    val lit = selectedProviderChip(state, recentView = view == TvLocalView.RECENT)
+                    LazyRow(
+                        contentPadding = PaddingValues(end = 24.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.padding(bottom = 10.dp).onFocusChanged { providersFocused = it.hasFocus },
+                    ) {
+                        itemsIndexed(state.providers, key = { _, tab -> tab.id }) { i, tab ->
+                            TvCategoryChip(
+                                label = tab.name,
+                                icon = null,
+                                selected = lit == tab.id,
+                                onClick = { view = TvLocalView.NONE; vm.chooseProvider(tab.id) },
+                                modifier = if (i == 0) Modifier.focusRequester(providersFocus) else Modifier,
+                            )
+                        }
+                    }
+                }
                 LazyRow(
                     contentPadding = PaddingValues(end = 24.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.onFocusChanged { chipsFocused = it.hasFocus },
                 ) {
                     item {
                         TvCategoryChip(
@@ -269,6 +351,9 @@ fun TvLiveGuideScreen(onWatchChannel: (LiveChannel) -> Unit, onBack: () -> Unit)
 
                 Spacer(Modifier.height(16.dp))
 
+                // The active provider's own note (a plugin list cut to the caps): "Lista recortada: …".
+                state.notice?.let { TvNoteLine(it) }
+
                 when {
                     view == TvLocalView.RECENT && baseChannels.isEmpty() ->
                         TvGuideMessage("Sin canales recientes", "Los canales que abras van a aparecer acá.")
@@ -276,8 +361,6 @@ fun TvLiveGuideScreen(onWatchChannel: (LiveChannel) -> Unit, onBack: () -> Unit)
                         TvGuideMessage(state.error!!, "Presiona OK para reintentar.") { vm.retry() }
                     state.loading && state.channels.isEmpty() ->
                         TvGuideMessage("Cargando canales…", null)
-                    search.isNotBlank() && channels.isEmpty() ->
-                        TvGuideMessage("Sin resultados", "Prueba con otro nombre o número de canal.")
                     baseChannels.isEmpty() ->
                         TvGuideMessage("Sin canales", "No encontramos canales en esta categoría.")
                     else -> LazyColumn(
@@ -288,6 +371,7 @@ fun TvLiveGuideScreen(onWatchChannel: (LiveChannel) -> Unit, onBack: () -> Unit)
                         items(channels, key = { it.liveCode }) { channel ->
                             TvChannelRow(
                                 channel = channel,
+                                badge = state.tabOf(channel),
                                 onClick = { watchChannel(channel) },
                                 modifier = Modifier.height(ROW_HEIGHT),
                             )
@@ -297,6 +381,58 @@ fun TvLiveGuideScreen(onWatchChannel: (LiveChannel) -> Unit, onBack: () -> Unit)
             }
         }
     }
+}
+
+/**
+ * The merged search across every provider (Amendment A1): the results list, each row with its
+ * provider's badge ([badgeOf], non-null only with more than one provider), "Sin resultados", or
+ * "Buscando…" while the first answer is computed; above it, which providers were not fully searched.
+ */
+@Composable
+private fun TvSearchResults(
+    view: LiveSearchView,
+    badgeOf: (LiveChannel) -> LiveProviderTab?,
+    onWatch: (LiveChannel) -> Unit,
+) {
+    val note = when (view) {
+        is LiveSearchView.Results -> view.note
+        is LiveSearchView.NoResults -> view.note
+        else -> null
+    }
+    Column(Modifier.fillMaxSize()) {
+        note?.let { TvNoteLine(it) }
+        when (view) {
+            is LiveSearchView.Results -> LazyColumn(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                contentPadding = PaddingValues(end = 24.dp, bottom = 16.dp),
+            ) {
+                items(view.channels, key = { it.liveCode }) { channel ->
+                    TvChannelRow(
+                        channel = channel,
+                        badge = badgeOf(channel),
+                        onClick = { onWatch(channel) },
+                        modifier = Modifier.height(ROW_HEIGHT),
+                    )
+                }
+            }
+            is LiveSearchView.NoResults ->
+                TvGuideMessage("Sin resultados", "Prueba con otro nombre o número de canal.")
+            else -> TvGuideMessage("Buscando…", null)
+        }
+    }
+}
+
+/** A small secondary line above the list: a provider's notice or the search's not-loaded note. Never focusable. */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun TvNoteLine(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.bodySmall,
+        color = ArkivTextSecondary,
+        modifier = Modifier.padding(bottom = 10.dp),
+    )
 }
 
 /**
@@ -310,7 +446,12 @@ fun TvLiveGuideScreen(onWatchChannel: (LiveChannel) -> Unit, onBack: () -> Unit)
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun TvChannelRow(channel: LiveChannel, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun TvChannelRow(
+    channel: LiveChannel,
+    badge: LiveProviderTab?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Surface(
         onClick = onClick,
         modifier = modifier.fillMaxWidth(),
@@ -352,13 +493,18 @@ private fun TvChannelRow(channel: LiveChannel, onClick: () -> Unit, modifier: Mo
                 }
             }
             Column {
-                Text(
-                    channel.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Color.White,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        channel.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    // Which provider the row is from, only with more than one ("CNN · Tu servidor").
+                    badge?.let { ProviderBadge(it, Modifier.padding(start = 8.dp)) }
+                }
                 // Number always visible, not just as the logo's fallback: it's what the search
                 // box matches by exact number, so it's worth seeing even when the logo is there too.
                 Text(

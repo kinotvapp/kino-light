@@ -109,7 +109,10 @@ import com.arkiv.player.ui.live.countryChannelsForHome
 import com.arkiv.player.ui.player.WAIT_BETWEEN_FOCUS_ATTEMPTS_MS
 import com.arkiv.player.ui.player.retryFocus
 import com.arkiv.player.ui.live.recentChannelsForHome
-import com.arkiv.player.ui.live.homeChannelsRow
+import com.arkiv.player.ui.live.homeLiveRow
+import com.arkiv.player.ui.live.providerBadge
+import com.arkiv.player.ui.live.ProviderBadge
+import com.arkiv.player.data.live.LiveProviderTab
 import com.arkiv.player.ui.live.liveCacheForRecents
 import com.arkiv.player.ui.rememberGraph
 import com.arkiv.player.ui.catalog.isLiveChannel
@@ -170,6 +173,19 @@ internal fun showForYouRow(recommendations: List<RecommendationEntity>): Boolean
  */
 internal fun liveGateNeedsRefocus(wasOn: Boolean, isOn: Boolean, screenHasFocus: Boolean): Boolean =
     wasOn && !isOn && !screenHasFocus
+
+/** Which live surfaces the TV Home draws: the "Xuper" and "En vivo" nav buttons, and the "Canales en vivo" row. */
+internal data class HomeLiveSurfaces(val xuperButton: Boolean, val liveButton: Boolean, val channelsRow: Boolean)
+
+/**
+ * [liveGateNeedsRefocus] over every live surface: any of them vanishing (the Xuper gate closing, the
+ * module emptying, the row losing its last channel to a provider that went) with nothing on the
+ * screen holding focus hands it back to the top bar.
+ */
+internal fun homeLiveNeedsRefocus(was: HomeLiveSurfaces, now: HomeLiveSurfaces, screenHasFocus: Boolean): Boolean =
+    liveGateNeedsRefocus(was.xuperButton, now.xuperButton, screenHasFocus) ||
+        liveGateNeedsRefocus(was.liveButton, now.liveButton, screenHasFocus) ||
+        liveGateNeedsRefocus(was.channelsRow, now.channelsRow, screenHasFocus)
 
 /** The key a Home card is restored by (`returnKey`): one format for the card and the row lookup. */
 internal fun pluginCardKey(pluginId: String, rowId: String, itemId: String?) = "plugin-$pluginId-$rowId-$itemId"
@@ -357,14 +373,14 @@ fun TvHomeScreen(
     val liveRecentDao = remember { graph.database.liveRecentDao() }
     val liveCacheDao = remember { graph.database.liveChannelCacheDao() }
     val liveRawRecents by liveRecentDao.flowRecent(10).collectAsStateWithLifecycle(initialValue = emptyList())
-    var liveCacheByCode by remember { mutableStateOf<Map<String, LiveChannelCacheEntity>>(emptyMap()) }
+    var liveCacheByLiveCode by remember { mutableStateOf<Map<String, LiveChannelCacheEntity>>(emptyMap()) }
     LaunchedEffect(liveRawRecents) {
         if (liveRawRecents.isNotEmpty()) {
-            liveCacheByCode = liveCacheForRecents(liveRawRecents, liveCacheDao)
+            liveCacheByLiveCode = liveCacheForRecents(liveRawRecents, liveCacheDao)
         }
     }
-    val recentChannels = remember(liveRawRecents, liveCacheByCode) {
-        recentChannelsForHome(liveRawRecents, liveCacheByCode)
+    val recentChannels = remember(liveRawRecents, liveCacheByLiveCode) {
+        recentChannelsForHome(liveRawRecents, liveCacheByLiveCode)
     }
 
     // Device's country channels, same as the phone's home (see countryChannelsForHome): so the
@@ -372,9 +388,10 @@ fun TvHomeScreen(
     // here than on the phone -- this TV may have no SIM, which is why detection looks at the time
     // zone before the language.
     //
-    // Everything Xuper-live here (this row, the "En vivo" and "Xuper" nav buttons) follows the Xuper
-    // plugin (AppGraph.xuperLive): off, the row is empty and the country's channels aren't even
-    // asked for; back on, they're fetched again. Recents stay in Room.
+    // The country part and the "Xuper" nav button follow the Xuper plugin (AppGraph.xuperLive):
+    // off, the country's channels aren't even asked for; back on, they're fetched again. The row
+    // itself and the "En vivo" button follow the whole live module (Xuper or any plugin with
+    // channels, `liveOn`). Recents stay in Room.
     val xuperLive by graph.xuperLive.collectAsStateWithLifecycle()
     var countryChannels by remember { mutableStateOf<List<LiveChannel>>(emptyList()) }
     LaunchedEffect(xuperLive) {
@@ -386,9 +403,12 @@ fun TvHomeScreen(
         )
     }
     // The module's providers right now: a switched-off plugin's recents leave the row (they are kept, not deleted).
+    val liveOn by graph.liveModule.available.collectAsStateWithLifecycle()
     val liveTabs by graph.liveModule.tabs.collectAsStateWithLifecycle()
-    val channelsRow = remember(recentChannels, countryChannels, xuperLive, liveTabs) {
-        if (xuperLive) homeChannelsRow(recentChannels, countryChannels, available = liveTabs.map { it.id }.toSet()) else emptyList()
+    // Same rule as the phone (homeLiveRow): drawn only with at least one channel to list, never as
+    // "Ver más canales" alone; empty module, no row.
+    val channelsRow = remember(recentChannels, countryChannels, liveOn, liveTabs) {
+        homeLiveRow(liveOn, recentChannels, countryChannels, available = liveTabs.map { it.id }.toSet()).orEmpty()
     }
 
     // The row GROWS after being painted: recents come from Room (instant) and the country's may
@@ -404,6 +424,14 @@ fun TvHomeScreen(
     var channelsRowFocused by remember { mutableStateOf(false) }
     LaunchedEffect(countryChannels) {
         if (countryChannels.isNotEmpty() && !channelsRowFocused) {
+            runCatching { channelsRowState.scrollToItem(0) }
+        }
+    }
+    // And whenever the row's first card changes (the row appears, a new recent lands first): a
+    // LazyRow keeps its key-anchored first visible item and can open scrolled to its end (measured
+    // on the phone). Same focus guard.
+    LaunchedEffect(channelsRow.firstOrNull()?.liveCode) {
+        if (channelsRow.isNotEmpty() && !channelsRowFocused) {
             runCatching { channelsRowState.scrollToItem(0) }
         }
     }
@@ -562,22 +590,24 @@ fun TvHomeScreen(
     // anything. And it leaves the user one click from their library, which is what they'll want if
     // nothing's been started.
     val barFocus = remember { FocusRequester() }
-    // The live gate can take away the node that holds focus (the channels row, the "En vivo" or
-    // "Xuper" button) while this screen is showing -- e.g. the Xuper plugin gets marked damaged.
+    // A live surface can take away the node that holds focus while this screen is showing: the
+    // "Xuper" button (the Xuper gate closes, e.g. its plugin gets marked damaged), the "En vivo"
+    // button (the live module empties) or the channels row (its last channel's provider went).
     // Compose then clears focus instead of moving it, and the D-pad is stranded. A per-node latch
     // can't catch it (the removed node reports "unfocused" before any effect runs), so this watches
-    // the whole screen: right after the gate closes, if nothing here holds focus, "Mi biblioteca"
-    // takes it ([liveGateNeedsRefocus]). Retried through `retryFocus` against the button's OWN
+    // the whole screen: right after a surface vanishes, if nothing here holds focus, "Mi biblioteca"
+    // takes it ([homeLiveNeedsRefocus]). Retried through `retryFocus` against the button's OWN
     // focus state: `FocusRequester.requestFocus()` never reports failure (see its KDoc).
     var screenHasFocus by remember { mutableStateOf(false) }
     var libraryFocused by remember { mutableStateOf(false) }
-    var lastXuperLive by remember { mutableStateOf(xuperLive) }
-    LaunchedEffect(xuperLive) {
-        val wasOn = lastXuperLive
-        lastXuperLive = xuperLive
+    val liveSurfaces = HomeLiveSurfaces(xuperButton = xuperLive, liveButton = liveOn, channelsRow = channelsRow.isNotEmpty())
+    var lastLiveSurfaces by remember { mutableStateOf(liveSurfaces) }
+    LaunchedEffect(liveSurfaces) {
+        val was = lastLiveSurfaces
+        lastLiveSurfaces = liveSurfaces
         // One frame for the removed node to clear focus before asking who holds it.
         delay(WAIT_BETWEEN_FOCUS_ATTEMPTS_MS)
-        if (!liveGateNeedsRefocus(wasOn, xuperLive, screenHasFocus)) return@LaunchedEffect
+        if (!homeLiveNeedsRefocus(was, liveSurfaces, screenHasFocus)) return@LaunchedEffect
         retryFocus(
             isAlreadyFocused = { libraryFocused },
             wait = { delay(WAIT_BETWEEN_FOCUS_ATTEMPTS_MS) },
@@ -747,7 +777,8 @@ fun TvHomeScreen(
                         onClick = onOpenLibrary,
                         modifier = Modifier.focusRequester(barFocus).onFocusChanged { libraryFocused = it.isFocused },
                     )
-                    if (xuperLive) {
+                    // The live guide follows the whole module: Xuper or any plugin with channels.
+                    if (liveOn) {
                         TvNavButton(
                             icon = Icons.Default.LiveTv,
                             label = "En vivo",
@@ -951,9 +982,10 @@ fun TvHomeScreen(
                                     contentPadding = PaddingValues(horizontal = 48.dp),
                                     horizontalArrangement = Arrangement.spacedBy(16.dp),
                                 ) {
-                                    items(channelsRow, key = { it.code }) { channel ->
+                                    items(channelsRow, key = { it.liveCode }) { channel ->
                                         TvLiveChannelCard(
                                             channel = channel,
+                                            badge = providerBadge(channel, liveTabs),
                                             cardHeight = cardHeight,
                                             onFocus = {
                                                 navSound()
@@ -1052,6 +1084,8 @@ fun TvHomeScreen(
 @Composable
 private fun TvLiveChannelCard(
     channel: LiveChannel,
+    /** The channel's provider, only with more than one ([providerBadge]). */
+    badge: LiveProviderTab?,
     cardHeight: Dp,
     modifier: Modifier = Modifier,
     onFocus: () -> Unit = {},
@@ -1093,6 +1127,7 @@ private fun TvLiveChannelCard(
                     )
                 }
             }
+            badge?.let { ProviderBadge(it, Modifier.align(Alignment.TopStart).padding(6.dp)) }
         }
     }
 }

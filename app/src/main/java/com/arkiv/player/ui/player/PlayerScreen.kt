@@ -4064,7 +4064,7 @@ private fun PlayerContent(
         if (isTv && isModuleLive && liveState.drawerOpen && blocked == null) {
             LiveChannelDrawer(
                 state = liveState,
-                currentChannel = liveChannel?.liveCode,
+                currentChannel = liveChannel,
                 onChooseChannel = { list, channel -> vm.goToChannel(list, channel) },
             )
         }

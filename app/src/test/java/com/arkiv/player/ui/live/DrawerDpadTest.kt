@@ -1,7 +1,11 @@
 package com.arkiv.player.ui.live
 
 import android.view.KeyEvent
+import com.arkiv.player.data.gateway.LiveChannel
+import com.arkiv.player.data.gateway.LiveChannelKeys
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -160,5 +164,43 @@ class DrawerDpadTest {
             DrawerAction.PASS,
             DrawerDpad.action(KeyEvent.KEYCODE_BACK, open = false, focus = channels),
         )
+    }
+
+    @Test fun `the guide lands on the provider row only when there is a choice of provider`() {
+        assertEquals(TvGuideFocus.PROVIDERS, tvGuideFirstFocus(showProviders = true))
+        assertEquals(TvGuideFocus.CATEGORIES, tvGuideFirstFocus(showProviders = false))
+    }
+
+    @Test fun `the drawer keys still never cross into another provider's list`() {
+        // The drawer has no provider column: left from categories closes it, as before.
+        assertEquals(DrawerAction.CLOSE, DrawerDpad.action(KeyEvent.KEYCODE_DPAD_LEFT, open = true, focus = DrawerFocus.CATEGORIES))
+    }
+
+    /** While a search is on screen the provider and category rows are hidden: only the keyboard is left to land on. */
+    @Test fun `the guide's focus target is the keyboard while searching, else its first row`() {
+        assertEquals(TvGuideFocus.KEYBOARD, tvGuideFocusTarget(showProviders = true, searching = true))
+        assertEquals(TvGuideFocus.KEYBOARD, tvGuideFocusTarget(showProviders = false, searching = true))
+        assertEquals(TvGuideFocus.PROVIDERS, tvGuideFocusTarget(showProviders = true, searching = false))
+        assertEquals(TvGuideFocus.CATEGORIES, tvGuideFocusTarget(showProviders = false, searching = false))
+    }
+
+    /**
+     * The guide lands once on opening; after that it only moves focus when a row that held it went
+     * away (a provider gone, the search cleared by its own button) and nothing on the screen holds it.
+     * A provider row appearing later never yanks focus from where the person is.
+     */
+    @Test fun `the guide lands on opening, then only rescues stranded focus`() {
+        assertTrue(tvGuideShouldLand(landedOnce = false, screenHasFocus = false))
+        assertTrue(tvGuideShouldLand(landedOnce = false, screenHasFocus = true))
+        assertTrue(tvGuideShouldLand(landedOnce = true, screenHasFocus = false))
+        assertFalse(tvGuideShouldLand(landedOnce = true, screenHasFocus = true))
+    }
+
+    /** R6: the drawer is locked to the on-screen channel's provider; with none known yet, Xuper's (as before providers). */
+    @Test fun `the drawer lists the on-screen channel's provider only`() {
+        val plugin = LiveChannel("c1", "CNN", 1, null, provider = "plugin:tv")
+        assertEquals("plugin:tv", drawerProviderFor(plugin))
+        assertEquals(LiveChannelKeys.XUPER, drawerProviderFor(LiveChannel("c1", "CNN", 1, null)))
+        assertEquals(LiveChannelKeys.XUPER, drawerProviderFor(null))
     }
 }

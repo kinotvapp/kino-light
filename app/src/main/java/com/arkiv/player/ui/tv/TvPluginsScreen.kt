@@ -78,6 +78,7 @@ import com.arkiv.player.ui.plugin.catalogActionOf
 import com.arkiv.player.ui.plugin.catalogRefreshLine
 import com.arkiv.player.ui.plugin.handleAddPluginBack
 import com.arkiv.player.ui.plugin.initialPluginsTab
+import com.arkiv.player.ui.plugin.installedGridLinesReserving
 import com.arkiv.player.ui.plugin.installedGridLinesWithMessage
 import com.arkiv.player.ui.plugin.installedTabLabel
 import com.arkiv.player.ui.plugin.legacyFirst
@@ -568,6 +569,16 @@ private fun InstalledTab(
 
     val messageIndex = rowMessageId?.let { id -> plugins.indexOfFirst { it.id == id } }?.takeIf { it >= 0 }
     val messageLines = remember(plugins, messageIndex) { installedGridLinesWithMessage(plugins.size, messageIndex, CATALOG_COLUMNS) }
+    // A live plugin's "Lista recortada: …" line, per card (null = none), following its current
+    // provider -- the same line as the phone's card. Plain text, never focusable: D-pad order is unchanged.
+    val liveModule = rememberGraph().liveModule
+    val notices = plugins.map { p ->
+        androidx.compose.runtime.key(p.id) {
+            val flow = remember(p.id) { liveModule.noticeFor(p.id) }
+            flow.collectAsStateWithLifecycle(initialValue = null).value
+        }
+    }
+    val noticeLines = installedGridLinesReserving(notices.map { it != null }, CATALOG_COLUMNS)
 
     LazyVerticalGrid(
         columns = GridCells.Fixed(CATALOG_COLUMNS),
@@ -582,6 +593,8 @@ private fun InstalledTab(
                 art = artForInstalled(art, p.record.address),
                 message = message.takeIf { rowMessageId == p.id },
                 reserveMessageLines = messageLines.getOrElse(index) { false },
+                liveNotice = notices.getOrNull(index),
+                reserveNoticeLines = noticeLines.getOrElse(index) { false },
                 modifier = Modifier
                     .focusRequester(cardFocus.getValue(p.id))
                     .then(if (index == 0) Modifier.focusRequester(entryFocus).focusProperties { up = selectedTabFocus } else Modifier)

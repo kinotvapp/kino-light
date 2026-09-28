@@ -274,7 +274,8 @@ private fun ProgramLine(text: String, color: Color) {
 @Composable
 internal fun BoxScope.LiveChannelDrawer(
     state: LiveState,
-    currentChannel: String?,
+    /** The channel on screen: the drawer is locked to its provider (R6). */
+    currentChannel: LiveChannel?,
     onChooseChannel: (List<LiveChannel>, LiveChannel) -> Unit,
 ) {
     Box(

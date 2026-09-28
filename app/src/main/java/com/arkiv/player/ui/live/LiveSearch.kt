@@ -97,6 +97,18 @@ fun liveSearchView(query: String, cross: CrossSearch?): LiveSearchView {
     return if (cross.results.isEmpty()) LiveSearchView.NoResults(note) else LiveSearchView.Results(cross.results, note)
 }
 
+/**
+ * The channels a click on the En vivo screen zaps through (set in [LiveZappingSource] before
+ * opening): the merged search results while they are on screen (the player then narrows them to the
+ * opened channel's provider, `zappingListFor`), the per-provider list [perProvider] with no search,
+ * and nothing while a search has no result to click. Pure.
+ */
+fun listOnScreen(view: LiveSearchView, perProvider: List<LiveChannel>): List<LiveChannel> = when (view) {
+    LiveSearchView.Off -> perProvider
+    is LiveSearchView.Results -> view.channels
+    else -> emptyList()
+}
+
 /** The provider chip to light: the active provider while one of its own categories is on screen; none on Favoritos or Recientes. Pure. */
 fun selectedProviderChip(state: LiveUiState, recentView: Boolean): String? =
     if (recentView || state.activeCategory == CATEGORY_FAVORITES) null else state.activeProvider

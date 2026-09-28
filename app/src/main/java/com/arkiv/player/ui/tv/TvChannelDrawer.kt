@@ -46,6 +46,7 @@ import com.arkiv.player.ui.live.CATEGORY_FAVORITES
 import com.arkiv.player.ui.live.DrawerFocus
 import com.arkiv.player.ui.live.DrawerIndex
 import com.arkiv.player.ui.live.LiveViewModel
+import com.arkiv.player.ui.live.drawerProviderFor
 import com.arkiv.player.ui.live.filterChannels
 import com.arkiv.player.ui.rememberGraph
 import com.arkiv.player.ui.theme.ArkivRed
@@ -60,7 +61,12 @@ private val ITEM_HEIGHT = 52.dp
 
 /**
  * The live channel drawer: opens with the left arrow over the video being watched, lists the
- * WHOLE catalog by categories, has a search box, and closes with right.
+ * on-screen channel's provider's catalog by categories, has a search box, and closes with right.
+ *
+ * Locked to that ONE provider (R6, [drawerProviderFor]): its categories, its favourites and its
+ * search, never another provider's -- so choosing from here, and the zapping that follows, stays
+ * within the provider being watched. No provider badge: it shows one provider. Its model is keyed
+ * per provider, so a channel from another provider opened later gets a drawer of its own.
  *
  * It's a drawer and not the full guide ([TvLiveGuideScreen]) on purpose: the guide is a screen
  * you go to, and the point of this is to switch channels WITHOUT stopping watching what you're
@@ -80,10 +86,13 @@ fun TvChannelDrawer(
     focus: DrawerFocus,
     onFocus: (DrawerFocus) -> Unit,
     onChooseChannel: (List<LiveChannel>, LiveChannel) -> Unit,
-    currentChannel: String?,
+    currentChannel: LiveChannel?,
 ) {
     val graph = rememberGraph()
+    val provider = drawerProviderFor(currentChannel)
+    val currentLiveCode = currentChannel?.liveCode
     val vm: LiveViewModel = viewModel(
+        key = "drawer:$provider",
         factory = viewModelFactory {
             initializer {
                 LiveViewModel(
@@ -92,6 +101,7 @@ fun TvChannelDrawer(
                     // Read on EVERY load, not once: unlocking 18+ from Settings has to show up
                     // on returning to the screen, without restarting the app.
                     adultsUnlocked = { graph.settings.adultsUnlocked.value },
+                    onlyProvider = provider,
                 )
             }
         },
@@ -110,7 +120,7 @@ fun TvChannelDrawer(
     // the whole list back to the start. With 1040 channels that looked like an endless scroll
     // upward that ended up far from the channel being watched. See [DrawerIndex].
     val channelsList = rememberLazyListState()
-    val currentIndex = remember(channels, currentChannel) { DrawerIndex.indexFor(channels, currentChannel) }
+    val currentIndex = remember(channels, currentLiveCode) { DrawerIndex.indexFor(channels, currentLiveCode) }
 
     // Android's focus takes a while to exist: the row to go to may not be composed yet when
     // `focus` changes. It retries for a short while instead of requesting it just once -- same
@@ -187,6 +197,9 @@ fun TvChannelDrawer(
 
         Column(Modifier.weight(1f).fillMaxHeight()) {
             when {
+                // Its provider left the module (the player stops the channel with its own message).
+                state.moduleEmpty ->
+                    DrawerMessage("Este proveedor ya no está disponible")
                 state.error != null && state.channels.isEmpty() ->
                     DrawerMessage(state.error!!)
                 state.loading && state.channels.isEmpty() ->
@@ -204,7 +217,7 @@ fun TvChannelDrawer(
                     itemsIndexed(channels) { i, channel ->
                         DrawerChannelRow(
                             channel = channel,
-                            onScreen = channel.liveCode == currentChannel,
+                            onScreen = channel.liveCode == currentLiveCode,
                             // Choosing changes the channel and closes: the caller decides both
                             // things. It's given the FILTERED list because that's the one
                             // up/down zapping has to go through after -- if you searched
