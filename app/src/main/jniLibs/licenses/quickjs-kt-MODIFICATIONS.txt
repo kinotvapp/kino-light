@@ -1,0 +1,12 @@
+Modifications to quickjs-kt (https://github.com/dokar3/quickjs-kt, v1.0.0-alpha13,
+commit d2fefdc451678d09bbef5526c3b00f12e41cd5cf, Apache License 2.0) in the libquickjs builds
+shipped with Kino (app/src/main/jniLibs/<abi>/libquickjs.so) and used by its unit tests
+(app/src/test/resources/jni/macos_aarch64/libquickjs.dylib):
+
+- quickjs/native/jni/quickjs_jni.c: Java_com_dokar_quickjs_QuickJs_releaseGlobals no longer calls
+  clear_java_vm_cache() and clear_jni_refs_cache(); the process-wide JNI caches are kept for the
+  life of the process. Patch: app/src/main/jniLibs/patches/0001-keep-process-wide-jni-caches.patch
+
+- Build only: Android libraries linked with -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384.
+
+No other source file is changed.

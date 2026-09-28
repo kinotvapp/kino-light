@@ -103,7 +103,7 @@ class PluginRuntime private constructor(
 ) : ScriptRuntime {
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val lock = Any()
-    private var inFlight: Deferred<String>? = null
+    private var inFlight: Deferred<String?>? = null
     private var closing = false
 
     @Volatile override var isDiscarded = false
@@ -113,10 +113,13 @@ class PluginRuntime private constructor(
         val job = synchronized(lock) {
             if (isDiscarded) throw PluginScriptException("El plugin se reinició, vuelve a intentar")
             val code = "await __kinoCall(${JSONObject.quote(function)}, ${JSONObject.quote(argJson)})"
-            scope.async { guarded { js.evaluate<String>(code) } }.also { inFlight = it }
+            scope.async { guarded { js.evaluate<String?>(code) } }.also { inFlight = it }
         }
         try {
+            // __kinoCall always answers a JSON string; null only comes from an engine that lost its
+            // way back into Kotlin (a failed native callback), never from the plugin itself.
             val result = withTimeout(timeoutMs) { job.await() }
+                ?: run { close(); throw PluginScriptException(NO_RESULT) }
             // The prelude's __kinoCall already refuses this in JS; this only keeps a bigger string
             // (should the prelude ever be bypassed) away from the JSON parsers downstream.
             if (result.length > MAX_RESULT_CHARS) throw PluginScriptException(RESULT_TOO_BIG)
@@ -189,6 +192,12 @@ class PluginRuntime private constructor(
         /** The longest JSON a capability call may return; checked in JS, before it crosses. */
         const val MAX_RESULT_CHARS = 2_000_000
 
+        /** A call whose engine answered nothing at all (see [call]); the runtime is discarded. */
+        private const val NO_RESULT = "el plugin no respondió, vuelve a intentar"
+
+        /** The prelude stopped before defining `__kinoCall` (see [open]). */
+        private const val PRELUDE_INCOMPLETE = "el plugin no terminó de cargar, vuelve a intentar"
+
         private const val RESULT_TOO_BIG = "respuesta del plugin demasiado grande (más de 2 millones de caracteres)"
 
         /** The longest `kino.fetch` request (URL, headers and body, as JSON); checked in JS. */
@@ -244,8 +253,12 @@ class PluginRuntime private constructor(
          * throw at module top level, and [PluginTimeoutException] if loading takes longer than
          * [PluginEnv.loadTimeoutMs] (a top-level infinite loop leaks that thread, see the class KDoc).
          */
+        suspend fun open(label: String, script: String, host: PluginHost, env: PluginEnv): PluginRuntime =
+            open(label, script, host, env, prelude(env))
+
+        /** [open] with the prelude source given: tests use it to load a prelude that aborts. */
         @OptIn(ExperimentalCoroutinesApi::class) // Deferred.getCompleted(), read only after completion is confirmed
-        suspend fun open(label: String, script: String, host: PluginHost, env: PluginEnv): PluginRuntime {
+        internal suspend fun open(label: String, script: String, host: PluginHost, env: PluginEnv, preludeCode: String): PluginRuntime {
             val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "plugin-$label").apply { isDaemon = true } }
             val dispatcher = executor.asCoroutineDispatcher()
             val loading = CoroutineScope(SupervisorJob() + dispatcher).async {
@@ -254,7 +267,14 @@ class PluginRuntime private constructor(
                     js.memoryLimit = env.memoryLimitBytes
                     js.maxStackSize = env.maxStackBytes
                     bind(js, host)
-                    js.evaluate<Any?>(code = prelude(env), filename = "prelude.js", asModule = false)
+                    js.evaluate<Any?>(code = preludeCode, filename = "prelude.js", asModule = false)
+                    // A prelude that stops early (a native callback failing while it loads) can come
+                    // back from evaluate() as a plain result, with no exception: without this check
+                    // the runtime would open fine and every call would then die on a missing
+                    // __kinoCall. Fail the load instead, where the pool reports and retries it.
+                    if (js.evaluate<Any?>("typeof __kinoCall === 'function'") != true) {
+                        throw PluginScriptException(PRELUDE_INCOMPLETE)
+                    }
                     js.addModule("plugin.js", script)
                     js.evaluate<Any?>(
                         code = "import * as p from 'plugin.js'; " +

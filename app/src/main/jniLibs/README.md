@@ -6,10 +6,37 @@
 Play requires 16 KB alignment for 64-bit libs. Every other native lib in the APK is already 0x4000.
 
 The `.so` files here are the **same upstream sources, rebuilt with the same toolchain and flags**,
-plus the linker option upstream itself added in v1.0.1 (`-Wl,-z,max-page-size=16384`). The
-`pickFirsts += "**/libquickjs.so"` rule in `app/build.gradle.kts` makes this copy the one that
-ships instead of the AAR's. The Kotlin side stays alpha13's; JVM unit tests keep using
-`quickjs-kt-jvm` (desktop natives) and never load these files.
+plus the linker option upstream itself added in v1.0.1 (`-Wl,-z,max-page-size=16384`) and **one
+source patch** (`patches/`, below). The `pickFirsts += "**/libquickjs.so"` rule in
+`app/build.gradle.kts` makes this copy the one that ships instead of the AAR's. The Kotlin side
+stays alpha13's. JVM unit tests use `quickjs-kt-jvm` (desktop natives) and never load these files;
+on a macOS arm64 host they load the same patched sources instead (see "Desktop library for the
+unit tests").
+
+## The patch: closing one QuickJs broke every other one
+
+`patches/0001-keep-process-wide-jni-caches.patch` (applied by the script with `git apply`).
+
+alpha13's native code keeps the `JavaVM *` and ~80 JNI class/method/field IDs in **process-wide
+statics** (`jni/jni_globals.c`, `jni/jni_globals_generated.c`), shared by every live QuickJs.
+`initGlobals` (in `QuickJs.create`) caches the VM; `releaseGlobals` (in `QuickJs.close`) called
+`clear_java_vm_cache()` and `clear_jni_refs_cache(env)`. So closing *any* runtime left every other
+live one without a way back into Kotlin until the next `create`: `get_jni_env()` returned NULL, a
+binding call (`kino.storage.get`, `kino.fetch`, `config()` while the prelude loads) unwound with a
+`null` JS exception, `evaluate` answered null (a raw NPE in `PluginRuntime.call`) or the prelude
+stopped before defining `__kinoCall`. It also deleted global class refs another thread could be
+using at that moment. `PluginRuntimePool` closes runtimes on idle, timeout, update and uninstall,
+and the install probe closes one, so this hit production. Measured: `PluginRuntimeIsolationTest`
+fails 3 of its cases on the unpatched library, deterministically.
+
+The patch deletes those two calls: the caches are filled once per process and never cleared.
+That is correct because a process has exactly one JavaVM for its whole life, and the cached
+classes (`java.*` plus quickjs-kt's own) live as long as their class loader, i.e. the process; the
+set is fixed, so nothing grows. A refcount across live instances was rejected: it still clears on
+the last close while a `create` on another thread may be mid-way, and buys nothing over never
+clearing. The lazy getters' first-fill race (two threads both calling `NewGlobalRef`) at worst leaks
+one class ref, once. `PluginRuntime` also defends in Kotlin (a prelude without `__kinoCall` fails
+`open`; a null result fails the call and discards the runtime), for any other native failure.
 
 Why not a newer quickjs-kt-android AAR's lib (those are already 16 KB): 1.0.6+ export different
 JNI symbols, and 1.0.1–1.0.5 export the same names but their native code calls
@@ -49,13 +76,19 @@ own strip step; `.dynsym` (the JNI exports) is untouched.
 ## sha256
 
 ```
-41eeab5d3f2b90d5f53066513cf5b152b41adda79e625222cdb78d9a9d80577d  arm64-v8a/libquickjs.so
-73217f8dabbd749f40f818a1d1baf5e1d5714cf6c02bdb904b1db179c723662f  armeabi-v7a/libquickjs.so
+d1a4768b2580140cecfa0f1d09c4b3c6b3820bee9dad8bf1a440d9deb97057d2  arm64-v8a/libquickjs.so
+3a8e8a90a9fa8b249e38bb06986ebe1b0909cd629acbe995fff6152636c265a1  armeabi-v7a/libquickjs.so
+7673c12e7f26fa8365282051d73181901420e253181695d5eebfc1a916ec2e0f  ../../test/resources/jni/macos_aarch64/libquickjs.dylib
 ```
 
-The build is reproducible: two runs from separate fresh clones gave these same hashes.
+The build is reproducible: two runs from separate fresh clones gave these same hashes (the dylib
+with zig 0.16.0 and Zulu JDK 17 headers). Before the patch the `.so` hashes were `41eeab5d…` and
+`73217f8d…`.
 
 ## Checked against the AAR's original
+
+(Measured before the patch. After it, the dynamic symbols, `NEEDED` and `SONAME` were re-checked
+and are still identical; `.text` shrank by the now-unused `clear_jni_refs_cache`.)
 
 - `LOAD` `p_align`: 0x1000 in the AAR, 0x4000 here, both ABIs.
 - Exported dynamic symbols (`llvm-nm -D --defined-only`, the 19 `Java_com_dokar_quickjs_QuickJs_*`
@@ -71,13 +104,29 @@ app/src/main/jniLibs/build-quickjs-16kb.sh [work-dir]
 ```
 
 Needs git, network and the Android SDK with `ndk;26.1.10909125` and `cmake;3.22.1`. It clones
-upstream, checks the tag and submodule commits above, builds both ABIs, overwrites the `.so` files
-here, fails if any `LOAD` segment is not 0x4000 and prints the sha256 of each file.
+upstream, checks the tag and submodule commits above, applies `patches/*.patch`, builds both ABIs,
+overwrites the `.so` files here, fails if any `LOAD` segment is not 0x4000 and prints the sha256 of
+each file. On a macOS arm64 host with `zig` and a JDK it then rebuilds the desktop test library.
 
-Drop this directory, the script and the `pickFirsts` rule once the app can move to a quickjs-kt
-release whose AAR is already 16 KB aligned (needs Kotlin >= 2.3).
+## Desktop library for the unit tests
+
+`app/src/test/resources/jni/macos_aarch64/libquickjs.dylib` is the same patched source built the
+way upstream builds its desktop natives (`-DTARGET_PLATFORM=macos_aarch64`, `MinSizeRel`, upstream's
+`cmake/zig-toolchain-macos_aarch64.cmake`, JNI headers from the local JDK). quickjs-kt-jvm finds
+its native library with `classLoader.getResource("/jni/macos_aarch64/libquickjs.dylib")`, and the
+unit-test classpath puts the test resources before the dependency jars, so this copy shadows the
+unpatched one inside the jar — no Gradle wiring. On any other host (Linux, Intel Mac, Windows) the
+tests load the jar's **unpatched** library and `PluginRuntimeIsolationTest` fails, as it should: the
+bug is still in that library. Build that host's library the same way (`TARGET_PLATFORM` =
+`linux_x64`, `macos_x64`, …) and drop it next to this one under `jni/<platform>/`.
+
+Drop this directory, the script, the test dylib and the `pickFirsts` rule once the app can move to
+a quickjs-kt release whose AAR is already 16 KB aligned (needs Kotlin >= 2.3) **and** whose
+`releaseGlobals` no longer clears the process-wide caches — check that before dropping the patch:
+`PluginRuntimeIsolationTest` must stay green.
 
 ## Licenses
 
 QuickJS (Fabrice Bellard, Charlie Gordon) and c-vector (Evan Teran) are MIT; quickjs-kt (dokar3)
-is Apache-2.0. Their notices are in `licenses/`.
+is Apache-2.0. Their notices are in `licenses/`, with the list of files this build modifies
+(Apache-2.0 section 4(b)) in `licenses/quickjs-kt-MODIFICATIONS.txt`.

@@ -5,8 +5,14 @@
 #
 # Same sources (upstream tag v1.0.0-alpha13 + its pinned submodules), same NDK (r26b, the one the
 # AAR's lib was built with, per its .note.android.ident / .comment), same CMakeLists and same
-# release flags as upstream's quickjs/build.gradle.kts. The only change is the linker option
-# upstream itself added in v1.0.1: -Wl,-z,max-page-size=16384.
+# release flags as upstream's quickjs/build.gradle.kts. Two changes: the linker option upstream
+# itself added in v1.0.1 (-Wl,-z,max-page-size=16384), and patches/*.patch applied to the sources
+# (0001: closing one QuickJs no longer wipes the JNI caches every other live instance uses).
+#
+# It also builds the same patched sources as the macOS arm64 desktop library the JVM unit tests load
+# (app/src/test/resources/jni/macos_aarch64/libquickjs.dylib, shadowing the unpatched one inside
+# quickjs-kt-jvm), with upstream's own zig toolchain file. Skipped, with a notice, on any other host
+# or without zig (brew install zig) and a JDK. See README.md here.
 #
 # Usage: app/src/main/jniLibs/build-quickjs-16kb.sh [work-dir]   (needs git, network, the Android SDK)
 set -euo pipefail
@@ -33,12 +39,17 @@ SRC="$WORK/quickjs-kt"
 if [ ! -d "$SRC/.git" ]; then
     git clone --quiet "$UPSTREAM_URL" "$SRC"
 fi
+# Reset first: a reused work dir already has the patches applied.
 git -C "$SRC" checkout --quiet "$UPSTREAM_COMMIT"
+git -C "$SRC" reset --quiet --hard "$UPSTREAM_COMMIT"
 [ "$(git -C "$SRC" rev-parse "$UPSTREAM_TAG^{commit}")" = "$UPSTREAM_COMMIT" ] \
     || { echo "tag $UPSTREAM_TAG no longer points at $UPSTREAM_COMMIT" >&2; exit 1; }
 git -C "$SRC" submodule update --init --quiet
 [ "$(git -C "$SRC/quickjs/native/quickjs" rev-parse HEAD)" = "$QUICKJS_SUBMODULE_COMMIT" ] || exit 1
 [ "$(git -C "$SRC/quickjs/native/c-vector" rev-parse HEAD)" = "$CVECTOR_SUBMODULE_COMMIT" ] || exit 1
+for patch in "$OUT"/patches/*.patch; do
+    git -C "$SRC" apply --whitespace=nowarn "$patch"
+done
 
 # Upstream release flags: defaultConfig cFlags + release cFlags, CMAKE_BUILD_TYPE=MinSizeRel.
 C_FLAGS="-fstrict-aliasing -g0 -Os -fomit-frame-pointer -DNDEBUG -fvisibility=hidden"
@@ -75,4 +86,26 @@ for abi in "${ABIS[@]}"; do
     fi
     shasum -a 256 "$so"
 done
+
+# Desktop library for the JVM unit tests: upstream's desktop build (MinSizeRel, its zig toolchain
+# file for macos_aarch64, JNI headers from a local JDK), from the same patched sources.
+TEST_LIB_DIR="$(cd "$OUT/../.." && pwd)/test/resources/jni/macos_aarch64"
+JDK_HOME="${QJS_JDK_HOME:-$(/usr/libexec/java_home 2>/dev/null || true)}"
+if [ "$(uname -s)-$(uname -m)" = "Darwin-arm64" ] && command -v zig > /dev/null && [ -n "$JDK_HOME" ]; then
+    build="$WORK/build-macos_aarch64"
+    rm -rf "$build"
+    (cd "$SRC/quickjs/native" && "$CMAKE_DIR/cmake" -B "$build" -G Ninja \
+        -DCMAKE_MAKE_PROGRAM="$CMAKE_DIR/ninja" \
+        -DCMAKE_BUILD_TYPE=MinSizeRel \
+        -DTARGET_PLATFORM=macos_aarch64 \
+        -DBUILD_WITH_JNI=ON \
+        -DLIBRARY_TYPE=shared \
+        -DPLATFORM_JAVA_HOME="$JDK_HOME" ./ > "$WORK/cmake-macos_aarch64.log")
+    "$CMAKE_DIR/cmake" --build "$build" > "$WORK/ninja-macos_aarch64.log"
+    mkdir -p "$TEST_LIB_DIR"
+    cp "$build/libquickjs.dylib" "$TEST_LIB_DIR/libquickjs.dylib"
+    shasum -a 256 "$TEST_LIB_DIR/libquickjs.dylib"
+else
+    echo "NOTICE: macOS arm64 test dylib not rebuilt (needs a Darwin arm64 host, zig and a JDK)" >&2
+fi
 echo "OK: work dir $WORK"

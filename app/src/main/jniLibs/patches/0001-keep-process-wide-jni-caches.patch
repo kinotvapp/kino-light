@@ -1,0 +1,20 @@
+diff --git a/quickjs/native/jni/quickjs_jni.c b/quickjs/native/jni/quickjs_jni.c
+index fb9f5ef..12367e3 100644
+--- a/quickjs/native/jni/quickjs_jni.c
++++ b/quickjs/native/jni/quickjs_jni.c
+@@ -156,9 +156,12 @@ Java_com_dokar_quickjs_QuickJs_releaseGlobals(JNIEnv *env, jobject this, jlong c
+     // Destroy js mutex
+     pthread_mutex_destroy(&globals->js_mutex);
+ 
+-    // Clear Env, class, methodId, fieldId
+-    clear_java_vm_cache();
+-    clear_jni_refs_cache(env);
++    // Kino patch: keep the JavaVM pointer and the JNI class/method/field caches. They are
++    // process-wide statics shared by every live QuickJs instance, not per-instance state: clearing
++    // them here broke every other runtime's JS -> Kotlin callbacks (get_jni_env() returned NULL)
++    // until the next initGlobals(), and deleted global class refs other threads could be using.
++    // The JavaVM never changes within a process and the cached classes live as long as it does,
++    // so caching once per process is correct; the refs are a fixed, bounded set.
+ 
+     // Free the globals struct
+     free(globals);

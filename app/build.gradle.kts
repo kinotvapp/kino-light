@@ -739,7 +739,9 @@ dependencies {
     testImplementation("org.xerial:sqlite-jdbc:3.45.3.0")
     // The same engine with desktop natives (macOS/Linux), so PluginRuntime runs in JVM unit tests.
     // The Android artifact is excluded from the unit-test classpaths below: its loader calls
-    // System.loadLibrary, which can't find an Android .so on the host JVM.
+    // System.loadLibrary, which can't find an Android .so on the host JVM. On macOS arm64 the jar's
+    // native lib is shadowed by src/test/resources/jni/macos_aarch64/libquickjs.dylib, built from the
+    // same patched sources as src/main/jniLibs (see the README there).
     testImplementation("io.github.dokar3:quickjs-kt-jvm:1.0.0-alpha13")
 
     // Instrumented tests: the native 3DES key/crypto path (MagisNativeCryptoInstrumentedTest) has
