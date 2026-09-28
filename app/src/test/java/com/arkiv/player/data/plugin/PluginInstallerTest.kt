@@ -136,10 +136,41 @@ class PluginInstallerTest {
 
     @Test fun `an update needing a newer Kino is reported, not applied`() = runBlocking {
         publish("1.0.0"); installFresh()
-        publish("2.0.0", api = 3)
+        publish("2.0.0", api = 4)
         val o = installer.checkUpdate("demo") as UpdateOutcome.Failed
         assertEquals("Este plugin necesita una versión más nueva de Kino", o.message)
         assertEquals("1.0.0", store.get("demo")!!.record.version)
+    }
+
+    @Test fun `a channels plugin must export liveCategories and liveChannels but never guide`() = runBlocking {
+        exports = { setOf("home", "resolve") }
+        publish(api = 3, capabilities = listOf("home", "resolve", "channels"))
+        val e = runCatching { installer.install(installer.preview("o/r")) }.exceptionOrNull()
+        assertEquals("El plugin no carga: le falta liveCategories, liveChannels", e?.message)
+        exports = { setOf("home", "resolve", "liveCategories", "liveChannels") }
+        val record = installer.install(installer.preview("o/r"))
+        assertEquals(listOf("home", "resolve", "channels"), record.capabilities)
+    }
+
+    @Test fun `the installed record remembers which functions the entry file exports`() = runBlocking {
+        exports = { setOf("home", "resolve", "liveCategories", "liveChannels", "guide") }
+        publish(api = 3, capabilities = listOf("home", "resolve", "channels"))
+        val record = installer.install(installer.preview("o/r"))
+        assertEquals(listOf("guide", "home", "liveCategories", "liveChannels", "resolve"), record.exports)
+        assertEquals(record, InstalledRecord.fromJson(record.toJson()))
+        assertEquals(emptyList<String>(), InstalledRecord.fromJson("""{"address":"o/r","version":"1.0.0","sha256":"x","hosts":[],"installedAt":1}""")!!.exports)
+    }
+
+    @Test fun `an update that adds channels waits for approval`() = runBlocking {
+        exports = { setOf("home", "resolve", "liveCategories", "liveChannels") }
+        publish("1.0.0", api = 3, capabilities = listOf("home", "resolve")); installFresh()
+        publish("1.1.0", api = 3, capabilities = listOf("home", "resolve", "channels"))
+        val outcome = installer.checkUpdate("demo") as UpdateOutcome.NeedsApproval
+        assertEquals(listOf("channels"), outcome.preview.newCapabilities)
+        assertEquals("1.0.0", store.get("demo")!!.record.version)
+        assertEquals(listOf("channels"), store.get("demo")!!.record.pendingCapabilities)
+        installer.install(outcome.preview)
+        assertEquals(listOf("home", "resolve", "channels"), store.get("demo")!!.record.capabilities)
     }
 
     @Test fun `an update that adds download or drm waits for approval and does not require their export`() = runBlocking {

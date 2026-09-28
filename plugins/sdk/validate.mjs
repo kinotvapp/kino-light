@@ -11,7 +11,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { checkOutput, contract, kb, validateManifest } from "./contract.mjs";
+import { checkOutput, contract, kb, requiredExports, validateManifest } from "./contract.mjs";
 import { createKino } from "./kino-shim.mjs";
 import { call, parseArgs } from "./run.mjs";
 
@@ -42,8 +42,8 @@ export async function validate(dirArg, { run = null, args = [], config = {}, rep
     const copy = join(scratch, "plugin.mjs");
     writeFileSync(copy, readFileSync(entry));
     const plugin = await import(pathToFileURL(copy).href);
-    // download/drm are flags the app itself acts on, never exported functions.
-    const missing = m.capabilities.filter((c) => !contract.capabilities.declarative.includes(c) && typeof plugin[c] !== "function");
+    // download/drm export nothing; channels exports liveCategories + liveChannels (guide optional).
+    const missing = requiredExports(m.capabilities).filter((f) => typeof plugin[f] !== "function");
     if (missing.length) problems.push(`the plugin doesn't export ${missing.join(", ")}: Kino refuses the install ("le falta ${missing.sort().join(", ")}")`);
     if (run && !problems.length) {
       if (!m.capabilities.includes(run)) problems.push(`"${run}" isn't in the manifest's capabilities`);

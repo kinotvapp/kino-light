@@ -24,8 +24,8 @@ const manifest = (extra = {}) => JSON.stringify({
 });
 
 test("contract.json is the one the app pins", () => {
-  assert.equal(contract.apiVersion, 2);
-  assert.deepEqual(contract.capabilities.names, ["search", "home", "browse", "episodes", "resolve", "download", "drm"]);
+  assert.equal(contract.apiVersion, 3);
+  assert.deepEqual(contract.capabilities.names, ["search", "home", "browse", "episodes", "resolve", "download", "drm", "channels"]);
   assert.deepEqual(contract.capabilities.declarative, ["download", "drm"]);
   assert.deepEqual(contract.permissions, []);
 });
@@ -740,4 +740,23 @@ test("kino.d.ts declares exactly what the kit's kino has", () => {
   });
   walk(kino, "kino");
   assert.deepEqual([...out].sort(), [...declaredKino()].sort());
+});
+
+test("apiVersion 3: channels validates only on v3, and needs liveCategories + liveChannels exported", async () => {
+  const caps = ["home", "resolve", "channels"];
+  assert.deepEqual(validateManifest(manifest({ capabilities: caps })), { ok: false, field: "capabilities", message: "Esta capacidad necesita apiVersion 3" });
+  assert.deepEqual(validateManifest(manifest({ apiVersion: 2, capabilities: caps })), { ok: false, field: "capabilities", message: "Esta capacidad necesita apiVersion 3" });
+  assert.deepEqual(validateManifest(manifest({ capabilities: ["search", "resolve", "download"] })), { ok: false, field: "capabilities", message: "Esta capacidad necesita apiVersion 2" });
+  assert.equal(validateManifest(manifest({ apiVersion: 3, capabilities: caps })).ok, true);
+  const dir = mkdtempSync(join(tmpdir(), "kino-channels-"));
+  try {
+    writeFileSync(join(dir, "kino-plugin.json"), manifest({ apiVersion: 3, capabilities: caps }));
+    writeFileSync(join(dir, "plugin.js"), "export async function home(){ return [] }\nexport async function resolve(){ return { url: 'https://example.com/a.m3u8' } }");
+    const missing = await validate(dir);
+    assert.ok(missing.problems.some((p) => p.includes("liveCategories, liveChannels")));
+    writeFileSync(join(dir, "plugin.js"), "export async function home(){ return [] }\nexport async function resolve(){ return { url: 'https://example.com/a.m3u8' } }\nexport async function liveCategories(){ return [] }\nexport async function liveChannels(){ return { items: [] } }");
+    assert.deepEqual((await validate(dir)).problems, []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

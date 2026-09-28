@@ -1,12 +1,16 @@
 {
-  "$comment": "Kino plugin contract, apiVersion 1 and 2. The single source of truth for every number and rule a plugin meets. The app checks each value against its own code, and a test in the app pins this file to it; sdk/validate.mjs, sdk/run.mjs and the guide's tables read this file.",
-  "apiVersion": 2,
-  "maxApiVersion": 2,
+  "$comment": "Kino plugin contract, apiVersion 1, 2 and 3. The single source of truth for every number and rule a plugin meets. The app checks each value against its own code, and a test in the app pins this file to it; sdk/validate.mjs, sdk/run.mjs and the guide's tables read this file.",
+  "apiVersion": 3,
+  "maxApiVersion": 3,
   "capabilities": {
-    "names": ["search", "home", "browse", "episodes", "resolve", "download", "drm"],
+    "names": ["search", "home", "browse", "episodes", "resolve", "download", "drm", "channels"],
     "required": ["resolve"],
     "atLeastOneOf": ["search", "home"],
-    "declarative": ["download", "drm"]
+    "declarative": ["download", "drm"],
+    "apiVersions": { "download": 2, "drm": 2, "channels": 3 },
+    "needsApproval": ["download", "drm", "channels"],
+    "exports": { "channels": ["liveCategories", "liveChannels"] },
+    "optionalExports": { "channels": ["guide"] }
   },
   "manifest": {
     "maxBytes": 16384,
@@ -19,6 +23,7 @@
     "minHosts": 1,
     "maxHosts": 20,
     "noHostsApiVersion": 2,
+    "insecureHostApiVersion": 2,
     "colorPattern": "^#[0-9A-Fa-f]{6}$",
     "entryMaxBytes": 1048576,
     "iconMaxBytes": 131072,

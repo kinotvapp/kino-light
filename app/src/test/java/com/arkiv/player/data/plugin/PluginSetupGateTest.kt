@@ -100,4 +100,15 @@ class PluginSetupGateTest {
             PluginConsent.extraLines(preview),
         )
     }
+
+    @Test fun `channels gets its consent line, marked nuevo on an update that adds it`() {
+        val m = PluginManifest(
+            "demo", "Demo", "1.1.0", 3, "plugin.js", "", "", "",
+            listOf("example.com"), setOf("home", "resolve", "channels"), null, null,
+        )
+        val fresh = InstallPreview(PluginAddress("o", "r"), m, "{}", isUpdate = false, newHosts = listOf("example.com"))
+        assertEquals(listOf(ConsentLine("Agrega canales en vivo a la pestaña En vivo")), PluginConsent.extraLines(fresh))
+        val update = InstallPreview(PluginAddress("o", "r"), m, "{}", isUpdate = true, newHosts = emptyList(), newCapabilities = listOf("channels"))
+        assertEquals(listOf(ConsentLine("Agrega canales en vivo a la pestaña En vivo", isNew = true)), PluginConsent.extraLines(update))
+    }
 }

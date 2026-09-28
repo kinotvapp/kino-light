@@ -149,10 +149,10 @@ names the field.
 | `id` | Required. `^[a-z0-9][a-z0-9-]{1,39}$` (2 to 40 lowercase letters, digits or hyphens, not starting with a hyphen). Not one of `magis`, `ditu`, `live`, `local`, `unknown`, `plugin`. It is the plugin's identity: never change it once people have installed it. |
 | `name` | Required. 1 to 40 characters. |
 | `version` | Required. `MAJOR.MINOR.PATCH` and nothing else (no `-beta`, no `+build`), each number up to 6 digits and without leading zeros. |
-| `apiVersion` | Required. `1` or `2`. A higher number than Kino supports is refused with "Este plugin necesita una versión más nueva de Kino". Declare `2` only if you use something that needs it (below); otherwise stay on `1` so your plugin also runs on older Kino builds. |
+| `apiVersion` | Required. `1`, `2` or `3`. A higher number than Kino supports is refused with "Este plugin necesita una versión más nueva de Kino". Declare `2` only if you use something that needs it (below); otherwise stay on `1` so your plugin also runs on older Kino builds. |
 | `entry` | Required. Relative path of the JavaScript file: letters, digits, `.`, `_`, `-` and `/` only, no `..`, at most 200 characters, ends in `.js`. The file is at most 1 MB. |
 | `hosts` | Required. 1 to 20 entries (from apiVersion 2 it may be empty, `[]`, when the plugin has a `url` setting: see [The person's own servers](#the-persons-own-servers)); each a lowercase DNS name (`archive.org`), `*.` plus a DNS name (`*.archive.org`), or (apiVersion 2 only) an object `{ "host": "…", "insecureHttp": true }` (below). Host names only: no scheme, port or path. No bare `*`, no IP addresses, no `localhost`, nothing ending in `.local`, `.lan`, `.internal`, `.localhost` or `.home.arpa`, and at least one dot. **`*.x` covers subdomains only, not `x` itself**: if you need both, list both. |
-| `capabilities` | Required. A subset of `search`, `home`, `browse`, `episodes`, `resolve`, `download`, `drm`. Must include `resolve` and at least one of `search` or `home`. `search`, `home`, `browse`, `episodes` and `resolve` must each be an exported function of the entry file, or the install fails with "El plugin no carga: le falta ...". `download` and `drm` need `apiVersion: 2` and are declarative flags instead — the app acts on them, not your code, so nothing extra to export; declaring one shows its consent line ("Puede descargar videos para verlos sin conexión" / "Reproduce video protegido (DRM)") and needs approval again on an update that adds it. `download` gives your titles offline downloads (see [Downloads](#downloads-apiversion-2)); `drm` lets a `Stream` carry a Widevine license (see [A Widevine-protected stream](#a-widevine-protected-stream-apiversion-2)). |
+| `capabilities` | Required. A subset of `search`, `home`, `browse`, `episodes`, `resolve`, `download`, `drm`, `channels`. Must include `resolve` and at least one of `search` or `home`. `search`, `home`, `browse`, `episodes` and `resolve` must each be an exported function of the entry file, or the install fails with "El plugin no carga: le falta ...". `download` and `drm` need `apiVersion: 2` and are declarative flags instead — the app acts on them, not your code, so nothing extra to export; declaring one shows its consent line ("Puede descargar videos para verlos sin conexión" / "Reproduce video protegido (DRM)") and needs approval again on an update that adds it. `download` gives your titles offline downloads (see [Downloads](#downloads-apiversion-2)); `drm` lets a `Stream` carry a Widevine license (see [A Widevine-protected stream](#a-widevine-protected-stream-apiversion-2)). `channels` needs `apiVersion: 3` and the exports `liveCategories` and `liveChannels` (see [Channels in the En vivo tab](#channels-in-the-en-vivo-tab-apiversion-3)). |
 | `settings` | Optional. What the person fills in on your plugin's "Configurar" screen: see below. |
 | `permissions` | Optional. A list of names from the closed list in `contract.json`. **The list is empty in this version**: any name is refused with "permiso desconocido: …". It exists so a later version can add permissions (each one shown on the consent screen) without a new `apiVersion`. |
 | `color` | Optional `#RRGGBB`: the accent of your plugin's tab and chips. A neutral color by default. |
@@ -337,7 +337,17 @@ item (and a row left with no items disappears), so declare `2` before you return
 still counts against the same row and page sizes as any item. Kino's own "Canales en vivo" row is
 native and separate: your channels appear in your rows, with your plugin's name.
 
-## 4. The contract (apiVersion 1 and 2)
+### Channels in the En vivo tab (apiVersion 3)
+
+Declare `"apiVersion": 3` and the capability `"channels"`, and export `liveCategories()` and
+`liveChannels({ categoryId, cursor })` (and, optionally, `guide(...)`, see §4). Your channels then
+appear in Kino's own En vivo tab, TV guide, channel drawer and Home "Canales en vivo" row, in a
+section with your plugin's name. `channels` does not replace `search`/`home`: the manifest still
+needs one of them (a plugin with only channels exports a `home()` that returns `[]`). Items of kind
+`"live"` in your rows keep working; a plugin can do both. On install, and on an update that adds it,
+the person reads and approves "Agrega canales en vivo a la pestaña En vivo".
+
+## 4. The contract (apiVersion 1, 2 and 3)
 
 Your entry file is one ES module that exports one `async` function for each capability you
 declared, and nothing is called that you did not declare:
@@ -1013,7 +1023,7 @@ Before you publish, check that:
   If your manifest has a `password` setting it adds "Este plugin usa tu usuario y contraseña"; a `url`
   setting adds "Se conectará a los servidores que escribas en su configuración". Declaring `download`
   adds "Puede descargar videos para verlos sin conexión", `drm` adds "Reproduce video protegido (DRM)",
-  and each `insecureHttp` host adds, in red, "Conexión sin cifrar con <host>". Nothing of yours runs
+  `channels` adds "Agrega canales en vivo a la pestaña En vivo", and each `insecureHttp` host adds, in red, "Conexión sin cifrar con <host>". Nothing of yours runs
   before they accept.
 - **Configurar.** A plugin with `settings` has a "Configurar" button in Ajustes ▸ Plugins. Until
   every required setting has a value its status is "Falta configurar" and nothing of it runs.

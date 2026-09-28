@@ -20,7 +20,7 @@ data class InstallPreview(
     val newHosts: List<String>,
     /** Permissions not yet approved (all of them on a first install); each gets its own consent line. */
     val newPermissions: List<String> = emptyList(),
-    /** `download`/`drm` not yet approved (all of them on a first install); each needs its own consent. */
+    /** `download`/`drm`/`channels` not yet approved (all of them on a first install); each needs its own consent. */
     val newCapabilities: List<String> = emptyList(),
     /** Hosts newly marked `insecureHttp` (all insecure ones on a first install), even when the host itself was already approved as https-only. */
     val newInsecureHosts: List<String> = emptyList(),
@@ -100,9 +100,9 @@ class PluginInstaller(
         } catch (e: PluginException) {
             throw InstallException("El plugin no carga: ${e.message}")
         }
-        // download/drm are flags the app itself acts on, never exported functions: only the
-        // function-shaped capabilities are checked against what the sandbox probe found.
-        val missing = (m.capabilities - ManifestParser.DECLARATIVE_CAPABILITIES) - exports
+        // Declarative capabilities (download/drm) export nothing; `channels` exports
+        // liveCategories + liveChannels (guide is optional): see ManifestParser.requiredExports.
+        val missing = ManifestParser.requiredExports(m.capabilities) - exports
         if (missing.isNotEmpty()) throw InstallException("El plugin no carga: le falta ${missing.sorted().joinToString(", ")}")
         val sha = sha256Hex(script)
         val installedAt = clock()
@@ -110,6 +110,7 @@ class PluginInstaller(
             address = preview.address.canonical, version = m.version, sha256 = sha,
             hosts = m.hosts, installedAt = installedAt, enabled = enabled, lastUpdateCheckAt = installedAt,
             permissions = m.permissions, capabilities = m.capabilities.toList(), insecureHosts = m.insecureHosts.toList(),
+            exports = exports.sorted(),
         )
         val staging = store.newStaging(m.id)
         try {
@@ -149,7 +150,7 @@ class PluginInstaller(
             }
             return UpdateOutcome.UpToDate
         }
-        // More reach than the person approved -- a host, a permission, a download/drm capability or
+        // More reach than the person approved -- a host, a permission, a download/drm/channels capability or
         // a host newly marked insecureHttp -- waits for them. A new REQUIRED setting doesn't: the
         // update applies and the plugin shows "Falta configurar".
         if (preview.newHosts.isNotEmpty() || preview.newPermissions.isNotEmpty() ||
@@ -202,7 +203,7 @@ class PluginInstaller(
             address, manifest, json, existing != null,
             newHosts = manifest.hosts.filterNot { it in approved },
             newPermissions = manifest.permissions.filterNot { it in approvedPermissions },
-            newCapabilities = manifest.capabilities.filter { it in ManifestParser.DECLARATIVE_CAPABILITIES }.filterNot { it in approvedCapabilities },
+            newCapabilities = manifest.capabilities.filter { it in ManifestParser.APPROVAL_CAPABILITIES }.filterNot { it in approvedCapabilities },
             newInsecureHosts = manifest.insecureHosts.filterNot { it in approvedInsecureHosts },
         )
     }

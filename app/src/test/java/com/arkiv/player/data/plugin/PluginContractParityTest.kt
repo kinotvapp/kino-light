@@ -25,6 +25,14 @@ class PluginContractParityTest {
         assertEquals(ManifestParser.REQUIRED_CAPABILITIES, obj("capabilities").strings("required"))
         assertEquals(ManifestParser.AT_LEAST_ONE_OF_CAPABILITIES, obj("capabilities").strings("atLeastOneOf"))
         assertEquals(ManifestParser.DECLARATIVE_CAPABILITIES, obj("capabilities").strings("declarative").toSet())
+        val caps = obj("capabilities")
+        val apiVersions = caps.getJSONObject("apiVersions")
+        assertEquals(ManifestParser.CAPABILITY_API_VERSIONS, apiVersions.keys().asSequence().associateWith { apiVersions.getInt(it) })
+        assertEquals(ManifestParser.APPROVAL_CAPABILITIES, caps.strings("needsApproval").toSet())
+        val exports = caps.getJSONObject("exports")
+        assertEquals(ManifestParser.EXPORTS_FOR, exports.keys().asSequence().associateWith { k -> exports.strings(k).toSet() })
+        val optional = caps.getJSONObject("optionalExports")
+        assertEquals(ManifestParser.OPTIONAL_EXPORTS_FOR, optional.keys().asSequence().associateWith { k -> optional.strings(k).toSet() })
     }
 
     @Test fun `manifest rules`() {
@@ -39,6 +47,7 @@ class PluginContractParityTest {
         assertEquals(ManifestParser.MIN_HOSTS, m.getInt("minHosts"))
         assertEquals(ManifestParser.MAX_HOSTS, m.getInt("maxHosts"))
         assertEquals(ManifestParser.NO_HOSTS_API_VERSION, m.getInt("noHostsApiVersion"))
+        assertEquals(ManifestParser.INSECURE_HOST_API_VERSION, m.getInt("insecureHostApiVersion"))
         assertEquals(ManifestParser.COLOR.pattern, m.getString("colorPattern"))
         assertEquals(PluginInstaller.MAX_SCRIPT_BYTES, m.getInt("entryMaxBytes"))
         assertEquals(PluginInstaller.MAX_ICON_BYTES, m.getInt("iconMaxBytes"))

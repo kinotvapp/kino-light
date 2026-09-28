@@ -25,14 +25,16 @@ data class InstalledRecord(
     val permissions: List<String> = emptyList(),
     /** Permissions a pending update adds, shown on its consent sheet. */
     val pendingPermissions: List<String> = emptyList(),
-    /** Every capability the person APPROVED (apiVersion 2's `download`/`drm` included). */
+    /** Every capability the person APPROVED (apiVersion 2's `download`/`drm` and apiVersion 3's `channels` included). */
     val capabilities: List<String> = emptyList(),
-    /** `download`/`drm` a pending update adds, shown on its consent sheet. */
+    /** `download`/`drm`/`channels` a pending update adds, shown on its consent sheet. */
     val pendingCapabilities: List<String> = emptyList(),
     /** The subset of [hosts] the person APPROVED as `insecureHttp` (apiVersion 2 only). */
     val insecureHosts: List<String> = emptyList(),
     /** Hosts a pending update newly marks `insecureHttp`, shown on its consent sheet. */
     val pendingInsecureHosts: List<String> = emptyList(),
+    /** The entry file's exported functions as the install probe found them (sorted); empty for records written before apiVersion 3. */
+    val exports: List<String> = emptyList(),
 ) {
     fun toJson(): String = JSONObject()
         .put("address", address).put("version", version).put("sha256", sha256)
@@ -47,6 +49,7 @@ data class InstalledRecord(
         .put("pendingCapabilities", JSONArray(pendingCapabilities))
         .put("insecureHosts", JSONArray(insecureHosts))
         .put("pendingInsecureHosts", JSONArray(pendingInsecureHosts))
+        .put("exports", JSONArray(exports))
         .toString()
 
     companion object {
@@ -67,6 +70,7 @@ data class InstalledRecord(
                 pendingCapabilities = list("pendingCapabilities"),
                 insecureHosts = list("insecureHosts"),
                 pendingInsecureHosts = list("pendingInsecureHosts"),
+                exports = list("exports"),
             )
         }.getOrNull()
     }

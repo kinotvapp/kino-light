@@ -39,11 +39,49 @@ class ManifestParserTest {
     @Test fun `version must be semver`() = assertEquals("version", invalidField(base().put("version", "1.0")))
 
     @Test fun `apiVersion above the supported one says Kino must be updated`() {
-        val r = ManifestParser.parse(base().put("apiVersion", 3).toString()) as ManifestResult.Invalid
+        val r = ManifestParser.parse(base().put("apiVersion", 4).toString()) as ManifestResult.Invalid
         assertEquals("apiVersion", r.field)
         assertEquals("Este plugin necesita una versión más nueva de Kino", r.message)
         assertEquals("apiVersion", invalidField(base().put("apiVersion", "1")))
         assertEquals("apiVersion", invalidField(base().put("apiVersion", 0)))
+    }
+
+    @Test fun `channels needs apiVersion 3`() {
+        val caps = JSONArray(listOf("home", "resolve", "channels"))
+        val v1 = ManifestParser.parse(base().put("capabilities", caps).toString()) as ManifestResult.Invalid
+        assertEquals("capabilities", v1.field)
+        assertEquals("Esta capacidad necesita apiVersion 3", v1.message)
+        val v2 = ManifestParser.parse(base().put("apiVersion", 2).put("capabilities", caps).toString()) as ManifestResult.Invalid
+        assertEquals("Esta capacidad necesita apiVersion 3", v2.message)
+        val v3 = (ManifestParser.parse(base().put("apiVersion", 3).put("capabilities", caps).toString()) as ManifestResult.Valid).manifest
+        assertEquals(3, v3.apiVersion)
+        assertTrue("channels" in v3.capabilities)
+    }
+
+    @Test fun `v1 keeps the exact round-2 refusals and v3 keeps every v2 declaration`() {
+        val download = ManifestParser.parse(base().put("capabilities", JSONArray(listOf("search", "resolve", "download"))).toString()) as ManifestResult.Invalid
+        assertEquals("Esta capacidad necesita apiVersion 2", download.message)
+        val insecure = JSONObject().put("host", "x.example.com").put("insecureHttp", true)
+        val host = ManifestParser.parse(base().put("hosts", JSONArray(listOf(insecure))).toString()) as ManifestResult.Invalid
+        assertEquals("Un host con \"insecureHttp\" necesita apiVersion 2", host.message)
+        val v3 = ManifestParser.parse(
+            base().put("apiVersion", 3).put("hosts", JSONArray(listOf(insecure)))
+                .put("capabilities", JSONArray(listOf("search", "resolve", "download", "drm", "channels"))).toString(),
+        ) as ManifestResult.Valid
+        assertEquals(setOf("x.example.com"), v3.manifest.insecureHosts)
+    }
+
+    @Test fun `a channels-only manifest still needs search or home`() {
+        val r = ManifestParser.parse(base().put("apiVersion", 3).put("capabilities", JSONArray(listOf("resolve", "channels"))).toString()) as ManifestResult.Invalid
+        assertEquals("El plugin debe declarar \"search\" o \"home\"", r.message)
+    }
+
+    @Test fun `the exports each capability needs`() {
+        assertEquals(setOf("search", "resolve"), ManifestParser.requiredExports(setOf("search", "resolve", "download", "drm")))
+        assertEquals(
+            setOf("home", "resolve", "liveCategories", "liveChannels"),
+            ManifestParser.requiredExports(setOf("home", "resolve", "channels")),
+        )
     }
 
     @Test fun `entry must be a safe relative js path`() {

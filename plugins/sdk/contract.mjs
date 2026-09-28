@@ -62,6 +62,11 @@ export function schemeAllowed(u, manifest) {
   return (manifest.insecureHosts || []).includes(h);
 }
 
+/** The functions the entry file must export for [caps], as the app's ManifestParser.requiredExports. */
+export function requiredExports(caps) {
+  return [...new Set(caps.flatMap((c) => contract.capabilities.exports[c] || (contract.capabilities.declarative.includes(c) ? [] : [c])))];
+}
+
 /** Same checks, same order, same Spanish messages as the app's own manifest validation. Returns { ok, field?, message?, manifest? }. */
 export function validateManifest(text, { knownPermissions = contract.permissions } = {}) {
   const m = contract.manifest;
@@ -91,7 +96,7 @@ export function validateManifest(text, { knownPermissions = contract.permissions
     if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
       // The object shape itself -- {host, insecureHttp} -- is apiVersion 2, whatever insecureHttp's
       // value: a v1 manifest gets the same clear refusal either way.
-      if (o.apiVersion < contract.maxApiVersion) return bad("hosts", `Un host con "insecureHttp" necesita apiVersion ${contract.maxApiVersion}`);
+      if (o.apiVersion < m.insecureHostApiVersion) return bad("hosts", `Un host con "insecureHttp" necesita apiVersion ${m.insecureHostApiVersion}`);
       hostEntries.push({ host: typeof raw.host === "string" ? raw.host : "", insecure: raw.insecureHttp === true });
       continue;
     }
@@ -109,10 +114,8 @@ export function validateManifest(text, { knownPermissions = contract.permissions
   const caps = [...new Set(o.capabilities.map((c) => (typeof c === "string" ? c : "")))];
   const unknownCap = caps.find((c) => !contract.capabilities.names.includes(c));
   if (unknownCap !== undefined) return bad("capabilities", `Capacidad desconocida: "${unknownCap}"`);
-  if (o.apiVersion < contract.maxApiVersion) {
-    const tooNewCap = caps.find((c) => contract.capabilities.declarative.includes(c));
-    if (tooNewCap !== undefined) return bad("capabilities", "Esta capacidad necesita apiVersion 2");
-  }
+  const tooNewCap = caps.find((c) => (contract.capabilities.apiVersions[c] || 1) > o.apiVersion);
+  if (tooNewCap !== undefined) return bad("capabilities", `Esta capacidad necesita apiVersion ${contract.capabilities.apiVersions[tooNewCap]}`);
   const missingRequiredCap = contract.capabilities.required.find((c) => !caps.includes(c));
   if (missingRequiredCap !== undefined) return bad("capabilities", `El plugin debe declarar "${missingRequiredCap}"`);
   if (!contract.capabilities.atLeastOneOf.some((c) => caps.includes(c))) {

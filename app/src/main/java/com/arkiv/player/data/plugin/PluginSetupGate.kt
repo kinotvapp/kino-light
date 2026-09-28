@@ -46,6 +46,9 @@ object PluginConsent {
         if ("drm" in m.capabilities) {
             out += ConsentLine("Reproduce video protegido (DRM)", isNew = preview.isUpdate && "drm" in preview.newCapabilities)
         }
+        if (ManifestParser.CHANNELS in m.capabilities) {
+            out += ConsentLine("Agrega canales en vivo a la pestaña En vivo", isNew = preview.isUpdate && ManifestParser.CHANNELS in preview.newCapabilities)
+        }
         m.insecureHosts.forEach { host ->
             out += ConsentLine("Conexión sin cifrar con $host", danger = true, isNew = preview.isUpdate && host in preview.newInsecureHosts)
         }

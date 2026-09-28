@@ -38,12 +38,15 @@ sealed interface ManifestResult {
 object ManifestParser {
     /**
      * The highest `apiVersion` a manifest may declare, and the value this build reports at runtime
-     * as `kino.apiVersion`. Round 2 of the SDK (the `download`/`drm` capabilities, and a `hosts`
-     * entry with `insecureHttp`) is gated behind exactly this number everywhere in this file: if a
-     * future apiVersion 3 ever needs its own, later gate, split that check out instead of reusing
-     * this constant for it.
+     * as `kino.apiVersion`. Each feature gates on its OWN constant below
+     * ([CAPABILITY_API_VERSIONS], [INSECURE_HOST_API_VERSION], [NO_HOSTS_API_VERSION],
+     * `PluginOutput.LIVE_API_VERSION`), never on this one: raising it must not move an older gate.
      */
-    const val SUPPORTED_API = 2
+    const val SUPPORTED_API = 3
+    /** The `{ "host", "insecureHttp": true }` host object arrived with apiVersion 2. */
+    const val INSECURE_HOST_API_VERSION = 2
+    /** apiVersion 3: the plugin adds channels to the En vivo module (see `data/live/PluginLiveProvider`). */
+    const val CHANNELS = "channels"
     const val MAX_BYTES = 16 * 1024
     const val MIN_HOSTS = 1
     /**
@@ -59,15 +62,26 @@ object ManifestParser {
     const val MAX_AUTHOR_CHARS = 60
     const val MAX_HOMEPAGE_CHARS = 200
     val RESERVED_IDS = setOf("magis", "ditu", "live", "local", "unknown", "plugin")
-    val CAPABILITIES = setOf("search", "home", "browse", "episodes", "resolve", "download", "drm")
+    val CAPABILITIES = setOf("search", "home", "browse", "episodes", "resolve", "download", "drm", CHANNELS)
     val REQUIRED_CAPABILITIES = listOf("resolve")
     val AT_LEAST_ONE_OF_CAPABILITIES = listOf("search", "home")
     /**
      * Capabilities the app itself acts on (a download button, DRM playback) rather than functions
-     * the plugin exports: [PluginInstaller] never requires them among the entry file's exports, and
-     * [parse] never accepts them below apiVersion 2.
+     * the plugin exports: [requiredExports] never includes them.
      */
     val DECLARATIVE_CAPABILITIES = setOf("download", "drm")
+    /** The lowest apiVersion that may declare each capability; any capability not listed is apiVersion 1. */
+    val CAPABILITY_API_VERSIONS: Map<String, Int> = mapOf("download" to 2, "drm" to 2, CHANNELS to 3)
+    /** A plugin update that newly declares one of these waits for the person's approval (new reach). */
+    val APPROVAL_CAPABILITIES: Set<String> = setOf("download", "drm", CHANNELS)
+    /** Capabilities whose exported functions are not named like the capability. */
+    val EXPORTS_FOR: Map<String, Set<String>> = mapOf(CHANNELS to setOf("liveCategories", "liveChannels"))
+    /** Functions a capability MAY export; the app copes with their absence (never checked at install). */
+    val OPTIONAL_EXPORTS_FOR: Map<String, Set<String>> = mapOf(CHANNELS to setOf("guide"))
+
+    /** The functions the entry file must export for [capabilities]: what the installer checks against the sandbox probe. */
+    fun requiredExports(capabilities: Set<String>): Set<String> =
+        capabilities.flatMap { c -> EXPORTS_FOR[c] ?: if (c in DECLARATIVE_CAPABILITIES) emptySet() else setOf(c) }.toSet()
     const val MAX_PATH_CHARS = 200
 
     /** `internal`, not public API of [PluginManifest]: exposed only so tests can pin `contract.json`'s `idPattern` to it. */
@@ -120,7 +134,7 @@ object ManifestParser {
                 is JSONObject -> {
                     // The object shape itself -- {host, insecureHttp} -- is apiVersion 2, whatever
                     // insecureHttp's value: a v1 manifest gets the same clear refusal either way.
-                    if (api < SUPPORTED_API) return invalid("hosts", "Un host con \"insecureHttp\" necesita apiVersion $SUPPORTED_API")
+                    if (api < INSECURE_HOST_API_VERSION) return invalid("hosts", "Un host con \"insecureHttp\" necesita apiVersion $INSECURE_HOST_API_VERSION")
                     hostEntries += HostEntry(raw.optString("host"), insecure = raw.optBoolean("insecureHttp"))
                 }
                 else -> hostEntries += HostEntry("", insecure = false)
@@ -140,8 +154,8 @@ object ManifestParser {
         val capsJson = o.optJSONArray("capabilities") ?: return invalid("capabilities", "Falta el campo \"capabilities\"")
         val caps = (0 until capsJson.length()).map { capsJson.opt(it) as? String ?: "" }.toSet()
         caps.firstOrNull { it !in CAPABILITIES }?.let { return invalid("capabilities", "Capacidad desconocida: \"$it\"") }
-        if (api < SUPPORTED_API) {
-            caps.firstOrNull { it in DECLARATIVE_CAPABILITIES }?.let { return invalid("capabilities", "Esta capacidad necesita apiVersion 2") }
+        caps.firstOrNull { (CAPABILITY_API_VERSIONS[it] ?: 1) > api }?.let {
+            return invalid("capabilities", "Esta capacidad necesita apiVersion ${CAPABILITY_API_VERSIONS.getValue(it)}")
         }
         REQUIRED_CAPABILITIES.firstOrNull { it !in caps }?.let { return invalid("capabilities", "El plugin debe declarar \"$it\"") }
         if (AT_LEAST_ONE_OF_CAPABILITIES.none { it in caps }) {
