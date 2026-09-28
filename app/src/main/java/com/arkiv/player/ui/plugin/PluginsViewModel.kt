@@ -114,7 +114,7 @@ internal fun communityRows(
     installed: List<InstalledPlugin>,
     query: String,
 ): List<CatalogRow> {
-    val entries = dedupeDiscovered(discovered, catalog.map { it.repo }, installed).map { d ->
+    val entries = dedupeDiscovered(discovered, catalog, installed).map { d ->
         CatalogEntry(id = d.id, repo = d.address, name = d.name, description = d.description, tags = listOf("por ${d.owner}"))
     }
     return filterCatalog(entries, query).map { e ->

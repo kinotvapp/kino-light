@@ -9,6 +9,9 @@ package com.arkiv.player.data.plugin
 object XuperPrivilege {
     const val SOURCE_REPO = "kinotvapp/kino-plugin-xuper"
 
+    /** The `id` in [SOURCE_REPO]'s `kino-plugin.json`. */
+    const val MANIFEST_ID = "xuper"
+
     /**
      * Whether [record] is that one recognized Xuper install. Exact-string equality against
      * [PluginAddress.canonical] -- never loosened to an owner-only or prefix match: [PluginAddress]
@@ -21,4 +24,13 @@ object XuperPrivilege {
      * reproduce the comparison, or a test can go on passing after the real gate silently changes.
      */
     fun grants(record: InstalledRecord): Boolean = record.address == SOURCE_REPO
+}
+
+/**
+ * Manifest ids only one repo may use in the community list: any other repo claiming one is an impostor
+ * and is never shown, whatever its stars (`owner/repo` compared case-insensitively). Only the list:
+ * the `kino.xuper.*` gate stays [XuperPrivilege.grants], by exact install address.
+ */
+object ReservedPluginIds {
+    val OWNERS: Map<String, String> = mapOf(XuperPrivilege.MANIFEST_ID to XuperPrivilege.SOURCE_REPO)
 }
