@@ -1,6 +1,7 @@
 package com.arkiv.player.data.update
 
 import android.content.Context
+import com.arkiv.player.data.net.DohDns
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -20,6 +21,7 @@ class ApkDownloader(private val context: Context) {
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
+        .dns(DohDns)
         .build()
 
     /**

@@ -1,5 +1,6 @@
 package com.arkiv.player.data.ditu
 
+import com.arkiv.player.data.net.DohDns
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -57,6 +58,7 @@ internal class DituClient(
         // 15s and not less: `DituCatalog.catalog` brings the whole catalog in a single GET, and on
         // a slow network like the TV's it might not make it in 10.
         .callTimeout(15, TimeUnit.SECONDS)
+        .dns(DohDns)
         .build(),
 ) : DituClientLike {
 
