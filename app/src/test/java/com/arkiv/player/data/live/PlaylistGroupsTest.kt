@@ -1,7 +1,9 @@
 package com.arkiv.player.data.live
 
+import com.arkiv.player.data.plugin.EffectiveHosts
 import com.arkiv.player.data.plugin.PluginPlaylist
 import com.arkiv.player.data.plugin.PluginRef
+import com.arkiv.player.data.plugin.UserHost
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -9,9 +11,10 @@ import org.junit.Test
 class PlaylistGroupsTest {
     private val provider = "plugin:demo"
     private fun list(vararg lines: String) = M3uParser.parse("#EXTM3U\n" + lines.joinToString("\n"))
-    private fun group(r: M3uResult, pl: PluginPlaylist = PluginPlaylist("https://l.example.com/a.m3u"), allowed: (String) -> Boolean = { true },
-                      maxCategories: Int = 500, maxChannels: Int = 5000) =
-        groupPlaylist(r, "k1", provider, "demo", pl, allowed, maxCategories, maxChannels)
+    private fun group(
+        r: M3uResult, pl: PluginPlaylist = PluginPlaylist("https://l.example.com/a.m3u"), hosts: EffectiveHosts = EffectiveHosts(emptyList()),
+        allowed: (String) -> Boolean = { true }, maxCategories: Int = 500, maxChannels: Int = 5000,
+    ) = groupPlaylist(r, "k1", provider, "demo", pl, hosts, allowed, maxCategories, maxChannels)
 
     @Test fun `groups become categories with stable ids, and tvg-ids become codes`() {
         val g = group(list(
@@ -63,6 +66,25 @@ class PlaylistGroupsTest {
         val g = group(list("#EXTINF:-1,Uno", "https://l.example.com/1.m3u8"), PluginPlaylist("https://l.example.com/a.m3u", resolve = true))
         val c = g.byCategory.values.single().single()
         assertEquals(PluginRef("demo", c.code, PluginRef.LIVE, "https://l.example.com/1.m3u8"), PluginRef.decode(c.ref!!))
+    }
+
+    @Test fun `a logo on the plugin's typed server keeps it, on any other local host it is dropped, elsewhere it follows the plugin image rule`() {
+        val hosts = EffectiveHosts(emptyList(), user = listOf(UserHost("http", "192.168.2.6", 8096)))
+        val g = group(
+            list(
+                "#EXTINF:-1 tvg-logo=\"http://192.168.2.6:8096/img/poster/canal-7.png\",TuServidor", "https://l.example.com/1.m3u8",
+                "#EXTINF:-1 tvg-logo=\"http://192.168.2.7:8096/img/poster/canal-8.png\",OtraLan", "https://l.example.com/2.m3u8",
+                "#EXTINF:-1 tvg-logo=\"https://cdn.example.com/c.png\",Publico", "https://l.example.com/3.m3u8",
+                "#EXTINF:-1 tvg-logo=\"http://cdn.example.com/c.png\",PublicoHttp", "https://l.example.com/4.m3u8",
+            ),
+            hosts = hosts,
+        )
+        val channels = g.byCategory.values.flatten().associateBy { it.name }
+        assertEquals("http://192.168.2.6:8096/img/poster/canal-7.png", channels.getValue("TuServidor").logo)
+        assertEquals(null, channels.getValue("OtraLan").logo)
+        assertEquals("https://cdn.example.com/c.png", channels.getValue("Publico").logo)
+        // Plain http on an undeclared public host: the plugin image rule requires https there too.
+        assertEquals(null, channels.getValue("PublicoHttp").logo)
     }
 
     @Test fun `what the parse filtered is counted, and a parse cut by its time budget is a cut list`() {

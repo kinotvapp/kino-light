@@ -162,6 +162,33 @@ class PluginLivePlaylistTest {
         assertEquals("the entry's logo, as the listing shows it", "https://cdn.example.com/c1.png", opening.channel.logo)
     }
 
+    @Test fun `a playlist logo on the plugin's typed server keeps it, on another LAN host it is dropped`() = runBlocking {
+        val typed = plugin.copy(userHosts = listOf(PluginHosts.userHostOf("http://192.168.2.6:8096")!!))
+        val m3u = "#EXTM3U\n" +
+            "#EXTINF:-1 tvg-logo=\"http://192.168.2.6:8096/img/poster/canal-7.png\",TuServidor\nhttps://live.example.com/1.m3u8\n" +
+            "#EXTINF:-1 tvg-logo=\"http://192.168.2.7:8096/img/poster/canal-8.png\",OtraLan\nhttps://live.example.com/2.m3u8\n" +
+            "#EXTINF:-1 tvg-logo=\"https://cdn.example.com/c.png\",Publico\nhttps://live.example.com/3.m3u8\n"
+        val p = PluginLiveProvider(typed, PluginCaller { _, _, _, _ -> """[{"playlist":{"url":"https://lists.example.com/t.m3u","format":"m3u"}}]""" },
+            fetcher = { _, _, _ -> m3u.toByteArray() }, cacheDir = tmp.newFolder(), clock = { now }, log = {})
+        val channels = p.channels(p.categories(false).single().id).associateBy { it.name }
+        assertEquals("http://192.168.2.6:8096/img/poster/canal-7.png", channels.getValue("TuServidor").logo)
+        assertEquals(null, channels.getValue("OtraLan").logo)
+        assertEquals("https://cdn.example.com/c.png", channels.getValue("Publico").logo)
+    }
+
+    @Test fun `a playlist logo on the typed server survives a restart, known only by its code`() = runBlocking {
+        val typed = plugin.copy(userHosts = listOf(PluginHosts.userHostOf("http://192.168.2.6:8096")!!))
+        val m3u = "#EXTM3U\n#EXTINF:-1 tvg-logo=\"http://192.168.2.6:8096/img/poster/canal-7.png\",TuServidor\nhttps://live.example.com/1.m3u8\n"
+        val restartCaller = PluginCaller { _, _, _, _ -> """[{"playlist":{"url":"https://lists.example.com/t.m3u","format":"m3u"}}]""" }
+        val restartFetcher = LivePlaylistFetcher { _, _, _ -> m3u.toByteArray() }
+        val code = PluginLiveProvider(typed, restartCaller, fetcher = restartFetcher, cacheDir = tmp.newFolder(), clock = { now }, log = {})
+            .let { p -> p.channels(p.categories(false).single().id).single().code }
+        val bare = LiveChannel(code, code, 0, null, provider = "plugin:demo")
+        val opened = PluginLiveProvider(typed, restartCaller, fetcher = restartFetcher, cacheDir = tmp.newFolder(), clock = { now }, log = {})
+            .open(bare) as LiveOpening.Plugin
+        assertEquals("http://192.168.2.6:8096/img/poster/canal-7.png", opened.channel.logo)
+    }
+
     @Test fun `rtmp and udp lines and undeclared hosts are counted, the rest plays`() = runBlocking {
         val m3u = "#EXTM3U\n#EXTINF:-1,A\nrtmp://live.example.com/a\n#EXTINF:-1,B\nudp://@239.0.0.1:1234\n" +
             "#EXTINF:-1,C\nhttps://evil.example.org/c.m3u8\n#EXTINF:-1,D\nhttps://live.example.com/d.m3u8\n"

@@ -39,9 +39,6 @@ internal fun trimNotice(groups: Collection<PlaylistGroups>): String? {
     return if (total > kept || groups.any { it.cut }) "Lista recortada: $kept de ${maxOf(kept, total)} canales" else null
 }
 
-/** A playlist logo is judged as a poster with no declared hosts: any public https image. */
-internal val NO_HOSTS = EffectiveHosts(emptyList())
-
 /**
  * One parsed playlist as categories and channels of [providerId]. Pure.
  *
@@ -54,9 +51,13 @@ internal val NO_HOSTS = EffectiveHosts(emptyList())
  *   fails [entryAllowed] is dropped and counted in [PlaylistGroups.skipped].
  * - At most [maxChannels] channels; with no category budget left nothing is kept.
  * - With `playlist.resolve`, each channel carries a LIVE ref of its entry URL for the plugin's `resolve`.
+ * - A channel's `tvg-logo` is checked with [PluginOutput.imageUrl] against [hosts], exactly like any
+ *   other plugin image (a plugin's poster, backdrop, `liveChannels` logo): the plugin's declared
+ *   hosts don't gate it, only the local-address rule and the servers the person typed do. Pass
+ *   [PluginLiveProvider]'s `liveHosts`, the same value already used for that plugin's other images.
  */
 internal fun groupPlaylist(
-    result: M3uResult, key: String, providerId: String, pluginId: String, playlist: PluginPlaylist,
+    result: M3uResult, key: String, providerId: String, pluginId: String, playlist: PluginPlaylist, hosts: EffectiveHosts,
     entryAllowed: (String) -> Boolean, maxCategories: Int, maxChannels: Int,
 ): PlaylistGroups {
     val tvgCount = result.entries.groupingBy { it.tvgId }.eachCount()
@@ -83,7 +84,7 @@ internal fun groupPlaylist(
             else categories.getOrPut(otrosId) { ProviderCategory(otrosId, "Otros") }
         val ref = if (playlist.resolve) PluginRef(pluginId, code, PluginRef.LIVE, e.url).encode() else null
         byCategory.getOrPut(category.id) { ArrayList() } +=
-            LiveChannel(code, e.name, e.number, PluginOutput.imageUrl(e.logo, NO_HOSTS).ifEmpty { null }, provider = providerId, ref = ref)
+            LiveChannel(code, e.name, e.number, PluginOutput.imageUrl(e.logo, hosts).ifEmpty { null }, provider = providerId, ref = ref)
         entries[code] = e
         kept++
     }

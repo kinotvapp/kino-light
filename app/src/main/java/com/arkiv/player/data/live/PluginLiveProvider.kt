@@ -50,6 +50,10 @@ import org.json.JSONObject
  * Hosts: a channel's inline stream URL is checked against `plugin.liveHosts` (any public host
  * only when the person approved `liveStreamHosts: "any"`); everything else -- the playlist and
  * EPG declarations in `liveCategories`, a stream's side files -- against the strict `plugin.hosts`.
+ * A playlist entry's `tvg-logo` is not a stream URL: it follows [PluginOutput.imageUrl] against
+ * [liveHosts], exactly like any other image this plugin returns (a poster, a `liveChannels` logo)
+ * -- declared hosts don't gate it, only a local address does, unless it is one of the servers the
+ * person typed for this plugin.
  *
  * Categories and channel lists are kept [LIST_TTL_MS] in memory and the guide [GUIDE_TTL_MS] per
  * channel. Low-end TVs must not pay for a plugin call on every screen, and one instance serves
@@ -278,7 +282,7 @@ class PluginLiveProvider(
         for ((source, result) in results) {
             if (result == null) continue
             val g = groupPlaylist(
-                result, source.key, id, pluginId, source.playlist,
+                result, source.key, id, pluginId, source.playlist, liveHosts,
                 entryAllowed = { PluginOutput.allowsUrl(it, liveHosts) },
                 maxCategories = categoriesLeft, maxChannels = channelsLeft,
             )
@@ -561,7 +565,7 @@ class PluginLiveProvider(
         if (lock.withLock { key !in groups }) categories(includeAdults = false)
         val (entry, source) = lock.withLock { groups[key]?.entries?.get(channel.code) to sources.values.firstOrNull { it.key == key } }
         if (entry == null || source == null) throw GatewayException("No se encontró el canal en $name")
-        val known = LiveChannel(channel.code, entry.name, entry.number, PluginOutput.imageUrl(entry.logo, NO_HOSTS).ifEmpty { null }, provider = id)
+        val known = LiveChannel(channel.code, entry.name, entry.number, PluginOutput.imageUrl(entry.logo, liveHosts).ifEmpty { null }, provider = id)
         if (source.playlist.resolve) {
             return opening(channel, known.copy(ref = PluginRef(pluginId, channel.code, PluginRef.LIVE, entry.url).encode()), null)
         }
