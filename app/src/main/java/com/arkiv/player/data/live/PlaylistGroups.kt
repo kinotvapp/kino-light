@@ -17,7 +17,9 @@ internal fun sha1Hex(s: String): String =
  * One playlist as a provider's categories and channels. [entries] maps each kept channel code to its
  * M3U entry (for playback and the guide). [kept] channels were kept out of [total] valid, visible
  * ones; [skipped] = broken lines plus entries on a host the plugin may not play; [hidden] = entries
- * in a hidden or adult group (never shown, never counted in [total]).
+ * in a hidden or adult group (never shown, never counted in [total]). Both include what the parse
+ * already dropped ([M3uResult.hidden], [M3uResult.refused]). [cut] = the parse stopped at its time
+ * budget, so the list is cut whatever the counts say.
  */
 internal data class PlaylistGroups(
     val categories: List<ProviderCategory>,
@@ -27,7 +29,15 @@ internal data class PlaylistGroups(
     val total: Int,
     val skipped: Int,
     val hidden: Int,
+    val cut: Boolean = false,
 )
+
+/** "Lista recortada: <kept> de <total> canales" when the caps or a parse's time budget cut any of [groups], else null. */
+internal fun trimNotice(groups: Collection<PlaylistGroups>): String? {
+    val kept = groups.sumOf { it.kept }
+    val total = groups.sumOf { it.total }
+    return if (total > kept || groups.any { it.cut }) "Lista recortada: $kept de ${maxOf(kept, total)} canales" else null
+}
 
 private val NO_HOSTS = EffectiveHosts(emptyList())
 
@@ -55,12 +65,11 @@ internal fun groupPlaylist(
     val otrosId = "pl:$key:otros"
     var hidden = 0
     var dropped = 0
-    var skipped = result.skipped
+    var skipped = result.skipped + result.refused
     var kept = 0
     for (e in result.entries) {
         val group = e.group.trim().ifEmpty { "Sin categoría" }
-        val g = group.lowercase()
-        if (g in ADULT_GROUPS || g in playlist.hideGroups) { hidden++; continue }
+        if (PlaylistSource.isHiddenGroup(group, playlist)) { hidden++; continue }
         if (!entryAllowed(e.url)) { skipped++; dropped++; continue }
         if (kept >= maxChannels || maxCategories <= 0) continue
         val idPart = e.tvgId.takeIf { PluginOutput.ID.matches(it) && tvgCount[it] == 1 } ?: sha1Hex("${e.url}|${e.name}").take(16)
@@ -77,5 +86,8 @@ internal fun groupPlaylist(
         entries[code] = e
         kept++
     }
-    return PlaylistGroups(categories.values.toList(), byCategory, entries, kept, result.total - hidden - dropped, skipped, hidden)
+    return PlaylistGroups(
+        categories.values.toList(), byCategory, entries, kept, result.total - hidden - dropped, skipped,
+        hidden + result.hidden, cut = result.stoppedEarly,
+    )
 }

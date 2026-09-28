@@ -5,97 +5,187 @@ import com.arkiv.player.data.plugin.PluginPlaylist
 import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /**
- * One declared playlist: its bytes on disk (`<cacheDir>/live/<key>.m3u|.epg`), fresh for
- * `refreshHours` (from the file's `lastModified`), re-downloaded on `force`, and the stale copy
- * kept for when the network fails. A 20 MB IPTV list must not be downloaded on every screen, nor
- * lost on a bad connection. The parsed list is also kept in memory while its bytes are fresh, so a
- * screen asking again parses nothing; after a failed download it is kept [RETRY_MS] before trying
- * again. Parsing runs on [Dispatchers.Default] against its time budget; disk IO on [Dispatchers.IO].
+ * One declared playlist and its disk copy.
  *
- * Not thread-safe: `PluginLiveProvider` serialises every call.
+ * - Files: `<cacheDir>/live/<key>.m3u|.epg`, fresh for `refreshHours` (from the file's
+ *   `lastModified`), re-downloaded on `force`. A download is streamed to `<file>.tmp` and renamed
+ *   over the saved copy only once complete, so a failed or cut download keeps the good copy.
+ * - [key] comes from the URL WITHOUT its query or fragment. IPTV lists carry rotating tokens there
+ *   (`get.php?username=…&token=…`, signed CDN URLs); a key per token would re-download on every
+ *   rotation, ignore `refreshHours` and orphan a copy per token. The current full URL is still what
+ *   is downloaded.
+ * - The parsed list is kept in memory while its bytes are fresh, so a second screen parses nothing.
+ *   After a failed download the parsed list (or, first time, the stale copy) stands [RETRY_MS]
+ *   before trying again; the stale copy is never parsed again while a parsed one is on hand.
+ * - Parsing streams from the file on [Dispatchers.Default] against its time budget, under
+ *   [parseGate] (process-wide by default): with many providers, only one playlist or guide is ever
+ *   being parsed at a time, so a 192 MB heap never holds several at once.
+ * - The M3U parse drops hidden/adult groups and entries [entryAllowed] refuses as it goes, so the
+ *   channel cap holds only channels that can be shown.
+ * - With no [cacheDir] there is nowhere to stream to: no playlist ([entries] is null).
+ * - After every save, `live/` is kept under [cacheBudgetBytes] ([pruneLiveDir]).
+ *
+ * Not safe for concurrent [entries] calls: `PluginLiveProvider` serialises them under its
+ * playlist lock. [guide] touches only the `.epg` file and may run alongside [entries]; the
+ * provider makes it single-flight per playlist.
  */
 internal class PlaylistSource(
-    val playlist: PluginPlaylist,
+    playlist: PluginPlaylist,
     private val fetcher: LivePlaylistFetcher,
     private val cacheDir: File?,
     private val clock: () -> Long,
     private val log: (String) -> Unit,
+    private val entryAllowed: (String) -> Boolean = { true },
+    private val parseGate: Semaphore = PARSE_GATE,
+    private val cacheBudgetBytes: Long = MAX_LIVE_CACHE_BYTES,
 ) {
-    val key: String = sha1Hex(playlist.url).take(8)
+    /** The current declaration. A new token in its URL keeps this source (and its key and parsed list): see [adopt]. */
+    @Volatile var playlist: PluginPlaylist = playlist
+        private set
+    val key: String = cacheKey(playlist.url)
 
-    private val refreshMs = playlist.refreshHours * 3_600_000L
     private var parsed: M3uResult? = null
     private var parsedUntil = 0L
 
-    /** Bytes and the time they stop being worth reusing. */
-    private class Loaded(val bytes: ByteArray, val until: Long)
+    private val refreshMs get() = playlist.refreshHours * 3_600_000L
 
-    /** Null = never downloaded and the download failed. */
+    /**
+     * Takes a new declaration of the same key when nothing the parse depends on changed (only the
+     * URLs, headers or refresh period: a rotated token). False = the caller needs a new source.
+     */
+    fun adopt(next: PluginPlaylist): Boolean {
+        if (cacheKey(next.url) != key || next.hideGroups != playlist.hideGroups) return false
+        playlist = next
+        return true
+    }
+
+    /** Null = never downloaded and the download failed, or no [cacheDir]. */
     suspend fun entries(force: Boolean): M3uResult? {
+        if (cacheDir == null) return null
         if (!force) parsed?.takeIf { clock() < parsedUntil }?.let { return it }
-        val loaded = load(playlist.url, "m3u", PluginLiveContract.MAX_PLAYLIST_BYTES, force)
-        if (loaded == null) {
+        val file = fileOf("m3u")
+        val state = refresh(playlist.url, file, PluginLiveContract.MAX_PLAYLIST_BYTES, force)
+        if (state == Refresh.FAILED) {
             parsedUntil = clock() + RETRY_MS
-            return parsed
+            // Offline: the list already parsed is as good as the stale copy, without parsing it again.
+            parsed?.let { return it }
+            if (!file.exists()) return null
         }
-        val result = withContext(Dispatchers.Default) {
-            val until = System.currentTimeMillis() + PluginLiveContract.PLAYLIST_PARSE_BUDGET_MS
-            M3uParser.parse(M3uParser.decode(loaded.bytes), deadline = { System.currentTimeMillis() > until })
+        val pl = playlist
+        val result = parseGate.withPermit {
+            withContext(Dispatchers.Default) {
+                val until = System.currentTimeMillis() + PluginLiveContract.PLAYLIST_PARSE_BUDGET_MS
+                M3uParser.parse(
+                    file, deadline = { System.currentTimeMillis() > until },
+                    hide = { isHiddenGroup(it.group, pl) }, allow = entryAllowed,
+                )
+            }
         }
-        if (result.stoppedEarly) log("playlist ${playlist.url.take(100)}: parse stopped at its time budget (${result.entries.size} entries)")
+        if (result.stoppedEarly) log("playlist ${pl.url.take(100)}: parse stopped at its time budget (${result.entries.size} entries)")
         parsed = result
-        parsedUntil = loaded.until
+        if (state != Refresh.FAILED) parsedUntil = withContext(Dispatchers.IO) { file.lastModified() } + refreshMs
         return result
     }
 
     /** Null = no EPG, or it could not be downloaded nor read from disk. A truncated guide is returned as is. */
     suspend fun guide(wantedIds: Set<String>, wantedNames: Set<String>, fromMs: Long, toMs: Long, force: Boolean): XmltvGuide? {
-        if (playlist.epgUrl.isEmpty()) return null
-        val loaded = load(playlist.epgUrl, "epg", PluginLiveContract.MAX_EPG_BYTES, force) ?: return null
-        return withContext(Dispatchers.Default) {
-            val until = System.currentTimeMillis() + PluginLiveContract.EPG_PARSE_BUDGET_MS
-            runCatching {
-                XmltvParser.parse(XmltvParser.open(loaded.bytes), fromMs, toMs, wantedIds, wantedNames, deadline = { System.currentTimeMillis() > until })
-            }.onFailure { log("guide ${playlist.epgUrl.take(100)} unreadable: ${it.message}") }.getOrNull()
-        }?.also { if (it.truncated) log("guide ${playlist.epgUrl.take(100)} was cut short; using what was read") }
+        val pl = playlist
+        if (pl.epgUrl.isEmpty() || cacheDir == null) return null
+        val file = fileOf("epg")
+        refresh(pl.epgUrl, file, PluginLiveContract.MAX_EPG_BYTES, force)
+        if (!withContext(Dispatchers.IO) { file.exists() }) return null
+        return parseGate.withPermit {
+            withContext(Dispatchers.Default) {
+                val until = System.currentTimeMillis() + PluginLiveContract.EPG_PARSE_BUDGET_MS
+                runCatching {
+                    XmltvParser.open(file).use { input ->
+                        XmltvParser.parse(input, fromMs, toMs, wantedIds, wantedNames, deadline = { System.currentTimeMillis() > until })
+                    }
+                }.onFailure { log("guide ${pl.epgUrl.take(100)} unreadable: ${it.message}") }.getOrNull()
+            }
+        }?.also { if (it.truncated) log("guide ${pl.epgUrl.take(100)} was cut short; using what was read") }
     }
 
-    private suspend fun load(url: String, ext: String, max: Long, force: Boolean): Loaded? = withContext(Dispatchers.IO) {
-        val file = cacheDir?.let { File(File(it, "live"), "$key.$ext") }
+    private fun fileOf(ext: String) = File(File(cacheDir, LIVE_DIR), "$key.$ext")
+
+    private enum class Refresh { FRESH, DOWNLOADED, FAILED }
+
+    /** Downloads [url] over [file] when it is missing, older than `refreshHours`, or [force]d. On FAILED the saved copy (if any) stands. */
+    private suspend fun refresh(url: String, file: File, max: Long, force: Boolean): Refresh {
         val now = clock()
-        if (!force && file != null && file.exists() && now - file.lastModified() < refreshMs) {
-            return@withContext Loaded(file.readBytes(), file.lastModified() + refreshMs)
-        }
-        try {
-            val bytes = fetcher.fetch(url, playlist.headers, max)
-            file?.let { save(it, bytes, now) }
-            Loaded(bytes, now + refreshMs)
+        val fresh = withContext(Dispatchers.IO) { file.exists() && now - file.lastModified() < refreshMs }
+        if (fresh && !force) return Refresh.FRESH
+        val tmp = File(file.parentFile, "${file.name}.tmp")
+        return try {
+            withContext(Dispatchers.IO) { file.parentFile?.mkdirs() }
+            fetcher.fetchTo(url, playlist.headers, max, tmp)
+            withContext(Dispatchers.IO) {
+                tmp.setLastModified(now)
+                // Rename over the saved copy (atomic on the same directory); the good copy is never deleted first.
+                if (!tmp.renameTo(file)) { tmp.delete(); throw java.io.IOException("could not replace the saved copy") }
+                file.setLastModified(now)
+                pruneLiveDir(cacheDir!!, keepKeys = null, budgetBytes = cacheBudgetBytes, justWritten = file, log = log)
+            }
+            Refresh.DOWNLOADED
         } catch (e: CancellationException) {
+            withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) { tmp.delete() }
             throw e
         } catch (e: Exception) {
-            val stale = file?.takeIf { it.exists() }
-            log("playlist ${url.take(100)} not downloaded (${e.message}); ${if (stale != null) "using the saved copy" else "no saved copy"}")
-            stale?.let { Loaded(it.readBytes(), now + RETRY_MS) }
+            withContext(Dispatchers.IO) { tmp.delete() }
+            log("playlist ${url.take(100)} not downloaded (${e.message}); ${if (file.exists()) "using the saved copy" else "no saved copy"}")
+            Refresh.FAILED
         }
-    }
-
-    /** Written aside and renamed, so a crash mid-write never leaves half a list as the saved copy. */
-    private fun save(file: File, bytes: ByteArray, now: Long) {
-        runCatching {
-            file.parentFile?.mkdirs()
-            val tmp = File(file.parentFile, "${file.name}.tmp")
-            tmp.writeBytes(bytes)
-            tmp.setLastModified(now)
-            if (!tmp.renameTo(file)) { file.delete(); tmp.renameTo(file) }
-            file.setLastModified(now)
-        }.onFailure { log("playlist cache not written: ${it.message}") }
     }
 
     companion object {
-        /** After a failed download, how long the stale copy (or nothing) stands before trying again. */
+        /** After a failed download, how long what's on hand stands before trying again. */
         const val RETRY_MS = 10 * 60 * 1000L
+        /** All of one plugin's saved playlists and guides together. */
+        const val MAX_LIVE_CACHE_BYTES = 150L * 1024 * 1024
+        private const val LIVE_DIR = "live"
+
+        /** One playlist or guide parse at a time, across every provider of the process. */
+        val PARSE_GATE = Semaphore(1)
+
+        /** First 8 hex of sha1(scheme://host:port/path): query and fragment (tokens) left out. */
+        fun cacheKey(url: String): String {
+            val u = url.toHttpUrlOrNull() ?: return sha1Hex(url).take(8)
+            return sha1Hex("${u.scheme}://${u.host}:${u.port}${u.encodedPath}").take(8)
+        }
+
+        internal fun isHiddenGroup(group: String, playlist: PluginPlaylist): Boolean {
+            val g = group.trim().ifEmpty { "Sin categoría" }.lowercase()
+            return g in ADULT_GROUPS || g in playlist.hideGroups
+        }
+
+        /**
+         * `<cacheDir>/live` housekeeping (blocking IO). With [keepKeys], every file (temp files
+         * too) of another key is deleted: a playlist no longer declared. Then, while the complete
+         * files add up to more than [budgetBytes], the oldest download goes first, never
+         * [justWritten]; a temp file being written is never evicted for size.
+         */
+        fun pruneLiveDir(cacheDir: File, keepKeys: Set<String>?, budgetBytes: Long, justWritten: File? = null, log: (String) -> Unit) {
+            val dir = File(cacheDir, LIVE_DIR)
+            val files = dir.listFiles()?.toMutableList() ?: return
+            if (keepKeys != null) {
+                files.removeAll { f ->
+                    (f.name.substringBefore('.') !in keepKeys).also { orphan -> if (orphan && !f.delete()) log("live cache: ${f.name} not deleted") }
+                }
+            }
+            val complete = files.filter { !it.name.endsWith(".tmp") && it.isFile }.sortedBy { it.lastModified() }.toMutableList()
+            var total = complete.sumOf { it.length() }
+            for (f in complete) {
+                if (total <= budgetBytes) break
+                if (f == justWritten) continue
+                val size = f.length()
+                if (f.delete()) { total -= size; log("live cache over ${budgetBytes / (1024 * 1024)} MB: ${f.name} evicted") }
+            }
+        }
     }
 }

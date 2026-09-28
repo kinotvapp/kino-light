@@ -106,7 +106,7 @@ class PluginLiveProvider(
     /** Channel codes a guide pass is asking for right now, and that pass's completion. */
     private val guideInFlight = HashMap<String, CompletableDeferred<Unit>>()
 
-    /** Declared playlists by url, in declaration order (under [lock]). */
+    /** Declared playlists by cache key (`PlaylistSource.cacheKey`: URL without its query), in declaration order (under [lock]). */
     private val sources = LinkedHashMap<String, PlaylistSource>()
     /** Each playlist's grouping by key, rebuilt when a list or the plugin's categories change (under [lock]). */
     private val groups = LinkedHashMap<String, PlaylistGroups>()
@@ -114,6 +114,7 @@ class PluginLiveProvider(
     /** The plugin categories and parsed lists (by key) the current [groups] were built from; the same again regroups nothing. */
     private var groupedCategories: List<ProviderCategory>? = null
     private var groupedResults: Map<String, M3uResult?> = emptyMap()
+    private var groupedPlaylists: List<PluginPlaylist> = emptyList()
     /** A playlist's parsed guide by key, until its time (under [lock]); null = no guide right now. */
     private val playlistGuides = HashMap<String, Pair<Long, XmltvGuide?>>()
     /** Serialises downloads and parses: a second screen waits and then reuses what the first got. */
@@ -144,14 +145,23 @@ class PluginLiveProvider(
         }
     }
 
-    /** [sources] follow the declared [playlists]: reused by url, the missing ones (and their groups and guides) dropped. Under [lock]. */
+    /**
+     * [sources] follow the declared [playlists] by cache key: a rotated token in a URL keeps its
+     * source (and its saved copy and parsed list); the missing ones (and their groups and guides)
+     * are dropped, and their files deleted by the next [ensurePlaylists]. Two declarations with
+     * the same key (same URL but for the query) are one playlist: the first wins. Under [lock].
+     */
     private fun reconcile(playlists: List<PluginPlaylist>) {
         val kept = LinkedHashMap<String, PlaylistSource>()
-        playlists.distinctBy { it.url }.forEach { pl ->
-            val old = sources[pl.url]
-            kept[pl.url] = old?.takeIf { it.playlist == pl } ?: PlaylistSource(pl, fetcher, cacheDir, clock) { log("[$pluginId] $it") }
+        playlists.forEach { pl ->
+            val key = PlaylistSource.cacheKey(pl.url)
+            if (key in kept) { log("[$pluginId] playlist ${pl.url.take(100)}: same list as an earlier one but for its query, ignored"); return@forEach }
+            kept[key] = sources[key]?.takeIf { it.adopt(pl) } ?: PlaylistSource(
+                pl, fetcher, cacheDir, clock, { log("[$pluginId] $it") },
+                entryAllowed = { PluginOutput.allowsUrl(it, liveHosts) },
+            )
         }
-        val keys = kept.values.map { it.key }.toSet()
+        val keys = kept.keys
         sources.clear()
         sources.putAll(kept)
         groups.keys.retainAll(keys)
@@ -167,11 +177,19 @@ class PluginLiveProvider(
         shared(PLAYLISTS_KEY + forceKey.orEmpty()) {
             playlistLock.withLock {
                 val list = lock.withLock { sources.values.toList() }
+                // Files of playlists no longer declared go, and the live/ dir stays within its budget.
+                cacheDir?.let { dir ->
+                    val keys = list.map { it.key }.toSet()
+                    withContext(Dispatchers.IO) {
+                        PlaylistSource.pruneLiveDir(dir, keys, PlaylistSource.MAX_LIVE_CACHE_BYTES) { log("[$pluginId] $it") }
+                    }
+                }
                 val results = list.map { it to it.entries(force = it.key == forceKey) }
                 val cats = lock.withLock { pluginCategories }
                 val byKey = LinkedHashMap<String, M3uResult?>().apply { results.forEach { (s, r) -> put(s.key, r) } }
+                val declared = list.map { it.playlist }
                 val same = lock.withLock {
-                    cats == groupedCategories && byKey.keys.toList() == groupedResults.keys.toList() &&
+                    cats == groupedCategories && declared == groupedPlaylists && byKey.keys.toList() == groupedResults.keys.toList() &&
                         byKey.all { (k, r) -> r === groupedResults[k] }
                 }
                 if (same) return@withLock
@@ -182,6 +200,7 @@ class PluginLiveProvider(
                     groups.clear()
                     groups.putAll(built)
                     groupedCategories = cats
+                    groupedPlaylists = declared
                     groupedResults = byKey
                 }
             }
@@ -192,8 +211,6 @@ class PluginLiveProvider(
         val out = LinkedHashMap<String, PlaylistGroups>()
         var categoriesLeft = PluginLiveContract.MAX_CATEGORIES_PER_PROVIDER - cats.size
         var channelsLeft = PluginLiveContract.MAX_CHANNELS_PER_PROVIDER
-        var kept = 0
-        var total = 0
         for ((source, result) in results) {
             if (result == null) continue
             val g = groupPlaylist(
@@ -204,11 +221,9 @@ class PluginLiveProvider(
             out[source.key] = g
             categoriesLeft -= g.categories.size
             channelsLeft -= g.kept
-            kept += g.kept
-            total += g.total
             if (g.skipped > 0 || g.hidden > 0) log("[$pluginId] playlist ${source.key}: ${g.kept} kept, ${g.skipped} skipped, ${g.hidden} hidden")
         }
-        _notice.value = if (total > kept) "Lista recortada: $kept de $total canales" else null
+        _notice.value = trimNotice(out.values)
         return out
     }
 

@@ -64,4 +64,14 @@ class PlaylistGroupsTest {
         val c = g.byCategory.values.single().single()
         assertEquals(PluginRef("demo", c.code, PluginRef.LIVE, "https://l.example.com/1.m3u8"), PluginRef.decode(c.ref!!))
     }
+
+    @Test fun `what the parse filtered is counted, and a parse cut by its time budget is a cut list`() {
+        val r = list("#EXTINF:-1,Uno", "https://l.example.com/1.m3u8").copy(hidden = 3, refused = 2, stoppedEarly = true)
+        val g = group(r)
+        assertEquals(3, g.hidden)
+        assertEquals(2, g.skipped)
+        assertTrue(g.cut)
+        assertEquals("Lista recortada: 1 de 1 canales", trimNotice(listOf(g)))
+        assertEquals(null, trimNotice(listOf(group(list("#EXTINF:-1,Uno", "https://l.example.com/1.m3u8")))))
+    }
 }

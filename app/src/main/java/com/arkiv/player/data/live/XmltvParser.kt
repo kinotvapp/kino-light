@@ -86,6 +86,18 @@ object XmltvParser {
         return ByteArrayInputStream(bytes)
     }
 
+    /** [open]'s rules for a saved guide, streamed from disk instead of held in memory. The caller closes it. */
+    fun open(file: java.io.File): InputStream {
+        val head = ByteArray(2)
+        val n = file.inputStream().use { it.read(head) }
+        val raw = java.io.BufferedInputStream(file.inputStream(), 64 * 1024)
+        if (n == 2 && head[0] == 0x1F.toByte() && head[1] == 0x8B.toByte()) {
+            return runCatching { GZIPInputStream(raw) as InputStream }
+                .getOrElse { raw.close(); ByteArrayInputStream(ByteArray(0)) }
+        }
+        return raw
+    }
+
     /** `"yyyyMMddHHmmss[ ±HHMM]"`, 12-digit (no seconds) too. No offset means UTC. Null on anything else. */
     fun parseTime(value: String): Long? {
         val m = TIME.find(value.trim()) ?: return null

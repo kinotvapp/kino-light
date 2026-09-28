@@ -181,4 +181,35 @@ class PluginLivePlaylistTest {
         p.guide(chans)
         assertEquals(1, got.count { it.endsWith(".xml") })
     }
+
+    @Test fun `adult and undeclared entries at the top never cost valid channels`() = runBlocking {
+        val m3u = "#EXTM3U\n" +
+            (0 until 100).joinToString("") { "#EXTINF:-1 group-title=\"Adultos\",A$it\nhttps://live.example.com/a$it.m3u8\n" } +
+            (0 until 100).joinToString("") { "#EXTINF:-1 group-title=\"G\",E$it\nhttps://evil.example.org/$it.m3u8\n" } +
+            (0 until 5000).joinToString("") { "#EXTINF:-1 group-title=\"G\",C$it\nhttps://live.example.com/$it.m3u8\n" }
+        val (p, _) = custom(m3u, null, """{"url":"https://lists.example.com/big.m3u","format":"m3u"}""")
+        assertEquals(5000, p.channels(p.categories(false).single().id).size)
+        assertNull(p.notice.value)
+    }
+
+    @Test fun `a forced reload whose download fails keeps the channels already listed`() = runBlocking {
+        val p = provider()
+        val cats = p.categories(false)
+        val before = p.channels(cats[1].id)
+        failDownloads = true
+        assertEquals(before, p.channels(cats[1].id, force = true))
+        assertEquals(listOf("Noticias propias", "Noticias", "Infantil"), p.categories(false).map { it.name })
+    }
+
+    @Test fun `a playlist the plugin stops declaring has its files deleted`() = runBlocking {
+        var answer = """[{"id":"news","title":"Noticias propias"},{"playlist":{"url":"https://lists.example.com/basic.m3u","format":"m3u"}}]"""
+        val cache = tmp.newFolder()
+        val p = PluginLiveProvider(plugin, PluginCaller { _, _, _, _ -> answer }, fetcher = fetcher, cacheDir = cache, clock = { now }, log = {})
+        p.categories(false)
+        assertEquals(1, File(cache, "live").list()!!.size)
+        answer = """[{"id":"news","title":"Noticias propias"}]"""
+        now += PluginLiveProvider.LIST_TTL_MS + 1
+        assertEquals(listOf("Noticias propias"), p.categories(false).map { it.name })
+        assertEquals(0, File(cache, "live").list()!!.size)
+    }
 }

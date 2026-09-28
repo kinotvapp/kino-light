@@ -66,4 +66,25 @@ class M3uParserTest {
         assertEquals(M3uResult(emptyList(), 0, 0), M3uParser.parse(""))
         assertEquals(0, M3uParser.parse(M3uParser.decode(ByteArray(64) { it.toByte() })).total)
     }
+
+    @Test fun `a file parses exactly like its decoded text, without loading it whole`() {
+        listOf("basic", "bom-crlf", "latin1", "broken", "headers").forEach { name ->
+            val f = File(dir, "$name.m3u")
+            assertEquals(name, M3uParser.parse(M3uParser.decode(f.readBytes())), M3uParser.parse(f))
+        }
+    }
+
+    @Test fun `hidden and refused entries are counted apart and never spend the cap`() {
+        val text = buildString {
+            append("#EXTM3U\n")
+            repeat(10) { append("#EXTINF:-1 group-title=\"XXX\",A$it\nhttps://live.example.com/a$it.m3u8\n") }
+            repeat(4) { append("#EXTINF:-1,E$it\nhttps://evil.example.org/$it.m3u8\n") }
+            repeat(5) { append("#EXTINF:-1,C$it\nhttps://live.example.com/$it.m3u8\n") }
+        }
+        val r = M3uParser.parse(text, maxEntries = 3, hide = { it.group == "XXX" }, allow = { "evil" !in it })
+        assertEquals(listOf("C0", "C1", "C2"), r.entries.map { it.name })
+        assertEquals(5, r.total)
+        assertEquals(10, r.hidden)
+        assertEquals(4, r.refused)
+    }
 }
