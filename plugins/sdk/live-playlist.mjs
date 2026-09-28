@@ -293,7 +293,7 @@ function decodeXml(b, maxBytes) {
   if (!declared || declared === "utf-8" || declared === "utf8") return utf8(b);
   if (NATIVE_LATIN1.includes(declared)) return { text: b.toString("latin1"), truncated: false };
   if (declared.startsWith("utf-16")) return { text: new TextDecoder(declared === "utf-16be" ? "utf-16be" : "utf-16le").decode(b), truncated: false };
-  // Transcoded, as the app does for what Expat can't read: the byte cap applies to the UTF-8 result too.
+  // Decoded, as the app does for what Expat can't read: the byte cap applies to the text counted as UTF-8 too.
   let text;
   try { text = new TextDecoder(declared).decode(b); } catch { text = b.toString("latin1"); }
   const encoded = Buffer.from(text, "utf8");
