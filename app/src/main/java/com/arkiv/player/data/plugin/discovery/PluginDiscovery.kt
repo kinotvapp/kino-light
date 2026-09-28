@@ -114,6 +114,9 @@ class PluginDiscovery(
     private val clock: () -> Long = System::currentTimeMillis,
     private val intervalMs: Long = INTERVAL_MS,
     manifestConcurrency: Int = 4,
+    private val scanDeadlineMs: Long = SCAN_DEADLINE_MS,
+    /** Milliseconds on a clock that never jumps; only for the scan budget ([clock] dates the cache). */
+    private val monotonicMs: () -> Long = { System.nanoTime() / 1_000_000 },
 ) : PluginDiscoveryProvider {
     private val mutex = Mutex()
     private val manifestPermits = Semaphore(manifestConcurrency)
@@ -169,18 +172,29 @@ class PluginDiscovery(
         return DiscoveryResult(plugins, DiscoveryOrigin.FRESH)
     }
 
-    private suspend fun filterByManifest(repos: List<DiscoveredRepo>, previous: Map<String, DiscoveredPlugin>): List<DiscoveredPlugin> =
-        coroutineScope {
-            repos.map { r -> async { manifestPermits.withPermit { pluginOf(r, previous[r.key]) } } }.awaitAll().filterNotNull()
+    /**
+     * The whole scan ends within [scanDeadlineMs] (measured on [monotonicMs], never the wall [clock]):
+     * each manifest gets at most the budget left, and a repo reached once it is spent counts as a
+     * timeout, so hanging raw hosts cannot keep the first screen searching for a minute and more.
+     */
+    private suspend fun filterByManifest(repos: List<DiscoveredRepo>, previous: Map<String, DiscoveredPlugin>): List<DiscoveredPlugin> {
+        val deadline = monotonicMs() + scanDeadlineMs
+        return coroutineScope {
+            repos.map { r ->
+                async { manifestPermits.withPermit { pluginOf(r, previous[r.key], deadline - monotonicMs()) } }
+            }.awaitAll().filterNotNull()
         }
+    }
 
     /**
-     * Ruling R7: a transient failure (offline, timeout, 5xx) keeps [previous] with today's stars; a
-     * verdict about the repo (404, 410, 451, too big, invalid, too new, `discoverable: false`) drops it.
+     * Ruling R7: a transient failure (offline, timeout, 5xx, no scan budget left) keeps [previous] with
+     * today's stars; a verdict about the repo (404, 410, 451, too big, invalid, too new,
+     * `discoverable: false`) drops it. [budgetMs] is what is left of the scan's deadline.
      */
-    private suspend fun pluginOf(r: DiscoveredRepo, previous: DiscoveredPlugin?): DiscoveredPlugin? {
+    private suspend fun pluginOf(r: DiscoveredRepo, previous: DiscoveredPlugin?, budgetMs: Long): DiscoveredPlugin? {
+        if (budgetMs <= 0) return previous?.copy(stars = r.stars)
         val bytes = try {
-            withTimeout(MANIFEST_TIMEOUT_MS) {
+            withTimeout(minOf(MANIFEST_TIMEOUT_MS, budgetMs)) {
                 fetcher.fetch(PluginAddress(r.owner, r.repo).rawUrl(PluginStore.MANIFEST_FILE), ManifestParser.MAX_BYTES + 1)
             }
         } catch (e: TimeoutCancellationException) {
@@ -247,6 +261,7 @@ class PluginDiscovery(
         const val MIN_BACKOFF_MS = 60 * 1000L
         const val MAX_BACKOFF_MS = 24 * 60 * 60 * 1000L
         const val MANIFEST_TIMEOUT_MS = 10 * 1000L
+        const val SCAN_DEADLINE_MS = 20 * 1000L
         private const val SCHEMA = 1
 
         /**

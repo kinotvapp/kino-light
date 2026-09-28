@@ -1,10 +1,12 @@
 package com.arkiv.player.data.plugin
 
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.suspendCancellableCoroutine
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import java.io.FileNotFoundException
 import java.io.IOException
 
@@ -53,16 +55,29 @@ class PluginFileTooBigException : IOException("archivo demasiado grande")
 class RawGithubFetcher(base: OkHttpClient) : PluginFetcher {
     private val client = base.newBuilder().followRedirects(false).followSslRedirects(false).build()
 
-    override suspend fun fetch(url: String, maxBytes: Int): ByteArray = withContext(Dispatchers.IO) {
+    /** Cancelling the caller cancels the call, so a host that never answers cannot outlive a timeout. */
+    override suspend fun fetch(url: String, maxBytes: Int): ByteArray {
         val u = url.toHttpUrl()
         require(u.scheme == "https" && u.host == "raw.githubusercontent.com") { "not a raw GitHub URL: $url" }
-        client.newCall(Request.Builder().url(u).build()).execute().use { r ->
-            if (r.code == 404) throw FileNotFoundException(u.encodedPath)
-            if (!r.isSuccessful) throw PluginFetchStatusException(r.code)
-            val source = r.body?.source() ?: throw IOException("respuesta vacía")
-            if (source.request(maxBytes + 1L)) throw PluginFileTooBigException()
-            source.buffer.readByteArray()
+        val call = client.newCall(Request.Builder().url(u).build())
+        return suspendCancellableCoroutine { cont ->
+            cont.invokeOnCancellation { call.cancel() }
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) = cont.resumeWith(Result.failure(e))
+
+                override fun onResponse(call: Call, response: Response) {
+                    cont.resumeWith(runCatching { response.use { read(it, u.encodedPath, maxBytes) } })
+                }
+            })
         }
+    }
+
+    private fun read(r: Response, path: String, maxBytes: Int): ByteArray {
+        if (r.code == 404) throw FileNotFoundException(path)
+        if (!r.isSuccessful) throw PluginFetchStatusException(r.code)
+        val source = r.body?.source() ?: throw IOException("respuesta vacía")
+        if (source.request(maxBytes + 1L)) throw PluginFileTooBigException()
+        return source.buffer.readByteArray()
     }
 }
 

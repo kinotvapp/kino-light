@@ -5,6 +5,7 @@ import com.arkiv.player.data.plugin.PluginFetcher
 import com.arkiv.player.data.plugin.PluginFileTooBigException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
@@ -40,8 +41,11 @@ class PluginDiscoveryTest {
     private inner class FakeRaw : PluginFetcher {
         val manifests = HashMap<String, String>()
         val failures = HashMap<String, Exception>()
+        /** Repos whose raw host never answers: the read waits until it is cancelled. */
+        val hanging = HashSet<String>()
         override suspend fun fetch(url: String, maxBytes: Int): ByteArray {
             val key = url.removePrefix("https://raw.githubusercontent.com/").substringBefore("/HEAD/")
+            if (key in hanging) awaitCancellation()
             failures[key]?.let { throw it }
             return (manifests[key] ?: throw FileNotFoundException(url)).toByteArray()
         }
@@ -239,5 +243,27 @@ class PluginDiscoveryTest {
         raw.failures["d/legal"] = PluginFetchStatusException(451)
         raw.failures["e/down"] = PluginFetchStatusException(503)
         assertEquals(listOf("one", "down"), discovery().load(force = false).plugins.map { it.id })
+    }
+
+    @Test fun `hanging raw hosts cannot hold the scan past its total deadline, and the other repos are kept`() = runBlocking {
+        // The per-manifest timeout stays at its real 10 s: only the total budget may end this scan early.
+        fun budgeted() = PluginDiscovery(github, raw, file, clock = { now }, scanDeadlineMs = 400)
+        val hangs = listOf("h1", "h2", "h3", "h4", "h5")
+        github.answer = { ok(repo("a", "one", 9), *hangs.map { repo("h", it, 1) }.toTypedArray()) }
+        raw.manifests["h/h1"] = manifest("h1")
+        assertEquals(listOf("one", "h1"), budgeted().load(force = false).plugins.map { it.id })
+        now += 2 * 60_000
+        github.answer = { ok(repo("a", "one", 10), *hangs.map { repo("h", it, 2) }.toTypedArray()) }
+        hangs.forEach { raw.hanging += "h/$it" }
+        val started = System.nanoTime()
+        val r = withTimeout(5_000) { budgeted().load(force = true) }
+        val elapsedMs = (System.nanoTime() - started) / 1_000_000
+        assertTrue("scan took $elapsedMs ms", elapsedMs < 3_000)
+        assertEquals(DiscoveryOrigin.FRESH, r.origin)
+        // Out of budget is transient (R7): h1 keeps its previous entry with today's stars, the rest are skipped.
+        assertEquals(
+            listOf(DiscoveredPlugin("a", "one", "one", "Name one", "Desc one", 10), DiscoveredPlugin("h", "h1", "h1", "Name h1", "Desc h1", 2)),
+            r.plugins,
+        )
     }
 }
