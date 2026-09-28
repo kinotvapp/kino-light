@@ -42,6 +42,8 @@ class M3uParserTest {
     @Test fun `a Latin-1 file reads its accents`() = check("latin1")
     @Test fun `broken entries are skipped and counted, the rest survive`() = check("broken")
     @Test fun `VLC, Kodi and pipe headers`() = check("headers")
+    @Test fun `an unterminated quote swallows the title, never the next entry`() = check("unterminated-quote")
+    @Test fun `one huge line with no line breaks is a single skipped entry`() = check("huge-line")
 
     @Test fun `a huge list keeps the cap and counts every valid entry`() {
         val text = buildString {
@@ -68,7 +70,7 @@ class M3uParserTest {
     }
 
     @Test fun `a file parses exactly like its decoded text, without loading it whole`() {
-        listOf("basic", "bom-crlf", "latin1", "broken", "headers").forEach { name ->
+        listOf("basic", "bom-crlf", "latin1", "broken", "headers", "unterminated-quote", "huge-line").forEach { name ->
             val f = File(dir, "$name.m3u")
             assertEquals(name, M3uParser.parse(M3uParser.decode(f.readBytes())), M3uParser.parse(f))
         }

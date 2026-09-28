@@ -388,11 +388,15 @@ function drmOf(value, check, allowDrm) {
   return { type: d.type, licenseUrl: d.licenseUrl, licenseHeaders: headersOf(d.licenseHeaders) };
 }
 
-function stream(value, { manifest, servers, allowDrm }) {
+function stream(value, { manifest, servers, allowDrm, liveChannel = false }) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("El plugin no devolvió un video");
   const check = urlChecker(manifest, servers);
   const drm = drmOf(value, check, allowDrm);
-  check(value.url, "El video");
+  // `liveStreamHosts: "any"` relaxes a live channel's own stream URL only; its subtitles, audio and
+  // license stay on the strict rule below.
+  if (liveChannel && manifest.liveStreamHostsAny) {
+    if (!liveStreamUrlAllowed(manifest, servers)(value.url)) throw new Error("El video apunta a una dirección local");
+  } else check(value.url, "El video");
   const expires = Number.isInteger(value.expiresInSeconds) && value.expiresInSeconds >= o().minExpiresInSeconds && value.expiresInSeconds <= o().maxExpiresInSeconds ? value.expiresInSeconds : 0;
   const subtitles = (Array.isArray(value.subtitles) ? value.subtitles : []).slice(0, o().maxSubtitles).filter((s) => {
     try { check(s && s.url, "El subtítulo"); return true; } catch { return false; }
@@ -420,6 +424,50 @@ function urlChecker(manifest, servers) {
 }
 
 const live = () => contract.live;
+
+/** HostRules.isPublicIpv4Literal: a canonical dotted IPv4 outside every private, local and reserved range. */
+export function isPublicIpv4Literal(host) {
+  const parts = String(host).split(".");
+  if (parts.length !== 4) return false;
+  const b = parts.map((p) => (/^\d+$/.test(p) && Number(p) <= 255 && String(Number(p)) === p ? Number(p) : -1));
+  if (b.includes(-1)) return false;
+  if (b[0] === 0 || b[0] === 10 || b[0] === 127 || b[0] >= 224) return false;
+  if (b[0] === 100 && b[1] >= 64 && b[1] <= 127) return false;
+  if (b[0] === 169 && b[1] === 254) return false;
+  if (b[0] === 172 && b[1] >= 16 && b[1] <= 31) return false;
+  if (b[0] === 192 && b[1] === 168) return false;
+  if (b[0] === 192 && b[1] === 0 && (b[2] === 0 || b[2] === 2)) return false;
+  if (b[0] === 198 && (b[1] === 18 || b[1] === 19)) return false;
+  return true;
+}
+
+/**
+ * The playlist and XMLTV download rule (strict, never `liveStreamHosts: "any"`): a server the person
+ * typed, or the scheme rule and a declared host. Every redirect hop is judged the same way.
+ */
+export function playlistUrlAllowed(manifest, servers = []) {
+  const check = urlChecker(manifest, servers);
+  return (url) => { try { check(url, ""); return true; } catch { return false; } };
+}
+
+/**
+ * A live channel's own stream URL (PluginOutput.checkUrl with anyPublicLiveHost): the strict rule,
+ * or, with `liveStreamHosts: "any"`, any public host over http(s), never a local one and never
+ * another port or scheme of a server the person typed.
+ */
+export function liveStreamUrlAllowed(manifest, servers = []) {
+  const strict = playlistUrlAllowed(manifest, servers);
+  const typedNames = servers.map((s) => { try { return new URL(s).hostname; } catch { return null; } });
+  return (url) => {
+    if (strict(url)) return true;
+    if (!manifest.liveStreamHostsAny) return false;
+    let u;
+    try { u = new URL(String(url)); } catch { return false; }
+    if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+    if (typedNames.includes(u.hostname)) return false;
+    return isPublicIpv4Literal(u.hostname) || !isLocalAddress(u.hostname);
+  };
+}
 
 /** A `{ playlist: {...} }` declaration, read as PluginOutput.playlistOf: null (dropped) when it can't be used. */
 function playlistOf(p, { manifest, servers }, drop) {
@@ -500,7 +548,7 @@ function liveChannels(value, ctx, drop) {
     if (ref.length > o().maxRefChars) return drop(`liveChannels: ${id} has an invalid ref`);
     let checked = null;
     if (c.stream !== null && typeof c.stream === "object" && !Array.isArray(c.stream)) {
-      try { checked = stream(c.stream, ctx); } catch (e) { return drop(`liveChannels: ${id} stream refused: ${e.message}`); }
+      try { checked = stream(c.stream, { ...ctx, liveChannel: true }); } catch (e) { return drop(`liveChannels: ${id} stream refused: ${e.message}`); }
     }
     if (!ref && !checked) return drop(`liveChannels: ${id} has neither a ref nor a stream`);
     if (seen.has(id)) return drop(`liveChannels: duplicate ${id} dropped`);

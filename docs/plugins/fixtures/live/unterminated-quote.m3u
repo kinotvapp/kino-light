@@ -1,0 +1,7 @@
+#EXTM3U
+#EXTINF:-1 tvg-id="uq1 group-title="Noticias",Canal Abierto
+https://live.example.com/uq1.m3u8
+#EXTINF:-1 tvg-name="Sin cierre,Nombre Perdido
+https://live.example.com/uq2.m3u8
+#EXTINF:-1 group-title="Cine",Siguiente Bien
+https://live.example.com/next.m3u8

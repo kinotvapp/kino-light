@@ -5,7 +5,9 @@
 //     and that every declared capability is an exported function (the app refuses the install
 //     otherwise).
 //   node sdk/validate.mjs <plugin folder> --run <function> [argument] [cursor] [--config k=v] [--replay file]
-//     also runs one function and reports every entry the app would drop, and why.
+//     also runs one function and reports every entry the app would drop, and why. With
+//     `--run liveCategories`, each declared playlist is downloaded and parsed as the app would.
+// It also prints the consent sheet's extra lines, the red ones marked, as the person will read them.
 // Exit code 0 = Kino would accept it; 1 = it wouldn't (the reasons are on stderr).
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,12 +16,31 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { checkOutput, contract, kb, requiredExports, validateManifest } from "./contract.mjs";
 import { createKino } from "./kino-shim.mjs";
 import { call, parseArgs } from "./run.mjs";
+import { loadPlaylist } from "./live-playlist.mjs";
 
 // Every return carries { ok, problems, drops, output } — even the early ones, before a `kino` even
 // exists — so a caller (this file's own CLI included) never has to guess which fields are present.
-const refused = (problems) => ({ ok: false, problems, drops: [], output: null });
+const refused = (problems) => ({ ok: false, problems, drops: [], output: null, consent: [] });
 
-export async function validate(dirArg, { run = null, args = [], config = {}, replay = null } = {}) {
+/**
+ * The consent sheet's lines beyond the host list, as the app's PluginConsent.extraLines builds them
+ * for a first install. `danger` lines are drawn in red.
+ */
+export function consentLines(m) {
+  const out = [];
+  const line = (text, danger = false) => out.push({ text, danger });
+  (m.permissions || []).forEach((p) => line(`Permiso: ${p}`));
+  if ((m.settings || []).some((s) => s.type === "password")) line("Este plugin usa tu usuario y contraseña");
+  if ((m.settings || []).some((s) => s.type === "url")) line("Se conectará a los servidores que escribas en su configuración");
+  if (m.capabilities.includes("download")) line("Puede descargar videos para verlos sin conexión");
+  if (m.capabilities.includes("drm")) line("Reproduce video protegido (DRM)");
+  if (m.capabilities.includes("channels")) line("Agrega canales en vivo a la pestaña En vivo");
+  (m.insecureHosts || []).forEach((h) => line(`Conexión sin cifrar con ${h}`, true));
+  if (m.liveStreamHostsAny) line("Puede reproducir canales desde cualquier servidor que indique su lista", true);
+  return out;
+}
+
+export async function validate(dirArg, { run = null, args = [], config = {}, replay = null, fetchImpl = globalThis.fetch } = {}) {
   const problems = [];
   const dir = resolve(dirArg);
   const manifestFile = join(dir, "kino-plugin.json");
@@ -27,8 +48,9 @@ export async function validate(dirArg, { run = null, args = [], config = {}, rep
   const checked = validateManifest(readFileSync(manifestFile, "utf8"));
   if (!checked.ok) return refused([`kino-plugin.json: ${checked.field}: ${checked.message}`]);
   const m = checked.manifest;
+  const consent = consentLines(m);
   const entry = join(dir, m.entry);
-  if (!existsSync(entry)) return refused([`entry ${m.entry} not found`]);
+  if (!existsSync(entry)) return { ...refused([`entry ${m.entry} not found`]), consent };
   if (statSync(entry).size > contract.manifest.entryMaxBytes) problems.push(`${m.entry} is bigger than ${kb(contract.manifest.entryMaxBytes)}: Kino refuses it`);
   if (m.icon && existsSync(join(dir, m.icon)) && statSync(join(dir, m.icon)).size > contract.manifest.iconMaxBytes) problems.push(`${m.icon} is bigger than ${kb(contract.manifest.iconMaxBytes)}: Kino skips it`);
   const scratch = mkdtempSync(join(tmpdir(), "kino-validate-"));
@@ -37,7 +59,7 @@ export async function validate(dirArg, { run = null, args = [], config = {}, rep
   try {
     // Inside the try too: an invalid --replay path (or any other setup failure) must become a
     // problem, not an uncaught rejection.
-    const { kino, servers } = createKino(m, { config, replay: replay && resolve(replay) });
+    const { kino, servers } = createKino(m, { config, replay: replay && resolve(replay), fetchImpl });
     globalThis.kino = kino;
     const copy = join(scratch, "plugin.mjs");
     writeFileSync(copy, readFileSync(entry));
@@ -53,6 +75,17 @@ export async function validate(dirArg, { run = null, args = [], config = {}, rep
         const checkedOut = checkOutput(run, await call(plugin, run, args), m, servers);
         output = checkedOut.value;
         drops.push(...checkedOut.drops);
+        // The app downloads and parses each declared playlist itself: one that fails or comes out
+        // empty would show nothing.
+        for (const p of run === "liveCategories" ? output.playlists : []) {
+          try {
+            const s = await loadPlaylist(p, { manifest: m, servers, fetchImpl });
+            if (s.channels === 0) problems.push(`playlist ${p.url}: 0 canales (${s.skipped} entradas descartadas, ${s.hidden} ocultas)`);
+            if (s.skipped) drops.push(`playlist ${p.url}: ${s.skipped} entradas descartadas`);
+          } catch (e) {
+            problems.push(`playlist ${p.url}: not downloaded: ${e.message}`);
+          }
+        }
       }
     }
   } catch (e) {
@@ -60,7 +93,7 @@ export async function validate(dirArg, { run = null, args = [], config = {}, rep
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
-  return { ok: problems.length === 0, problems, drops, output };
+  return { ok: problems.length === 0, problems, drops, output, consent };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -77,6 +110,12 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       config: opts.config,
       replay: opts.replay,
     });
+    if (result.consent.length) {
+      // Red on a terminal, as on the consent sheet; "(en rojo)" either way so a log keeps it.
+      const red = process.stderr.isTTY ? (t) => `\x1b[31m${t}\x1b[0m` : (t) => t;
+      console.error("Consent sheet:");
+      result.consent.forEach((c) => console.error(c.danger ? red(`  ! ${c.text} (en rojo)`) : `  · ${c.text}`));
+    }
     result.drops.forEach((d) => console.error(`[dropped by Kino] ${d}`));
     result.problems.forEach((p) => console.error(`✗ ${p}`));
     if (result.ok) console.error("✓ Kino would accept this plugin" + (result.drops.length ? ` (${result.drops.length} entries dropped, see above)` : ""));

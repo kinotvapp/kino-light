@@ -367,7 +367,9 @@ manifest is refused with `El campo "liveStreamHosts" solo admite "any"` or
 What it allows: **a live channel's stream** (the `url` of a channel's inline `stream`, or the `url`
 `resolve` returns for a channel; items you mark as live are treated as channels) may be on **any
 public host**, over `http` or `https`, a public IPv4 address included (not an IPv6 literal). The player then fetches that manifest and
-its variants, segments and keys, and follows their redirects, under the same rule.
+its variants, segments and keys, and follows their redirects, under the same rule. The audio and
+subtitle renditions the HLS manifest itself lists (`#EXT-X-MEDIA`) are part of that stream and follow
+the same rule too; the `subtitles` and `audioTracks` you return in a `Stream` do not (see below).
 
 What it never allows:
 
@@ -613,6 +615,13 @@ A plugin can give its channels in three ways, and mix them:
    group titles not to show (case doesn't matter, at most 50). With `resolve: true`, each entry plays
    through your `resolve(<entry url>)`, for lists whose links need a fresh token. At most 10 per
    answer.
+
+   Each entry gets a channel code, the key of favourites and recents: its `tvg-id` when that is a
+   valid id **used by no other entry of the list**, else one made from its URL and name. So a
+   channel's code can change between refreshes: when the list later gains a second entry with the
+   same `tvg-id`, both switch to URL-and-name codes, and favourites and recents saved under the old
+   code stop matching (the same happens to a URL-and-name code when the URL changes). Give every
+   entry a stable, unique `tvg-id`; `node sdk/run.mjs live playlist <list>` lists the repeated ones.
 
 The rules:
 
@@ -1050,14 +1059,45 @@ throws and 2 when the command is wrong. The runner only runs functions your mani
   `.kino-cookies.json`, both next to your manifest. Add them to your `.gitignore`. Delete them to
   start from scratch.
 - `node sdk/validate.mjs <folder>` checks the manifest with every rule of section 3 (the same
-  Spanish messages the app shows) and that each declared capability is exported;
-  `--run <function> [argument]` also runs it and lists what Kino would drop. Exit code 0 means Kino
-  would accept it.
+  Spanish messages the app shows) and that each declared capability is exported, and prints the
+  consent sheet's extra lines as the person will read them (the red ones, an `insecureHttp` host or
+  `"liveStreamHosts": "any"`, marked "(en rojo)");
+  `--run <function> [argument]` also runs it and lists what Kino would drop. With
+  `--run liveCategories`, every declared playlist is downloaded and parsed too: one that cannot be
+  downloaded or parses to 0 channels is a problem, and its discarded entries are listed. Exit code 0
+  means Kino would accept it.
 - The `sdk/` folder does not have to live in your repository. Copy it anywhere and run
   `node /path/to/sdk/run.mjs ./plugin.js ...`.
 - A stack trace names a temporary `plugin.mjs`: the runner loads a copy of your file so that Node
   treats it as an ES module whatever its version and `package.json` say. The line numbers are your
   `plugin.js`'s.
+
+**Live channels** (apiVersion 3). The `channels` exports run through `live`, with the plugin folder
+first:
+
+```
+node sdk/run.mjs . live categories
+node sdk/run.mjs . live channels noticias
+node sdk/run.mjs . live channels noticias 2
+node sdk/run.mjs . live guide canal1,canal2
+node sdk/run.mjs live playlist https://iptv-org.github.io/iptv/countries/co.m3u
+node sdk/run.mjs live playlist ./lista.m3u --epg ./guia.xml.gz
+```
+
+- `live categories` calls `liveCategories()` and prints what Kino keeps. Then, for each `{ playlist }`
+  in the answer, it downloads the list as the app would (your `headers`, your `hosts` or the person's
+  server only, every redirect too) and prints, on stderr, the same summary as `live playlist` and
+  the list's groups as the categories people will see.
+- `live channels <categoryId> [cursor]` calls `liveChannels({ categoryId, cursor })`, and
+  `live guide <id,id>` calls `guide()` with those ids and a 24-hour window starting two hours ago.
+- `live playlist <url|file>` needs no plugin: it reads any M3U list with Kino's own rules and prints
+  `N canales en M categorías; K entradas descartadas; L ocultas (adultos)`, the categories, and the
+  first 20 channels as `group › name  url`. With `--epg <url|file>` it also shows what each of those
+  20 has on now, or "sin guía". Use it on a list before you write a line of plugin.
+
+The kit reads lists and guides with `sdk/live-playlist.mjs`, a copy of the app's readers pinned to
+the same test files (`docs/plugins/fixtures/live` in Kino's repository): what it keeps is what Kino
+keeps.
 
 **What the Node kit does not reproduce.** Kino is the authority; the kit only approximates it so
 you can iterate fast. Before you publish, install the plugin in the app and try it there. The
@@ -1183,7 +1223,7 @@ episodes numbered 0 are dropped), so do not copy those as intended behavior.
 ## 11. Cookbook
 
 Three complete shapes, then two short recipes for the apiVersion 2 powers that need a line on the
-consent sheet. The first and the third shapes are, nearly line for line, the two reference plugins
+consent sheet, and three for live channels (apiVersion 3). The first and the third shapes are, nearly line for line, the two reference plugins
 Kino's own tests run end to end against a fake server.
 
 ### An HTML site with a login and hidden links
@@ -1581,3 +1621,182 @@ What the flag does, and what it does not:
   that traffic can be read on the way; an update that newly marks an already-approved host
   `insecureHttp` waits for approval ([section 8](#8-publishing-your-plugin)). Prefer `https` whenever
   the server can: the flag is for the host that cannot.
+
+### Live channels: three recipes (apiVersion 3)
+
+Three ways to fill the En vivo tab, from the least code to the most control. Each is a complete
+plugin (see [Channels in the En vivo tab](#channels-in-the-en-vivo-tab-apiversion-3) and
+[Live channels](#live-channels-apiversion-3) for the rules).
+
+**1. A plain M3U list the person types.** The person pastes the address of their list (and, if they
+have one, of its guide) in Configurar; Kino downloads it, groups it and plays each entry itself.
+
+```json
+{
+  "id": "mi-lista", "name": "Mi lista", "version": "1.0.0", "apiVersion": 3, "entry": "plugin.js",
+  "hosts": [],
+  "capabilities": ["home", "resolve", "channels"],
+  "liveStreamHosts": "any",
+  "settings": [
+    { "key": "lista", "label": "Lista M3U", "type": "url", "required": true },
+    { "key": "guia", "label": "Guía XMLTV", "type": "url" }
+  ]
+}
+```
+
+`"hosts": []` is enough: the list and the guide are on servers the person typed. Their streams are
+not: an IPTV list points at dozens of servers nobody can declare ahead of time, which is what
+`"liveStreamHosts": "any"` is for ([Channels from any server](#channels-from-any-server-livestreamhosts-apiversion-3)).
+The person sees it on the consent sheet, in red: "Puede reproducir canales desde cualquier servidor
+que indique su lista". Leave it out when every stream is on hosts you can declare.
+
+```js
+// Kino downloads the list (and the guide), groups it and plays each entry by itself.
+export async function liveCategories() {
+  const guia = kino.config.get("guia");
+  return [{
+    playlist: {
+      url: kino.config.get("lista"),
+      format: "m3u",
+      epg: guia ? { url: guia, format: "xmltv" } : undefined,
+      hideGroups: ["Compras"],
+    },
+  }];
+}
+
+// Every channel comes from the list: no categories of your own to page.
+export async function liveChannels() {
+  return { items: [] };
+}
+
+// The manifest needs search or home; a plugin with only channels has an empty home.
+export async function home() {
+  return [];
+}
+
+// A direct list never calls resolve: its entries play as they are.
+export async function resolve() {
+  await null;
+  throw kino.error("not_found");
+}
+```
+
+```
+node sdk/run.mjs . --config lista=https://iptv-org.github.io/iptv/countries/co.m3u live categories
+```
+
+**2. A token per channel.** Your API lists the channels, and each play needs a freshly signed URL.
+`liveChannels` returns `{ id, title, ref }` items; `resolve(ref)` signs the URL when the person
+plays it. A channel's `expiresInSeconds` is ignored: when a live stream is cut, Kino simply calls
+`resolve` again.
+
+```json
+{
+  "id": "mi-tv", "name": "Mi TV", "version": "1.0.0", "apiVersion": 3, "entry": "plugin.js",
+  "hosts": ["api.example.com", "cdn.example.com"],
+  "capabilities": ["home", "resolve", "channels"],
+  "settings": [{ "key": "token", "label": "Código de acceso", "type": "password", "required": true }]
+}
+```
+
+```js
+const API = "https://api.example.com";
+
+async function api(path) {
+  const r = await kino.fetch(API + path, { headers: { Authorization: "Bearer " + kino.config.get("token") } });
+  if (r.status === 401) throw kino.error("auth_required", "código de acceso inválido");
+  if (!r.ok) throw kino.error("unavailable", "la API respondió " + r.status);
+  return r.json();
+}
+
+export async function home() {
+  return [];
+}
+
+export async function liveCategories() {
+  const cats = await api("/categorias"); // [{ slug, nombre }]
+  return cats.map((c) => ({ id: c.slug, title: c.nombre }));
+}
+
+// One page of a category. The ref is only the channel's id: the signed URL is made on play.
+export async function liveChannels({ categoryId, cursor }) {
+  const page = await api("/canales?categoria=" + encodeURIComponent(categoryId) + (cursor ? "&pagina=" + encodeURIComponent(cursor) : ""));
+  return {
+    items: page.canales.map((c) => ({ id: c.id, title: c.nombre, categoryId, ref: c.id, logo: c.logo, number: c.numero })),
+    next: page.siguiente || undefined,
+  };
+}
+
+// Called on every play, and again when the stream is cut: always a fresh token.
+export async function resolve(ref) {
+  const s = await api("/firmar/" + encodeURIComponent(ref)); // { url: "https://cdn.example.com/…?token=…" }
+  return { url: s.url, mime: "application/vnd.apple.mpegurl" };
+}
+```
+
+```
+node sdk/run.mjs . --config token=... live channels noticias
+```
+
+**3. Mixed.** Your own "Destacados" category with inline `stream` items (they play with no call to
+your plugin, so zapping through them is instant), plus the provider's full list declared with
+`resolve: true`: Kino downloads and groups it, and each of its entries plays through your
+`resolve(<entry url>)`, which appends a token.
+
+```json
+{
+  "id": "mi-mezcla", "name": "Mi mezcla", "version": "1.0.0", "apiVersion": 3, "entry": "plugin.js",
+  "hosts": ["api.example.com", "live.example.com", "listas.example.com"],
+  "capabilities": ["home", "resolve", "channels"]
+}
+```
+
+```js
+// Your own featured channels: inline streams, played with no call to the plugin (fast zapping).
+const DESTACADOS = [
+  { id: "noticias24", title: "Noticias 24", number: 1, url: "https://live.example.com/noticias24/index.m3u8" },
+  { id: "deportes", title: "Deportes", number: 2, url: "https://live.example.com/deportes/index.m3u8" },
+];
+
+export async function home() {
+  return [];
+}
+
+export async function liveCategories() {
+  return [
+    { id: "destacados", title: "Destacados" },
+    // The provider's full list: Kino downloads and groups it; each entry plays through resolve().
+    {
+      playlist: {
+        url: "https://listas.example.com/todos.m3u",
+        format: "m3u",
+        epg: { url: "https://listas.example.com/guia.xml.gz", format: "xmltv" },
+        resolve: true,
+      },
+    },
+  ];
+}
+
+export async function liveChannels({ categoryId }) {
+  if (categoryId !== "destacados") return { items: [] };
+  return {
+    items: DESTACADOS.map((c) => ({ id: c.id, title: c.title, number: c.number, categoryId, stream: { url: c.url } })),
+  };
+}
+
+// Only the list's entries get here (resolve: true), with the entry's URL as the ref.
+export async function resolve(url) {
+  const r = await kino.fetch("https://api.example.com/token");
+  if (!r.ok) throw kino.error("unavailable", "no hay token");
+  const { token } = r.json();
+  return { url: url + (url.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(token) };
+}
+```
+
+The list's streams must be on your `hosts` here (`live.example.com`), since this manifest does not
+declare `"liveStreamHosts": "any"`; `live categories` counts the entries that are not as discarded.
+
+```
+node sdk/run.mjs . live categories
+node sdk/run.mjs . live channels destacados
+```
