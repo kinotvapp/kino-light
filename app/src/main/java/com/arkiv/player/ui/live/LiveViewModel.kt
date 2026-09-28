@@ -48,6 +48,13 @@ const val CATEGORY_FAVORITES = "__favoritos__"
 /** How long the cross-provider search waits for typing to settle. */
 private const val SEARCH_DEBOUNCE_MS = 150L
 
+/**
+ * An unchanged section is still rewritten once its rows are this old: Home's country row
+ * (`CountryChannels.kt`) trusts Xuper's rows for 24 h by their `guardadoAt`, so they must keep
+ * being refreshed well inside that.
+ */
+private const val CACHE_REWRITE_AFTER_MS = 12L * 60 * 60 * 1000
+
 private val COMBINING_MARKS = Regex("\\p{Mn}+")
 
 internal fun String.normalized(): String =
@@ -400,7 +407,8 @@ class LiveViewModel(
             if (provider == null) { _state.update { it.copy(loading = false) }; return@launch }
             fun stillActive() = _state.value.activeProvider == providerId && _state.value.activeCategory == category
 
-            val cached = cacheDao.byCategory(providerId, category)
+            val cachedRows = cacheDao.byCategory(providerId, category)
+            val cached = cachedRows
                 .map { LiveChannel(it.code, it.nombre, it.numero, it.logo, provider = it.provider, ref = it.ref) }
             if (cached.isNotEmpty() && stillActive()) {
                 _state.update { it.copy(channels = cached, loading = false) }
@@ -431,9 +439,13 @@ class LiveViewModel(
                 return@launch
             }
             val nowMs = System.currentTimeMillis()
-            cacheDao.replace(providerId, category, fresh.map {
-                LiveChannelCacheEntity(it.code, category, it.name, it.number, it.logo, nowMs, provider = providerId, ref = it.ref)
-            })
+            // The very rows just painted, written recently: rewriting them (up to 5000 for a playlist) changes nothing.
+            val unchanged = fresh == cached && cachedRows.isNotEmpty() && cachedRows.all { nowMs - it.guardadoAt < CACHE_REWRITE_AFTER_MS }
+            if (!unchanged) {
+                cacheDao.replace(providerId, category, fresh.map {
+                    LiveChannelCacheEntity(it.code, category, it.name, it.number, it.logo, nowMs, provider = providerId, ref = it.ref)
+                })
+            }
             mergeIntoSearch(providerId, fresh)
             if (stillActive()) {
                 // A plugin learns whether it has a guide (a playlist EPG) only once it listed.

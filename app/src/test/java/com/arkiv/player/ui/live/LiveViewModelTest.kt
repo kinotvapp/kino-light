@@ -172,7 +172,10 @@ private class FakeCacheDao : LiveChannelCacheDao {
     override suspend fun clear(provider: String, category: String) { store.remove(provider to category) }
     override suspend fun clearProvider(provider: String) { store.keys.removeAll { it.first == provider } }
     override suspend fun clearPlaylistRows(provider: String) { store.keys.removeAll { it.first == provider && it.second.startsWith("pl:") } }
+    /** How many times rows were written (replace() is clear + save). */
+    var saves = 0
     override suspend fun save(rows: List<LiveChannelCacheEntity>) {
+        saves++
         rows.groupBy { it.provider to it.categoria }.forEach { (key, rows) -> store[key] = rows }
     }
     // replace() uses the interface's default body (clear + save), not needed here.
@@ -521,6 +524,40 @@ class LiveViewModelAsyncTest {
         vm.chooseProvider(tvId)
         advanceUntilIdle()
         assertEquals(false, vm.state.value.hasGuide)
+    }
+
+    @Test
+    fun `a fresh answer equal to the recent cache just painted is not written again`() = runTest(dispatcher) {
+        val (xuper, tv) = twoProviders()
+        val cache = FakeCacheDao()
+        val row = LiveChannelCacheEntity("c1", "news", "C1", 1, null, System.currentTimeMillis(), provider = tvId)
+        cache.preload(tvId, "news", listOf(row))
+        val vm = LiveViewModel(FakeModule(xuper, tv), FakeFavoriteDao(), cache)
+        advanceUntilIdle()
+        val before = cache.saves
+        vm.chooseProvider(tvId)
+        advanceUntilIdle()
+        assertEquals(listOf("plugin:tv:c1"), vm.state.value.channels.map { it.liveCode })
+        assertEquals("unchanged and recent: no rewrite", before, cache.saves)
+    }
+
+    @Test
+    fun `an equal answer still refreshes an old cache, and a different one is always written`() = runTest(dispatcher) {
+        val (xuper, tv) = twoProviders()
+        val cache = FakeCacheDao()
+        cache.preload(tvId, "news", listOf(LiveChannelCacheEntity("c1", "news", "C1", 1, null, 0L, provider = tvId)))
+        val vm = LiveViewModel(FakeModule(xuper, tv), FakeFavoriteDao(), cache)
+        advanceUntilIdle()
+        val before = cache.saves
+        vm.chooseProvider(tvId)
+        advanceUntilIdle()
+        assertEquals(before + 1, cache.saves)
+        assertTrue(cache.byCategory(tvId, "news").single().guardadoAt > 0L)
+        tv.channelsByCategory["news"] = listOf(ch("c1", tvId), ch("c2", tvId))
+        vm.reload()
+        advanceUntilIdle()
+        assertEquals(before + 2, cache.saves)
+        assertEquals(listOf("c1", "c2"), cache.byCategory(tvId, "news").map { it.code })
     }
 
     @Test
