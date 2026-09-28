@@ -63,6 +63,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -107,6 +108,7 @@ import com.arkiv.player.ui.EffectsAutoTune
 import com.arkiv.player.ui.KinoWordmark
 import com.arkiv.player.ui.LocalReducedEffects
 import com.arkiv.player.ui.backdropFadeSpec
+import com.arkiv.player.ui.TV_CARD_FOCUS_SCALE
 import com.arkiv.player.ui.cardFocusScale
 import com.arkiv.player.ui.heroFallback
 import com.arkiv.player.ui.heroSubtitle
@@ -119,6 +121,7 @@ import com.arkiv.player.ui.live.countryChannelsForHome
 import com.arkiv.player.ui.player.WAIT_BETWEEN_FOCUS_ATTEMPTS_MS
 import com.arkiv.player.ui.player.retryFocus
 import com.arkiv.player.ui.live.recentChannelsForHome
+import com.arkiv.player.ui.live.channelCircleForRow
 import com.arkiv.player.ui.live.homeLiveRow
 import com.arkiv.player.ui.live.providerBadge
 import com.arkiv.player.ui.live.ProviderBadge
@@ -739,7 +742,8 @@ fun TvHomeScreen(
     }
 
     // Fixed-size cards and rows: the rows zone measures EXACTLY 2 rows (label + landscape card),
-    // and the hero above —immovable— takes up the rest with weight(1f).
+    // and the hero above —immovable— takes up the rest with weight(1f). The live row's circles (circle +
+    // name) are sized to this same cardHeight (see tvChannelCircle), so every row is one rowUnit.
     val cardHeight = 92.dp
     val labelHeight = 26.dp
     val rowGap = 14.dp
@@ -1056,8 +1060,13 @@ fun TvHomeScreen(
                                 LazyRow(
                                     state = channelsRowState,
                                     modifier = Modifier.onFocusChanged { channelsRowFocused = it.hasFocus },
-                                    contentPadding = PaddingValues(horizontal = 48.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                    // The first CIRCLE, not its wider item, lines up with the label.
+                                    contentPadding = PaddingValues(
+                                        horizontal = 48.dp - tvChannelCircle(cardHeight).let { (it.itemWidthDp - it.diameterDp) / 2f }.dp,
+                                    ),
+                                    // Tighter than the poster rows: each circle's item is already wider
+                                    // than the circle (room for its name), so 8 dp reads as the same gap.
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 ) {
                                     items(channelsRow, key = { it.liveCode }) { channel ->
                                         TvLiveChannelCard(
@@ -1180,15 +1189,35 @@ fun TvHomeScreen(
     }
 }
 
+/** Height of the channel name under each circle on the "Canales en vivo" row. */
+private val TV_CHANNEL_NAME_HEIGHT = 18.dp
+
+/** The focus ring's width on a channel circle, the same 3 dp white every TV card wears. */
+private val TV_CHANNEL_RING = 3.dp
+
 /**
- * Card (16:9, same template as [TvLandscapeCard]/[TvWideCard]) for a recent channel on the
- * "Canales en vivo" row. No overlaid title -- the name shows up top, in the hero, on focus (same
- * criterion as the TV's other rows).
+ * The circle sizes for a live row [cardHeight] tall: circle + gap + name fill exactly the poster rows'
+ * card height, so the rows zone keeps showing exactly two rows (see `rowUnit`). Sized for the full
+ * focus zoom even when it's reduced, so the row doesn't change layout with that setting.
+ */
+private fun tvChannelCircle(cardHeight: Dp) = channelCircleForRow(
+    rowHeightDp = cardHeight.value,
+    nameHeightDp = TV_CHANNEL_NAME_HEIGHT.value,
+    focusScale = TV_CARD_FOCUS_SCALE,
+    ringDp = TV_CHANNEL_RING.value,
+)
+
+/**
+ * A channel on the "Canales en vivo" row: a round tile with the logo centered and fitted with room to
+ * spare (wide logos never touch the edge), and the name below. The hero also names it on focus.
  *
  * Logo if the cache has it (see [recentChannelsForHome]); if not, the same treatment as
  * `ChannelCard` in `LiveScreen.kt` (phone): gradient + the channel number, deliberate instead of a
  * broken logo. If not even the number is known yet (a just-seen channel, no cache entry for that
  * `code`), it falls back to the name's initials -- a "0" wouldn't mean anything here.
+ *
+ * The circle is the single focusable; the provider badge sits on its top-right, outside the logo's
+ * area, and doesn't zoom with it.
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -1201,51 +1230,42 @@ private fun TvLiveChannelCard(
     onFocus: () -> Unit = {},
     onClick: () -> Unit,
 ) {
-    Card(
+    val spec = tvChannelCircle(cardHeight)
+    TvChannelCircleItem(
+        spec = spec,
+        label = channel.name,
+        badge = badge,
+        modifier = modifier,
+        onFocus = onFocus,
         onClick = onClick,
-        modifier = modifier.height(cardHeight).onFocusChanged { if (it.isFocused) onFocus() },
-        scale = cardFocusScale(LocalReducedEffects.current),
-        colors = CardDefaults.colors(containerColor = ArkivSurfaceHigh),
-        border = CardDefaults.border(
-            focusedBorder = Border(androidx.compose.foundation.BorderStroke(3.dp, Color.White)),
-        ),
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxHeight()
-                .aspectRatio(16f / 9f)
-                .background(ArkivSurfaceHigh),
-        ) {
-            if (channel.logo != null) {
-                AsyncImage(
-                    model = channel.logo,
-                    contentDescription = channel.name,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.fillMaxSize().padding(12.dp),
+        if (channel.logo != null) {
+            AsyncImage(
+                model = channel.logo,
+                contentDescription = channel.name,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize().padding(spec.logoPaddingDp.dp),
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Brush.linearGradient(listOf(Color(0xFF33333D), Color(0xFF17171C)))),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = if (channel.number > 0) channel.number.toString() else channel.name.take(2).uppercase(),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Color.White.copy(alpha = 0.6f),
                 )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Brush.linearGradient(listOf(Color(0xFF33333D), Color(0xFF17171C)))),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = if (channel.number > 0) channel.number.toString() else channel.name.take(2).uppercase(),
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = Color.White.copy(alpha = 0.6f),
-                    )
-                }
             }
-            badge?.let { ProviderBadge(it, Modifier.align(Alignment.TopStart).padding(6.dp)) }
         }
     }
 }
 
 /**
- * Last card on the "Canales en vivo" row: opens the "En vivo" section with the full grid. Same
- * template as [TvLiveChannelCard] (row height, 16:9, same focus and border) so the row doesn't
- * change height or rhythm on reaching the end.
+ * Last item on the "Canales en vivo" row: opens the "En vivo" section with the full grid. The same
+ * circle as [TvLiveChannelCard] (same size, focus ring and zoom) so the row keeps its rhythm at the end.
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -1255,36 +1275,81 @@ private fun TvSeeMoreChannelsCard(
     onFocus: () -> Unit = {},
     onClick: () -> Unit,
 ) {
-    Card(
+    TvChannelCircleItem(
+        spec = tvChannelCircle(cardHeight),
+        label = "Ver más",
+        badge = null,
+        modifier = modifier,
+        onFocus = onFocus,
         onClick = onClick,
-        modifier = modifier.height(cardHeight).onFocusChanged { if (it.isFocused) onFocus() },
-        scale = cardFocusScale(LocalReducedEffects.current),
-        colors = CardDefaults.colors(containerColor = ArkivSurfaceHigh),
-        border = CardDefaults.border(
-            focusedBorder = Border(androidx.compose.foundation.BorderStroke(3.dp, Color.White)),
-        ),
     ) {
         Box(
             modifier = Modifier
-                .fillMaxHeight()
-                .aspectRatio(16f / 9f)
+                .fillMaxSize()
                 .background(Brush.linearGradient(listOf(Color(0xFF33333D), Color(0xFF17171C)))),
             contentAlignment = Alignment.Center,
         ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(
-                    imageVector = Icons.Default.LiveTv,
-                    contentDescription = null,
-                    tint = ArkivRed,
-                    modifier = Modifier.size(28.dp),
-                )
-                Text(
-                    text = "Ver más canales",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color.White,
-                    modifier = Modifier.padding(top = 6.dp),
-                )
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                contentDescription = null,
+                tint = ArkivRed,
+                modifier = Modifier.size(28.dp),
+            )
+        }
+    }
+}
+
+/**
+ * The shared frame of the live row's circles: the round focusable (white ring + the cards' focus zoom),
+ * the optional provider badge on its top-right and the one-line name below, all exactly
+ * `spec.diameter + spec.nameGap + TV_CHANNEL_NAME_HEIGHT` tall.
+ */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun TvChannelCircleItem(
+    spec: com.arkiv.player.ui.live.ChannelCircleSpec,
+    label: String,
+    badge: LiveProviderTab?,
+    modifier: Modifier,
+    onFocus: () -> Unit,
+    onClick: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    Column(
+        modifier = Modifier.width(spec.itemWidthDp.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(Modifier.fillMaxWidth().height(spec.diameterDp.dp)) {
+            Card(
+                onClick = onClick,
+                modifier = modifier
+                    .align(Alignment.Center)
+                    .size(spec.diameterDp.dp)
+                    .onFocusChanged { if (it.isFocused) onFocus() },
+                shape = CardDefaults.shape(CircleShape),
+                scale = cardFocusScale(LocalReducedEffects.current),
+                colors = CardDefaults.colors(containerColor = ArkivSurfaceHigh),
+                border = CardDefaults.border(
+                    focusedBorder = Border(
+                        androidx.compose.foundation.BorderStroke(TV_CHANNEL_RING, Color.White),
+                        shape = CircleShape,
+                    ),
+                ),
+            ) {
+                Box(Modifier.fillMaxSize().background(ArkivSurfaceHigh)) { content() }
             }
+            badge?.let { ProviderBadge(it, Modifier.align(Alignment.TopEnd).zIndex(1f)) }
+        }
+        Spacer(Modifier.height(spec.nameGapDp.dp))
+        Box(Modifier.fillMaxWidth().height(TV_CHANNEL_NAME_HEIGHT), contentAlignment = Alignment.Center) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodySmall,
+                color = ArkivTextSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            )
         }
     }
 }

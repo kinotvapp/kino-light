@@ -102,7 +102,10 @@ val LocalReducedEffects = compositionLocalOf { false }
  * D-pad press, which is what makes a slow box feel sluggish.
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
-fun cardFocusScale(reduced: Boolean): CardScale = CardDefaults.scale(focusedScale = if (reduced) 1f else 1.08f)
+fun cardFocusScale(reduced: Boolean): CardScale = CardDefaults.scale(focusedScale = if (reduced) 1f else TV_CARD_FOCUS_SCALE)
+
+/** The TV cards' full focus zoom (see [cardFocusScale]); layouts that must leave room for it read it here. */
+const val TV_CARD_FOCUS_SCALE = 1.08f
 
 /**
  * Judges the device while the effects run, and turns them off for good if it's slow. TV Home only.

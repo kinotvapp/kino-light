@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -49,6 +50,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -88,7 +90,7 @@ private data class HomeSizes(
     val heroHeight: Dp,
     val posterWidth: Dp,
     val continueWidth: Dp,
-    val channelWidth: Dp,
+    val channelDiameter: Dp,
 )
 
 @Composable
@@ -98,14 +100,14 @@ private fun homeSizes(): HomeSizes =
             heroHeight = 420.dp,
             posterWidth = 180.dp,
             continueWidth = 320.dp,
-            channelWidth = 200.dp,
+            channelDiameter = 96.dp,
         )
     } else {
         HomeSizes(
             heroHeight = 220.dp,
             posterWidth = 120.dp,
             continueWidth = 220.dp,
-            channelWidth = 140.dp,
+            channelDiameter = 72.dp,
         )
     }
 
@@ -420,21 +422,27 @@ fun HomeScreen(
                     SectionHeader("Canales en vivo", modifier = Modifier.padding(start = 16.dp))
                     LazyRow(
                         state = channelsRowState,
-                        contentPadding = PaddingValues(horizontal = 16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        // Each circle's item is wider than the circle (room for the name), so the
+                        // padding and the spacing give that back: the first CIRCLE lines up with the
+                        // header and circles sit about as far apart as the other rows' cards.
+                        contentPadding = PaddingValues(
+                            horizontal = 16.dp - com.arkiv.player.ui.live.channelCircle(sizes.channelDiameter.value)
+                                .let { (it.itemWidthDp - it.diameterDp) / 2f }.dp,
+                        ),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         items(channelsRow, key = { it.liveCode }) { channel ->
                             LiveChannelCard(
                                 channel = channel,
                                 badge = providerBadge(channel, liveTabs),
-                                width = sizes.channelWidth,
+                                diameter = sizes.channelDiameter,
                                 onClick = { playChannel(channel) },
                             )
                         }
                         // At the end of the row, the way out to the full grid: recents are a
                         // shortcut, not the catalog.
                         item(key = "live_ver_mas") {
-                            SeeMoreChannelsCard(width = sizes.channelWidth, onClick = onOpenLive)
+                            SeeMoreChannelsCard(diameter = sizes.channelDiameter, onClick = onOpenLive)
                         }
                     }
                 }
@@ -579,84 +587,103 @@ private fun Hero(
 }
 
 /**
- * "Canales en vivo" row's last card: opens the "En vivo" tab with the full grid. Same shape as
- * [LiveChannelCard] (140.dp, 16:9 and text below) so the row doesn't change height at the end.
+ * "Canales en vivo" row's last item: opens the "En vivo" tab with the full grid. The same circle as
+ * [LiveChannelCard] (same size, label below) so the row keeps its rhythm at the end.
  */
 @Composable
-private fun SeeMoreChannelsCard(width: Dp = 140.dp, onClick: () -> Unit) {
-    Column(modifier = Modifier.width(width).clickable(onClick = onClick)) {
+private fun SeeMoreChannelsCard(diameter: Dp, onClick: () -> Unit) {
+    ChannelCircleItem(diameter = diameter, label = "Ver más", badge = null, onClick = onClick) {
         Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(16f / 9f)
-                .clip(RoundedCornerShape(8.dp))
+                .fillMaxSize()
                 .background(Brush.linearGradient(listOf(Color(0xFF33333D), Color(0xFF17171C)))),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                imageVector = Icons.Default.LiveTv,
+                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
                 contentDescription = null,
                 tint = ArkivRed,
                 modifier = Modifier.size(28.dp),
             )
         }
-        Text(
-            text = "Ver más canales",
-            style = MaterialTheme.typography.bodyMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(top = 6.dp),
-        )
     }
 }
 
 /**
- * Card for a recent channel in the home's "Canales en vivo" row: logo if the cache has it (see
- * [recentChannelsForHome]); if not, the same treatment as `ChannelCard` in `LiveScreen.kt` --
- * gradient + the channel number, so it looks deliberate and not like a broken logo. If not even
- * the number is known (a just-watched channel, cache with no such `code`), it falls back further
- * still: the name's initials, to not show a "0" that means nothing.
+ * A recent channel in the home's "Canales en vivo" row: a round tile with the logo centered and fitted
+ * with room to spare (wide logos never touch the edge) and the name below. Logo if the cache has it
+ * (see [recentChannelsForHome]); if not, the same treatment as `ChannelCard` in `LiveScreen.kt` --
+ * gradient + the channel number, so it looks deliberate and not like a broken logo. If not even the
+ * number is known (a just-watched channel, cache with no such `code`), it falls back further still:
+ * the name's initials, to not show a "0" that means nothing.
  */
 @Composable
-private fun LiveChannelCard(channel: LiveChannel, badge: LiveProviderTab? = null, width: Dp = 140.dp, onClick: () -> Unit) {
-    Column(modifier = Modifier.width(width).clickable(onClick = onClick)) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(16f / 9f)
-                .clip(RoundedCornerShape(8.dp))
-                .background(ArkivSurfaceHigh),
-        ) {
-            if (channel.logo != null) {
-                AsyncImage(
-                    model = channel.logo,
-                    contentDescription = channel.name,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.fillMaxSize().padding(10.dp),
+private fun LiveChannelCard(channel: LiveChannel, badge: LiveProviderTab? = null, diameter: Dp, onClick: () -> Unit) {
+    val spec = com.arkiv.player.ui.live.channelCircle(diameter.value)
+    ChannelCircleItem(diameter = diameter, label = channel.name, badge = badge, onClick = onClick) {
+        if (channel.logo != null) {
+            AsyncImage(
+                model = channel.logo,
+                contentDescription = channel.name,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize().padding(spec.logoPaddingDp.dp),
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Brush.linearGradient(listOf(Color(0xFF33333D), Color(0xFF17171C)))),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = if (channel.number > 0) channel.number.toString() else channel.name.take(2).uppercase(),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Color.White.copy(alpha = 0.6f),
                 )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Brush.linearGradient(listOf(Color(0xFF33333D), Color(0xFF17171C)))),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = if (channel.number > 0) channel.number.toString() else channel.name.take(2).uppercase(),
-                        style = MaterialTheme.typography.headlineMedium,
-                        color = Color.White.copy(alpha = 0.6f),
-                    )
-                }
             }
-            // Only with more than one provider (ruling R6): the row mixes their recents.
-            badge?.let { ProviderBadge(it, Modifier.align(Alignment.TopStart).padding(4.dp)) }
+        }
+    }
+}
+
+/**
+ * The shared frame of the live row's circles: the round tile, the optional provider badge on its
+ * top-right (only with more than one provider, ruling R6: the row mixes their recents) and the
+ * one-line name below. The whole item is the tap target.
+ */
+@Composable
+private fun ChannelCircleItem(
+    diameter: Dp,
+    label: String,
+    badge: LiveProviderTab?,
+    onClick: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    val spec = com.arkiv.player.ui.live.channelCircle(diameter.value)
+    Column(
+        modifier = Modifier
+            .width(spec.itemWidthDp.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(Modifier.fillMaxWidth().height(diameter)) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .size(diameter)
+                    .clip(CircleShape)
+                    .background(ArkivSurfaceHigh),
+            ) { content() }
+            badge?.let { ProviderBadge(it, Modifier.align(Alignment.TopEnd)) }
         }
         Text(
-            text = channel.name,
-            style = MaterialTheme.typography.bodyMedium,
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = ArkivTextSecondary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(top = 6.dp),
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth().padding(top = spec.nameGapDp.dp),
         )
     }
 }
