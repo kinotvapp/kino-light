@@ -32,6 +32,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Border
 import androidx.tv.material3.Card
@@ -67,6 +68,10 @@ private val ICON_SIZE = 96.dp
 /** Height of the placeholder initial, in dp (not sp: it must not grow with the font scale, see [CardTile]). */
 private val INITIAL_SIZE = 56.dp
 
+/** Tile shape of a card: 16:9, or the wide, low strip of a [compact] card. */
+private const val TILE_RATIO = 16f / 9f
+private const val COMPACT_TILE_RATIO = 3f
+
 /**
  * One recommended plugin as a card of the Plugins screen's Recomendados grid: a 16:9 tile in the plugin's own colour
  * with its icon (or, while it has none, the first letter of its name), then its name, what it does and
@@ -80,6 +85,9 @@ private val INITIAL_SIZE = 56.dp
  * leaves room for it in the cards that have none, so the cards of a grid line end at the same height
  * (see [gridLinesWithStatus]).
  *
+ * [compact] is for a grid that has to show many cards on one screen ("Elige tus fuentes"): the same
+ * card, texts and actions, with a much lower tile ([COMPACT_TILE_RATIO] instead of 16:9) and tighter padding.
+ *
  * [modifier] goes first in the chain: a `focusRequester` on it reaches the card's own focus target.
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
@@ -89,6 +97,7 @@ fun TvPluginCard(
     art: CatalogArt?,
     modifier: Modifier = Modifier,
     reserveStatusLine: Boolean = false,
+    compact: Boolean = false,
     onClick: () -> Unit,
 ) {
     val entry = row.entry
@@ -106,13 +115,20 @@ fun TvPluginCard(
         ),
     ) {
         Column(Modifier.clearAndSetSemantics { }) {
-            CardTile(name = entry.name, iconFile = art?.iconFile, tileColorArgb = tileColor(art), pill = cardPill(row))
+            CardTile(
+                name = entry.name,
+                iconFile = art?.iconFile,
+                tileColorArgb = tileColor(art),
+                pill = cardPill(row),
+                ratio = if (compact) COMPACT_TILE_RATIO else TILE_RATIO,
+            )
             CardTexts(
                 name = entry.name,
                 description = entry.description,
                 action = action,
                 status = cardStatus(row),
                 reserveStatusLine = reserveStatusLine,
+                verticalPadding = if (compact) 6.dp else 10.dp,
             )
         }
     }
@@ -134,13 +150,13 @@ fun TvPluginCard(
  * instead of a catalog [CatalogArt], so its own icon and colour (not just the catalog's) can win.
  */
 @Composable
-internal fun CardTile(name: String, iconFile: File?, tileColorArgb: Long, pill: String?) {
+internal fun CardTile(name: String, iconFile: File?, tileColorArgb: Long, pill: String?, ratio: Float = TILE_RATIO) {
     val tile = tileColorArgb
     var iconFailed by remember(iconFile) { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .aspectRatio(16f / 9f)
+            .aspectRatio(ratio)
             .clip(RoundedCornerShape(topStart = CARD_CORNER, topEnd = CARD_CORNER))
             .background(Color(tile)),
     ) {
@@ -192,9 +208,16 @@ internal fun CardTile(name: String, iconFile: File?, tileColorArgb: Long, pill: 
 }
 
 @Composable
-private fun CardTexts(name: String, description: String, action: CatalogAction, status: PluginStatus?, reserveStatusLine: Boolean) {
+private fun CardTexts(
+    name: String,
+    description: String,
+    action: CatalogAction,
+    status: PluginStatus?,
+    reserveStatusLine: Boolean,
+    verticalPadding: Dp,
+) {
     Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = verticalPadding),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         Text(name, style = MaterialTheme.typography.titleMedium, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)

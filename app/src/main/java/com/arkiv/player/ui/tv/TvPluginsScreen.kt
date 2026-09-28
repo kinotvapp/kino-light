@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridItemSpanScope
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -373,8 +374,14 @@ private fun RecommendedTab(
     modifier: Modifier = Modifier,
 ) {
     val focusManager = LocalFocusManager.current
+    val gridState = rememberLazyGridState()
+    val gridFocus = rememberTvGridFocus(gridState)
+    // Up/Down among the cards, "Actualizar" and the community cards go by line (see TvGridFocus): the geometric
+    // search let Down from some columns skip "De la comunidad". Above the first card line the key takes its usual course.
+    gridFocus.update(listOf(GridBlock.Cards(rows.map { "card-${it.entry.id}" })) + communityFocusBlocks(community), TV_CATALOG_COLUMNS)
     LazyVerticalGrid(
         columns = GridCells.Fixed(TV_CATALOG_COLUMNS),
+        state = gridState,
         modifier = modifier,
         contentPadding = PaddingValues(top = 16.dp, bottom = 24.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -434,7 +441,7 @@ private fun RecommendedTab(
             TvPluginCard(
                 row = row,
                 art = art[row.entry.repo],
-                modifier = Modifier
+                modifier = gridFocus.stop("card-${row.entry.id}")
                     .then(if (index == 0) firstRowModifier else Modifier)
                     .then(if (cardHasNothingToTheRight(index, rows.lastIndex, TV_CATALOG_COLUMNS)) Modifier.noFocusToTheRight() else Modifier),
                 reserveStatusLine = statusLines.getOrElse(index) { false },
@@ -447,7 +454,7 @@ private fun RecommendedTab(
                 Text("No hay plugins que coincidan.", style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary)
             }
         }
-        tvCommunityItems(community, art, TV_CATALOG_COLUMNS, onRefresh = vm::refreshCommunity, onAction = { runCatalogAction(vm, it) })
+        tvCommunityItems(community, art, TV_CATALOG_COLUMNS, onRefresh = vm::refreshCommunity, onAction = { runCatalogAction(vm, it) }, focus = gridFocus)
     }
 }
 
