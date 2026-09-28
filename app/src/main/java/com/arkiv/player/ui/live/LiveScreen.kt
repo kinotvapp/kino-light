@@ -89,8 +89,8 @@ private enum class LocalView { NONE, RECENT }
  * as a header -- that allowed requesting with someone else's Magis account), with this screen not
  * needing to know anything about it.
  *
- * [onOpenChannel] receives the tapped channel's code; the caller (`ArkivRoot`) decides what to do
- * with that code -- today, navigate to the player in live mode (Task 14). Before invoking it,
+ * [onOpenChannel] receives the tapped channel's live code; the caller (`ArkivRoot`) decides what to do
+ * with it -- today, navigate to the player in live mode (`live:<liveCode>`). Before invoking it,
  * `open()` sets in [LiveZappingSource] the list it was entered with (so the player's zapping can
  * go through it), so this screen doesn't need to know anything about the player.
  *
@@ -157,7 +157,7 @@ fun LiveScreen(
     val activeList = if (view == LocalView.RECENT) visibleRecents else visible
     fun open(channel: LiveChannel) {
         LiveZappingSource.list = activeList
-        onOpenChannel(channel.code)
+        onOpenChannel(channel.liveCode)
     }
     fun favorite(channel: LiveChannel) = vm.toggleFavorite(channel)
 

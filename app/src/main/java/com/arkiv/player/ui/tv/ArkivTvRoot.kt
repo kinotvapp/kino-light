@@ -18,6 +18,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import com.arkiv.player.data.gateway.liveCode
 import com.arkiv.player.playback.MagisEphemeral
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
@@ -234,7 +235,7 @@ fun ArkivTvRoot(
                 // in LiveZappingSource the list it was entered with -- here it only needs to
                 // navigate with the prefix PlayerSource.kindFor() recognizes as live. Without a
                 // linked account, goToLiveChannel opens the linking screen instead (see its KDoc).
-                onWatchChannel = { channel -> goToLiveChannel(channel.code) },
+                onWatchChannel = { channel -> goToLiveChannel(channel.liveCode) },
                 onBack = { navController.popBackStack() },
             )
         }

@@ -88,6 +88,7 @@ import com.arkiv.player.data.db.RecommendationEntity
 import com.arkiv.player.data.gateway.GatewayResult
 import com.arkiv.player.data.plugin.PluginHomeRow
 import com.arkiv.player.data.gateway.LiveChannel
+import com.arkiv.player.data.gateway.liveCode
 import com.arkiv.player.thumbnails.ThumbnailChoice
 import com.arkiv.player.ui.home.HomeViewModel
 import com.arkiv.player.ui.home.pluginHeroPick
@@ -384,8 +385,10 @@ fun TvHomeScreen(
             prefs = context.getSharedPreferences(SettingsStore.PREFS_NAME, android.content.Context.MODE_PRIVATE),
         )
     }
-    val channelsRow = remember(recentChannels, countryChannels, xuperLive) {
-        if (xuperLive) homeChannelsRow(recentChannels, countryChannels) else emptyList()
+    // The module's providers right now: a switched-off plugin's recents leave the row (they are kept, not deleted).
+    val liveTabs by graph.liveModule.tabs.collectAsStateWithLifecycle()
+    val channelsRow = remember(recentChannels, countryChannels, xuperLive, liveTabs) {
+        if (xuperLive) homeChannelsRow(recentChannels, countryChannels, available = liveTabs.map { it.id }.toSet()) else emptyList()
     }
 
     // The row GROWS after being painted: recents come from Room (instant) and the country's may
@@ -409,7 +412,7 @@ fun TvHomeScreen(
         // Same mechanism as TvLiveGuideScreen.verCanal: sets the list it was "entered" with so
         // up/down in the player goes through the same channels the row shows.
         LiveZappingSource.list = channelsRow
-        onPlayLive(channel.code)
+        onPlayLive(channel.liveCode)
     }
 
     // Stable backdrop (for the card) and a random one (for the hero) for an item, falling back to the thumb.

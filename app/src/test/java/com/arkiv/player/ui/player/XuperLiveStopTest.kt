@@ -36,6 +36,10 @@ class XuperLiveStopTest {
         assertNull(xuperLiveStopMessage("/sdcard/file.mp4", off))
     }
 
+    @Test fun `a plugin channel of the En vivo module is never stopped by the xuper gate`() {
+        assertNull(xuperLiveStopMessage("${PlayerSource.LIVE_PREFIX}plugin:tv:ch1", off))
+    }
+
     @Test fun `nothing loaded yet is never stopped`() {
         assertNull(xuperLiveStopMessage(null, off))
     }

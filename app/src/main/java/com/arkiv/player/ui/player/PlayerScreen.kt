@@ -139,6 +139,7 @@ import com.arkiv.player.cast.CastProgress
 import com.arkiv.player.cast.localAudioFormat
 import com.arkiv.player.cast.localVideoFormat
 import com.arkiv.player.data.ChapterMarker
+import com.arkiv.player.data.gateway.liveCode
 import com.arkiv.player.data.magis.MagisAccountState
 import com.arkiv.player.data.plugin.XuperPrivilege
 import com.arkiv.player.ui.settings.MagisLinkOffer
@@ -402,6 +403,7 @@ private fun PlayerContent(
                     funFactsEnabled = { graph.settings.funFactsEnabled.value },
                     plugins = graph.pluginRegistry,
                     xuperLiveBlocked = graph.xuperLiveBlocked,
+                    liveModule = graph.liveModule,
                 )
             }
         },
@@ -481,11 +483,12 @@ private fun PlayerContent(
     // Two of them. `isLive` is ANY live channel, Magis's or Caracol's
     // ([PlayerSource.isLiveChannel]): everything that makes no sense on a live stream hangs off it
     // (the progress bar and VOD's overlay, seeking by gesture and D-pad, saving the position,
-    // auto-advance on end). `isMagisLive` is only Magis's: zapping, the drawer and the channel
-    // card, reopening on cuts, and "Cambiando de canal…". A Caracol channel has none of that: it
-    // opens from its own section, and `loadDitu` builds no zapping.
+    // auto-advance on end). `isModuleLive` is the En vivo module's channel, from any provider
+    // (`live:<liveCode>`: Xuper or a plugin's): zapping, the drawer and the channel card, and
+    // "Cambiando de canal…". A Caracol channel or a plugin's `live` card has none of that: it
+    // opens from its own section, and builds no zapping.
     val isLive = remember(episodeId) { PlayerSource.isLiveChannel(episodeId) }
-    val isMagisLive = remember(episodeId) { PlayerSource.kindFor(episodeId) == SourceKind.LIVE }
+    val isModuleLive = remember(episodeId) { PlayerSource.kindFor(episodeId) == SourceKind.LIVE }
 
     // Index of the item playing WITHIN the ViewModel's playlist. Lives up here -- and not with the
     // rest of the transport state, further below -- because `currentEpisode` needs it.
@@ -1966,10 +1969,10 @@ private fun PlayerContent(
                 // would still replenish all three reopens -- the cap never ran out and the on-screen
                 // warning could never appear. Replenishing only once it actually played for a while
                 // is what distinguishes "it recovered" from "it reopened and died again".
-                if (isMagisLive) {
+                if (liveItem != null) {
                     vm.liveIsPlaying(mirror.positionMs)
                 } else if (isLive && magisItem != null) {
-                    // A plugin's channel replenishes its own reopen budget the same way.
+                    // A plugin's channel (a `live` card, or the En vivo module's): its own reopen budget.
                     vm.pluginLiveIsPlaying(mirror.positionMs)
                 }
             }
@@ -2711,7 +2714,7 @@ private fun PlayerContent(
                                 // drawer open this listener no longer receives keys (Android's
                                 // focus is on Compose's rows), so only the "closed + left" case can
                                 // happen here.
-                                if (isMagisLive) {
+                                if (isModuleLive) {
                                     val drawerAction =
                                         DrawerDpad.action(keyCode, liveState.drawerOpen, liveState.drawerFocus)
                                     if (drawerAction == DrawerAction.OPEN) {
@@ -2721,9 +2724,9 @@ private fun PlayerContent(
                                 }
                                 return@setOnKeyListener when (keyCode) {
                                     KeyEvent.KEYCODE_DPAD_UP ->
-                                        if (isMagisLive) { vm.zapPrevious(); liveState.showInfo(); true } else false
+                                        if (isModuleLive) { vm.zapPrevious(); liveState.showInfo(); true } else false
                                     KeyEvent.KEYCODE_DPAD_DOWN ->
-                                        if (isMagisLive) { vm.zapNext(); liveState.showInfo(); true } else false
+                                        if (isModuleLive) { vm.zapNext(); liveState.showInfo(); true } else false
                                     KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER,
                                     KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
                                     KeyEvent.KEYCODE_MEDIA_PLAY, KeyEvent.KEYCODE_MEDIA_PAUSE ->
@@ -2967,7 +2970,7 @@ private fun PlayerContent(
                                 // seek/volume/brightness in live, see onDrag below). On a Caracol
                                 // channel there's no zapping (it belongs to Magis live): the swipe does nothing.
                                 if (isLive) {
-                                    if (isMagisLive && !horizontal && kotlin.math.abs(totalDy) > ZAP_THRESHOLD_PX) {
+                                    if (isModuleLive && !horizontal && kotlin.math.abs(totalDy) > ZAP_THRESHOLD_PX) {
                                         if (totalDy < 0) vm.zapNext() else vm.zapPrevious()
                                         liveState.showInfo()
                                     }
@@ -3059,7 +3062,7 @@ private fun PlayerContent(
                 // portal, see LiveController's KDoc) -- with no text, this same spinner looks
                 // identical to a freeze. A Caracol channel doesn't zap: while resolving it says
                 // `resolving`, and afterward it falls to the "Cargando video…" below.
-                if (isMagisLive) {
+                if (isModuleLive) {
                     Text("Cambiando de canal…", color = Color.White.copy(alpha = 0.9f), style = MaterialTheme.typography.labelMedium)
                 }
                 if (waitingForVideo && !casting) {
@@ -3070,7 +3073,7 @@ private fun PlayerContent(
                 // measured on the Fire Stick (the CDN rejected two ranges and the proxy retried
                 // them) with not a single word on screen. The text only shows when nothing else
                 // covers it, to avoid stacking two lines saying the same thing.
-                if (!resolving && !isMagisLive && !waitingForVideo) {
+                if (!resolving && !isModuleLive && !waitingForVideo) {
                     Text(
                         if (casting) "Cargando en el receptor…" else "Cargando video…",
                         color = Color.White.copy(alpha = 0.9f),
@@ -3905,8 +3908,9 @@ private fun PlayerContent(
                     DlnaCastButtons(casting = casting, castContext = castContext, onDiscoverDlna = dlnaState::discover)
                 }
             }
-            // This card is for Magis live: its channel and its EPG. Caracol doesn't have it.
-            if (isMagisLive) ChannelCard(state = liveState, channel = liveChannel, liveApi = graph.liveCatalog)
+            // This card is for the En vivo module's channels (any provider): the channel and its
+            // provider's guide. Caracol and a plugin's `live` card don't have it.
+            if (isModuleLive) ChannelCard(state = liveState, channel = liveChannel, module = graph.liveModule)
         }
 
         // Whether the button HAD focus. It's a latch, not the live reading of `isFocused`: when
@@ -4053,10 +4057,10 @@ private fun PlayerContent(
 
         // Goes LAST inside the Box so it sits above the rest of the overlays. Never under the
         // blocked dialog: with the Xuper plugin switched off the drawer's channels can't open.
-        if (isTv && isMagisLive && liveState.drawerOpen && blocked == null) {
+        if (isTv && isModuleLive && liveState.drawerOpen && blocked == null) {
             LiveChannelDrawer(
                 state = liveState,
-                currentChannel = liveChannel?.code,
+                currentChannel = liveChannel?.liveCode,
                 onChooseChannel = { list, channel -> vm.goToChannel(list, channel) },
             )
         }

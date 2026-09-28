@@ -11,6 +11,8 @@ import com.arkiv.player.data.gateway.GatewayAudioTrack
 import com.arkiv.player.data.gateway.GatewayBlockedException
 import com.arkiv.player.data.gateway.GatewaySubtitle
 import com.arkiv.player.data.gateway.LiveChannel
+import com.arkiv.player.data.gateway.LiveChannelKeys
+import com.arkiv.player.data.gateway.liveCode
 import com.arkiv.player.data.plugin.blockedMessage
 import com.arkiv.player.playback.ArchiveCacheProxy
 import com.arkiv.player.playback.AdultContent
@@ -24,6 +26,11 @@ import com.arkiv.player.playback.SourceKind
 import com.arkiv.player.ui.live.LiveController
 import com.arkiv.player.ui.live.LiveZapping
 import com.arkiv.player.ui.live.LiveZappingSource
+import com.arkiv.player.ui.live.PluginLivePlay
+import com.arkiv.player.ui.live.channelForLiveCode
+import com.arkiv.player.ui.live.pluginLivePlay
+import com.arkiv.player.ui.live.providerGone
+import com.arkiv.player.ui.live.zappingListFor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -323,13 +330,16 @@ internal fun shouldRetryPluginStream(
 /**
  * The message to stop playback with when the Xuper live gate is closed ([gateMessage] non-null,
  * see `XuperLiveGate.blockedMessage`), or null to leave it alone. Only a native Xuper channel
- * ([SourceKind.LIVE], `live:<code>`) is ever stopped: Caracol live, a plugin's live channel and any
- * VOD title answer null whatever the gate says. [loadedEpisodeId] is what the player has loaded
- * (null before the first load). Asked when the gate flips mid-playback and again right after a
- * channel's open returns, so an open racing the gate is never published.
+ * ([SourceKind.LIVE], `live:<code>`) is ever stopped: Caracol live, a plugin's live channel (a
+ * `live` card, or the En vivo module's `live:plugin:<id>:<code>`) and any VOD title answer null
+ * whatever the gate says. [loadedEpisodeId] is what the player has loaded (null before the first
+ * load). Asked when the gate flips mid-playback and again right after a channel's open returns,
+ * so an open racing the gate is never published.
  */
 internal fun xuperLiveStopMessage(loadedEpisodeId: String?, gateMessage: String?): String? =
-    if (loadedEpisodeId != null && PlayerSource.kindFor(loadedEpisodeId) == SourceKind.LIVE) gateMessage else null
+    if (loadedEpisodeId != null && PlayerSource.kindFor(loadedEpisodeId) == SourceKind.LIVE &&
+        LiveChannelKeys.parse(loadedEpisodeId.removePrefix(PlayerSource.LIVE_PREFIX))?.first == LiveChannelKeys.XUPER
+    ) gateMessage else null
 
 // `internal constructor` because of [dituSource]: its type is internal to the module, and a public
 // constructor can't take it.
@@ -366,6 +376,8 @@ class PlayerViewModel internal constructor(
      * message (see [stopXuperLive]). Caracol and plugin live channels never read it.
      */
     private val xuperLiveBlocked: StateFlow<String?> = MutableStateFlow(null),
+    /** The En vivo module: opens a plugin channel from zapping and notices its provider leaving. Null in tests that don't play live. */
+    private val liveModule: com.arkiv.player.data.live.LiveModule? = null,
 ) : ViewModel() {
 
     private val _playlist = MutableStateFlow<PlaylistData?>(null)
@@ -626,6 +638,32 @@ class PlayerViewModel internal constructor(
         viewModelScope.launch {
             xuperLiveBlocked.collect { gate -> xuperLiveStopMessage(loadedEpisodeId, gate)?.let(::stopXuperLive) }
         }
+        // A plugin switched off or uninstalled mid-channel: its channel stops with the module's
+        // blocked message. Xuper's own stop is the collector above (step 1's gate), untouched.
+        liveModule?.let { module ->
+            viewModelScope.launch {
+                module.providers.collect { list ->
+                    val channel = _liveChannel.value
+                    if (channel != null && channel.provider != LiveChannelKeys.XUPER && providerGone(channel, list.map { it.id })) {
+                        stopPluginChannel(module.blockedMessage(channel.provider))
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Stops the plugin channel on screen because its provider left the module (spec R13): cancels
+     * its open and its pending reopen, drops the published item and shows [message].
+     */
+    private fun stopPluginChannel(message: String) {
+        Log.w(PLAY, "live: the provider of ${_liveChannel.value?.liveCode} is gone → stopping")
+        pluginOpenJob?.cancel()
+        pluginLiveReopenJob?.cancel()
+        _resolving.value = false
+        _magisItem.value = null
+        _error.value = null
+        _blocked.value = message
     }
 
     /**
@@ -657,15 +695,16 @@ class PlayerViewModel internal constructor(
     val liveGeneration: StateFlow<Int> = _liveGeneration.asStateFlow()
 
     /**
-     * Starts zapping over the list the user ENTERED with (see [LiveZappingSource]), not the whole
-     * catalog -- it's the one they have in mind. With nothing set there (process recreated
-     * mid-live-player, or a caller that didn't go through the grid) it falls back to a single-
-     * channel list: zapping is lost, but the chosen channel still plays.
+     * Starts zapping over the list the person ENTERED with ([LiveZappingSource]), narrowed to the
+     * chosen channel's provider ([zappingListFor]). [liveCode] is the route's value: a Xuper code,
+     * or `plugin:<id>:<code>` ([LiveChannelKeys]). With nothing set there (process recreated, a
+     * companion send, a deep link) the list is the channel alone.
      */
-    private fun loadLive(code: String) {
-        val entryList = LiveZappingSource.list.ifEmpty { listOf(LiveChannel(code, code, 0, null)) }
-        val index = entryList.indexOfFirst { it.code == code }.coerceAtLeast(0)
-        zapping = LiveZapping(entryList, index)
+    private fun loadLive(liveCode: String) {
+        val chosen = channelForLiveCode(liveCode, LiveZappingSource.list)
+            ?: run { _error.value = "No se encontró el canal"; return }
+        val list = zappingListFor(LiveZappingSource.list, chosen)
+        zapping = LiveZapping(list, list.indexOfFirst { it.liveCode == chosen.liveCode }.coerceAtLeast(0))
         openCurrentChannel()
     }
 
@@ -683,7 +722,9 @@ class PlayerViewModel internal constructor(
      * itself against the CDN -- that's [LiveHlsProxy]'s whole reason to exist (see its KDoc).
      */
     private fun openCurrentChannel() {
+        pluginOpenJob?.cancel()
         val channel = zapping?.current ?: return
+        if (channel.provider != LiveChannelKeys.XUPER) { openPluginChannel(channel); return }
         _liveChannel.value = channel
         // Another channel is a new zap: a new id in the live log and a clock that runs until the first frame.
         // The SAME channel again is a reopen after a cut and stays inside the story it belongs to.
@@ -712,7 +753,7 @@ class PlayerViewModel internal constructor(
             val url = runCatching { liveController.open(channel.code) }.getOrElse {
                 Log.w(PLAY, "openCurrentChannel() failed for ${channel.code}: ${it.message}")
                 LiveLog.e("open FAILED after ${System.currentTimeMillis() - openStartedAt}ms: ${it.javaClass.simpleName}: ${it.message}")
-                if (zapping?.current?.code == channel.code) {
+                if (zapping?.current?.liveCode == channel.liveCode) {
                     if (it is GatewayBlockedException) {
                         _blocked.value = it.message
                     } else {
@@ -728,7 +769,7 @@ class PlayerViewModel internal constructor(
             // same pattern (and same reason) as LiveViewModel.cargar()'s categoriaActiva, see its
             // KDoc.
             LiveLog.i("open: session resolved in ${System.currentTimeMillis() - openStartedAt}ms")
-            if (zapping?.current?.code != channel.code) {
+            if (zapping?.current?.liveCode != channel.liveCode) {
                 LiveLog.w("open: the person already zapped to another channel, this late answer is dropped")
                 return@launch
             }
@@ -777,10 +818,78 @@ class PlayerViewModel internal constructor(
             // of the three from being fixed tomorrow while the other two aren't.
             if (AdultContent.shouldLog(channel.adult)) {
                 runCatching {
-                    liveRecentDao.record(LiveRecentEntity(channel.code, channel.name, System.currentTimeMillis()))
+                    liveRecentDao.record(LiveRecentEntity(channel.code, channel.name, System.currentTimeMillis(), provider = channel.provider))
                 }
             }
             preheatNeighbors()
+        }
+    }
+
+    /** The in-flight open of a plugin channel: a newer zap cancels it (see [openPluginChannel]). */
+    private var pluginOpenJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * A plugin channel from the En vivo module (spec §1): its provider finds the channel's live ref
+     * or its known stream ([com.arkiv.player.data.live.PluginLiveProvider.open]). It is handed over
+     * through [com.arkiv.player.playback.PluginLive] and played by [loadPlugin] on `StreamExoPlayer`:
+     * the same path, host gate and [onPluginLiveError] recovery as a plugin's `live` card. None of
+     * Xuper's proxy/seed/preheat machinery applies. A newer zap cancels this open, and a late
+     * answer never replaces the channel now on screen. Recents are keyed by the live code (code +
+     * provider), never by the plugin's ref.
+     */
+    private fun openPluginChannel(channel: LiveChannel) {
+        _liveChannel.value = channel
+        pluginOpenJob = viewModelScope.launch {
+            _error.value = null
+            _needsMagisAccount.value = false
+            playbackHiccup = false
+            _playlist.value = null
+            _liveItem.value = null
+            ditu.clear()
+            preheatJob?.cancel()
+            reopenJob?.cancel()
+            pluginLiveReopenJob?.cancel()
+            pluginLiveReopens.reset()
+            val module = liveModule
+            val provider = module?.provider(channel.provider)
+            if (provider == null) {
+                _magisItem.value = null
+                _blocked.value = module?.blockedMessage(channel.provider) ?: "Este canal no está disponible ahora"
+                return@launch
+            }
+            val opening = try {
+                provider.open(channel)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(PLAY, "openPluginChannel() ${channel.liveCode} failed: ${e.message}")
+                if (zapping?.current?.liveCode == channel.liveCode) {
+                    _magisItem.value = null
+                    when (val outcome = PluginLoadFailure.from(e, provider.name)) {
+                        is PluginLoadFailure.Blocked -> _blocked.value = outcome.message
+                        is PluginLoadFailure.SetupRequired -> _pluginSetup.value = PluginSetupPrompt(outcome.pluginId, outcome.message)
+                        is PluginLoadFailure.Generic -> _error.value = outcome.message
+                    }
+                }
+                return@launch
+            }
+            val plugin = opening as? com.arkiv.player.data.live.LiveOpening.Plugin ?: return@launch
+            if (zapping?.current?.liveCode != channel.liveCode) return@launch
+            // Through null first, like every plugin re-resolve: the previous channel's item must
+            // not stay on screen while this one resolves.
+            _magisItem.value = null
+            com.arkiv.player.playback.PluginLive.leave(plugin.channel)
+            loadPlugin(plugin.channel.episodeId)
+            val mine = _magisItem.value?.episodeId == plugin.channel.episodeId
+            if (zapping?.current?.liveCode != channel.liveCode) {
+                if (mine) _magisItem.value = null
+                return@launch
+            }
+            if (mine && AdultContent.shouldLog(channel.adult)) {
+                runCatching {
+                    liveRecentDao.record(LiveRecentEntity(channel.code, channel.name, System.currentTimeMillis(), provider = channel.provider))
+                }
+            }
         }
     }
 
@@ -823,8 +932,8 @@ class PlayerViewModel internal constructor(
      */
     fun reopenLiveAfterCut() {
         val channel = zapping?.current ?: return
-        if (channel.code != counterChannel) {
-            counterChannel = channel.code
+        if (channel.liveCode != counterChannel) {
+            counterChannel = channel.liveCode
             liveReopens = 0
         }
         if (liveReopens >= MAX_LIVE_REOPENS) {
@@ -848,7 +957,7 @@ class PlayerViewModel internal constructor(
             delay(wait)
             // Zapping during the wait wins: reopening the old channel here would override the one
             // the person just chose.
-            if (zapping?.current?.code == channel.code) openCurrentChannel()
+            if (zapping?.current?.liveCode == channel.liveCode) openCurrentChannel()
         }
     }
 
@@ -888,10 +997,10 @@ class PlayerViewModel internal constructor(
      * [loadLive] reads it from.
      */
     fun goToChannel(list: List<LiveChannel>, channel: LiveChannel) {
-        val entryList = list.ifEmpty { listOf(channel) }
+        val entryList = zappingListFor(list, channel)
         LiveZappingSource.list = entryList
-        loadedEpisodeId = "${PlayerSource.LIVE_PREFIX}${channel.code}"
-        zapping = LiveZapping(entryList, entryList.indexOfFirst { it.code == channel.code }.coerceAtLeast(0))
+        loadedEpisodeId = "${PlayerSource.LIVE_PREFIX}${channel.liveCode}"
+        zapping = LiveZapping(entryList, entryList.indexOfFirst { it.liveCode == channel.liveCode }.coerceAtLeast(0))
         openCurrentChannel()
     }
 
@@ -905,7 +1014,9 @@ class PlayerViewModel internal constructor(
      */
     private fun preheatNeighbors() {
         preheatJob?.cancel()
-        val neighbors = zapping?.neighbors() ?: return
+        // Plugin channels are not preheated: their resolve belongs to the plugin, and a resolve
+        // spent in advance may expire before the person gets there.
+        val neighbors = zapping?.neighbors()?.filter { it.provider == LiveChannelKeys.XUPER } ?: return
         preheatJob = viewModelScope.launch {
             delay(1000)
             neighbors.forEach { neighbor -> launch { runCatching { liveController.preheat(neighbor.code) } } }
@@ -1417,16 +1528,28 @@ class PlayerViewModel internal constructor(
         // A live channel (apiVersion 2) has no library row: its ref comes from the card's handoff
         // ([PluginLive]), like Caracol's channels. A reload after a cut or an expired URL comes
         // back through here with the same id and finds it again (`take` doesn't clear it).
+        // A channel whose stream is already known (an inline `stream`, a playlist entry) plays it
+        // with no plugin call, on the first open and on every reopen after a cut alike.
         val live = com.arkiv.player.data.plugin.PluginIds.isLiveEpisode(episodeId)
         val channel = if (live) com.arkiv.player.playback.PluginLive.take(episodeId) else null
-        val ref = if (live) channel?.ref else repo.magisRefForEpisode(episodeId)
+        val plan = if (live) pluginLivePlay(channel) else null
+        val ref = when (plan) {
+            null -> repo.magisRefForEpisode(episodeId)
+            is PluginLivePlay.Resolve -> plan.ref
+            is PluginLivePlay.Direct -> "direct"
+            PluginLivePlay.Missing -> null
+        }
         Log.w(PLAY, "loadPlugin() episodeId=$episodeId plugin=$pluginId live=$live ref=${ref?.take(16)}…")
         if (ref.isNullOrBlank()) { _error.value = if (live) "No se encontró el canal de $name" else "No se encontró la fuente de $name"; return }
 
         _playlist.value = null
         _webExtras.value = null
         _resolving.value = true
-        val resolved = withContext(Dispatchers.IO) { runCatching { source.resolve(ref) } }
+        val resolved = if (plan is PluginLivePlay.Direct) {
+            Result.success(plan.playable)
+        } else {
+            withContext(Dispatchers.IO) { runCatching { source.resolve(ref) } }
+        }
         _resolving.value = false
         val play = resolved.getOrNull()
         if (play == null) {
@@ -1465,7 +1588,13 @@ class PlayerViewModel internal constructor(
             // A live channel's stream may reach any public host only when the installed record
             // approved liveStreamHosts "any", decided from the RESOLVED ref's kind (LIVE, of this
             // plugin), never from the episode id; anything else stays strict.
-            pluginHosts = if (ready != null && pluginId != null) ready.streamHostsFor(pluginId, ref) else approvedHosts,
+            // A direct stream came from this plugin's own live listing, which was already checked
+            // against those same live hosts.
+            pluginHosts = when {
+                ready == null || pluginId == null -> approvedHosts
+                plan is PluginLivePlay.Direct -> ready.liveHosts
+                else -> ready.streamHostsFor(pluginId, ref)
+            },
             pluginXuper = xuper,
             mime = play.mime,
             startPositionMs = startPos,

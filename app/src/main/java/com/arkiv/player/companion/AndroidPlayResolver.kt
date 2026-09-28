@@ -25,9 +25,9 @@ internal class AndroidPlayResolver(
 
     override suspend fun resolve(item: CompanionPlayItem): CompanionPlayReceiver.PlayOutcome {
         val episodeId: String? = when (item.kind) {
-            CompanionPlayItem.KIND_LIVE -> {
-                if (!graph.magisSession.hasAccountLinked) return CompanionPlayReceiver.PlayOutcome.Fail("no_link")
-                "${PlayerSource.LIVE_PREFIX}${item.liveCode}"
+            CompanionPlayItem.KIND_LIVE -> when (val target = liveSendTarget(item.liveCode, graph.magisSession.hasAccountLinked)) {
+                is LiveSendTarget.Refuse -> return CompanionPlayReceiver.PlayOutcome.Fail(target.reason)
+                is LiveSendTarget.Play -> target.episodeId
             }
             CompanionPlayItem.KIND_MAGIS -> graph.repository.addMagisSource(
                 ref = item.ref, contentId = item.contentId, title = item.title,

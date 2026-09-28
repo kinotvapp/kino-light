@@ -43,9 +43,10 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
-import com.arkiv.player.data.gateway.LiveCatalogGateway
 import com.arkiv.player.data.gateway.LiveChannel
 import com.arkiv.player.data.gateway.LiveProgram
+import com.arkiv.player.data.gateway.liveCode
+import com.arkiv.player.data.live.LiveModule
 import com.arkiv.player.ui.live.DrawerAction
 import com.arkiv.player.ui.live.DrawerDpad
 import com.arkiv.player.ui.live.DrawerFocus
@@ -131,16 +132,18 @@ internal class LiveState {
     }
 
     /**
-     * The channel's "Now"/"Up next": requested best-effort straight from the gateway. Purely
-     * informational for this overlay, not something the ViewModel needs in order to play, so it
-     * isn't burdened with another dependency just for this.
+     * The channel's "Now"/"Up next": requested best-effort from the channel's own provider in the
+     * En vivo module. Purely informational for this overlay, not something the ViewModel needs in
+     * order to play, so it isn't burdened with another dependency just for this. A provider that
+     * is gone, or has no guide, leaves both empty.
      */
-    suspend fun loadEpg(channel: LiveChannel?, liveApi: LiveCatalogGateway) {
+    suspend fun loadEpg(channel: LiveChannel?, module: LiveModule) {
         if (channel == null) return
         current = null
         next = null
-        val epg = runCatching { liveApi.epg(listOf(channel.code)) }.getOrNull() ?: return
-        val progs = epg.first[channel.code] ?: return
+        val provider = module.provider(channel.provider) ?: return
+        val epg = runCatching { provider.guide(listOf(channel)) }.getOrNull() ?: return
+        val progs = epg.first[channel.liveCode] ?: return
         val now = System.currentTimeMillis() / 1000
         val currentNow = currentProgram(progs, now)
         current = currentNow
@@ -194,9 +197,9 @@ internal fun BoxScope.LiveBanner(
 internal fun BoxScope.ChannelCard(
     state: LiveState,
     channel: LiveChannel?,
-    liveApi: LiveCatalogGateway,
+    module: LiveModule,
 ) {
-    LaunchedEffect(channel?.code) { state.loadEpg(channel, liveApi) }
+    LaunchedEffect(channel?.liveCode) { state.loadEpg(channel, module) }
     LaunchedEffect(state.infoTick) {
         delay(CARD_VISIBLE_MS)
         state.hideInfo()

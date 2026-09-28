@@ -56,4 +56,10 @@ class CompanionPlayMappingTest {
             ),
         )
     }
+
+    @Test fun `a plugin channel from the module travels as its live code`() {
+        val item = buildCompanionPlayItem("live:plugin:own-server:c1", null, "", "", null, null, "")!!
+        assertEquals(CompanionPlayItem.KIND_LIVE, item.kind)
+        assertEquals("plugin:own-server:c1", item.liveCode)
+    }
 }

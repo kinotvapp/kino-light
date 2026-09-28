@@ -59,6 +59,7 @@ import coil.compose.AsyncImage
 import com.arkiv.player.data.db.LibraryRow
 import com.arkiv.player.data.db.LiveChannelCacheEntity
 import com.arkiv.player.data.gateway.LiveChannel
+import com.arkiv.player.data.gateway.liveCode
 import com.arkiv.player.thumbnails.ThumbnailChoice
 import com.arkiv.player.ui.components.ContinueCard
 import com.arkiv.player.ui.components.SectionHeader
@@ -188,15 +189,17 @@ fun HomeScreen(
             prefs = context.getSharedPreferences(SettingsStore.PREFS_NAME, Context.MODE_PRIVATE),
         )
     }
-    val channelsRow = remember(recentChannels, countryChannels, xuperLive) {
-        if (xuperLive) homeChannelsRow(recentChannels, countryChannels) else emptyList()
+    // The module's providers right now: a switched-off plugin's recents leave the row (they are kept, not deleted).
+    val liveTabs by graph.liveModule.tabs.collectAsStateWithLifecycle()
+    val channelsRow = remember(recentChannels, countryChannels, xuperLive, liveTabs) {
+        if (xuperLive) homeChannelsRow(recentChannels, countryChannels, available = liveTabs.map { it.id }.toSet()) else emptyList()
     }
 
     fun playChannel(channel: LiveChannel) {
         // Pins the list it was "entered" with, same mechanism as LiveScreen.open -- so
         // up/down in the player goes through the same channels the row shows.
         LiveZappingSource.list = channelsRow
-        onPlayLive(channel.code)
+        onPlayLive(channel.liveCode)
     }
 
     val hasInternet by graph.hasInternet.collectAsStateWithLifecycle()
