@@ -156,4 +156,32 @@ class XmltvParserTest {
         val g = XmltvParser.parse(ByteArrayInputStream(doc.toByteArray()), from, to, wantedIds = null)
         assertEquals(5000, g.programmes.size)
     }
+
+    // --- Fix round 2 ---------------------------------------------------------------------
+
+    @Test fun `a windows-1252 guide reads its smart quotes and its ñ`() {
+        assertEquals(expectedFrom("guide-windows1252.expected.json"), parseFile("guide-windows1252.xml", wanted = null))
+    }
+
+    @Test fun `an unrecognised declared charset falls back to ISO-8859-1, never fails`() {
+        val xml = "<?xml version=\"1.0\" encoding=\"totally-bogus-charset\"?><tv><channel id=\"n\"><display-name>Niños</display-name></channel><programme start=\"20260927120000 +0000\" stop=\"20260927130000 +0000\" channel=\"n\"><title>Niñez</title></programme></tv>"
+        val bytes = xml.toByteArray(Charsets.ISO_8859_1)
+        val g = XmltvParser.parse(ByteArrayInputStream(bytes), from, to, wantedIds = null)
+        assertEquals("Niñez", g.programmes.getValue("n").single().title)
+    }
+
+    @Test fun `the byte cap still applies once transcoding has expanded the stream`() {
+        // Each windows-1252 "smart quote" byte decodes to U+201C/U+201D, 3 UTF-8 bytes apiece: a
+        // cap set comfortably above the ORIGINAL size, but well below the TRANSCODED one, only
+        // bites if the cap travelled onto the re-encoded stream too.
+        val prologue = "<?xml version=\"1.0\" encoding=\"windows-1252\"?><tv>".toByteArray(Charsets.US_ASCII)
+        val programmeOpen = "<programme start=\"20260927120000 +0000\" stop=\"20260927130000 +0000\" channel=\"c\"><title>".toByteArray(Charsets.US_ASCII)
+        val closeTitle = "</title></programme></tv>".toByteArray(Charsets.US_ASCII)
+        val quotes = ByteArray(8000) { if (it % 2 == 0) 0x93.toByte() else 0x94.toByte() }
+        val original = prologue + programmeOpen + quotes + closeTitle
+        val cap = (original.size + 2000).toLong() // > original.size (~8.2 KB), << its ~24 KB transcoded size
+
+        val g = XmltvParser.parse(ByteArrayInputStream(original), from, to, wantedIds = null, maxBytes = cap)
+        assertTrue(g.truncated)
+    }
 }

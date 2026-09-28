@@ -49,9 +49,21 @@ data class XmltvGuide(val displayNames: Map<String, List<String>>, val programme
  * dispatch to the [LexicalHandler], which is what actually holds there.
  *
  * The kit's `sdk` mirrors these same rules, both pinned to `docs/plugins/fixtures/live`.
+ *
+ * One more encoding wrinkle, Android-specific: Expat itself only speaks UTF-8, UTF-16,
+ * ISO-8859-1 and US-ASCII natively. A guide declaring anything else (`windows-1252` is common in
+ * Latin-American XMLTV) is sniffed (BOM first, then the `encoding="..."` in the XML declaration,
+ * both read from the same head bytes) and, when it names something Expat can't read itself,
+ * transcoded up front with a `java.nio.charset.Charset` into a fresh UTF-8 stream with the
+ * declaration rewritten to match -- re-capped at the same [PluginLiveContract.MAX_EPG_BYTES], so
+ * the byte cap and the doctype refusal both still apply to what the parser actually reads. An
+ * unrecognised charset name falls back to ISO-8859-1 (never a failure) rather than handing Expat
+ * a declaration it can't honour.
  */
 object XmltvParser {
     private val TIME = Regex("""^(\d{14}|\d{12})\s*([+-]\d{4})?""")
+    private val ENCODING_DECL = Regex("""encoding\s*=\s*["']([^"'?>]+)["']""", RegexOption.IGNORE_CASE)
+    private val NATIVE_ENCODINGS = setOf("utf-8", "utf8", "utf-16", "utf-16be", "utf-16le", "iso-8859-1", "iso8859-1", "latin1", "us-ascii", "ascii")
     private const val HEAD_SCAN_BYTES = 8192
     private const val MAX_TEXT_CHARS = 2000
     private const val MAX_TITLE_CHARS = 200
@@ -103,7 +115,7 @@ object XmltvParser {
         maxPerChannel: Int = PluginLiveContract.MAX_GUIDE_ENTRIES_PER_CHANNEL,
         deadline: () -> Boolean = { false },
     ): XmltvGuide {
-        val buffered = BufferedInputStream(CappedInput(input, maxBytes), 64 * 1024)
+        var buffered = BufferedInputStream(CappedInput(input, maxBytes), 64 * 1024)
 
         val names = LinkedHashMap<String, List<String>>()
         val wanted = HashMap<String, Boolean>()
@@ -221,6 +233,11 @@ object XmltvParser {
         }
 
         try {
+            // Expat (Android) only reads UTF-8/UTF-16/ISO-8859-1/US-ASCII itself; anything else
+            // declared is transcoded up front into a fresh, re-capped UTF-8 stream (see the class
+            // KDoc). A no-op on the common case (no declaration, or one of those four already).
+            buffered = prepareEncoding(buffered, maxBytes)
+
             // A fast path only: most guides never declare a doctype, and this skips building
             // the SAX parser for them. It is not the defence (see the class KDoc) -- moved
             // inside this try (a truncated read here is as valid a "keep what was read" case as
@@ -258,6 +275,44 @@ object XmltvParser {
 
         if (refused) return XmltvGuide(emptyMap(), emptyMap())
         return XmltvGuide(names, progs.mapValues { (_, m) -> m.values.toList() }, truncated)
+    }
+
+    /**
+     * Transcodes to UTF-8, re-capped, when the declared encoding is one Expat can't read itself.
+     * A no-op (the same [buffered], untouched) whenever nothing was declared, or a BOM or the XML
+     * declaration names UTF-8, UTF-16 (either byte order) or ISO-8859-1/US-ASCII already.
+     */
+    private fun prepareEncoding(buffered: BufferedInputStream, maxBytes: Long): BufferedInputStream {
+        buffered.mark(HEAD_SCAN_BYTES)
+        val head = ByteArray(HEAD_SCAN_BYTES)
+        var read = 0
+        while (read < head.size) {
+            val n = buffered.read(head, read, head.size - read)
+            if (n < 0) break
+            read += n
+        }
+        buffered.reset()
+
+        val declared = sniffEncoding(head, read) ?: return buffered
+        if (declared.lowercase() in NATIVE_ENCODINGS) return buffered
+
+        val charset = runCatching { java.nio.charset.Charset.forName(declared) }.getOrElse { Charsets.ISO_8859_1 }
+        val text = String(buffered.readBytes(), charset) // bounded already: buffered wraps a CappedInput
+        val rewritten = ENCODING_DECL.replace(text) { "encoding=\"UTF-8\"" }
+        val utf8Bytes = rewritten.toByteArray(Charsets.UTF_8)
+        return BufferedInputStream(CappedInput(ByteArrayInputStream(utf8Bytes), maxBytes), 64 * 1024)
+    }
+
+    /** A BOM first (authoritative when present), else the `encoding="..."` the XML declaration names. */
+    private fun sniffEncoding(head: ByteArray, len: Int): String? {
+        if (len >= 3 && head[0] == 0xEF.toByte() && head[1] == 0xBB.toByte() && head[2] == 0xBF.toByte()) return "UTF-8"
+        if (len >= 2 && head[0] == 0xFE.toByte() && head[1] == 0xFF.toByte()) return "UTF-16BE"
+        if (len >= 2 && head[0] == 0xFF.toByte() && head[1] == 0xFE.toByte()) return "UTF-16LE"
+        // ASCII bytes (the declaration itself) decode the same in UTF-8, ISO-8859-1 and every
+        // single-byte encoding a guide is likely to name, so this is safe ahead of knowing which
+        // one it actually is.
+        val text = String(head, 0, len, Charsets.ISO_8859_1)
+        return ENCODING_DECL.find(text)?.groupValues?.get(1)
     }
 
     /** Reads up to [HEAD_SCAN_BYTES] under `mark`/`reset` so the parse proper starts from byte 0. */
