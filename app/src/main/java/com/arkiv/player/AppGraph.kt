@@ -246,7 +246,12 @@ class AppGraph(context: Context) {
         val t0 = android.os.SystemClock.elapsedRealtime()
         var built = false
         try {
-            if (credentialsStore.read() == null) return // fresh install: nothing to warm
+            val activated = credentialsStore.read() != null
+            // Recorded once, on this build's first start, BEFORE the early return below: a device that was
+            // already activated is an updating one (keeps the Xuper migration, never sees the source
+            // picker); anything else is new. See data/onboarding/Onboarding.
+            runCatching { com.arkiv.player.data.onboarding.Onboarding.classifyOnce(settings, activated) }
+            if (!activated) return // fresh install: nothing to warm
             magisPortal   // -> MagisCrypto(...) -> NativeCredentialResolver.magisActivate (the slow part)
             magisSession  // depends on magisPortal + magisStore; warm it too
             // Also pre-build every heavy lazy a screen's ViewModel factory reads on the MAIN thread
@@ -268,12 +273,20 @@ class AppGraph(context: Context) {
             runCatching { reconcilePluginSecrets() }
                 .onFailure { android.util.Log.w("KinoPlugin", "warm-up: plugin secrets not reconciled: ${it.javaClass.simpleName}") }
             pluginRegistry.reload()
-            // One-time migration (Task 12): a person activated before this app version shipped
-            // never "installed" anything -- Xuper was simply always there. Guarded exactly like
-            // reconcilePluginSecrets() above: no network right now (or GitHub unreachable) must
-            // never abort the rest of warm-up, and this isn't gated behind a "did we already try"
-            // flag, so the next cold start just tries again. See autoInstallXuperPluginIfNeeded.
-            runCatching { autoInstallXuperPluginIfNeeded(credentialsStore, pluginRegistry, pluginAdmin) }
+            // One-time migration (Task 12), for UPDATING devices only (the onboarding kind recorded
+            // above is LEGACY): a person activated before this app version shipped never "installed"
+            // anything -- Xuper was simply always there. A new device picks its own sources instead.
+            // Guarded exactly like reconcilePluginSecrets() above: no network right now (or GitHub
+            // unreachable) must never abort the rest of warm-up, and this isn't gated behind a "did we
+            // already try" flag, so the next cold start just tries again. An unrecorded kind (its
+            // write failed) skips it this start only: the next start records it and runs it.
+            // See autoInstallXuperPluginIfNeeded.
+            runCatching {
+                autoInstallXuperPluginIfNeeded(
+                    com.arkiv.player.data.onboarding.Onboarding.runsXuperMigration(settings.onboardingKind),
+                    credentialsStore, pluginRegistry, pluginAdmin,
+                )
+            }
                 .onFailure { android.util.Log.w("KinoPlugin", "warm-up: Xuper plugin not auto-installed: ${it.javaClass.simpleName}") }
             // Start the live gate's watcher now (it's eager but lazily built): from here on,
             // switching the Xuper plugin off drops the live sessions even before a screen reads it.
@@ -1524,12 +1537,18 @@ class AppGraph(context: Context) {
  * same as [XuperPrivilege.grants] above it: Xuper's real manifest `id` isn't known before that
  * fetch, so there's no id to look up a tombstone for any earlier. This still costs only the one
  * network call [preview] already made -- [install] is simply skipped when the tombstone is there.
+ *
+ * [runsMigration] is `Onboarding.runsXuperMigration(kind)`: only a device that was already activated
+ * before this build (an updating one) gets the migration; a new one chooses in "Elige tus fuentes",
+ * where Xuper is found through its `kino-plugin` topic.
  */
 suspend fun autoInstallXuperPluginIfNeeded(
+    runsMigration: Boolean,
     credentialsStore: com.arkiv.player.data.credentials.RemoteCredentialsStore,
     pluginRegistry: PluginRegistry,
     pluginAdmin: PluginAdmin,
 ) {
+    if (!runsMigration) return // a new device picks its own sources (spec 2026-09-28 §4)
     if (credentialsStore.read() == null) return // never activated: nothing to migrate
     val alreadyThere = pluginRegistry.plugins.value.any { XuperPrivilege.grants(it.record) }
     if (alreadyThere) return

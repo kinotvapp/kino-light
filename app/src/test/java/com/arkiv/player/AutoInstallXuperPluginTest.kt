@@ -112,7 +112,7 @@ class AutoInstallXuperPluginTest {
         val credentials = FakeRemoteCredentialsStore(sampleCredentials())
         val admin = RecordingPluginAdmin()
 
-        autoInstallXuperPluginIfNeeded(credentials, registry, admin)
+        autoInstallXuperPluginIfNeeded(runsMigration = true, credentials, registry, admin)
 
         assertEquals(listOf(XuperPrivilege.SOURCE_REPO), admin.previewedInputs)
         assertEquals(listOf(XuperPrivilege.SOURCE_REPO), admin.installedAddresses)
@@ -122,7 +122,7 @@ class AutoInstallXuperPluginTest {
         val credentials = FakeRemoteCredentialsStore(initial = null)
         val admin = RecordingPluginAdmin()
 
-        autoInstallXuperPluginIfNeeded(credentials, registry, admin)
+        autoInstallXuperPluginIfNeeded(runsMigration = true, credentials, registry, admin)
 
         assertTrue(admin.previewedInputs.isEmpty())
         assertTrue(admin.installedAddresses.isEmpty())
@@ -133,7 +133,7 @@ class AutoInstallXuperPluginTest {
         val credentials = FakeRemoteCredentialsStore(sampleCredentials())
         val admin = RecordingPluginAdmin()
 
-        autoInstallXuperPluginIfNeeded(credentials, registry, admin)
+        autoInstallXuperPluginIfNeeded(runsMigration = true, credentials, registry, admin)
 
         assertTrue(admin.installedAddresses.isEmpty())
     }
@@ -143,7 +143,7 @@ class AutoInstallXuperPluginTest {
         val credentials = FakeRemoteCredentialsStore(sampleCredentials())
         val admin = RecordingPluginAdmin()
 
-        autoInstallXuperPluginIfNeeded(credentials, registry, admin)
+        autoInstallXuperPluginIfNeeded(runsMigration = true, credentials, registry, admin)
 
         assertTrue(admin.previewedInputs.isEmpty())
         assertTrue(admin.installedAddresses.isEmpty())
@@ -154,7 +154,7 @@ class AutoInstallXuperPluginTest {
         val credentials = FakeRemoteCredentialsStore(sampleCredentials())
         val admin = RecordingPluginAdmin()
 
-        autoInstallXuperPluginIfNeeded(credentials, registry, admin)
+        autoInstallXuperPluginIfNeeded(runsMigration = true, credentials, registry, admin)
 
         assertEquals(listOf(XuperPrivilege.SOURCE_REPO), admin.installedAddresses)
     }
@@ -172,11 +172,21 @@ class AutoInstallXuperPluginTest {
         val credentials = FakeRemoteCredentialsStore(sampleCredentials())
         val admin = RecordingPluginAdmin()
 
-        autoInstallXuperPluginIfNeeded(credentials, registry, admin)
+        autoInstallXuperPluginIfNeeded(runsMigration = true, credentials, registry, admin)
 
         // preview() still runs: it's the only way to learn Xuper's real manifest id, needed to
         // look up the tombstone at all -- the bug this test guards against is install() running.
         assertEquals(listOf(XuperPrivilege.SOURCE_REPO), admin.previewedInputs)
+        assertTrue(admin.installedAddresses.isEmpty())
+    }
+
+    @Test fun `a new device never gets Xuper installed behind its back`() = runTest {
+        val credentials = FakeRemoteCredentialsStore(sampleCredentials())
+        val admin = RecordingPluginAdmin()
+
+        autoInstallXuperPluginIfNeeded(runsMigration = false, credentials, registry, admin)
+
+        assertTrue(admin.previewedInputs.isEmpty())
         assertTrue(admin.installedAddresses.isEmpty())
     }
 }

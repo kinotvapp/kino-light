@@ -10,7 +10,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
 /** Simple settings persisted in SharedPreferences. */
-class SettingsStore(context: Context) {
+class SettingsStore(context: Context) : com.arkiv.player.data.onboarding.OnboardingPrefs {
     private val prefs = context.applicationContext.getSharedPreferences("arkiv_settings", Context.MODE_PRIVATE)
 
     // Player's night mode: level of the black scrim over the video, from 0 (normal) to
@@ -81,6 +81,22 @@ class SettingsStore(context: Context) {
     // since nothing observes it, it's only read on launch.
     val recentsPurged: Boolean
         get() = prefs.getBoolean(KEY_RECENTS_PURGED, false)
+
+    // Onboarding (spec 2026-09-28 §4): recorded once per device; nothing observes them, they're read at start.
+    override val onboardingKind: com.arkiv.player.data.onboarding.OnboardingKind?
+        get() = com.arkiv.player.data.onboarding.OnboardingKind.fromWire(prefs.getString(KEY_ONBOARDING_KIND, null))
+
+    // commit(), not apply(): written once, from warm-up on IO, and it must be on disk before the person
+    // can activate -- a lost "new" record would reclassify an activated device as updating next start.
+    override fun setOnboardingKind(kind: com.arkiv.player.data.onboarding.OnboardingKind) {
+        prefs.edit().putString(KEY_ONBOARDING_KIND, kind.wire).commit()
+    }
+
+    override val sourcePickerDone: Boolean get() = prefs.getBoolean(KEY_SOURCE_PICKER_DONE, false)
+
+    override fun setSourcePickerDone(done: Boolean) {
+        prefs.edit().putBoolean(KEY_SOURCE_PICKER_DONE, done).apply()
+    }
 
     fun setDimLevel(v: Int) { prefs.edit().putInt(KEY_DIM_LEVEL, v).apply(); _dimLevel.value = v }
 
@@ -274,6 +290,8 @@ class SettingsStore(context: Context) {
         private const val KEY_ADULTS_UNLOCKED = "adultosDesbloqueado"
         private const val KEY_ADULTS_CODE = "codigoAdultos"
         private const val KEY_RECENTS_PURGED = "recientesPurgados2026_08_14"
+        private const val KEY_ONBOARDING_KIND = "onboarding_kind"
+        private const val KEY_SOURCE_PICKER_DONE = "source_picker_done"
 
         private const val KEY_FOR_YOU_LAST_ATTEMPT = "para_ti_ultimo_intento"
         private const val KEY_FOR_YOU_MODEL_FAILURE = "para_ti_fallo_modelo"
