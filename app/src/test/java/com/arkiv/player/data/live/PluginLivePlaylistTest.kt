@@ -147,6 +147,7 @@ class PluginLivePlaylistTest {
         val opening = provider().open(bare) as LiveOpening.Plugin
         assertEquals("https://live.example.com/c1/index.m3u8", opening.channel.direct!!.url)
         assertEquals("Canal Uno HD", opening.channel.title)
+        assertEquals("the entry's logo, as the listing shows it", "https://cdn.example.com/c1.png", opening.channel.logo)
     }
 
     @Test fun `rtmp and udp lines and undeclared hosts are counted, the rest plays`() = runBlocking {

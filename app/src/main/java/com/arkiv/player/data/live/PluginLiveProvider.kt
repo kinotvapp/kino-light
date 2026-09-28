@@ -532,7 +532,7 @@ class PluginLiveProvider(
         if (lock.withLock { key !in groups }) categories(includeAdults = false)
         val (entry, source) = lock.withLock { groups[key]?.entries?.get(channel.code) to sources.values.firstOrNull { it.key == key } }
         if (entry == null || source == null) throw GatewayException("No se encontró el canal en $name")
-        val known = LiveChannel(channel.code, entry.name, entry.number, null, provider = id)
+        val known = LiveChannel(channel.code, entry.name, entry.number, PluginOutput.imageUrl(entry.logo, NO_HOSTS).ifEmpty { null }, provider = id)
         if (source.playlist.resolve) {
             return opening(channel, known.copy(ref = PluginRef(pluginId, channel.code, PluginRef.LIVE, entry.url).encode()), null)
         }

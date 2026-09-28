@@ -39,7 +39,8 @@ internal fun trimNotice(groups: Collection<PlaylistGroups>): String? {
     return if (total > kept || groups.any { it.cut }) "Lista recortada: $kept de ${maxOf(kept, total)} canales" else null
 }
 
-private val NO_HOSTS = EffectiveHosts(emptyList())
+/** A playlist logo is judged as a poster with no declared hosts: any public https image. */
+internal val NO_HOSTS = EffectiveHosts(emptyList())
 
 /**
  * One parsed playlist as categories and channels of [providerId]. Pure.
