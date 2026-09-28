@@ -6,8 +6,20 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -15,7 +27,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import com.arkiv.player.playback.ACTION_OPEN_PLAYER
 import com.arkiv.player.playback.EXTRA_EPISODE_ID
 import com.arkiv.player.playback.NowPlaying
@@ -26,6 +42,7 @@ import com.arkiv.player.ui.ArkivRoot
 import com.arkiv.player.ui.ArkivSplash
 import com.arkiv.player.ui.LocalReducedEffects
 import com.arkiv.player.ui.rememberReducedEffects
+import com.arkiv.player.ui.theme.ArkivSurface
 import com.arkiv.player.ui.theme.ArkivTheme
 import com.arkiv.player.ui.tv.ArkivTvRoot
 import kotlinx.coroutines.delay
@@ -104,6 +121,37 @@ class MainActivity : AppCompatActivity() {
         setContent {
             ArkivTheme {
                 val graph = (application as ArkivApp).graph
+
+                // Reactive host approval: a plugin's kino.fetch hit a host its manifest never
+                // declared, and the coroutine behind that call (see HostApprovalCenter) is
+                // suspended waiting for a verdict. Dismissing (back button, tap outside) counts as
+                // a reject -- respond(false) -- so the wait can never hang open forever unanswered.
+                val pendingHostApproval by graph.hostApprovalCenter.pending.collectAsState()
+                pendingHostApproval?.let { req ->
+                    Dialog(onDismissRequest = { req.respond(false) }) {
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = ArkivSurface,
+                            modifier = Modifier.widthIn(max = 480.dp),
+                        ) {
+                            Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Text(req.pluginName, style = MaterialTheme.typography.titleLarge, color = Color.White)
+                                Text(
+                                    "Quiere conectarse por primera vez a ${req.host}. ¿Permitir?",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Color.White,
+                                )
+                                Row(
+                                    Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),
+                                ) {
+                                    TextButton(onClick = { req.respond(false) }) { Text("Rechazar") }
+                                    Button(onClick = { req.respond(true) }) { Text("Permitir") }
+                                }
+                            }
+                        }
+                    }
+                }
 
                 // The intro is drawn ON TOP of the app to cover the cold start.
                 //
