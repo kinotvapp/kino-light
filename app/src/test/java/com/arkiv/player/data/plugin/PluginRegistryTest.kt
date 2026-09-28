@@ -201,4 +201,16 @@ class PluginRegistryTest {
     private fun url(key: String) = PluginSetting(key, key, SettingType.URL, required = true)
     private fun text(key: String) = PluginSetting(key, key, SettingType.TEXT, required = true)
     private fun password(key: String) = PluginSetting(key, key, SettingType.PASSWORD, required = true)
+
+    @Test fun `liveHosts relaxes only when the installed record approved liveStreamHosts any`() {
+        install("pa", "A") { copy(hosts = listOf("api.example.com"), liveStreamHostsAny = true) }
+        val p = registry.find("pa")!!
+        assertEquals(false, p.hosts.anyPublicLiveHost)
+        assertEquals(p.hosts.copy(anyPublicLiveHost = true), p.liveHosts)
+        val ready = registry.accessFor("pa") as PluginAccess.Ready
+        assertEquals(p.hosts, ready.hosts)
+        assertEquals(p.liveHosts, ready.liveHosts)
+        install("pb", "B")
+        assertEquals(registry.find("pb")!!.hosts, (registry.accessFor("pb") as PluginAccess.Ready).liveHosts)
+    }
 }

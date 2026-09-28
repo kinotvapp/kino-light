@@ -267,4 +267,29 @@ class PluginHttpTest {
         assertThrows(PrivateAddressException::class.java) { PluginDns(delegate = lan).lookup("nas.lan") }
         assertThrows(PrivateAddressException::class.java) { PluginDns(delegate = loop, userHostNames = setOf("nas.lan")).lookup("nas.lan") }
     }
+
+    @Test fun `any public live host passes, LAN and private literals never do`() {
+        val any = EffectiveHosts(listOf("declared.example.com"), anyPublicLiveHost = true)
+        PluginHostGate.check("http://cdn.iptv-somewhere.net/live/1.m3u8".toHttpUrl(), any)
+        PluginHostGate.check("https://cdn.iptv-somewhere.net/live/1.ts".toHttpUrl(), any)
+        PluginHostGate.check("http://203.0.113.7:8080/live/1.m3u8".toHttpUrl(), any)
+        listOf("http://192.168.1.10/x", "http://10.0.0.2/x", "http://172.20.0.1/x", "http://127.0.0.1/x", "http://169.254.1.1/x",
+            "http://100.64.0.1/x", "http://0.0.0.0/x", "http://224.0.0.1/x", "http://[fd00::1]/x", "http://router.local/x", "http://nas.lan/x",
+        ).forEach { url ->
+            assertThrows(url, HostNotAllowedException::class.java) { PluginHostGate.check(url.toHttpUrl(), any) }
+        }
+        // Without the flag nothing changes: an undeclared host is refused as always.
+        assertThrows(HostNotAllowedException::class.java) {
+            PluginHostGate.check("https://cdn.iptv-somewhere.net/x".toHttpUrl(), EffectiveHosts(listOf("declared.example.com")))
+        }
+    }
+
+    @Test fun `isPublicIpv4Literal refuses every non-public range and every non-canonical shape`() {
+        listOf("8.8.8.8", "203.0.113.7", "1.1.1.1", "172.15.0.1", "172.32.0.1", "100.63.255.255", "100.128.0.1", "223.255.255.255")
+            .forEach { assertTrue(it, HostRules.isPublicIpv4Literal(it)) }
+        listOf("0.1.2.3", "10.1.1.1", "127.0.0.1", "169.254.0.1", "172.16.0.1", "172.31.255.255", "192.168.0.1", "100.64.0.1",
+            "100.127.0.1", "192.0.0.1", "192.0.2.1", "198.18.0.1", "198.19.255.1", "224.0.0.1", "240.0.0.1", "255.255.255.255",
+            "127.1", "2130706433", "010.0.0.1", "0x7f.0.0.1", "1.2.3.4.5", "1.2.3", "256.1.1.1", "", "example.com", "::1",
+        ).forEach { assertTrue(it, !HostRules.isPublicIpv4Literal(it)) }
+    }
 }

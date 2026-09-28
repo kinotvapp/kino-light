@@ -397,7 +397,7 @@ object PluginOutput {
     }
 
     /** Whether [url] passes the stream URL check ([checkUrl]): a declared host or a typed server, with the scheme rule. */
-    internal fun allowsUrl(url: String, hosts: EffectiveHosts): Boolean = runCatching { checkUrl(url, hosts, "") }.isSuccess
+    internal fun allowsUrl(url: String, hosts: EffectiveHosts): Boolean = runCatching { checkUrl(url, hosts.strict, "") }.isSuccess
 
     /**
      * `liveChannels({ categoryId, cursor })` (apiVersion 3): a `{ items, next? }` page or a plain
@@ -500,7 +500,10 @@ object PluginOutput {
 
     /** [stream]'s rules on an already-parsed object: also a `liveChannels` item's inline `stream`. */
     internal fun streamOf(o: JSONObject, hosts: EffectiveHosts, xuper: XuperStreams? = null, allowDrm: Boolean = false): PluginStream {
-        val drm = drmOf(o, hosts, allowDrm)
+        // liveStreamHosts "any" relaxes the stream's own URL only: its subtitles, audio tracks and
+        // DRM license stay on the declared hosts and typed servers.
+        val strict = hosts.strict
+        val drm = drmOf(o, strict, allowDrm)
         val url = o.optString("url")
         val native = xuper?.headersFor(url)
         if (native == null) checkUrl(url, hosts, "El video")
@@ -512,7 +515,7 @@ object PluginOutput {
             for (i in 0 until minOf(arr.length(), MAX_SUBTITLES)) {
                 val s = arr.optJSONObject(i) ?: continue
                 val su = s.optString("url")
-                if (xuper?.headersFor(su) == null && runCatching { checkUrl(su, hosts, "El subtítulo") }.isFailure) continue
+                if (xuper?.headersFor(su) == null && runCatching { checkUrl(su, strict, "El subtítulo") }.isFailure) continue
                 val format = s.optString("format").takeIf { it == "vtt" || it == "srt" }.orEmpty()
                 subtitles += PluginSubtitle(text(s, "lang", 20).ifBlank { "und" }, su, format)
             }
@@ -522,7 +525,7 @@ object PluginOutput {
             for (i in 0 until minOf(arr.length(), MAX_AUDIO_TRACKS)) {
                 val a = arr.optJSONObject(i) ?: continue
                 val au = a.optString("url")
-                if (xuper?.headersFor(au) == null && runCatching { checkUrl(au, hosts, "El audio") }.isFailure) continue
+                if (xuper?.headersFor(au) == null && runCatching { checkUrl(au, strict, "El audio") }.isFailure) continue
                 // One URL is one merged child: twice would be two menu rows and, on a failure,
                 // `fallbackAudioTracks` would blame both. The first entry wins, as for item ids.
                 if (audioTracks.any { it.url == au }) continue
@@ -578,11 +581,16 @@ object PluginOutput {
      * typed passes at once (its own scheme, http included); otherwise the scheme must pass
      * [EffectiveHosts.allowsScheme] (https, or plain http only on a host the person approved as
      * insecure -- the same rule the host gate applies when the player then requests it), and only
-     * then must the host be a declared one.
+     * then must the host be a declared one. With [EffectiveHosts.anyPublicLiveHost] (only ever the
+     * stream's own URL, see [streamOf]) any public host passes, over http or https, never a local one.
      */
     private fun checkUrl(url: String, hosts: EffectiveHosts, what: String) {
         val u = url.toHttpUrlOrNull() ?: throw PluginContractException("$what tiene una dirección inválida")
         if (hosts.userHostFor(u) != null) return
+        if (hosts.anyPublicLiveHost) {
+            if (HostRules.isPublicIpv4Literal(u.host) || !HostRules.isLocalAddress(u.host)) return
+            throw PluginContractException("$what apunta a ${u.host.take(100)}, una dirección local")
+        }
         if (!hosts.allowsScheme(u)) throw PluginContractException("$what debe usar https")
         if (!HostRules.matches(u.host, hosts.declared)) throw PluginContractException("$what apunta a ${u.host.take(100)}, que el plugin no declaró")
     }

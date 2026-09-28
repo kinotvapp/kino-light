@@ -134,8 +134,11 @@ class PluginContentSource(
         val own = decodeOwn(ref)
         if (own.kind == PluginRef.SERIES) throw GatewayException("Elige un capítulo primero")
         val out = callOrThrow("resolve", JSONObject.quote(own.ref), RESOLVE_TIMEOUT_MS)
+        // A channel's stream may be on any public host only if the INSTALLED record approved
+        // liveStreamHosts "any"; `hosts` keeps any typed servers either way.
+        val streamHosts = if (own.kind == PluginRef.LIVE) hosts.copy(anyPublicLiveHost = plugin.record.liveStreamHostsAny) else hosts
         val stream = try {
-            PluginOutput.stream(out, hosts, xuper, allowDrm)
+            PluginOutput.stream(out, streamHosts, xuper, allowDrm)
         } catch (e: PluginContractException) {
             throw GatewayException("$name: ${e.message}", e)
         }

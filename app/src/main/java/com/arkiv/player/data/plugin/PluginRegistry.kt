@@ -38,6 +38,12 @@ data class InstalledPlugin(
      */
     val hosts: EffectiveHosts get() = EffectiveHosts(record.hosts, userHosts, record.insecureHosts.toSet())
 
+    /**
+     * [hosts] for a LIVE CHANNEL's stream: relaxed to any public host only when the INSTALLED
+     * record says the person approved `liveStreamHosts: "any"` -- never from plugin output.
+     */
+    val liveHosts: EffectiveHosts get() = hosts.copy(anyPublicLiveHost = record.liveStreamHostsAny)
+
     /** A required setting has no value: its calls fail with `auth_required` without running. */
     val needsSetup: Boolean get() = missingSettings.isNotEmpty()
 
@@ -75,6 +81,8 @@ sealed interface PluginAccess {
         override val name: String,
         val hosts: EffectiveHosts = EffectiveHosts(emptyList()),
         val xuper: Boolean = false,
+        /** [hosts] for a live channel's stream (see [InstalledPlugin.liveHosts]); equal to [hosts] unless approved. */
+        val liveHosts: EffectiveHosts = hosts,
     ) : PluginAccess
     data class Disabled(override val name: String) : PluginAccess
     data class Uninstalled(override val name: String) : PluginAccess
@@ -171,7 +179,7 @@ class PluginRegistry(
             p == null -> PluginAccess.Uninstalled(pluginId?.let(store::removedName) ?: pluginId ?: "desconocido")
             p.record.damaged -> PluginAccess.Damaged(p.manifest.name)
             !p.isUsable -> PluginAccess.Disabled(p.manifest.name)
-            else -> PluginAccess.Ready(p.manifest.name, p.hosts, xuper = XuperPrivilege.grants(p.record))
+            else -> PluginAccess.Ready(p.manifest.name, p.hosts, xuper = XuperPrivilege.grants(p.record), liveHosts = p.liveHosts)
         }
     }
 

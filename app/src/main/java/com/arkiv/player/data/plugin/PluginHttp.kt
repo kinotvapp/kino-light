@@ -36,7 +36,9 @@ class PrivateAddressException(val hostname: String) : UnknownHostException("$hos
  * The single rule of plugin networking: a request (and every redirect hop) goes only to a host the
  * person approved at install, over https (or plain http on the one host they approved as
  * `insecureHttp`, see [EffectiveHosts.allowsScheme]) and never to an IP literal or a local name —
- * or to a server the person typed in the plugin's settings, exactly as typed (see [UserHost]). Used
+ * or to a server the person typed in the plugin's settings, exactly as typed (see [UserHost]). A live
+ * channel of a plugin approved for `liveStreamHosts: "any"` ([EffectiveHosts.anyPublicLiveHost])
+ * may also reach any public host, over http or https, but still never a local one. Used
  * by `kino.fetch` ([PluginHttp]) and by the player ([PluginStreamGate]), which also carries a
  * Widevine license request. `allowInsecureLocalhost` exists for MockWebServer tests; production
  * code never sets it.
@@ -67,6 +69,13 @@ object PluginHostGate {
                 throw HostNotAllowedException(url.host)
             }
             return
+        }
+        if (hosts.anyPublicLiveHost) {
+            // Any scheme HttpUrl knows (http or https) on a public IPv4 literal or a public NAME;
+            // PluginDns still refuses a name that resolves into the LAN, at connect time.
+            if (HostRules.isPublicIpv4Literal(url.host)) return
+            if (!HostRules.isLocalAddress(url.host)) return
+            throw HostNotAllowedException(url.host)
         }
         val testLocalhost = allowInsecureLocalhost && url.host == "localhost"
         if (HostRules.isLocalAddress(url.host) && !testLocalhost) throw HostNotAllowedException(url.host)

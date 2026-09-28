@@ -1462,7 +1462,9 @@ class PlayerViewModel internal constructor(
             openingStartMs = null, openingEndMs = null, endingStartMs = null,
             kind = SourceKind.PLUGIN,
             requestHeaders = play.headers,
-            pluginHosts = approvedHosts,
+            // A live channel's stream may reach any public host only when the installed record
+            // approved liveStreamHosts "any" (PluginAccess.Ready.liveHosts); VOD stays strict.
+            pluginHosts = if (live) ready?.liveHosts ?: approvedHosts else approvedHosts,
             pluginXuper = xuper,
             mime = play.mime,
             startPositionMs = startPos,

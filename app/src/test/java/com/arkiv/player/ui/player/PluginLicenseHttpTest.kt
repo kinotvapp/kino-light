@@ -133,4 +133,17 @@ class PluginLicenseHttpTest {
         assertThrows(IOException::class.java) { postLicense(factories.license, url("/wv"), emptyMap()) }
         assertEquals(0, server.requestCount)
     }
+
+    @Test fun `under liveStreamHosts any the stream relaxes but the license client stays strict`() {
+        val any = EffectiveHosts(listOf("declared.example.com"), anyPublicLiveHost = true)
+        fun client(hosts: EffectiveHosts) = PluginStreamHttp.client(OkHttpClient(), hosts, allowInsecureLocalhost = true, delegateDns = loopback)
+        val factories = pluginHttpFactories(client(any), streamHeaders, emptyMap(), licenseClient = client(any.strict))
+        server.enqueue(ok("#EXTM3U"))
+
+        getStream(factories.stream, "http://cdn.iptv-somewhere.test:${server.port}/1.m3u8")
+        assertEquals(1, server.requestCount)
+
+        assertThrows(IOException::class.java) { postLicense(factories.license, "http://cdn.iptv-somewhere.test:${server.port}/wv", emptyMap()) }
+        assertEquals(1, server.requestCount)
+    }
 }

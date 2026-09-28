@@ -247,7 +247,9 @@ internal fun StreamExoPlayer(
     val prepared = remember(mediaUrl, subtitleConfigs, requestHeaders, mimeType, http, audioTracks, drm) {
         Log.i(TAG, "Creating ExoPlayer · url=${mediaUrl.take(80)} startMs=$startPositionMs subs=${subtitleConfigs.size} audioTracks=${audioTracks.size} drm=${drm != null}")
         val pluginFactories: PluginHttpFactories? = (http as? StreamHttp.PluginGated)?.let {
-            pluginHttpFactories(graph.pluginStreamClient(it.hosts, it.xuper), requestHeaders, drm?.licenseHeaders.orEmpty())
+            val streamClient = graph.pluginStreamClient(it.hosts, it.xuper)
+            val licenseClient = if (it.hosts.anyPublicLiveHost) graph.pluginStreamClient(it.hosts.strict, it.xuper) else streamClient
+            pluginHttpFactories(streamClient, requestHeaders, drm?.licenseHeaders.orEmpty(), licenseClient)
         }
         val httpFactory: DataSource.Factory = when (http) {
             StreamHttp.Default -> DefaultHttpDataSource.Factory()
@@ -738,9 +740,10 @@ internal sealed interface StreamHttp {
 }
 
 /**
- * The data-source factories of a gated plugin stream, both over the SAME host-gated client (so a
- * license request can no more reach an undeclared host, plain http or the home network than a
- * segment can):
+ * The data-source factories of a gated plugin stream, both over a host-gated client (so a license
+ * request can no more reach an undeclared host, plain http or the home network than a segment can).
+ * The same one, except under `liveStreamHosts: "any"`: the license then gets its own STRICT client
+ * (the hosts with `anyPublicLiveHost` off), since "any" never covers a DRM license:
  *  - [stream]: the manifest, segments, keys, side audio, subtitles and redirect hops, with the
  *    Stream's `headers` on every request.
  *  - [license]: the Widevine license (and provisioning) request only, bare: none of the Stream's
@@ -751,18 +754,22 @@ internal sealed interface StreamHttp {
  */
 internal class PluginHttpFactories(val stream: DataSource.Factory, val license: DataSource.Factory)
 
-/** [PluginHttpFactories] over [client], the plugin's host-gated OkHttp client. */
+/**
+ * [PluginHttpFactories] over [client], the plugin's host-gated OkHttp client; the license over
+ * [licenseClient], which is [client] unless the stream's hosts are relaxed for a live channel.
+ */
 @androidx.annotation.OptIn(UnstableApi::class)
 internal fun pluginHttpFactories(
     client: okhttp3.Call.Factory,
     requestHeaders: Map<String, String>,
     licenseHeaders: Map<String, String>,
+    licenseClient: okhttp3.Call.Factory = client,
 ): PluginHttpFactories {
     val stream = OkHttpDataSource.Factory(client)
         .setUserAgent(userAgentOf(requestHeaders))
         .setDefaultRequestProperties(requestHeaders.filterKeys { !it.equals("User-Agent", true) })
     // No default request properties: only what the request itself carries (licenseHeaders).
-    val license = OkHttpDataSource.Factory(client).setUserAgent(userAgentOf(licenseHeaders))
+    val license = OkHttpDataSource.Factory(licenseClient).setUserAgent(userAgentOf(licenseHeaders))
     return PluginHttpFactories(stream, license)
 }
 

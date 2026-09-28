@@ -191,7 +191,19 @@ data class EffectiveHosts(
     val declared: List<String>,
     val user: List<UserHost> = emptyList(),
     val insecure: Set<String> = emptySet(),
+    /**
+     * `liveStreamHosts: "any"`, approved by the person: a LIVE CHANNEL's stream URL and its
+     * variants, segments and keys may be on any public host, over http or https. Set only by
+     * [InstalledPlugin.liveHosts]; never on `kino.fetch`, playlist/EPG downloads, subtitles,
+     * audio tracks, DRM licenses or VOD. Never the home network either: an IP literal must be
+     * public ([HostRules.isPublicIpv4Literal]), a local name is refused, and a public name that
+     * resolves into the LAN is refused at connect time by [PluginDns].
+     */
+    val anyPublicLiveHost: Boolean = false,
 ) {
+    /** These hosts with [anyPublicLiveHost] off: what every non-stream URL of a live channel is checked against. */
+    val strict: EffectiveHosts get() = if (anyPublicLiveHost) copy(anyPublicLiveHost = false) else this
+
     fun userHostFor(url: okhttp3.HttpUrl): UserHost? = user.firstOrNull { it.matches(url) }
 
     /**

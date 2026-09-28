@@ -23,6 +23,12 @@ data class PluginManifest(
     val settings: List<PluginSetting> = emptyList(),
     /** The subset of [hosts] the manifest marked `{ "host", "insecureHttp": true }` (apiVersion 2 only). */
     val insecureHosts: Set<String> = emptySet(),
+    /**
+     * `"liveStreamHosts": "any"` (apiVersion 3, with `channels`): the plugin asks that its live
+     * channels' streams may be on any public server. What the gate honours is the INSTALLED record's
+     * copy ([InstalledRecord.liveStreamHostsAny]), the one the person approved in red.
+     */
+    val liveStreamHostsAny: Boolean = false,
 )
 
 sealed interface ManifestResult {
@@ -47,6 +53,10 @@ object ManifestParser {
     const val INSECURE_HOST_API_VERSION = 2
     /** apiVersion 3: the plugin adds channels to the En vivo module (see `data/live/PluginLiveProvider`). */
     const val CHANNELS = "channels"
+    /** The only value `liveStreamHosts` admits: a live channel's stream may be on any public host. */
+    const val LIVE_STREAM_HOSTS_ANY = "any"
+    /** `liveStreamHosts` arrived with apiVersion 3 (and needs [CHANNELS]). */
+    const val LIVE_STREAM_HOSTS_API_VERSION = 3
     const val MAX_BYTES = 16 * 1024
     const val MIN_HOSTS = 1
     /**
@@ -162,6 +172,13 @@ object ManifestParser {
             return invalid("capabilities", "El plugin debe declarar \"" + AT_LEAST_ONE_OF_CAPABILITIES.joinToString("\" o \"") + "\"")
         }
 
+        val liveStreamHostsAny = if (!o.has("liveStreamHosts")) false else {
+            if (o.opt("liveStreamHosts") != LIVE_STREAM_HOSTS_ANY) return invalid("liveStreamHosts", "El campo \"liveStreamHosts\" solo admite \"$LIVE_STREAM_HOSTS_ANY\"")
+            if (api < LIVE_STREAM_HOSTS_API_VERSION) return invalid("liveStreamHosts", "\"liveStreamHosts\" necesita apiVersion $LIVE_STREAM_HOSTS_API_VERSION")
+            if (CHANNELS !in caps) return invalid("liveStreamHosts", "\"liveStreamHosts\" necesita la capacidad \"$CHANNELS\"")
+            true
+        }
+
         val color = o.optString("color").takeIf { it.isNotEmpty() }
         if (color != null && !COLOR.matches(color)) return invalid("color", "El campo \"color\" debe ser del tipo #RRGGBB")
 
@@ -193,7 +210,7 @@ object ManifestParser {
                 description = text(o, "description", MAX_DESCRIPTION_CHARS), author = text(o, "author", MAX_AUTHOR_CHARS),
                 homepage = text(o, "homepage", MAX_HOMEPAGE_CHARS), hosts = hosts, capabilities = caps,
                 color = color?.uppercase(), icon = icon, permissions = permissions, settings = settings,
-                insecureHosts = insecureHosts,
+                insecureHosts = insecureHosts, liveStreamHostsAny = liveStreamHostsAny,
             ),
         )
     }

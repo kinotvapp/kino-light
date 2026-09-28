@@ -192,4 +192,23 @@ class ManifestParserTest {
         assertEquals("kino-plugin.json", (ManifestParser.parse("{nope") as ManifestResult.Invalid).field)
         assertEquals("kino-plugin.json", invalidField(base().put("description", "x".repeat(17_000))))
     }
+
+    @Test fun `liveStreamHosts any needs apiVersion 3 and the channels capability`() {
+        val caps = JSONArray(listOf("home", "resolve", "channels"))
+        val ok = (ManifestParser.parse(base().put("apiVersion", 3).put("capabilities", caps).put("liveStreamHosts", "any").toString()) as ManifestResult.Valid).manifest
+        assertTrue(ok.liveStreamHostsAny)
+        val v2 = ManifestParser.parse(base().put("apiVersion", 2).put("liveStreamHosts", "any").toString()) as ManifestResult.Invalid
+        assertEquals("\"liveStreamHosts\" necesita apiVersion 3", v2.message)
+        val noChannels = ManifestParser.parse(base().put("apiVersion", 3).put("liveStreamHosts", "any").toString()) as ManifestResult.Invalid
+        assertEquals("\"liveStreamHosts\" necesita la capacidad \"channels\"", noChannels.message)
+        val other = ManifestParser.parse(base().put("apiVersion", 3).put("capabilities", caps).put("liveStreamHosts", "all").toString()) as ManifestResult.Invalid
+        assertEquals("El campo \"liveStreamHosts\" solo admite \"any\"", other.message)
+        assertEquals("liveStreamHosts", other.field)
+        // Not a string at all (true, a list) is the same refusal, never a silent "any".
+        listOf<Any>(true, JSONArray(listOf("any"))).forEach { v ->
+            val bad = ManifestParser.parse(base().put("apiVersion", 3).put("capabilities", caps).put("liveStreamHosts", v).toString()) as ManifestResult.Invalid
+            assertEquals("El campo \"liveStreamHosts\" solo admite \"any\"", bad.message)
+        }
+        assertEquals(false, (ManifestParser.parse(base().toString()) as ManifestResult.Valid).manifest.liveStreamHostsAny)
+    }
 }

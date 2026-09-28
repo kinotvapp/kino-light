@@ -43,11 +43,14 @@ class PluginInstallerTest {
         script: String = "export async function search(){}\nexport async function resolve(){}",
         prefix: String = base,
         api: Int = 1,
+        liveStreamHosts: String? = null,
     ) {
         files[prefix + "kino-plugin.json"] = JSONObject()
             .put("id", "demo").put("name", "Demo").put("version", version).put("apiVersion", api)
             .put("entry", "plugin.js").put("hosts", JSONArray(hosts))
-            .put("capabilities", JSONArray(capabilities)).toString().toByteArray()
+            .put("capabilities", JSONArray(capabilities))
+            .apply { if (liveStreamHosts != null) put("liveStreamHosts", liveStreamHosts) }
+            .toString().toByteArray()
         files[prefix + "plugin.js"] = script.toByteArray()
     }
 
@@ -261,5 +264,32 @@ class PluginInstallerTest {
         assertEquals(emptyList<Pair<String, UpdateOutcome>>(), installer.checkDueUpdates())
         now += 2 * 3_600_000L
         assertEquals(listOf("demo" to UpdateOutcome.Applied("1.1.0")), installer.checkDueUpdates())
+    }
+
+    @Test fun `an update that adds liveStreamHosts any waits for approval, and installing records it`() = runBlocking {
+        exports = { setOf("home", "resolve", "liveCategories", "liveChannels") }
+        publish("1.0.0", api = 3, capabilities = listOf("home", "resolve", "channels")); installFresh()
+        assertEquals(false, store.get("demo")!!.record.liveStreamHostsAny)
+        publish("1.1.0", api = 3, capabilities = listOf("home", "resolve", "channels"), liveStreamHosts = "any")
+        val outcome = installer.checkUpdate("demo") as UpdateOutcome.NeedsApproval
+        assertTrue(outcome.preview.newLiveStreamHostsAny)
+        assertTrue(store.get("demo")!!.record.pendingLiveStreamHostsAny)
+        installer.install(outcome.preview)
+        assertTrue(store.get("demo")!!.record.liveStreamHostsAny)
+        assertEquals(false, store.get("demo")!!.record.pendingLiveStreamHostsAny)
+        val record = store.get("demo")!!.record
+        assertEquals(record, InstalledRecord.fromJson(record.toJson()))
+        // Already approved: a later update keeping it applies without asking again.
+        publish("1.2.0", api = 3, capabilities = listOf("home", "resolve", "channels"), liveStreamHosts = "any")
+        assertEquals(UpdateOutcome.Applied("1.2.0"), installer.checkUpdate("demo"))
+        assertTrue(store.get("demo")!!.record.liveStreamHostsAny)
+    }
+
+    @Test fun `a first install with liveStreamHosts any flags it as new on the preview`() = runBlocking {
+        exports = { setOf("home", "resolve", "liveCategories", "liveChannels") }
+        publish(api = 3, capabilities = listOf("home", "resolve", "channels"), liveStreamHosts = "any")
+        val preview = installer.preview("o/r")
+        assertTrue(preview.newLiveStreamHostsAny)
+        assertTrue(installer.install(preview).liveStreamHostsAny)
     }
 }

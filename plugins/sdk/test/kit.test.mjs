@@ -819,3 +819,13 @@ test("run.mjs builds the live arguments the app sends", async () => {
     ["guide", ["c1", "c2"], 24 * 3600 * 1000],
   ]);
 });
+
+test("liveStreamHosts any validates only on v3 with channels", () => {
+  const caps = ["home", "resolve", "channels"];
+  assert.equal(validateManifest(manifest({ apiVersion: 3, capabilities: caps, liveStreamHosts: "any" })).manifest.liveStreamHostsAny, true);
+  assert.deepEqual(validateManifest(manifest({ apiVersion: 2, liveStreamHosts: "any" })), { ok: false, field: "liveStreamHosts", message: '"liveStreamHosts" necesita apiVersion 3' });
+  assert.deepEqual(validateManifest(manifest({ apiVersion: 3, liveStreamHosts: "any" })), { ok: false, field: "liveStreamHosts", message: '"liveStreamHosts" necesita la capacidad "channels"' });
+  assert.deepEqual(validateManifest(manifest({ apiVersion: 3, capabilities: caps, liveStreamHosts: "x" })), { ok: false, field: "liveStreamHosts", message: 'El campo "liveStreamHosts" solo admite "any"' });
+  assert.equal(validateManifest(manifest({ apiVersion: 3, capabilities: caps })).manifest.liveStreamHostsAny, false);
+  assert.deepEqual(contract.manifest.liveStreamHosts, { value: "any", apiVersion: 3, requires: "channels" });
+});

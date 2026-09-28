@@ -54,6 +54,10 @@ class PluginContractParityTest {
         assertEquals(SemVer.RE.pattern, m.getString("versionPattern"))
         assertEquals(ManifestParser.PATH_SEGMENT.pattern, m.getString("pathSegmentPattern"))
         assertEquals(ManifestParser.MAX_PATH_CHARS, m.getInt("maxPathChars"))
+        val lsh = m.getJSONObject("liveStreamHosts")
+        assertEquals(ManifestParser.LIVE_STREAM_HOSTS_ANY, lsh.getString("value"))
+        assertEquals(ManifestParser.LIVE_STREAM_HOSTS_API_VERSION, lsh.getInt("apiVersion"))
+        assertEquals(ManifestParser.CHANNELS, lsh.getString("requires"))
     }
 
     @Test fun `host rules`() {

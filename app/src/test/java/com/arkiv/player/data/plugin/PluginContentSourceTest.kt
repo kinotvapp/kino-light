@@ -279,4 +279,21 @@ class PluginContentSourceTest {
         assertEquals("plugin:demo", err.source)
         assertTrue(err.cause is PluginTimeoutException)
     }
+
+    // --- liveStreamHosts "any" (apiVersion 3) ---
+
+    @Test fun `with liveStreamHosts any approved, only a live ref resolves to an undeclared public server`() = runTest {
+        val base = plugin(caps = setOf("home", "resolve", "channels"), apiVersion = 3)
+        val any = base.copy(record = base.record.copy(liveStreamHostsAny = true))
+        val caller = FakeCaller(mapOf("resolve" to """{"url":"http://cdn.iptv-somewhere.net/1.m3u8"}"""))
+        val live = PluginRef("demo", "c1", PluginRef.LIVE, "ch-1").encode()
+        assertEquals("http://cdn.iptv-somewhere.net/1.m3u8", source(caller, any).resolve(live).url)
+        // A movie of the same plugin stays strict, and so does a live ref without the approval.
+        val movie = PluginRef("demo", "m1", PluginRef.MOVIE, "m-1").encode()
+        assertTrue(runCatching { source(caller, any).resolve(movie) }.exceptionOrNull() is GatewayException)
+        assertTrue(runCatching { source(caller, base).resolve(live) }.exceptionOrNull() is GatewayException)
+        // Never the LAN, approval or not.
+        val lan = FakeCaller(mapOf("resolve" to """{"url":"http://192.168.1.20/1.m3u8"}"""))
+        assertTrue(runCatching { source(lan, any).resolve(live) }.exceptionOrNull() is GatewayException)
+    }
 }

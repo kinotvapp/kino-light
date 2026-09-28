@@ -348,6 +348,41 @@ needs one of them (a plugin with only channels exports a `home()` that returns `
 `"live"` in your rows keep working; a plugin can do both. On install, and on an update that adds it,
 the person reads and approves "Agrega canales en vivo a la pestaña En vivo".
 
+### Channels from any server (`liveStreamHosts`, apiVersion 3)
+
+IPTV lists name their streams on servers you cannot know ahead of time, often plain `http` and
+often a bare public IP. For that, and only that, a `channels` plugin may add:
+
+```json
+"apiVersion": 3,
+"capabilities": ["home", "resolve", "channels"],
+"liveStreamHosts": "any"
+```
+
+`"any"` is the only value, it needs `"apiVersion": 3`, and it needs the `channels` capability
+(otherwise the manifest is refused with `"liveStreamHosts" necesita apiVersion 3` or
+`"liveStreamHosts" necesita la capacidad "channels"`).
+
+What it allows: **a live channel's stream** (the `url` of a channel's inline `stream`, the `url`
+`resolve` returns for a channel, or for an item of kind `"live"`) may be on **any public host**,
+over `http` or `https`, a public IPv4 address included. The player then fetches that manifest and
+its variants, segments and keys, and follows their redirects, under the same rule.
+
+What it never allows:
+
+- the home network: private, loopback, link-local and carrier-grade NAT addresses, IPv6 literals,
+  `localhost` and local names (`.local`, `.lan`, …), and a public name that resolves into any of
+  them (refused when the player connects);
+- `kino.fetch`: your own requests still reach only your `hosts` and the person's servers;
+- the playlist and XMLTV downloads a `{ playlist }` declaration asks Kino to make: those URLs must
+  still be on your `hosts` (or the person's server);
+- subtitles, audio tracks and a `drm` block's `licenseUrl`: still your `hosts` only;
+- movies and episodes: a non-live `Stream` is checked exactly as before;
+- images: the poster rule (https, never local) does not change.
+
+The consent sheet shows it in red, "Puede reproducir canales desde cualquier servidor que indique su
+lista", and an update that newly adds it waits for the person's approval, like a new host.
+
 ## 4. The contract (apiVersion 1, 2 and 3)
 
 Your entry file is one ES module that exports one `async` function for each capability you
@@ -1086,7 +1121,7 @@ Before you publish, check that:
   If your manifest has a `password` setting it adds "Este plugin usa tu usuario y contraseña"; a `url`
   setting adds "Se conectará a los servidores que escribas en su configuración". Declaring `download`
   adds "Puede descargar videos para verlos sin conexión", `drm` adds "Reproduce video protegido (DRM)",
-  `channels` adds "Agrega canales en vivo a la pestaña En vivo", and each `insecureHttp` host adds, in red, "Conexión sin cifrar con <host>". Nothing of yours runs
+  `channels` adds "Agrega canales en vivo a la pestaña En vivo", each `insecureHttp` host adds, in red, "Conexión sin cifrar con <host>", and `liveStreamHosts: "any"` adds, in red, "Puede reproducir canales desde cualquier servidor que indique su lista". Nothing of yours runs
   before they accept.
 - **Configurar.** A plugin with `settings` has a "Configurar" button in Ajustes ▸ Plugins. Until
   every required setting has a value its status is "Falta configurar" and nothing of it runs.

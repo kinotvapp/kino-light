@@ -616,4 +616,35 @@ class PluginOutputTest {
         assertEquals(PluginLiveContract.MAX_GUIDE_ENTRIES_PER_CHANNEL, PluginOutput.guide(many, setOf("c1"), from, to).size)
         assertEquals(emptyList<PluginGuideEntry>(), PluginOutput.guide("{}", setOf("c1"), from, to))
     }
+
+    @Test fun `with any public live host the stream url relaxes, but not its subtitles nor its license`() {
+        val any = EffectiveHosts(listOf("declared.example.com"), anyPublicLiveHost = true)
+        val s = PluginOutput.stream(
+            """{"url":"http://cdn.iptv-somewhere.net/1.m3u8","subtitles":[{"lang":"es","url":"https://subs.elsewhere.org/a.vtt"}]}""", any,
+        )
+        assertEquals("http://cdn.iptv-somewhere.net/1.m3u8", s.url)
+        assertEquals(emptyList<PluginSubtitle>(), s.subtitles)
+        assertThrows(PluginContractException::class.java) {
+            PluginOutput.stream("""{"url":"http://192.168.1.4/1.m3u8"}""", any)
+        }
+        assertThrows(PluginContractException::class.java) {
+            PluginOutput.stream("""{"url":"https://cdn.iptv-somewhere.net/1.mpd","drm":{"type":"widevine","licenseUrl":"https://lic.elsewhere.org/"}}""", any, allowDrm = true)
+        }
+    }
+
+    @Test fun `with any public live host audio tracks and playlist downloads stay strict`() {
+        val any = EffectiveHosts(listOf("declared.example.com"), anyPublicLiveHost = true)
+        val s = PluginOutput.stream(
+            """{"url":"http://203.0.113.7:8080/1.m3u8","audioTracks":[{"lang":"es","url":"https://audio.elsewhere.org/a.m4a"}]}""", any,
+        )
+        assertEquals("http://203.0.113.7:8080/1.m3u8", s.url)
+        assertEquals(emptyList<PluginAudioTrack>(), s.audioTracks)
+        listOf("http://[fd00::1]/1.m3u8", "http://10.0.0.2/1.m3u8", "http://tv.lan/1.m3u8", "http://localhost/1.m3u8").forEach { u ->
+            assertThrows(u, PluginContractException::class.java) { PluginOutput.stream("""{"url":"$u"}""", any) }
+        }
+        // The app downloads a playlist and its guide itself: never under "any".
+        assertEquals(false, PluginOutput.allowsUrl("https://lists.elsewhere.org/a.m3u", any))
+        val catalog = PluginOutput.liveCategories("""[{"playlist":{"url":"https://lists.elsewhere.org/a.m3u","format":"m3u"}}]""", any)
+        assertEquals(0, catalog.playlists.size)
+    }
 }

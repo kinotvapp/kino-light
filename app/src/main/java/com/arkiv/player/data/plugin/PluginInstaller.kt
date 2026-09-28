@@ -24,6 +24,8 @@ data class InstallPreview(
     val newCapabilities: List<String> = emptyList(),
     /** Hosts newly marked `insecureHttp` (all insecure ones on a first install), even when the host itself was already approved as https-only. */
     val newInsecureHosts: List<String> = emptyList(),
+    /** The manifest asks for `liveStreamHosts: "any"` and the person has not approved it yet (always, on a first install that asks). */
+    val newLiveStreamHostsAny: Boolean = false,
 )
 
 sealed interface UpdateOutcome {
@@ -110,7 +112,7 @@ class PluginInstaller(
             address = preview.address.canonical, version = m.version, sha256 = sha,
             hosts = m.hosts, installedAt = installedAt, enabled = enabled, lastUpdateCheckAt = installedAt,
             permissions = m.permissions, capabilities = m.capabilities.toList(), insecureHosts = m.insecureHosts.toList(),
-            exports = exports.sorted(),
+            exports = exports.sorted(), liveStreamHostsAny = m.liveStreamHostsAny,
         )
         val staging = store.newStaging(m.id)
         try {
@@ -145,21 +147,22 @@ class PluginInstaller(
             touch {
                 it.copy(
                     pendingVersion = null, pendingHosts = emptyList(), pendingPermissions = emptyList(),
-                    pendingCapabilities = emptyList(), pendingInsecureHosts = emptyList(),
+                    pendingCapabilities = emptyList(), pendingInsecureHosts = emptyList(), pendingLiveStreamHostsAny = false,
                 )
             }
             return UpdateOutcome.UpToDate
         }
-        // More reach than the person approved -- a host, a permission, a download/drm/channels capability or
-        // a host newly marked insecureHttp -- waits for them. A new REQUIRED setting doesn't: the
+        // More reach than the person approved -- a host, a permission, a download/drm/channels capability,
+        // a host newly marked insecureHttp or liveStreamHosts "any" -- waits for them. A new REQUIRED setting doesn't: the
         // update applies and the plugin shows "Falta configurar".
         if (preview.newHosts.isNotEmpty() || preview.newPermissions.isNotEmpty() ||
-            preview.newCapabilities.isNotEmpty() || preview.newInsecureHosts.isNotEmpty()
+            preview.newCapabilities.isNotEmpty() || preview.newInsecureHosts.isNotEmpty() || preview.newLiveStreamHostsAny
         ) {
             touch {
                 it.copy(
                     pendingVersion = preview.manifest.version, pendingHosts = preview.newHosts, pendingPermissions = preview.newPermissions,
                     pendingCapabilities = preview.newCapabilities, pendingInsecureHosts = preview.newInsecureHosts,
+                    pendingLiveStreamHostsAny = preview.newLiveStreamHostsAny,
                 )
             }
             return UpdateOutcome.NeedsApproval(preview)
@@ -205,6 +208,7 @@ class PluginInstaller(
             newPermissions = manifest.permissions.filterNot { it in approvedPermissions },
             newCapabilities = manifest.capabilities.filter { it in ManifestParser.APPROVAL_CAPABILITIES }.filterNot { it in approvedCapabilities },
             newInsecureHosts = manifest.insecureHosts.filterNot { it in approvedInsecureHosts },
+            newLiveStreamHostsAny = manifest.liveStreamHostsAny && existing?.record?.liveStreamHostsAny != true,
         )
     }
 

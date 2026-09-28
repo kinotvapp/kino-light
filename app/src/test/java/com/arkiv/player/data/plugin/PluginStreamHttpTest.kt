@@ -137,4 +137,38 @@ class PluginStreamHttpTest {
         assertThrows(IOException::class.java) { get(localClient(), url("/loop")) }
         assertEquals(11, server.requestCount)
     }
+
+    // --- liveStreamHosts "any": the player client of an approved live channel ---
+
+    private fun anyClient(dns: Dns, loopback: Boolean = false) = PluginStreamHttp.client(
+        OkHttpClient(), EffectiveHosts(listOf("declared.example.com"), anyPublicLiveHost = true),
+        allowInsecureLocalhost = loopback, delegateDns = dns,
+    )
+
+    @Test fun `with any public live host an undeclared name is fetched over plain http`() {
+        server.enqueue(MockResponse().setBody("#EXTM3U"))
+        // Resolves to this MockWebServer (loopback only through the test-only flag).
+        get(anyClient(recordingDns(), loopback = true), "http://cdn.iptv-somewhere.test:${server.port}/1.m3u8").use {
+            assertEquals("#EXTM3U", it.body!!.string())
+        }
+        assertEquals(listOf("cdn.iptv-somewhere.test"), lookups)
+    }
+
+    @Test fun `with any public live host a public name resolving into the home network is refused at connect time`() {
+        listOf(byteArrayOf(192.toByte(), 168.toByte(), 1, 1), byteArrayOf(10, 0, 0, 2), byteArrayOf(100, 64, 0, 1),
+            byteArrayOf(127, 0, 0, 1), byteArrayOf(169.toByte(), 254.toByte(), 1, 1)).forEach { ip ->
+            val rebinding = recordingDns { listOf(InetAddress.getByAddress(it, ip)) }
+            assertThrows(UnknownHostException::class.java) { get(anyClient(rebinding), "http://cdn.iptv-somewhere.test/1.m3u8") }
+        }
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test fun `with any public live host a redirect onto a LAN literal never reaches it`() {
+        server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "http://192.168.1.1/cgi-bin/x"))
+        val e = assertThrows(HostNotAllowedException::class.java) {
+            get(anyClient(recordingDns(), loopback = true), "http://cdn.iptv-somewhere.test:${server.port}/1.m3u8")
+        }
+        assertEquals("host no permitido: 192.168.1.1", e.message)
+        assertEquals(1, server.requestCount)
+    }
 }

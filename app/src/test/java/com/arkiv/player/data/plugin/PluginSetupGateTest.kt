@@ -111,4 +111,23 @@ class PluginSetupGateTest {
         val update = InstallPreview(PluginAddress("o", "r"), m, "{}", isUpdate = true, newHosts = emptyList(), newCapabilities = listOf("channels"))
         assertEquals(listOf(ConsentLine("Agrega canales en vivo a la pestaña En vivo", isNew = true)), PluginConsent.extraLines(update))
     }
+
+    @Test fun `liveStreamHosts any is a red consent line, nuevo on an update`() {
+        val m = PluginManifest("demo", "Demo", "1.1.0", 3, "plugin.js", "", "", "", listOf("example.com"),
+            setOf("home", "resolve", "channels"), null, null, liveStreamHostsAny = true)
+        val update = InstallPreview(PluginAddress("o", "r"), m, "{}", isUpdate = true, newHosts = emptyList(), newLiveStreamHostsAny = true)
+        assertEquals(
+            listOf(
+                ConsentLine("Agrega canales en vivo a la pestaña En vivo"),
+                ConsentLine("Puede reproducir canales desde cualquier servidor que indique su lista", danger = true, isNew = true),
+            ),
+            PluginConsent.extraLines(update),
+        )
+        // Already approved: still shown (it is what the plugin can do), without the "nuevo" chip.
+        val again = update.copy(newLiveStreamHostsAny = false)
+        assertEquals(
+            ConsentLine("Puede reproducir canales desde cualquier servidor que indique su lista", danger = true),
+            PluginConsent.extraLines(again).last(),
+        )
+    }
 }

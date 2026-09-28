@@ -35,6 +35,14 @@ data class InstalledRecord(
     val pendingInsecureHosts: List<String> = emptyList(),
     /** The entry file's exported functions as the install probe found them (sorted); empty for records written before apiVersion 3. */
     val exports: List<String> = emptyList(),
+    /**
+     * The person APPROVED `"liveStreamHosts": "any"` (the red consent line): this plugin's live
+     * channel streams may be on any public host. Read by `InstalledPlugin.liveHosts`, never from
+     * the manifest on disk.
+     */
+    val liveStreamHostsAny: Boolean = false,
+    /** A pending update newly asks for `liveStreamHosts: "any"`, shown on its consent sheet. */
+    val pendingLiveStreamHostsAny: Boolean = false,
 ) {
     fun toJson(): String = JSONObject()
         .put("address", address).put("version", version).put("sha256", sha256)
@@ -50,6 +58,8 @@ data class InstalledRecord(
         .put("insecureHosts", JSONArray(insecureHosts))
         .put("pendingInsecureHosts", JSONArray(pendingInsecureHosts))
         .put("exports", JSONArray(exports))
+        .put("liveStreamHostsAny", liveStreamHostsAny)
+        .put("pendingLiveStreamHostsAny", pendingLiveStreamHostsAny)
         .toString()
 
     companion object {
@@ -71,6 +81,8 @@ data class InstalledRecord(
                 insecureHosts = list("insecureHosts"),
                 pendingInsecureHosts = list("pendingInsecureHosts"),
                 exports = list("exports"),
+                liveStreamHostsAny = o.optBoolean("liveStreamHostsAny"),
+                pendingLiveStreamHostsAny = o.optBoolean("pendingLiveStreamHostsAny"),
             )
         }.getOrNull()
     }

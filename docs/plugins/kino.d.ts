@@ -119,7 +119,10 @@ interface KinoEpisodes {
 }
 
 interface KinoStream {
-  /** https on a declared host (http only on one declared `insecureHttp`), or the person's own server exactly as typed. */
+  /**
+   * https on a declared host (http only on one declared `insecureHttp`), or the person's own server exactly as typed.
+   * A live channel's stream of a plugin approved for `"liveStreamHosts": "any"` may be on any public host, http or https.
+   */
   url: string;
   mime?: string;
   /**

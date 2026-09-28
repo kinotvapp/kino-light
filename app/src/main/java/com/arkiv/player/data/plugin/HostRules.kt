@@ -42,6 +42,32 @@ object HostRules {
         return h.substringAfterLast('.').all { it.isDigit() }
     }
 
+    /**
+     * A dotted IPv4 literal outside every private, loopback, link-local, CGNAT, "this network",
+     * IETF-protocol, benchmarking, multicast and reserved range. Used ONLY by `liveStreamHosts: "any"`
+     * channel streams: IPTV lists often name public IPs, never a device on the person's network.
+     * Only the canonical four-decimal shape counts (no `127.1`, octal `010.…` or hex): anything else
+     * is not a public literal, and [isLocalAddress] then refuses it.
+     *
+     * TEST-NET ranges (192.0.2/24 excepted, 198.51.100/24, 203.0.113/24) are documentation-only but
+     * not refused by the rest: they are never routed, so allowing them reaches nothing.
+     */
+    fun isPublicIpv4Literal(host: String): Boolean {
+        val parts = host.split('.')
+        if (parts.size != 4) return false
+        val b = parts.map { p -> p.toIntOrNull()?.takeIf { it in 0..255 && p == it.toString() } ?: return false }
+        return when {
+            b[0] == 0 || b[0] == 10 || b[0] == 127 || b[0] >= 224 -> false
+            b[0] == 100 && b[1] in 64..127 -> false
+            b[0] == 169 && b[1] == 254 -> false
+            b[0] == 172 && b[1] in 16..31 -> false
+            b[0] == 192 && b[1] == 168 -> false
+            b[0] == 192 && b[1] == 0 && b[2] in listOf(0, 2) -> false
+            b[0] == 198 && b[1] in 18..19 -> false
+            else -> true
+        }
+    }
+
     fun matches(host: String, patterns: Collection<String>): Boolean {
         val h = host.lowercase().trimEnd('.')
         return patterns.any { p ->

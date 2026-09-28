@@ -28,7 +28,8 @@ data class PluginStreamExpiry(val resolvedAtMs: Long, val expiresInSeconds: Int,
 
 /**
  * One extra line of the consent sheet; [warning] ones get the warning icon, [isNew] the "nuevo"
- * chip, [danger] draws the text itself in red (an insecure connection, never combined with [warning]).
+ * chip, [danger] draws the text itself in red (an insecure connection or `liveStreamHosts: "any"`,
+ * never combined with [warning]).
  */
 data class ConsentLine(val text: String, val warning: Boolean = false, val isNew: Boolean = false, val danger: Boolean = false)
 
@@ -51,6 +52,9 @@ object PluginConsent {
         }
         m.insecureHosts.forEach { host ->
             out += ConsentLine("Conexión sin cifrar con $host", danger = true, isNew = preview.isUpdate && host in preview.newInsecureHosts)
+        }
+        if (m.liveStreamHostsAny) {
+            out += ConsentLine("Puede reproducir canales desde cualquier servidor que indique su lista", danger = true, isNew = preview.isUpdate && preview.newLiveStreamHostsAny)
         }
         return out
     }
