@@ -47,7 +47,9 @@ class AppGraph(context: Context) {
     val updateChecker: UpdateChecker by lazy {
         UpdateChecker(okhttp3.OkHttpClient.Builder()
             .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
-            .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS).build())
+            .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+            .dns(com.arkiv.player.data.net.DohDns)
+            .build())
     }
 
     private val _updateInfo = kotlinx.coroutines.flow.MutableStateFlow<UpdateInfo?>(null)
@@ -101,6 +103,7 @@ class AppGraph(context: Context) {
             okhttp3.OkHttpClient.Builder()
                 .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
                 .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+                .dns(com.arkiv.player.data.net.DohDns)
                 .build(),
         )
     }
@@ -127,6 +130,7 @@ class AppGraph(context: Context) {
     val portalHttp: okhttp3.OkHttpClient by lazy {
         okhttp3.OkHttpClient.Builder()
             .callTimeout(45, java.util.concurrent.TimeUnit.SECONDS)
+            .dns(com.arkiv.player.data.net.DohDns)
             .build()
     }
 

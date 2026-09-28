@@ -1,5 +1,6 @@
 package com.arkiv.player.data.plugin
 
+import com.arkiv.player.data.net.DohDns
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.CookieJar
@@ -114,7 +115,7 @@ object PluginHostGate {
  */
 class PluginDns(
     private val allowLoopback: Boolean = false,
-    private val delegate: Dns = Dns.SYSTEM,
+    private val delegate: Dns = DohDns,
     private val userHostNames: Set<String> = emptySet(),
 ) : Dns {
     override fun lookup(hostname: String): List<InetAddress> {

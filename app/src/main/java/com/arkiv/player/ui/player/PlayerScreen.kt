@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
+import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Tune
@@ -3574,6 +3575,19 @@ private fun PlayerContent(
                         // Casting, tracks are chosen on the LOCAL player, so these hide entirely.
                         val hasSecondaryButtons = !isTv && !casting
                         val secondaryIcons: @Composable () -> Unit = {
+                            // Rotate (phone only): forces the orientation the system's auto-rotate
+                            // wouldn't otherwise give -- most people keep it off. Scoped to this
+                            // screen only: nextPlayerOrientation's KDoc has why the rest of the app
+                            // never sees it.
+                            IconButton(onClick = {
+                                activity?.requestedOrientation = nextPlayerOrientation(isLandscape)
+                            }) {
+                                Icon(
+                                    Icons.Default.ScreenRotation,
+                                    contentDescription = if (isLandscape) "Cambiar a vertical" else "Cambiar a horizontal",
+                                    tint = Color.White,
+                                )
+                            }
                             if (hasMarkersToFix) {
                                 ChapterMarkersMenu(
                                     state = markers,

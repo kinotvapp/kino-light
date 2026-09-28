@@ -1,5 +1,6 @@
 package com.arkiv.player.data.plugin
 
+import com.arkiv.player.data.net.DohDns
 import okhttp3.Dns
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Interceptor
@@ -36,7 +37,7 @@ object PluginStreamHttp {
         base: OkHttpClient,
         hosts: EffectiveHosts,
         allowInsecureLocalhost: Boolean = false,
-        delegateDns: Dns = Dns.SYSTEM,
+        delegateDns: Dns = DohDns,
         xuper: XuperStreams? = null,
         strictOrigins: Collection<String> = emptySet(),
     ): OkHttpClient = base.newBuilder()

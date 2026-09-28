@@ -708,6 +708,9 @@ dependencies {
 
     // Networking (JSON parsed with bundled org.json)
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // DNS-over-HTTPS (Cloudflare): bypasses an ISP resolver that hijacks/sinkholes a host without
+    // touching the network's actual routing. See FallbackDns / DohDns.
+    implementation("com.squareup.okhttp3:okhttp-dnsoverhttps:4.12.0")
     // kino.html.select for plugins (CSS selectors over fetched HTML).
     implementation("org.jsoup:jsoup:1.18.3")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
