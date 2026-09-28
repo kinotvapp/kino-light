@@ -10,6 +10,7 @@ import okhttp3.mockwebserver.SocketPolicy
 import okio.Buffer
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -304,5 +305,21 @@ class PluginHttpTest {
         listOf("http://nas-name:22/x", "https://nas-name:8096/x", "http://myhome.duckdns.org:80/admin", "http://NAS-NAME.:8080/x").forEach { u ->
             assertThrows(u, HostNotAllowedException::class.java) { PluginHostGate.check(u.toHttpUrl(), any) }
         }
+    }
+
+    @Test fun `isPromptableMiss only true for an undeclared, otherwise-normal public https host`() {
+        val hosts = EffectiveHosts(listOf("archive.org"))
+        assertTrue(PluginHostGate.isPromptableMiss("https://new-cdn.example/x".toHttpUrl(), hosts))
+        // Already declared: not a "miss" at all, whatever the reason it failed (e.g. scheme).
+        assertFalse(PluginHostGate.isPromptableMiss("http://archive.org/x".toHttpUrl(), hosts))
+        // Hard refusals never become promptable, however the manifest is shaped.
+        assertFalse(PluginHostGate.isPromptableMiss("https://192.168.1.10/x".toHttpUrl(), hosts))
+        assertFalse(PluginHostGate.isPromptableMiss("https://nas.local/x".toHttpUrl(), hosts))
+        assertFalse(PluginHostGate.isPromptableMiss("http://new-cdn.example/x".toHttpUrl(), hosts)) // plain http: never auto-approved
+        // A server the person typed is its own gate, not a "miss".
+        val withUser = hosts.copy(user = listOfNotNull(PluginHosts.userHostOf("http://192.168.1.5:8096")))
+        assertFalse(PluginHostGate.isPromptableMiss("http://192.168.1.5:8096/x".toHttpUrl(), withUser))
+        // The live "any host" carve-out is its own thing, never routed through reactive approval.
+        assertFalse(PluginHostGate.isPromptableMiss("https://anything.example/x".toHttpUrl(), hosts.copy(anyPublicLiveHost = true)))
     }
 }

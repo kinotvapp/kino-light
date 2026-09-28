@@ -101,6 +101,21 @@ object PluginHostGate {
         val target = hosts.userHostFor(to) ?: return
         if (target != origin) throw HostNotAllowedException(to.host)
     }
+
+    /**
+     * True only for the ONE gap reactive approval may close: a plain public https host that simply
+     * isn't declared yet. Never true for a hard refusal (local address, IP literal, plain http on a
+     * host not marked `insecureHttp`), a server the person typed ([EffectiveHosts.userHostFor]), the
+     * live "any host" carve-out, or a host that IS declared but failed [check] for some other reason
+     * (e.g. the wrong scheme) -- none of those are a missing-host problem reactive approval can fix.
+     */
+    fun isPromptableMiss(url: HttpUrl, hosts: EffectiveHosts): Boolean {
+        if (url.scheme != "https") return false
+        if (hosts.userHostFor(url) != null) return false
+        if (hosts.anyPublicLiveHost) return false
+        if (HostRules.isLocalAddress(url.host)) return false
+        return !HostRules.matches(url.host, hosts.declared)
+    }
 }
 
 /**
