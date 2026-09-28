@@ -8,7 +8,7 @@ internal const val EMPTY_HOME_TITLE = "Aún no tienes fuentes de contenido"
 internal const val EMPTY_HOME_LINE = "Agrega un plugin para ver películas, series o canales en vivo."
 internal const val EMPTY_HOME_ACTION = "Agregar plugin"
 internal const val BROKEN_HOME_TITLE = "Tus fuentes no están funcionando"
-internal const val BROKEN_HOME_LINE_PHONE = "Revisa tus plugins en Plugins, en el menú, o agrega otro."
+internal const val BROKEN_HOME_LINE_PHONE = "Revisa tus plugins en Menú ▸ Plugins o agrega otro."
 internal const val BROKEN_HOME_LINE_TV = "Revisa tus plugins en Ajustes ▸ Plugins o agrega otro."
 
 data class HomeEmptyCopy(val title: String, val line: String, val action: String)

@@ -23,7 +23,7 @@ import org.json.JSONObject
 
 /**
  * The person must configure [pluginId] before its titles open: the screen offers a button to its
- * Configurar screen. [message] is already the Spanish sentence ("Configura X en Plugins, en el menú", see [PluginsPlace]).
+ * Configurar screen. [message] is already the Spanish sentence ("Configura X en Menú ▸ Plugins", see [PluginsPlace]).
  */
 class PluginSetupRequiredException(val pluginId: String, message: String) : RuntimeException(message)
 

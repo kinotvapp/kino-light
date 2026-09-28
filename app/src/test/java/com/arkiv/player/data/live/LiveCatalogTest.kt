@@ -82,8 +82,8 @@ class LiveCatalogTest {
         assertEquals("El plugin TV1 tiene archivos dañados, reinstálalo", liveBlockedMessage("plugin:tv1", listOf(plugin("tv1", damaged = true))))
         assertEquals("Configura TV1 en Ajustes ▸ Plugins", liveBlockedMessage("plugin:tv1", listOf(plugin("tv1", missing = listOf("server"))), PluginsPlace.TV))
         assertEquals("El plugin TV1 no responde ahora; revísalo en Ajustes ▸ Plugins", liveBlockedMessage("plugin:tv1", listOf(plugin("tv1", unresponsive = true)), PluginsPlace.TV))
-        assertEquals("Configura TV1 en Plugins, en el menú", liveBlockedMessage("plugin:tv1", listOf(plugin("tv1", missing = listOf("server"))), PluginsPlace.PHONE))
-        assertEquals("El plugin TV1 no responde ahora; revísalo en Plugins, en el menú", liveBlockedMessage("plugin:tv1", listOf(plugin("tv1", unresponsive = true)), PluginsPlace.PHONE))
+        assertEquals("Configura TV1 en Menú ▸ Plugins", liveBlockedMessage("plugin:tv1", listOf(plugin("tv1", missing = listOf("server"))), PluginsPlace.PHONE))
+        assertEquals("El plugin TV1 no responde ahora; revísalo en Menú ▸ Plugins", liveBlockedMessage("plugin:tv1", listOf(plugin("tv1", unresponsive = true)), PluginsPlace.PHONE))
         assertEquals("El plugin TV1 ya no ofrece canales en vivo", liveBlockedMessage("plugin:tv1", listOf(plugin("tv1", caps = setOf("home", "resolve")))))
         assertEquals("Este canal venía de un plugin que ya no está instalado", liveBlockedMessage("plugin:tv1", emptyList()))
     }

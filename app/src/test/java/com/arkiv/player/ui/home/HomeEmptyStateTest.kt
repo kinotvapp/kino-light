@@ -33,7 +33,7 @@ class HomeEmptyStateTest {
         assertEquals(HomeEmptyCopy(EMPTY_HOME_TITLE, EMPTY_HOME_LINE, EMPTY_HOME_ACTION), homeEmptyCopy(emptyList(), isTv = false))
         val broken = homeEmptyCopy(listOf(plugin(enabled = false)), isTv = false)
         assertEquals("Tus fuentes no están funcionando", broken.title)
-        assertEquals("Revisa tus plugins en Plugins, en el menú, o agrega otro.", broken.line)
+        assertEquals("Revisa tus plugins en Menú ▸ Plugins o agrega otro.", broken.line)
         assertEquals("Agregar plugin", broken.action)
         // The TV keeps Plugins as a tab of Ajustes.
         assertEquals("Revisa tus plugins en Ajustes ▸ Plugins o agrega otro.", homeEmptyCopy(listOf(plugin(enabled = false)), isTv = true).line)
