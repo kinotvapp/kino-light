@@ -55,6 +55,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -201,6 +202,34 @@ fun ArkivRoot(
             popUpTo(navController.graph.findStartDestination().id) { saveState = true }
             launchSingleTop = true
             restoreState = true
+        }
+    }
+
+    /** "Listo" / "Ahora no" / Back of the source picker (ruling R9): never opens by itself again, back to Home. */
+    fun finishSourcePicker() {
+        com.arkiv.player.ui.plugin.leaveSourcePicker(
+            graph.settings,
+            popBack = { navController.popBackStack() },
+            goHome = { navController.navigate("home") },
+        )
+    }
+
+    fun openSourcePicker() = navController.navigate(com.arkiv.player.ui.plugin.SOURCE_PICKER_ROUTE) { launchSingleTop = true }
+
+    // Ruling R8: a new device that never finished the picker and has nothing usable gets it right away,
+    // which is right after activation (this root composes fresh when MainActivity's onActivated fires)
+    // and again after a start that died mid-picker. Read on IO: the registry's first read touches disk.
+    // The NavHost sits inside the Scaffold's subcomposition, so its graph may not be set when this effect
+    // starts: the first back-stack entry is awaited before navigating.
+    LaunchedEffect(Unit) {
+        val open = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            com.arkiv.player.data.onboarding.Onboarding.opensPickerOnStart(
+                graph.settings.onboardingKind, graph.settings.sourcePickerDone, graph.pluginAdmin.plugins.value,
+            )
+        }
+        if (open) {
+            navController.currentBackStackEntryFlow.first()
+            openSourcePicker()
         }
     }
 
@@ -557,6 +586,9 @@ fun ArkivRoot(
                     isTv = false,
                     onDone = { navController.popBackStack() },
                 )
+            }
+            composable(com.arkiv.player.ui.plugin.SOURCE_PICKER_ROUTE) {
+                com.arkiv.player.ui.plugin.SourcePickerScreen(onFinish = { finishSourcePicker() })
             }
             composable(
                 "row_browse/{rowId}?title={title}",

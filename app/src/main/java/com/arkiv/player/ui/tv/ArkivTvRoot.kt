@@ -20,6 +20,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import com.arkiv.player.data.gateway.liveCode
 import com.arkiv.player.playback.MagisEphemeral
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -83,6 +84,34 @@ fun ArkivTvRoot(
     // channel opens on its own provider.
     fun goToLiveChannel(liveCode: String) {
         goToPlayer("${com.arkiv.player.playback.PlayerSource.LIVE_PREFIX}$liveCode")
+    }
+
+    /** "Listo" / "Ahora no" / Back of the source picker (ruling R9): never opens by itself again, back to Home. */
+    fun finishSourcePicker() {
+        com.arkiv.player.ui.plugin.leaveSourcePicker(
+            graph.settings,
+            popBack = { navController.popBackStack() },
+            goHome = { navController.navigate("home") },
+        )
+    }
+
+    fun openSourcePicker() = navController.navigate(com.arkiv.player.ui.plugin.SOURCE_PICKER_ROUTE) { launchSingleTop = true }
+
+    // Ruling R8: a new device that never finished the picker and has nothing usable gets it right away,
+    // which is right after activation (this root composes fresh when MainActivity's onActivated fires)
+    // and again after a start that died mid-picker. Read on IO: the registry's first read touches disk.
+    // Effects run after this composition applied, so the NavHost below has set its graph; the first
+    // back-stack entry is still awaited so a navigate can never race it.
+    LaunchedEffect(Unit) {
+        val open = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            com.arkiv.player.data.onboarding.Onboarding.opensPickerOnStart(
+                graph.settings.onboardingKind, graph.settings.sourcePickerDone, graph.pluginAdmin.plugins.value,
+            )
+        }
+        if (open) {
+            navController.currentBackStackEntryFlow.first()
+            openSourcePicker()
+        }
     }
 
     LaunchedEffect(deepLinkEpisodeId) {
@@ -339,6 +368,9 @@ fun ArkivTvRoot(
                 isTv = true,
                 onDone = { navController.popBackStack() },
             )
+        }
+        composable(com.arkiv.player.ui.plugin.SOURCE_PICKER_ROUTE) {
+            TvSourcePickerScreen(onFinish = { finishSourcePicker() })
         }
     }
 }
