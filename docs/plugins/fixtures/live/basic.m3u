@@ -1,0 +1,8 @@
+#EXTM3U x-tvg-url="https://epg.example.com/guide.xml.gz"
+#EXTINF:-1 tvg-id="canal1.co" tvg-name="Canal Uno" tvg-logo="https://cdn.example.com/c1.png" tvg-chno="1" tvg-language="Español" tvg-country="CO" group-title="Noticias",Canal Uno HD
+https://live.example.com/c1/index.m3u8
+#EXTINF:-1 tvg-id="" tvg-logo="" group-title="Deportes, en vivo",Deportes 24/7
+http://live.example.com/dep/index.m3u8
+#EXTGRP:Infantil
+#EXTINF:0,Kids, Fun & More
+https://live.example.com/kids.m3u8

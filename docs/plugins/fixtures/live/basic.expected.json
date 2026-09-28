@@ -1,0 +1,4 @@
+{"total":3,"skipped":0,"entries":[
+ {"name":"Canal Uno HD","url":"https://live.example.com/c1/index.m3u8","tvgId":"canal1.co","tvgName":"Canal Uno","logo":"https://cdn.example.com/c1.png","number":1,"group":"Noticias","language":"Español","country":"CO","headers":{}},
+ {"name":"Deportes 24/7","url":"http://live.example.com/dep/index.m3u8","tvgId":"","tvgName":"","logo":"","number":0,"group":"Deportes, en vivo","language":"","country":"","headers":{}},
+ {"name":"Kids, Fun & More","url":"https://live.example.com/kids.m3u8","tvgId":"","tvgName":"","logo":"","number":0,"group":"Infantil","language":"","country":"","headers":{}}]}

@@ -1,0 +1,14 @@
+#EXTM3U
+#EXTINF:-1 group-title="A",Sin URL
+#EXTINF:-1 group-title="A",Bueno
+https://live.example.com/ok.m3u8
+https://live.example.com/huerfano.m3u8
+#EXTINF:-1 group-title="A",Protocolo raro
+rtmp://live.example.com/x
+#EXTINF:-1 group-title="A",
+https://live.example.com/sin-nombre.m3u8
+#EXTINF:-1 tvg-name="Con nombre de tvg" group-title="A",
+https://live.example.com/tvg-name.m3u8
+#EXTINF:-1 tvg-chno="abc" group-title="A" tvg-id=sin-comillas,Atributos raros
+https://live.example.com/raros.m3u8
+#EXTINF:-1 group-title="A",Al final sin URL

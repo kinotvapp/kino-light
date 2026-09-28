@@ -1,0 +1,4 @@
+{"total":3,"skipped":5,"entries":[
+ {"name":"Bueno","url":"https://live.example.com/ok.m3u8","tvgId":"","tvgName":"","logo":"","number":0,"group":"A","language":"","country":"","headers":{}},
+ {"name":"Con nombre de tvg","url":"https://live.example.com/tvg-name.m3u8","tvgId":"","tvgName":"Con nombre de tvg","logo":"","number":0,"group":"A","language":"","country":"","headers":{}},
+ {"name":"Atributos raros","url":"https://live.example.com/raros.m3u8","tvgId":"sin-comillas","tvgName":"","logo":"","number":0,"group":"A","language":"","country":"","headers":{}}]}

@@ -1,0 +1,4 @@
+{"total":3,"skipped":0,"entries":[
+ {"name":"Con VLC","url":"https://live.example.com/vlc.m3u8","tvgId":"","tvgName":"","logo":"","number":0,"group":"Cine","language":"","country":"","headers":{"User-Agent":"KinoTest/1.0","Referer":"https://ref.example.com/"}},
+ {"name":"Con Kodi","url":"https://live.example.com/kodi.m3u8","tvgId":"","tvgName":"","logo":"","number":0,"group":"Cine","language":"","country":"","headers":{"User-Agent":"Kodi/20","Referer":"https://kodi.example.com/"}},
+ {"name":"Con tubería","url":"https://live.example.com/pipe.m3u8","tvgId":"","tvgName":"","logo":"","number":0,"group":"Cine","language":"","country":"","headers":{"User-Agent":"Pipe/1+beta","Origin":"https://o.example.com"}}]}

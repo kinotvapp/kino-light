@@ -1,0 +1,3 @@
+﻿#EXTM3U
+#EXTINF:-1 tvg-chno="12" group-title="Películas",Cine Clásico
+https://live.example.com/cine.m3u8
