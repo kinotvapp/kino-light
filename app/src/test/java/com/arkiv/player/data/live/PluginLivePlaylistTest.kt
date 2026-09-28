@@ -212,4 +212,12 @@ class PluginLivePlaylistTest {
         assertEquals(listOf("Noticias propias"), p.categories(false).map { it.name })
         assertEquals(0, File(cache, "live").list()!!.size)
     }
+
+    @Test fun `a saved list vanishing mid-parse leaves the categories as they were`() = runBlocking {
+        val p = provider()
+        assertEquals(3, p.categories(false).size)
+        now += 13 * 3600 * 1000L
+        p.playlistReadHook = { it.delete() }
+        assertEquals(listOf("Noticias propias", "Noticias", "Infantil"), p.categories(false).map { it.name })
+    }
 }

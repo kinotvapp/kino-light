@@ -50,6 +50,8 @@ internal class PlaylistSource(
         private set
     val key: String = cacheKey(playlist.url)
 
+    /** Test seam: runs between the M3U encoding sniff and the read (a file vanishing mid-parse). */
+    @Volatile internal var beforeRead: (File) -> Unit = {}
     private var parsed: M3uResult? = null
     private var parsedUntil = 0L
 
@@ -78,14 +80,25 @@ internal class PlaylistSource(
             if (!file.exists()) return null
         }
         val pl = playlist
-        val result = parseGate.withPermit {
-            withContext(Dispatchers.Default) {
-                val until = System.currentTimeMillis() + PluginLiveContract.PLAYLIST_PARSE_BUDGET_MS
-                M3uParser.parse(
-                    file, deadline = { System.currentTimeMillis() > until },
-                    hide = { isHiddenGroup(it.group, pl) }, allow = entryAllowed,
-                )
+        val result = try {
+            parseGate.withPermit {
+                withContext(Dispatchers.Default) {
+                    inUse(file) {
+                        val until = System.currentTimeMillis() + PluginLiveContract.PLAYLIST_PARSE_BUDGET_MS
+                        M3uParser.parse(
+                            file, deadline = { System.currentTimeMillis() > until },
+                            hide = { isHiddenGroup(it.group, pl) }, allow = entryAllowed, beforeRead = beforeRead,
+                        )
+                    }
+                }
             }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Unreadable or gone (another cleanup, the disk): like a failed download, what's on hand stands.
+            log("playlist ${pl.url.take(100)}: saved copy unreadable (${e.message}); ${if (parsed != null) "keeping the parsed list" else "no list"}")
+            parsedUntil = clock() + RETRY_MS
+            return parsed
         }
         if (result.stoppedEarly) log("playlist ${pl.url.take(100)}: parse stopped at its time budget (${result.entries.size} entries)")
         parsed = result
@@ -104,7 +117,7 @@ internal class PlaylistSource(
             withContext(Dispatchers.Default) {
                 val until = System.currentTimeMillis() + PluginLiveContract.EPG_PARSE_BUDGET_MS
                 runCatching {
-                    XmltvParser.open(file).use { input ->
+                    inUse(file) { XmltvParser.open(file) }.use { input ->
                         XmltvParser.parse(input, fromMs, toMs, wantedIds, wantedNames, deadline = { System.currentTimeMillis() > until })
                     }
                 }.onFailure { log("guide ${pl.epgUrl.take(100)} unreadable: ${it.message}") }.getOrNull()
@@ -153,6 +166,21 @@ internal class PlaylistSource(
         /** One playlist or guide parse at a time, across every provider of the process. */
         val PARSE_GATE = Semaphore(1)
 
+        /**
+         * Files being opened or parsed right now (absolute paths): [pruneLiveDir] never deletes them.
+         * Both parsers open their file twice (a sniff, then the read); once a stream is open,
+         * deleting the path no longer hurts it, so a guide is held only while it is being opened.
+         */
+        private val inUse = HashSet<String>()
+
+        private inline fun <T> inUse(file: File, block: () -> T): T {
+            val path = file.absolutePath
+            synchronized(inUse) { inUse += path }
+            try { return block() } finally { synchronized(inUse) { inUse -= path } }
+        }
+
+        private fun isInUse(file: File) = synchronized(inUse) { file.absolutePath in inUse }
+
         /** First 8 hex of sha1(scheme://host:port/path): query and fragment (tokens) left out. */
         fun cacheKey(url: String): String {
             val u = url.toHttpUrlOrNull() ?: return sha1Hex(url).take(8)
@@ -175,14 +203,14 @@ internal class PlaylistSource(
             val files = dir.listFiles()?.toMutableList() ?: return
             if (keepKeys != null) {
                 files.removeAll { f ->
-                    (f.name.substringBefore('.') !in keepKeys).also { orphan -> if (orphan && !f.delete()) log("live cache: ${f.name} not deleted") }
+                    (f.name.substringBefore('.') !in keepKeys && !isInUse(f)).also { orphan -> if (orphan && !f.delete()) log("live cache: ${f.name} not deleted") }
                 }
             }
             val complete = files.filter { !it.name.endsWith(".tmp") && it.isFile }.sortedBy { it.lastModified() }.toMutableList()
             var total = complete.sumOf { it.length() }
             for (f in complete) {
                 if (total <= budgetBytes) break
-                if (f == justWritten) continue
+                if (f == justWritten || isInUse(f)) continue
                 val size = f.length()
                 if (f.delete()) { total -= size; log("live cache over ${budgetBytes / (1024 * 1024)} MB: ${f.name} evicted") }
             }

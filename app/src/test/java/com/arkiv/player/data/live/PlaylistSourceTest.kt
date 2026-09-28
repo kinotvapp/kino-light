@@ -98,4 +98,28 @@ class PlaylistSourceTest {
     @Test fun `no cache dir means no playlist`() = runBlocking {
         assertNull(PlaylistSource(PluginPlaylist("https://lists.example.com/a.m3u"), fetcher, null, { now }, {}).entries(false))
     }
+
+    @Test fun `a list deleted between the encoding sniff and the read keeps the parsed copy, never throws`() = runBlocking {
+        val s = source("https://lists.example.com/a.m3u")
+        val first = s.entries(false)!!
+        now += 13 * 3600_000L
+        s.beforeRead = { it.delete() }
+        assertSame(first, s.entries(false))
+        val cold = source("https://lists.example.com/b.m3u")
+        cold.beforeRead = { it.delete() }
+        assertNull(cold.entries(false))
+    }
+
+    @Test fun `a list being parsed is never evicted for size`() = runBlocking {
+        val s = source("https://lists.example.com/a.m3u")
+        var survived = false
+        s.beforeRead = { f ->
+            PlaylistSource.pruneLiveDir(tmp.root, keepKeys = null, budgetBytes = 0) {}
+            val afterBudget = f.exists()
+            PlaylistSource.pruneLiveDir(tmp.root, keepKeys = emptySet(), budgetBytes = 0) {}
+            survived = afterBudget && f.exists()
+        }
+        assertEquals(1, s.entries(false)!!.total)
+        assertTrue(survived)
+    }
 }

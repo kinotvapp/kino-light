@@ -119,6 +119,8 @@ class PluginLiveProvider(
     private val playlistGuides = HashMap<String, Pair<Long, XmltvGuide?>>()
     /** Serialises downloads and parses: a second screen waits and then reuses what the first got. */
     private val playlistLock = Mutex()
+    /** Test seam, handed to every [PlaylistSource]: runs between a list's encoding sniff and its read. */
+    @Volatile internal var playlistReadHook: (java.io.File) -> Unit = {}
     private val _notice = MutableStateFlow<String?>(null)
     /** "Lista recortada: <kept> de <total> canales" when the caps cut this provider's playlists, else null. */
     val notice: StateFlow<String?> = _notice
@@ -159,7 +161,7 @@ class PluginLiveProvider(
             kept[key] = sources[key]?.takeIf { it.adopt(pl) } ?: PlaylistSource(
                 pl, fetcher, cacheDir, clock, { log("[$pluginId] $it") },
                 entryAllowed = { PluginOutput.allowsUrl(it, liveHosts) },
-            )
+            ).also { s -> s.beforeRead = { f -> playlistReadHook(f) } }
         }
         val keys = kept.keys
         sources.clear()

@@ -68,8 +68,11 @@ object M3uParser {
     fun parse(
         file: File, maxEntries: Int = PluginLiveContract.MAX_CHANNELS_PER_PROVIDER, deadline: () -> Boolean = { false },
         hide: (M3uEntry) -> Boolean = { false }, allow: (String) -> Boolean = { true },
+        /** Test seam: runs between the encoding sniff and the read. */
+        beforeRead: (File) -> Unit = {},
     ): M3uResult {
         val charset = if (isStrictUtf8(file)) Charsets.UTF_8 else Charsets.ISO_8859_1
+        beforeRead(file)
         val bom = if (charset == Charsets.UTF_8) "\uFEFF" else "\u00EF\u00BB\u00BF"
         return file.bufferedReader(charset).useLines { lines ->
             var first = true
