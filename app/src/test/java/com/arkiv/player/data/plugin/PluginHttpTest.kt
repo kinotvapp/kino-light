@@ -319,6 +319,9 @@ class PluginHttpTest {
         // A server the person typed is its own gate, not a "miss".
         val withUser = hosts.copy(user = listOfNotNull(PluginHosts.userHostOf("http://192.168.1.5:8096")))
         assertFalse(PluginHostGate.isPromptableMiss("http://192.168.1.5:8096/x".toHttpUrl(), withUser))
+        // User-typed servers exclude the host even with the right scheme (https)
+        val withHttpsUser = hosts.copy(user = listOfNotNull(PluginHosts.userHostOf("https://myhome.duckdns.org")))
+        assertFalse(PluginHostGate.isPromptableMiss("https://myhome.duckdns.org/x".toHttpUrl(), withHttpsUser))
         // The live "any host" carve-out is its own thing, never routed through reactive approval.
         assertFalse(PluginHostGate.isPromptableMiss("https://anything.example/x".toHttpUrl(), hosts.copy(anyPublicLiveHost = true)))
     }
