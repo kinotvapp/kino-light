@@ -29,6 +29,7 @@ import org.json.JSONObject
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.IOException
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 /** A community plugin as the lists show it: its repo, what its manifest says, and how GitHub ranks it. */
@@ -45,7 +46,11 @@ data class DiscoveredPlugin(
     val address: String get() = "$owner/$repo"
 }
 
-enum class DiscoveryOrigin { FRESH, CACHE, NONE }
+/**
+ * [FRESH]: this load's GitHub search. [CACHE]: the disk copy (of a search or of the fallback list).
+ * [FALLBACK]: this load's read of the static community list, because GitHub could not answer. [NONE]: nothing.
+ */
+enum class DiscoveryOrigin { FRESH, CACHE, FALLBACK, NONE }
 
 data class DiscoveryResult(val plugins: List<DiscoveredPlugin>, val origin: DiscoveryOrigin) {
     companion object {
@@ -110,7 +115,17 @@ fun dedupeDiscovered(
  * ([backoffUntil], persisted with the list so a restart honours it). Loads are single-flight. Every
  * failure answers with the last good list ([DiscoveryOrigin.CACHE]) or nothing ([DiscoveryOrigin.NONE]).
  *
- * [cacheFile]: `{"schema":1,"fetchedAt":ms,"blockedUntil":ms,"plugins":[{owner,repo,id,name,description,stars}]}`,
+ * Fallback: when the search fails (any non-success) or finds nothing valid, and there is no list of its
+ * own to show, the static community list [fallback] (published next to the recommended catalog, same
+ * hosts) is read instead and its repos go through the SAME manifest checks ([DiscoveryOrigin.FALLBACK]).
+ * It is cached like a search, but marked, so it never holds GitHub off for [intervalMs]: the next load
+ * past the spacing and any backoff asks GitHub again. A cached fallback list older than [intervalMs] is
+ * read again when GitHub still fails. At most one fallback read per [MIN_ATTEMPT_SPACING_MS].
+ *
+ * Telemetry: when the search failed and there was no search list to show, [report] gets ONE event per
+ * instance (the app holds one, so once per app start), with the failure class only (see [DiscoveryFailure]).
+ *
+ * [cacheFile]: `{"schema":1,"fetchedAt":ms,"blockedUntil":ms,"fallback":bool,"plugins":[{owner,repo,id,name,description,stars}]}`,
  * written atomically; anything unreadable is treated as absent.
  */
 class PluginDiscovery(
@@ -123,16 +138,36 @@ class PluginDiscovery(
     private val scanDeadlineMs: Long = SCAN_DEADLINE_MS,
     /** Milliseconds on a clock that never jumps; only for the scan budget ([clock] dates the cache). */
     private val monotonicMs: () -> Long = { System.nanoTime() / 1_000_000 },
+    /** The static community list read when GitHub cannot answer; null: no fallback. */
+    private val fallback: CommunityFallback? = null,
+    /** Receives the telemetry extras of a failed search (see the class KDoc). */
+    private val report: (extras: Map<String, String>) -> Unit = { extras ->
+        com.arkiv.player.crash.Crash.report(com.arkiv.player.crash.DiscoveryFailed(FAILURE_MESSAGE), "discovery", extras)
+    },
 ) : PluginDiscoveryProvider {
     private val mutex = Mutex()
     private val manifestPermits = Semaphore(manifestConcurrency)
     private val completedLoads = AtomicLong()
     @Volatile private var lastResult: DiscoveryResult = DiscoveryResult.NONE
     @Volatile private var lastAttemptAt: Long? = null
+    @Volatile private var lastFallbackAt: Long? = null
+    private val reported = AtomicBoolean(false)
 
-    private data class DiskState(val fetchedAt: Long, val blockedUntil: Long, val plugins: List<DiscoveredPlugin>) {
+    private data class DiskState(
+        val fetchedAt: Long,
+        val blockedUntil: Long,
+        val plugins: List<DiscoveredPlugin>,
+        /** The list came from the fallback, not from a GitHub search. */
+        val fromFallback: Boolean = false,
+    ) {
         fun asResult(): DiscoveryResult = if (fetchedAt > 0) DiscoveryResult(plugins, DiscoveryOrigin.CACHE) else DiscoveryResult.NONE
     }
+
+    /** Why the search did not give a list, for [report]; [serverDateMs] is the search answer's `Date`, when there was one. */
+    private class Failure(val kind: String, val error: Throwable? = null, val serverDateMs: Long? = null)
+
+    /** What the fallback did: [status] is `ok`, `failed` or `unused`; [result] is set only when it gave plugins. */
+    private class FallbackOutcome(val status: String, val result: DiscoveryResult? = null, val serverDateMs: Long? = null)
 
     override fun cached(): DiscoveryResult = readState()?.asResult() ?: DiscoveryResult.NONE
 
@@ -154,28 +189,88 @@ class PluginDiscovery(
         val cache = state.asResult()
         // A backoff further away than any GitHub could set (a clock that ran ahead when the 403/429
         // arrived, a cache restored from another device) is ignored, never a block until some far date.
-        if (now < state.blockedUntil && state.blockedUntil - now <= MAX_BACKOFF_MS) return cache
-        // A copy dated in the future (the clock moved backwards) is stale, never fresh forever.
-        if (!force && state.fetchedAt > 0 && now - state.fetchedAt in 0L until intervalMs) return cache
-        lastAttemptAt?.let { if (now - it in 0L until MIN_ATTEMPT_SPACING_MS) return cache }
+        if (now < state.blockedUntil && state.blockedUntil - now <= MAX_BACKOFF_MS) {
+            return withoutSearch(state, now, Failure(DiscoveryFailure.RATE_LIMITED))
+        }
+        // A copy dated in the future (the clock moved backwards) is stale, never fresh forever. A fallback
+        // copy never counts as fresh here: GitHub is asked again as soon as spacing and backoff allow.
+        if (!force && !state.fromFallback && state.fetchedAt > 0 && now - state.fetchedAt in 0L until intervalMs) return cache
+        lastAttemptAt?.let { if (now - it in 0L until MIN_ATTEMPT_SPACING_MS) return withoutSearch(state, now, null) }
         lastAttemptAt = now
         val response = try {
             transport.search()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            return cache
+            return withoutSearch(state, now, Failure(DiscoveryFailure.of(e), e))
         }
+        val serverDate = response.headers["date"]?.let { runCatching { okhttp3.Headers.headersOf("Date", it).getDate("Date")?.time }.getOrNull() }
         if (response.code == 403 || response.code == 429) {
-            writeState(state.copy(blockedUntil = backoffUntil(now, response.headers)))
-            return cache
+            val blocked = state.copy(blockedUntil = backoffUntil(now, response.headers))
+            writeState(blocked)
+            return withoutSearch(blocked, now, Failure(DiscoveryFailure.ofStatus(response.code), serverDateMs = serverDate))
         }
-        if (response.code != 200) return cache
-        val repos = GithubSearchParser.parse(response.body ?: return cache) ?: return cache
+        if (response.code != 200) return withoutSearch(state, now, Failure(DiscoveryFailure.ofStatus(response.code), serverDateMs = serverDate))
+        val repos = response.body?.let(GithubSearchParser::parse)
+            ?: return withoutSearch(state, now, Failure(DiscoveryFailure.PARSE, serverDateMs = serverDate))
         val previous = state.plugins.associateBy { it.address.lowercase() }
         val plugins = filterByManifest(repos, previous)
-        writeState(DiskState(fetchedAt = now, blockedUntil = 0, plugins = plugins))
+        val searched = DiskState(fetchedAt = now, blockedUntil = 0, plugins = plugins)
+        writeState(searched)
+        // The search worked but nothing in it can be shown (every manifest unreadable or invalid): the fallback may still have some.
+        if (plugins.isEmpty()) tryFallback(searched, now).result?.let { return it }
         return DiscoveryResult(plugins, DiscoveryOrigin.FRESH)
+    }
+
+    /**
+     * The answer when this load got no search list: the cache when it holds a search list (any age) or a
+     * fallback list younger than [intervalMs]; else the fallback, else whatever the cache has. [failure]
+     * (null when the search was only skipped for spacing) is reported when no search list was there to show.
+     */
+    private suspend fun withoutSearch(state: DiskState, now: Long, failure: Failure?): DiscoveryResult {
+        val cache = state.asResult()
+        if (cache.plugins.isNotEmpty() && !state.fromFallback) return cache
+        val freshFallback = cache.plugins.isNotEmpty() && now - state.fetchedAt in 0L until intervalMs
+        val outcome = if (freshFallback) FallbackOutcome("cached") else tryFallback(state, now)
+        // A fallback read that did not work still leaves the older fallback list on screen, when there is one.
+        val status = if (outcome.result == null && cache.plugins.isNotEmpty()) "cached" else outcome.status
+        if (failure != null) reportOnce(failure, status, now, outcome.serverDateMs)
+        return outcome.result ?: cache
+    }
+
+    /** Reads the fallback list (at most once per [MIN_ATTEMPT_SPACING_MS]) and caches it, marked, keeping [state]'s backoff. */
+    private suspend fun tryFallback(state: DiskState, now: Long): FallbackOutcome {
+        val source = fallback ?: return FallbackOutcome("unused")
+        lastFallbackAt?.let { if (now - it in 0L until MIN_ATTEMPT_SPACING_MS) return FallbackOutcome("unused") }
+        lastFallbackAt = now
+        val answer = try {
+            source.load()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return FallbackOutcome("failed")
+        }
+        val repos = answer.repos ?: return FallbackOutcome("failed", serverDateMs = answer.serverDateMs)
+        val plugins = filterByManifest(repos, state.plugins.associateBy { it.address.lowercase() })
+        if (plugins.isEmpty()) return FallbackOutcome("failed", serverDateMs = answer.serverDateMs)
+        writeState(DiskState(fetchedAt = now, blockedUntil = state.blockedUntil, plugins = plugins, fromFallback = true))
+        return FallbackOutcome("ok", DiscoveryResult(plugins, DiscoveryOrigin.FALLBACK), answer.serverDateMs)
+    }
+
+    private fun reportOnce(failure: Failure, fallbackStatus: String, now: Long, fallbackDateMs: Long?) {
+        if (!reported.compareAndSet(false, true)) return
+        val extras = LinkedHashMap<String, String>()
+        extras["failure"] = failure.kind
+        extras["fallback"] = fallbackStatus
+        if (failure.kind == DiscoveryFailure.TLS) {
+            extras["clock"] = DiscoveryFailure.clock(now, failure.serverDateMs ?: fallbackDateMs)
+            extras["cert_time"] = (failure.error?.let(DiscoveryFailure::certTimeRejected) ?: false).toString()
+        }
+        try {
+            report(extras)
+        } catch (e: Exception) {
+            // Telemetry never breaks discovery.
+        }
     }
 
     /**
@@ -231,7 +326,7 @@ class PluginDiscovery(
         if (o.optInt("schema") != SCHEMA) return@runCatching null
         val array = o.optJSONArray("plugins") ?: JSONArray()
         val plugins = (0 until minOf(array.length(), DiscoveryRules.MAX_RESULTS)).mapNotNull { i -> array.optJSONObject(i)?.let(::pluginFromJson) }
-        DiskState(o.optLong("fetchedAt", 0L).coerceAtLeast(0L), o.optLong("blockedUntil", 0L).coerceAtLeast(0L), plugins)
+        DiskState(o.optLong("fetchedAt", 0L).coerceAtLeast(0L), o.optLong("blockedUntil", 0L).coerceAtLeast(0L), plugins, o.optBoolean("fallback", false))
     }.getOrNull()
 
     private fun pluginFromJson(o: JSONObject): DiscoveredPlugin? {
@@ -247,6 +342,7 @@ class PluginDiscovery(
     /** A disk that refuses costs only the cache: the answer is still returned. */
     private fun writeState(state: DiskState) {
         val json = JSONObject().put("schema", SCHEMA).put("fetchedAt", state.fetchedAt).put("blockedUntil", state.blockedUntil)
+            .put("fallback", state.fromFallback)
             .put("plugins", JSONArray(state.plugins.map {
                 JSONObject().put("owner", it.owner).put("repo", it.repo).put("id", it.id)
                     .put("name", it.name).put("description", it.description).put("stars", it.stars)
@@ -268,6 +364,8 @@ class PluginDiscovery(
         const val MAX_BACKOFF_MS = 24 * 60 * 60 * 1000L
         const val MANIFEST_TIMEOUT_MS = 10 * 1000L
         const val SCAN_DEADLINE_MS = 20 * 1000L
+        /** The telemetry event's constant message: one GitHub issue collects every device. */
+        const val FAILURE_MESSAGE = "discovery: github search failed"
         private const val SCHEMA = 1
 
         /**

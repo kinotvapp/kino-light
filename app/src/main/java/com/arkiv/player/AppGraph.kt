@@ -665,17 +665,20 @@ class AppGraph(context: Context) {
      * [debugPluginFetcher]. Its folder is outside `plugins/`, so it cannot collide with a plugin's id.
      */
     val pluginDiscovery: com.arkiv.player.data.plugin.discovery.PluginDiscoveryProvider by lazy {
+        val discoveryHttp = okhttp3.OkHttpClient.Builder()
+            .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+            .dns(com.arkiv.player.data.net.DohDns)
+            .build()
         com.arkiv.player.data.plugin.discovery.PluginDiscovery(
             transport = com.arkiv.player.data.plugin.discovery.OkHttpGithubTransport(
-                okhttp3.OkHttpClient.Builder()
-                    .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
-                    .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-                    .dns(com.arkiv.player.data.net.DohDns)
-                    .build(),
+                discoveryHttp,
                 userAgent = "Kino/${BuildConfig.VERSION_NAME}",
             ),
             fetcher = RawGithubFetcher(pluginBaseHttp),
             cacheFile = java.io.File(appContext.filesDir, "plugin-discovery/discovery.json"),
+            // When GitHub cannot answer: the static list next to the catalog (same hosts, see CommunityListRepository).
+            fallback = com.arkiv.player.data.plugin.discovery.CommunityListRepository(discoveryHttp),
         )
     }
 

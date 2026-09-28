@@ -121,3 +121,12 @@ class LiveSeedRotated(message: String) : Exception(message)
  * `CastSessionManager`.
  */
 class CastFailure(message: String) : Exception(message)
+
+/**
+ * The community plugin search on GitHub failed and there was no list of its own to show, so the person
+ * depended on the static fallback list (or saw nothing). The message is constant (`discovery: github search
+ * failed`); the extras carry only the failure class (`rate_limited`, `dns`, `tls_or_clock`, `timeout`,
+ * `offline`, `http_<code>`, `parse`, `io`, `error`), whether the fallback helped (`ok`, `cached`, `failed`,
+ * `unused`) and, for TLS, whether the device clock looks off. Once per app start. See `PluginDiscovery`.
+ */
+class DiscoveryFailed(message: String) : Exception(message)

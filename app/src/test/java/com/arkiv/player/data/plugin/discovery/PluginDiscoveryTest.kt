@@ -19,6 +19,10 @@ import org.junit.rules.TemporaryFolder
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.IOException
+import java.net.UnknownHostException
+import javax.net.ssl.SSLHandshakeException
+import com.arkiv.player.data.plugin.XuperPrivilege
+import org.junit.Assert.assertFalse
 
 class PluginDiscoveryTest {
     @get:Rule val tmp = TemporaryFolder()
@@ -265,5 +269,151 @@ class PluginDiscoveryTest {
             listOf(DiscoveredPlugin("a", "one", "one", "Name one", "Desc one", 10), DiscoveredPlugin("h", "h1", "h1", "Name h1", "Desc h1", 2)),
             r.plugins,
         )
+    }
+
+    // ---- Fallback community list (GitHub search unavailable) ----
+
+    private inner class FakeFallback : CommunityFallback {
+        @Volatile var calls = 0
+        var answer: () -> CommunityFallbackAnswer = { CommunityFallbackAnswer(listOf(DiscoveredRepo("f", "one", 2)), null) }
+        override suspend fun load(): CommunityFallbackAnswer {
+            calls++
+            return answer()
+        }
+    }
+
+    private val fallback = FakeFallback()
+    private val reports = ArrayList<Map<String, String>>()
+    private fun withFallback() = PluginDiscovery(github, raw, file, clock = { now }, fallback = fallback, report = { reports += it })
+
+    init {
+        raw.manifests["f/one"] = manifest("fone")
+    }
+
+    @Test fun `a 403 with nothing cached shows the fallback list, reported once`() = runBlocking {
+        github.answer = { GithubResponse(403, null, mapOf("retry-after" to "600")) }
+        val r = withFallback().load(force = false)
+        assertEquals(DiscoveryOrigin.FALLBACK, r.origin)
+        assertEquals(listOf(DiscoveredPlugin("f", "one", "fone", "Name fone", "Desc fone", 2)), r.plugins)
+        assertEquals(1, fallback.calls)
+        assertEquals(listOf(mapOf("failure" to "rate_limited", "fallback" to "ok")), reports)
+    }
+
+    @Test fun `a working search never fetches the fallback nor reports`() = runBlocking {
+        assertEquals(DiscoveryOrigin.FRESH, withFallback().load(force = false).origin)
+        assertEquals(0, fallback.calls)
+        assertTrue(reports.isEmpty())
+    }
+
+    @Test fun `a failing GitHub with a good GitHub cache keeps the cache, no fallback, no report`() = runBlocking {
+        withFallback().load(force = false)
+        now += 13 * hour
+        github.answer = { throw UnknownHostException("api.github.com") }
+        val r = withFallback().load(force = false)
+        assertEquals(DiscoveryOrigin.CACHE, r.origin)
+        assertEquals(listOf("one"), r.plugins.map { it.id })
+        assertEquals(0, fallback.calls)
+        assertTrue(reports.isEmpty())
+    }
+
+    @Test fun `the fallback failing too is an empty answer, never a crash`() = runBlocking {
+        github.answer = { throw UnknownHostException("api.github.com") }
+        fallback.answer = { CommunityFallbackAnswer(null, null) }
+        assertEquals(DiscoveryResult.NONE, withFallback().load(force = false))
+        assertEquals(listOf(mapOf("failure" to "dns", "fallback" to "failed")), reports)
+        now += 2 * 60_000
+        fallback.answer = { throw IllegalStateException("boom") }
+        assertEquals(DiscoveryResult.NONE, withFallback().load(force = true))
+    }
+
+    @Test fun `only one failure is reported per process`() = runBlocking {
+        github.answer = { throw UnknownHostException("api.github.com") }
+        fallback.answer = { CommunityFallbackAnswer(null, null) }
+        val d = withFallback()
+        d.load(force = false)
+        now += 2 * 60_000
+        d.load(force = true)
+        assertEquals(2, github.calls)
+        assertEquals(1, reports.size)
+    }
+
+    @Test fun `a TLS failure reports whether the device clock looks off against the fallback's Date`() = runBlocking {
+        github.answer = { throw SSLHandshakeException("handshake") }
+        fallback.answer = { CommunityFallbackAnswer(null, now - 3 * 24 * hour) }
+        withFallback().load(force = false)
+        assertEquals(listOf(mapOf("failure" to "tls_or_clock", "fallback" to "failed", "clock" to "off", "cert_time" to "false")), reports)
+    }
+
+    @Test fun `a cached fallback list is shown during the backoff and GitHub is asked again after it`() = runBlocking {
+        github.answer = { GithubResponse(429, null, mapOf("retry-after" to "300")) }
+        withFallback().load(force = false)
+        now += 2 * 60_000
+        val during = withFallback().load(force = false)
+        assertEquals(DiscoveryOrigin.CACHE, during.origin)
+        assertEquals(listOf("fone"), during.plugins.map { it.id })
+        assertEquals(1, github.calls)
+        assertEquals(1, fallback.calls)
+        now += 4 * 60_000
+        github.answer = { ok(repo("a", "one", 5)) }
+        val after = withFallback().load(force = false)
+        assertEquals(DiscoveryOrigin.FRESH, after.origin)
+        assertEquals(2, github.calls)
+        assertEquals(listOf("one"), after.plugins.map { it.id })
+    }
+
+    @Test fun `a cached fallback list never holds GitHub off for 12 hours, and is reused while GitHub keeps failing`() = runBlocking {
+        github.answer = { throw UnknownHostException("api.github.com") }
+        withFallback().load(force = false)
+        now += 2 * 60_000
+        val r = withFallback().load(force = false)
+        assertEquals(2, github.calls)
+        assertEquals(1, fallback.calls)
+        assertEquals(listOf("fone"), r.plugins.map { it.id })
+        assertEquals(listOf("fallback" to "cached"), reports.drop(1).map { "fallback" to it["fallback"] })
+    }
+
+    @Test fun `a stale fallback list is fetched again once GitHub still fails`() = runBlocking {
+        github.answer = { throw UnknownHostException("api.github.com") }
+        withFallback().load(force = false)
+        now += 13 * hour
+        withFallback().load(force = false)
+        assertEquals(2, fallback.calls)
+    }
+
+    @Test fun `a search that works but finds nothing valid falls back too`() = runBlocking {
+        github.answer = { ok(repo("a", "broken", 5)) }
+        raw.manifests["a/broken"] = "{}"
+        val r = withFallback().load(force = false)
+        assertEquals(DiscoveryOrigin.FALLBACK, r.origin)
+        assertEquals(listOf("fone"), r.plugins.map { it.id })
+        assertTrue(reports.isEmpty())
+    }
+
+    @Test fun `fallback entries go through the same manifest rules`() = runBlocking {
+        github.answer = { GithubResponse(500, null, emptyMap()) }
+        fallback.answer = {
+            CommunityFallbackAnswer(
+                listOf(DiscoveredRepo("f", "one", 9), DiscoveredRepo("f", "hidden", 8), DiscoveredRepo("f", "future", 7), DiscoveredRepo("f", "missing", 6)),
+                null,
+            )
+        }
+        raw.manifests["f/hidden"] = manifest("hidden") { put("discoverable", false) }
+        raw.manifests["f/future"] = manifest("future", api = 99)
+        val r = withFallback().load(force = false)
+        assertEquals(listOf("fone"), r.plugins.map { it.id })
+        assertEquals("http_500", reports.single()["failure"])
+    }
+
+    @Test fun `the reserved-id impostor rule still drops a fallback entry claiming Xuper's id`() = runBlocking {
+        val (realOwner, realRepo) = XuperPrivilege.SOURCE_REPO.split('/')
+        github.answer = { throw IOException("offline") }
+        fallback.answer = { CommunityFallbackAnswer(listOf(DiscoveredRepo("evil", "xuper-clone", 99), DiscoveredRepo(realOwner, realRepo, 3)), null) }
+        raw.manifests["evil/xuper-clone"] = manifest(XuperPrivilege.MANIFEST_ID)
+        raw.manifests["$realOwner/$realRepo"] = manifest(XuperPrivilege.MANIFEST_ID)
+        val r = withFallback().load(force = false)
+        assertEquals(2, r.plugins.size)
+        val shown = dedupeDiscovered(r.plugins, catalog = emptyList(), installed = emptyList())
+        assertEquals(listOf("$realOwner/$realRepo"), shown.map { it.address })
+        assertFalse(shown.any { it.owner == "evil" })
     }
 }
