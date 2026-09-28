@@ -1024,6 +1024,15 @@ test("summarisePlaylist groups as the app: adult and hideGroups hidden, blank gr
   assert.ok(ADULT_GROUPS.includes("xxx"));
 });
 
+test("summarisePlaylist keys a repeated tvg-id's first entry by the tvg-id, like the app's channel code", () => {
+  // The first "d" keeps its tvg-id code, so the id-less copy of its url and name is a channel of its own;
+  // the later "d" gets a url-and-name code, and the very same url and name again is the copy skipped.
+  const text = "#EXTM3U\n#EXTINF:-1 tvg-id=\"d\",Z\nhttps://c.example.com/z\n#EXTINF:-1 tvg-id=\"d\",W\nhttps://c.example.com/w\n#EXTINF:-1,Z\nhttps://c.example.com/z\n#EXTINF:-1,W\nhttps://c.example.com/w\n";
+  const s = summarisePlaylist(text);
+  assert.deepEqual([s.channels, s.skipped], [3, 1]);
+  assert.deepEqual(s.duplicateTvgIds, ["d"]);
+});
+
 test("validate shows the consent lines, the channels line and liveStreamHosts any in red", async () => {
   const dir = mkdtempSync(join(tmpdir(), "kino-consent-"));
   try {

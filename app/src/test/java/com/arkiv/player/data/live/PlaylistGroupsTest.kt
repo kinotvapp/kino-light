@@ -40,6 +40,15 @@ class PlaylistGroupsTest {
         assertEquals(2, g.entries.keys.size)
     }
 
+    @Test fun `a later entry repeating a tvg-id leaves the first one's code alone`() {
+        val hd = arrayOf("#EXTINF:-1 tvg-id=\"uno.co\",Uno HD", "https://l.example.com/hd.m3u8")
+        val before = group(list(*hd))
+        val after = group(list(*hd, "#EXTINF:-1 tvg-id=\"uno.co\",Uno SD", "https://l.example.com/sd.m3u8"))
+        assertEquals(listOf("~k1.uno.co"), before.entries.keys.toList())
+        assertEquals("~k1.uno.co", after.entries.keys.first())
+        assertTrue(after.entries.keys.last().matches(Regex("~k1\\.[0-9a-f]{16}")))
+    }
+
     @Test fun `adult and hidden groups vanish, disallowed urls are skipped`() {
         val pl = PluginPlaylist("https://l.example.com/a.m3u", hideGroups = setOf("compras"))
         val g = group(list(

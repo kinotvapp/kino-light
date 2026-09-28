@@ -42,8 +42,9 @@ internal fun trimNotice(groups: Collection<PlaylistGroups>): String? {
 /**
  * One parsed playlist as categories and channels of [providerId]. Pure.
  *
- * - Codes: `~<key>.<tvg-id>` when the tvg-id is a valid item id and unique in the list, else
- *   `~<key>.<sha1(url|name) first 16 hex>`, so the same entry keeps its code across refreshes.
+ * - Codes: `~<key>.<tvg-id>` when the tvg-id is a valid item id and this is the list's first entry
+ *   with it, else `~<key>.<sha1(url|name) first 16 hex>`, so the same entry keeps its code across
+ *   refreshes, and a later copy of a tvg-id never moves the first one's favourites and recents.
  * - Categories: `pl:<key>:<sha1(group) first 10 hex>` (a plugin's own ids can't hold `:`); a
  *   blank group is "Sin categoría"; past [maxCategories] - 1 groups, the rest share "Otros"
  *   (`pl:<key>:otros`), so the list never exceeds [maxCategories].
@@ -60,7 +61,9 @@ internal fun groupPlaylist(
     result: M3uResult, key: String, providerId: String, pluginId: String, playlist: PluginPlaylist, hosts: EffectiveHosts,
     entryAllowed: (String) -> Boolean, maxCategories: Int, maxChannels: Int,
 ): PlaylistGroups {
-    val tvgCount = result.entries.groupingBy { it.tvgId }.eachCount()
+    // Index of each tvg-id's first entry in the parsed list, whatever the loop below drops.
+    val firstWithTvg = HashMap<String, Int>()
+    result.entries.forEachIndexed { i, e -> firstWithTvg.putIfAbsent(e.tvgId, i) }
     val categories = LinkedHashMap<String, ProviderCategory>()
     val byCategory = LinkedHashMap<String, MutableList<LiveChannel>>()
     val entries = LinkedHashMap<String, M3uEntry>()
@@ -69,12 +72,12 @@ internal fun groupPlaylist(
     var dropped = 0
     var skipped = result.skipped + result.refused
     var kept = 0
-    for (e in result.entries) {
+    for ((i, e) in result.entries.withIndex()) {
         val group = e.group.trim().ifEmpty { "Sin categoría" }
         if (PlaylistSource.isHiddenGroup(group, playlist)) { hidden++; continue }
         if (!entryAllowed(e.url)) { skipped++; dropped++; continue }
         if (kept >= maxChannels || maxCategories <= 0) continue
-        val idPart = e.tvgId.takeIf { PluginOutput.ID.matches(it) && tvgCount[it] == 1 } ?: sha1Hex("${e.url}|${e.name}").take(16)
+        val idPart = e.tvgId.takeIf { PluginOutput.ID.matches(it) && firstWithTvg[it] == i } ?: sha1Hex("${e.url}|${e.name}").take(16)
         val code = "~$key.$idPart"
         // The very same url and name twice: one channel, the copy counted as skipped.
         if (code in entries) { skipped++; dropped++; continue }

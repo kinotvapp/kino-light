@@ -618,11 +618,11 @@ A plugin can give its channels in three ways, and mix them:
    answer.
 
    Each entry gets a channel code, the key of favourites and recents: its `tvg-id` when that is a
-   valid id **used by no other entry of the list**, else one made from its URL and name. So a
-   channel's code can change between refreshes: when the list later gains a second entry with the
-   same `tvg-id`, both switch to URL-and-name codes, and favourites and recents saved under the old
-   code stop matching (the same happens to a URL-and-name code when the URL changes). Give every
-   entry a stable, unique `tvg-id`; `node sdk/run.mjs live playlist <list>` lists the repeated ones.
+   valid id and the entry is the **first of the list to use it**, else one made from its URL and
+   name. A later entry repeating a `tvg-id` never moves the first one's code, but it gets a
+   URL-and-name code itself, which changes (and its favourites and recents stop matching) when its
+   URL does; a copy inserted *before* the first one takes the `tvg-id` code over. Give every entry a
+   stable, unique `tvg-id`; `node sdk/run.mjs live playlist <list>` lists the repeated ones.
 
 The rules:
 

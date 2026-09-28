@@ -170,23 +170,28 @@ export function isHiddenGroup(group, hideGroups = []) {
  * A playlist as Kino shows it: parsed with the adult and `hideGroups` groups hidden and `allow`'s
  * refusals counted, then grouped into categories. `channels` kept, `total` valid and visible,
  * `skipped` (broken lines, refused hosts and the very same url+name twice), `hidden`. A tvg-id used
- * by more than one entry is listed in `duplicateTvgIds`: those entries get a code from their URL and
- * name instead, and one that was unique before changes code (favourites and recents stop matching).
+ * by more than one entry is listed in `duplicateTvgIds`: only its first entry keeps the tvg-id as
+ * its code, the later ones get a code from their URL and name (their favourites and recents follow
+ * the URL, and a copy inserted BEFORE the first one takes the tvg-id code over).
  */
 export function summarisePlaylist(input, { hideGroups = [], allow = null, maxChannels = live().maxChannelsPerProvider, maxCategories = live().maxCategoriesPerProvider } = {}) {
   const r = parseM3u(input, { maxEntries: maxChannels, hide: (e) => isHiddenGroup(e.group, hideGroups), allow });
   const tvgCount = new Map();
-  for (const e of r.entries) tvgCount.set(e.tvgId, (tvgCount.get(e.tvgId) || 0) + 1);
+  const firstWithTvg = new Map();
+  r.entries.forEach((e, i) => {
+    tvgCount.set(e.tvgId, (tvgCount.get(e.tvgId) || 0) + 1);
+    if (!firstWithTvg.has(e.tvgId)) firstWithTvg.set(e.tvgId, i);
+  });
   const categories = new Map();
   const seen = new Set();
   const channels = [];
   let skipped = r.skipped + r.refused;
   let dropped = 0;
-  for (const e of r.entries) {
+  for (const [i, e] of r.entries.entries()) {
     if (channels.length >= maxChannels || maxCategories <= 0) continue;
-    // The app's channel code: the tvg-id when it is a valid id and unique in the list, else the
-    // url and name; the very same code twice is one channel, the copy counted as skipped.
-    const key = ID.test(e.tvgId) && tvgCount.get(e.tvgId) === 1 ? `id:${e.tvgId}` : `h:${e.url}|${e.name}`;
+    // The app's channel code: the tvg-id when it is a valid id and this is the list's first entry
+    // with it, else the url and name; the very same code twice is one channel, the copy counted as skipped.
+    const key = ID.test(e.tvgId) && firstWithTvg.get(e.tvgId) === i ? `id:${e.tvgId}` : `h:${e.url}|${e.name}`;
     if (seen.has(key)) { skipped++; dropped++; continue; }
     seen.add(key);
     const group = ktTrim(e.group) || NO_GROUP;
@@ -430,7 +435,7 @@ export function summaryLines(s) {
   const lines = [`${s.channels} canales en ${s.categories.length} categorías; ${s.skipped} entradas descartadas; ${s.hidden} ocultas (adultos)`];
   if (s.total > s.channels) lines.push(`Lista recortada: ${s.channels} de ${s.total} canales`);
   if (s.duplicateTvgIds.length) {
-    lines.push(`note: ${s.duplicateTvgIds.length} tvg-id used more than once (${s.duplicateTvgIds.slice(0, 5).join(", ")}${s.duplicateTvgIds.length > 5 ? ", …" : ""}): those channels get a code from their URL and name, which changes if the URL does; keep tvg-ids unique and stable`);
+    lines.push(`note: ${s.duplicateTvgIds.length} tvg-id used more than once (${s.duplicateTvgIds.slice(0, 5).join(", ")}${s.duplicateTvgIds.length > 5 ? ", …" : ""}): after the first, those channels get a code from their URL and name, which changes if the URL does; keep tvg-ids unique and stable`);
   }
   return lines;
 }
