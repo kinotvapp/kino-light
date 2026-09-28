@@ -54,7 +54,8 @@ private val ACTION_CONTAINER = ArkivRed.copy(alpha = 0.30f)
  * tile in the plugin's colour with its icon or initial, its name, one status line) plus what only an
  * installed plugin has -- the hosts it may reach, an on/off switch and a "Gestionar" button that opens
  * [InstalledActionsSheet] with every action the row it replaces had (Configurar, Buscar actualización,
- * Desinstalar), calling the very same [PluginsViewModel] functions and opening the very same dialogs
+ * Desinstalar), plus "Olvidar rechazos de host" when `plugin.record.rejectedHosts` isn't empty, calling
+ * the very same [PluginsViewModel] functions and opening the very same dialogs
  * (consent, uninstall, Configurar) those always did.
  *
  * [message] is this plugin's own line (see [rowMessagePluginId]); [reserveMessageLines] leaves the same room
@@ -180,7 +181,8 @@ internal fun InstalledPluginCard(
  * "Gestionar"'s sheet: the plugin's full host list (the card's own line is capped to
  * [installedHostsLines] and may cut it), then Configurar (only when [InstalledCardModel.hasSettings]), Buscar
  * actualización (its label switches to "Revisar actualización" the same way the row's did, once an update is
- * pending consent) and Desinstalar, each calling the same [PluginsViewModel] function the row's own button
+ * pending consent), Olvidar rechazos de host (only when `plugin.record.rejectedHosts` isn't empty) and
+ * Desinstalar, each calling the same [PluginsViewModel] function the row's own button
  * did and then closing the sheet, so whatever dialog that call opens (the consent sheet, "¿Desinstalar…?",
  * Configurar) shows over the tab, not stacked under this one.
  */
@@ -217,6 +219,9 @@ private fun InstalledActionsSheet(
                 if (plugin.status == PluginStatus.UPDATE_PENDING) "Revisar actualización" else "Buscar actualización",
                 enabled = !busy,
             ) { vm.checkUpdate(plugin.id); onDismiss() }
+            if (plugin.record.rejectedHosts.isNotEmpty()) {
+                SheetAction("Olvidar rechazos de host", enabled = !busy) { vm.forgetHostRejections(plugin.id); onDismiss() }
+            }
             SheetAction("Desinstalar", color = ArkivRed, enabled = !busy) { vm.askUninstall(plugin); onDismiss() }
         }
     }

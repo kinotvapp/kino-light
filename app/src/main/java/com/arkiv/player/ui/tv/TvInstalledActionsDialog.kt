@@ -42,7 +42,8 @@ import com.arkiv.player.ui.theme.ArkivTextSecondary
  * "Buscar actualización", which is always there): "Activar {name}" or "Desactivar {name}" (absent for a
  * damaged plugin, which cannot be toggled -- [InstalledCardModel.switchEnabled]), "Configurar {name}" (only
  * with settings -- [InstalledCardModel.hasSettings]), "Buscar actualización de {name}" (or "Revisar
- * actualización de {name}" once one is pending consent), "Desinstalar {name}" and "Cerrar". Every action
+ * actualización de {name}" once one is pending consent), "Olvidar rechazos de host de {name}" (only when
+ * `plugin.record.rejectedHosts` isn't empty), "Desinstalar {name}" and "Cerrar". Every action
  * closes the dialog after it runs, so whatever it opens (the consent sheet, "¿Desinstalar…?", Configurar)
  * shows alone, not stacked under this one; [onDismiss] is also Back and "Cerrar" -- the caller sends focus
  * back to the card that opened it.
@@ -99,6 +100,11 @@ internal fun TvInstalledActionsDialog(plugin: InstalledPlugin, art: CatalogArt?,
                 label = if (plugin.status == PluginStatus.UPDATE_PENDING) "Revisar actualización de $name" else "Buscar actualización de $name",
                 modifier = if (hasSwitch || hasSettings) Modifier.fillMaxWidth() else firstModifier(),
             ) { vm.checkUpdate(plugin.id); onDismiss() }
+            if (plugin.record.rejectedHosts.isNotEmpty()) {
+                TvCompactAction(label = "Olvidar rechazos de host de $name", modifier = Modifier.fillMaxWidth()) {
+                    vm.forgetHostRejections(plugin.id); onDismiss()
+                }
+            }
             TvCompactAction(label = "Desinstalar $name", modifier = Modifier.fillMaxWidth()) { vm.askUninstall(plugin); onDismiss() }
             TvCompactAction(label = "Cerrar", modifier = Modifier.fillMaxWidth(), onClick = onDismiss)
         }

@@ -526,6 +526,12 @@ class PluginsViewModel(
         }
     }
 
+    /** "Olvidar rechazos de host": clears every remembered "no" for [id], so an undeclared host is asked about again. */
+    fun forgetHostRejections(id: String) = busy(pluginId = id) {
+        withContext(io) { admin.forgetHostRejections(id) }
+        _state.update { it.copy(message = "Se olvidaron los rechazos de host") }
+    }
+
     fun askUninstall(plugin: InstalledPlugin) {
         // The TV's actions can't be disabled while busy; confirming would then be dropped by busy().
         if (_state.value.busy) return
