@@ -212,7 +212,29 @@ internal fun homeCardsHold(cardKey: String, pluginCards: List<List<String>>): Bo
  * the list ended there; with the previous row first the card sits in the second slot, which is the
  * layout D-pad navigation gives.
  */
+/** The rows list's key for the empty state ("Aún no tienes fuentes de contenido"). */
+private const val EMPTY_SOURCES_KEY = "empty_sources"
+
 internal fun homeRowScrollTarget(rowIndex: Int): Int = (rowIndex - 1).coerceAtLeast(0)
+
+/**
+ * Scrolls a lazy list until the item with [key] is composed, so a requester inside it exists. Only the
+ * visible window is known, not the index of a key, so it walks the [total] items from the top. False when
+ * no item carries [key].
+ */
+internal suspend fun revealListKey(
+    key: Any,
+    total: Int,
+    visibleKeys: () -> List<Any>,
+    scrollTo: suspend (Int) -> Unit,
+): Boolean {
+    if (key in visibleKeys()) return true
+    for (i in 0 until total) {
+        scrollTo(i)
+        if (key in visibleKeys()) return true
+    }
+    return false
+}
 
 /**
  * Index, in the Home rows list, of the row that holds the card [cardKey] (one list of card keys per
@@ -682,7 +704,17 @@ fun TvHomeScreen(
                 landed = runCatching { firstCardFocus.requestFocus() }.isSuccess
             } else {
                 val target = when (tvHomeDefaultLanding(homeEmptyNow)) {
-                    TvHomeLanding.ADD_SOURCES -> emptySourcesFocus
+                    TvHomeLanding.ADD_SOURCES -> {
+                        // Same reason as the first card: "Para ti" or the live recents can sit above the
+                        // empty state and keep it out of the composed window, so bring it in first.
+                        revealListKey(
+                            EMPTY_SOURCES_KEY,
+                            rowsListState.layoutInfo.totalItemsCount,
+                            visibleKeys = { rowsListState.layoutInfo.visibleItemsInfo.map { it.key } },
+                            scrollTo = { runCatching { rowsListState.scrollToItem(it) } },
+                        )
+                        emptySourcesFocus
+                    }
                     TvHomeLanding.TOP_BAR -> barFocus
                 }
                 landed = runCatching { target.requestFocus() }.isSuccess
@@ -1043,7 +1075,7 @@ fun TvHomeScreen(
                     }
 
                     if (homeEmpty) {
-                        item(key = "empty_sources") {
+                        item(key = EMPTY_SOURCES_KEY) {
                             Column(
                                 Modifier.fillMaxWidth().padding(horizontal = 48.dp, vertical = 12.dp),
                                 verticalArrangement = Arrangement.spacedBy(8.dp),
