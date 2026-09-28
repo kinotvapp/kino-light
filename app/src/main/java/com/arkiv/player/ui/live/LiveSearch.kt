@@ -43,6 +43,9 @@ fun searchAcrossProviders(
     if (raw.isEmpty()) return emptyList()
     val q = raw.normalized()
     val wordStart = " $q"
+    // Parsed once: the loop compares ints instead of formatting every channel's number per query.
+    // A query with a leading zero ("0502") never matched a number before, and still doesn't.
+    val rawNumber = raw.toIntOrNull()?.takeIf { it > 0 && it.toString() == raw } ?: -1
     val seen = HashSet<String>()
     // One bucket per rank keeps provider order and each provider's order without sorting.
     val buckets = Array(4) { ArrayList<LiveChannel>() }
@@ -50,7 +53,7 @@ fun searchAcrossProviders(
         for (e in list) {
             val c = e.channel
             val rank = when {
-                (c.number > 0 && c.number.toString() == raw) || e.name == q -> 0
+                c.number == rawNumber || e.name == q -> 0
                 e.name.startsWith(q) -> 1
                 e.spaced.contains(wordStart) -> 2
                 e.name.contains(q) -> 3
