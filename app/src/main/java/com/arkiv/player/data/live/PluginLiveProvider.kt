@@ -18,13 +18,18 @@ import com.arkiv.player.data.plugin.PluginLiveCatalog
 import com.arkiv.player.data.plugin.PluginLiveChannelItem
 import com.arkiv.player.data.plugin.PluginLiveContract
 import com.arkiv.player.data.plugin.PluginOutput
+import com.arkiv.player.data.plugin.PluginPlaylist
 import com.arkiv.player.data.plugin.PluginRef
+import com.arkiv.player.data.plugin.PluginStream
 import com.arkiv.player.playback.PluginLiveChannel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -56,12 +61,27 @@ import org.json.JSONObject
  * nothing new. One instance lives as long as the plugin's `changeKey()` (see `LiveCatalog`). A
  * channel's wrapped ref is only ever kept here and in the Room channel cache, never in
  * favourites, recents or sync.
+ *
+ * Playlists: the M3U lists a plugin declares in `liveCategories` are downloaded by the APP through
+ * [fetcher] (the STRICT host gate, never `liveStreamHosts: "any"`), kept on disk under [cacheDir]
+ * (see [PlaylistSource]) and grouped by [groupPlaylist] after the plugin's own categories, in
+ * declaration order, under one budget of [PluginLiveContract.MAX_CHANNELS_PER_PROVIDER] channels
+ * and [PluginLiveContract.MAX_CATEGORIES_PER_PROVIDER] categories; each entry's stream URL is
+ * checked against `plugin.liveHosts`. When anything was cut, [notice] says so. A playlist channel
+ * (code `~<key>.<id>`) plays straight from its entry, or through the plugin's `resolve(<entry url>)`
+ * when the playlist says `resolve: true`. Its guide comes from the playlist's XMLTV, matched by
+ * `tvg-id`, else by normalised name. Downloads and parses are serialised and single-flight: two
+ * screens never download or parse the same playlist twice.
  */
 class PluginLiveProvider(
     private val plugin: InstalledPlugin,
     private val caller: PluginCaller,
     /** The Room channel cache row for a code of THIS provider (written by `LiveViewModel`), for [open]. */
     private val cached: suspend (code: String) -> LiveChannelCacheEntity? = { null },
+    /** Playlist and EPG downloads: `PluginPlaylistFetcher(PluginStreamHttp.client(base, plugin.hosts))`. */
+    private val fetcher: LivePlaylistFetcher = LivePlaylistFetcher { _, _, _ -> throw java.io.IOException("sin descargas") },
+    /** The plugin's data dir; playlists are kept under `live/`. Null = memory only. */
+    private val cacheDir: java.io.File? = null,
     private val clock: () -> Long = System::currentTimeMillis,
     private val log: (String) -> Unit = { android.util.Log.w("KinoPlugin", it) },
 ) : LiveChannelProvider {
@@ -86,16 +106,111 @@ class PluginLiveProvider(
     /** Channel codes a guide pass is asking for right now, and that pass's completion. */
     private val guideInFlight = HashMap<String, CompletableDeferred<Unit>>()
 
-    override fun initialCategory(): String? = catalogCache?.second?.categories?.firstOrNull()?.id
+    /** Declared playlists by url, in declaration order (under [lock]). */
+    private val sources = LinkedHashMap<String, PlaylistSource>()
+    /** Each playlist's grouping by key, rebuilt when a list or the plugin's categories change (under [lock]). */
+    private val groups = LinkedHashMap<String, PlaylistGroups>()
+    private var pluginCategories: List<ProviderCategory> = emptyList()
+    /** The plugin categories and parsed lists (by key) the current [groups] were built from; the same again regroups nothing. */
+    private var groupedCategories: List<ProviderCategory>? = null
+    private var groupedResults: Map<String, M3uResult?> = emptyMap()
+    /** A playlist's parsed guide by key, until its time (under [lock]); null = no guide right now. */
+    private val playlistGuides = HashMap<String, Pair<Long, XmltvGuide?>>()
+    /** Serialises downloads and parses: a second screen waits and then reuses what the first got. */
+    private val playlistLock = Mutex()
+    private val _notice = MutableStateFlow<String?>(null)
+    /** "Lista recortada: <kept> de <total> canales" when the caps cut this provider's playlists, else null. */
+    val notice: StateFlow<String?> = _notice
 
-    override fun hasGuide(): Boolean = "guide" in plugin.record.exports
+    override fun initialCategory(): String? =
+        catalogCache?.second?.categories?.firstOrNull()?.id ?: groups.values.firstNotNullOfOrNull { it.categories.firstOrNull() }?.id
+
+    override fun hasGuide(): Boolean =
+        "guide" in plugin.record.exports || catalogCache?.second?.playlists?.any { it.epgUrl.isNotEmpty() } == true
 
     /**
      * [includeAdults] is unused: a plugin's own adult categories and channels never reach here
      * (`PluginOutput` drops every `adult` entry), so there is nothing behind the 18+ lock to show.
      */
-    override suspend fun categories(includeAdults: Boolean): List<ProviderCategory> =
-        catalog().categories.map { ProviderCategory(it.id, it.title) }
+    override suspend fun categories(includeAdults: Boolean): List<ProviderCategory> {
+        val catalog = catalog()
+        lock.withLock {
+            pluginCategories = catalog.categories.map { ProviderCategory(it.id, it.title) }
+            reconcile(catalog.playlists)
+        }
+        ensurePlaylists(null)
+        return lock.withLock {
+            (pluginCategories + groups.values.flatMap { it.categories }).take(PluginLiveContract.MAX_CATEGORIES_PER_PROVIDER)
+        }
+    }
+
+    /** [sources] follow the declared [playlists]: reused by url, the missing ones (and their groups and guides) dropped. Under [lock]. */
+    private fun reconcile(playlists: List<PluginPlaylist>) {
+        val kept = LinkedHashMap<String, PlaylistSource>()
+        playlists.distinctBy { it.url }.forEach { pl ->
+            val old = sources[pl.url]
+            kept[pl.url] = old?.takeIf { it.playlist == pl } ?: PlaylistSource(pl, fetcher, cacheDir, clock) { log("[$pluginId] $it") }
+        }
+        val keys = kept.values.map { it.key }.toSet()
+        sources.clear()
+        sources.putAll(kept)
+        groups.keys.retainAll(keys)
+        playlistGuides.keys.retainAll(keys)
+    }
+
+    /**
+     * Brings every playlist's grouping up to date, downloading or re-reading only what is due
+     * ([forceKey]'s playlist is downloaded again), then regroups them in order under one budget.
+     * Single-flight per [forceKey]; serialised by [playlistLock].
+     */
+    private suspend fun ensurePlaylists(forceKey: String?) {
+        shared(PLAYLISTS_KEY + forceKey.orEmpty()) {
+            playlistLock.withLock {
+                val list = lock.withLock { sources.values.toList() }
+                val results = list.map { it to it.entries(force = it.key == forceKey) }
+                val cats = lock.withLock { pluginCategories }
+                val byKey = LinkedHashMap<String, M3uResult?>().apply { results.forEach { (s, r) -> put(s.key, r) } }
+                val same = lock.withLock {
+                    cats == groupedCategories && byKey.keys.toList() == groupedResults.keys.toList() &&
+                        byKey.all { (k, r) -> r === groupedResults[k] }
+                }
+                if (same) return@withLock
+                val built = withContext(Dispatchers.Default) { regroup(cats, results) }
+                lock.withLock {
+                    // A list parsed again may have other entries: its guide is matched again.
+                    byKey.forEach { (k, r) -> if (r !== groupedResults[k]) playlistGuides.remove(k) }
+                    groups.clear()
+                    groups.putAll(built)
+                    groupedCategories = cats
+                    groupedResults = byKey
+                }
+            }
+        }
+    }
+
+    private fun regroup(cats: List<ProviderCategory>, results: List<Pair<PlaylistSource, M3uResult?>>): Map<String, PlaylistGroups> {
+        val out = LinkedHashMap<String, PlaylistGroups>()
+        var categoriesLeft = PluginLiveContract.MAX_CATEGORIES_PER_PROVIDER - cats.size
+        var channelsLeft = PluginLiveContract.MAX_CHANNELS_PER_PROVIDER
+        var kept = 0
+        var total = 0
+        for ((source, result) in results) {
+            if (result == null) continue
+            val g = groupPlaylist(
+                result, source.key, id, pluginId, source.playlist,
+                entryAllowed = { PluginOutput.allowsUrl(it, liveHosts) },
+                maxCategories = categoriesLeft, maxChannels = channelsLeft,
+            )
+            out[source.key] = g
+            categoriesLeft -= g.categories.size
+            channelsLeft -= g.kept
+            kept += g.kept
+            total += g.total
+            if (g.skipped > 0 || g.hidden > 0) log("[$pluginId] playlist ${source.key}: ${g.kept} kept, ${g.skipped} skipped, ${g.hidden} hidden")
+        }
+        _notice.value = if (total > kept) "Lista recortada: $kept de $total canales" else null
+        return out
+    }
 
     private suspend fun catalog(): PluginLiveCatalog {
         lock.withLock { freshCatalog()?.let { return it } }
@@ -114,11 +229,24 @@ class PluginLiveProvider(
     private fun freshCatalog(): PluginLiveCatalog? = catalogCache?.takeIf { clock() < it.first }?.second
 
     override suspend fun channels(categoryId: String, force: Boolean): List<LiveChannel> {
+        if (categoryId.startsWith(PLAYLIST_CATEGORY_PREFIX)) return playlistChannels(categoryId, force)
         if (!force) lock.withLock { freshList(categoryId)?.let { return it.channels } }
         return shared(CHANNELS_KEY + categoryId) {
             if (!force) lock.withLock { freshList(categoryId)?.let { return@shared it.channels } }
             fetchChannels(categoryId)
         }
+    }
+
+    /** A playlist category's channels; [force] ("Recargar") downloads that playlist again. */
+    private suspend fun playlistChannels(categoryId: String, force: Boolean): List<LiveChannel> {
+        val key = categoryId.split(':').getOrNull(1).orEmpty()
+        if (force) {
+            if (lock.withLock { sources.isEmpty() }) categories(includeAdults = false)
+            ensurePlaylists(key)
+        } else if (lock.withLock { key !in groups }) {
+            categories(includeAdults = false)
+        }
+        return lock.withLock { groups[key]?.byCategory?.get(categoryId).orEmpty() }
     }
 
     private fun freshList(categoryId: String): ChannelList? {
@@ -190,6 +318,57 @@ class PluginLiveProvider(
     }
 
     override suspend fun guide(channels: List<LiveChannel>): Pair<Map<String, List<LiveProgram>>, List<String>> {
+        val mine = channels.filter { it.provider == id }
+        val (fromPlaylists, fromPlugin) = mine.partition { it.code.startsWith(PluginLiveContract.RESERVED_ID_PREFIX) }
+        val (out, later) = if (fromPlugin.isEmpty()) HashMap<String, List<LiveProgram>>() to emptyList() else pluginGuide(fromPlugin)
+        if (fromPlaylists.isEmpty()) return out to later
+        val all = HashMap(out)
+        all.putAll(playlistGuide(fromPlaylists))
+        return all to later
+    }
+
+    /**
+     * Playlist channels' programmes from their playlist's XMLTV, parsed once per [GUIDE_TTL_MS] for
+     * all the list's kept entries (a failure is not retried before then). Matched by `tvg-id`, else
+     * by normalised name against the guide's display names. Every asked channel gets an answer.
+     */
+    private suspend fun playlistGuide(channels: List<LiveChannel>): Map<String, List<LiveProgram>> {
+        val out = HashMap<String, List<LiveProgram>>()
+        for ((key, asked) in channels.distinctBy { it.code }.groupBy { playlistKey(it.code) }) {
+            if (lock.withLock { key !in groups }) runCatching { categories(includeAdults = false) }
+                .onFailure { if (it is CancellationException) throw it }
+            val g = playlistGuideOf(key)
+            val entries = lock.withLock { groups[key]?.entries }.orEmpty()
+            val nameToId = HashMap<String, String>()
+            g?.displayNames?.forEach { (gid, names) -> names.forEach { nameToId.putIfAbsent(XmltvParser.normaliseName(it), gid) } }
+            for (c in asked) {
+                val e = entries[c.code]
+                val programmes = if (g == null || e == null) emptyList()
+                else g.programmes[e.tvgId] ?: nameToId[XmltvParser.normaliseName(e.name)]?.let { g.programmes[it] }.orEmpty()
+                out[c.liveCode] = programmes.map { LiveProgram(it.title, it.startMs / 1000, it.endMs / 1000, it.description) }
+            }
+        }
+        return out
+    }
+
+    private suspend fun playlistGuideOf(key: String): XmltvGuide? {
+        lock.withLock { playlistGuides[key]?.takeIf { clock() < it.first }?.let { return it.second } }
+        return shared(EPG_KEY + key) {
+            lock.withLock { playlistGuides[key]?.takeIf { clock() < it.first }?.let { return@shared it.second } }
+            val (source, entries) = lock.withLock { sources.values.firstOrNull { it.key == key } to groups[key]?.entries?.values }
+            if (source == null || entries == null) return@shared null
+            val now = clock()
+            val ids = entries.mapNotNullTo(HashSet()) { e -> e.tvgId.takeIf { it.isNotBlank() } }
+            val names = entries.mapNotNullTo(HashSet()) { e -> XmltvParser.normaliseName(e.name).takeIf { it.isNotEmpty() } }
+            val from = now - GUIDE_BEHIND_MS
+            // Not under playlistLock: a 50 MB guide parse must not hold up the channel lists. Single-flight per key already.
+            val guide = source.guide(ids, names, from, from + PluginLiveContract.MAX_GUIDE_WINDOW_MS, force = false)
+            lock.withLock { playlistGuides[key] = (now + GUIDE_TTL_MS) to guide }
+            guide
+        }
+    }
+
+    private suspend fun pluginGuide(channels: List<LiveChannel>): Pair<Map<String, List<LiveProgram>>, List<String>> {
         val now = clock()
         val out = HashMap<String, List<LiveProgram>>()
         val ask: List<LiveChannel>
@@ -198,7 +377,7 @@ class PluginLiveProvider(
         val pass = CompletableDeferred<Unit>()
         lock.withLock {
             val missing = ArrayList<LiveChannel>()
-            channels.filter { it.provider == id }.distinctBy { it.code }.forEach { c ->
+            channels.distinctBy { it.code }.forEach { c ->
                 val hit = guideCache[c.code]?.takeIf { now < it.first }
                 val running = guideInFlight[c.code]
                 when {
@@ -259,6 +438,7 @@ class PluginLiveProvider(
 
     override suspend fun open(channel: LiveChannel): LiveOpening {
         require(channel.provider == id) { "channel ${channel.liveCode} is not $id's" }
+        if (channel.code.startsWith(PluginLiveContract.RESERVED_ID_PREFIX)) return openPlaylistEntry(channel)
         directOf(channel.code)?.let { return opening(channel, inMemory(channel.code), it) }
         val known = channel.takeIf { it.ref != null }
             ?: inMemory(channel.code)?.takeIf { it.ref != null }
@@ -270,6 +450,23 @@ class PluginLiveProvider(
         if (known.ref == null) throw GatewayException("No se encontró el canal en $name")
         return opening(channel, known, null)
     }
+
+    /** A playlist channel: straight from its entry, or through the plugin's `resolve(<entry url>)` for a `resolve` playlist. */
+    private suspend fun openPlaylistEntry(channel: LiveChannel): LiveOpening {
+        val key = playlistKey(channel.code)
+        // Known only by code (after a restart, from a favourite): list the playlists first.
+        if (lock.withLock { key !in groups }) categories(includeAdults = false)
+        val (entry, source) = lock.withLock { groups[key]?.entries?.get(channel.code) to sources.values.firstOrNull { it.key == key } }
+        if (entry == null || source == null) throw GatewayException("No se encontró el canal en $name")
+        val known = LiveChannel(channel.code, entry.name, entry.number, null, provider = id)
+        if (source.playlist.resolve) {
+            return opening(channel, known.copy(ref = PluginRef(pluginId, channel.code, PluginRef.LIVE, entry.url).encode()), null)
+        }
+        val stream = PluginStream(url = entry.url, headers = PluginOutput.headersOf(JSONObject(entry.headers as Map<*, *>)))
+        return opening(channel, known, PluginContentSource.livePlayable(stream))
+    }
+
+    private fun playlistKey(code: String) = code.substring(PluginLiveContract.RESERVED_ID_PREFIX.length).substringBefore('.')
 
     /** [channel] as the player takes it: [playable] set plays directly, else [known]'s ref resolves. */
     private fun opening(channel: LiveChannel, known: LiveChannel?, playable: GatewayPlayable?): LiveOpening {
@@ -325,5 +522,9 @@ class PluginLiveProvider(
         const val MAX_GUIDE_CHUNKS_PER_PASS = 4
         private const val CATALOG_KEY = "catalog"
         private const val CHANNELS_KEY = "channels:"
+        private const val PLAYLISTS_KEY = "playlists:"
+        private const val EPG_KEY = "epg:"
+        /** Category ids of playlist groups (`pl:<key>:<hash>`); a plugin's own ids can't hold `:`. */
+        private const val PLAYLIST_CATEGORY_PREFIX = "pl:"
     }
 }

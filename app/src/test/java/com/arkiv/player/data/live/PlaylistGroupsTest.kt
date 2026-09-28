@@ -1,0 +1,67 @@
+package com.arkiv.player.data.live
+
+import com.arkiv.player.data.plugin.PluginPlaylist
+import com.arkiv.player.data.plugin.PluginRef
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class PlaylistGroupsTest {
+    private val provider = "plugin:demo"
+    private fun list(vararg lines: String) = M3uParser.parse("#EXTM3U\n" + lines.joinToString("\n"))
+    private fun group(r: M3uResult, pl: PluginPlaylist = PluginPlaylist("https://l.example.com/a.m3u"), allowed: (String) -> Boolean = { true },
+                      maxCategories: Int = 500, maxChannels: Int = 5000) =
+        groupPlaylist(r, "k1", provider, "demo", pl, allowed, maxCategories, maxChannels)
+
+    @Test fun `groups become categories with stable ids, and tvg-ids become codes`() {
+        val g = group(list(
+            "#EXTINF:-1 tvg-id=\"uno.co\" group-title=\"Noticias\",Uno", "https://l.example.com/1.m3u8",
+            "#EXTINF:-1 group-title=\"Noticias\",Dos", "https://l.example.com/2.m3u8",
+            "#EXTINF:-1,Tres", "https://l.example.com/3.m3u8",
+        ))
+        assertEquals(listOf("Noticias", "Sin categoría"), g.categories.map { it.name })
+        assertTrue(g.categories.all { it.id.startsWith("pl:k1:") })
+        val news = g.byCategory.getValue(g.categories[0].id)
+        assertEquals("~k1.uno.co", news[0].code)
+        assertTrue(news[1].code.matches(Regex("~k1\\.[0-9a-f]{16}")))
+        assertEquals(listOf(provider, provider), news.map { it.provider })
+        assertEquals(group(list("#EXTINF:-1 group-title=\"Noticias\",Dos", "https://l.example.com/2.m3u8")).byCategory.values.single().single().code, news[1].code)
+    }
+
+    @Test fun `a repeated tvg-id falls back to the hash, so both variants stay`() {
+        val g = group(list(
+            "#EXTINF:-1 tvg-id=\"uno.co\",Uno HD", "https://l.example.com/hd.m3u8",
+            "#EXTINF:-1 tvg-id=\"uno.co\",Uno SD", "https://l.example.com/sd.m3u8",
+        ))
+        assertEquals(2, g.kept)
+        assertEquals(2, g.entries.keys.size)
+    }
+
+    @Test fun `adult and hidden groups vanish, disallowed urls are skipped`() {
+        val pl = PluginPlaylist("https://l.example.com/a.m3u", hideGroups = setOf("compras"))
+        val g = group(list(
+            "#EXTINF:-1 group-title=\"XXX\",A", "https://l.example.com/a.m3u8",
+            "#EXTINF:-1 group-title=\"Compras\",B", "https://l.example.com/b.m3u8",
+            "#EXTINF:-1 group-title=\"Ok\",C", "https://bad.example.org/c.m3u8",
+            "#EXTINF:-1 group-title=\"Ok\",D", "https://l.example.com/d.m3u8",
+        ), pl, allowed = { it.startsWith("https://l.example.com/") })
+        assertEquals(listOf("D"), g.byCategory.values.flatten().map { it.name })
+        assertEquals(2, g.hidden)
+        assertEquals(1, g.skipped)
+    }
+
+    @Test fun `caps cut channels and fold extra groups into Otros`() {
+        val lines = (0 until 30).flatMap { listOf("#EXTINF:-1 group-title=\"G$it\",C$it", "https://l.example.com/$it.m3u8") }
+        val g = group(list(*lines.toTypedArray()), maxCategories = 5, maxChannels = 20)
+        assertEquals(5, g.categories.size)
+        assertEquals("Otros", g.categories.last().name)
+        assertEquals(20, g.kept)
+        assertEquals(30, g.total)
+    }
+
+    @Test fun `resolve playlists give each channel a ref for the plugin's resolve`() {
+        val g = group(list("#EXTINF:-1,Uno", "https://l.example.com/1.m3u8"), PluginPlaylist("https://l.example.com/a.m3u", resolve = true))
+        val c = g.byCategory.values.single().single()
+        assertEquals(PluginRef("demo", c.code, PluginRef.LIVE, "https://l.example.com/1.m3u8"), PluginRef.decode(c.ref!!))
+    }
+}
