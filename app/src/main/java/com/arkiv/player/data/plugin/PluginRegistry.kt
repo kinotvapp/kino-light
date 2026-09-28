@@ -83,7 +83,17 @@ sealed interface PluginAccess {
         val xuper: Boolean = false,
         /** [hosts] for a live channel's stream (see [InstalledPlugin.liveHosts]); equal to [hosts] unless approved. */
         val liveHosts: EffectiveHosts = hosts,
-    ) : PluginAccess
+    ) : PluginAccess {
+        /**
+         * The player's gate for the stream [ref] resolved to: [liveHosts] only when [ref] is a LIVE
+         * ref of [pluginId] itself (the kind `PluginContentSource.resolve` relaxed it for), [hosts]
+         * for anything else -- never inferred from the episode id the player was opened with.
+         */
+        fun streamHostsFor(pluginId: String, ref: String): EffectiveHosts {
+            val decoded = PluginRef.decode(ref)
+            return if (decoded != null && decoded.pluginId == pluginId && decoded.kind == PluginRef.LIVE) liveHosts else hosts
+        }
+    }
     data class Disabled(override val name: String) : PluginAccess
     data class Uninstalled(override val name: String) : PluginAccess
     data class Damaged(override val name: String) : PluginAccess

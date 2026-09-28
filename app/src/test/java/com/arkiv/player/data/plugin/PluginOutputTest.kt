@@ -647,4 +647,18 @@ class PluginOutputTest {
         val catalog = PluginOutput.liveCategories("""[{"playlist":{"url":"https://lists.elsewhere.org/a.m3u","format":"m3u"}}]""", any)
         assertEquals(0, catalog.playlists.size)
     }
+
+    @Test fun `under any, a typed server's name on another port is refused, the server itself plays`() {
+        val any = EffectiveHosts(listOf("declared.example.com"), listOfNotNull(PluginHosts.userHostOf("http://nas-name:8096")), anyPublicLiveHost = true)
+        assertEquals("http://nas-name:8096/1.m3u8", PluginOutput.stream("""{"url":"http://nas-name:8096/1.m3u8"}""", any).url)
+        assertThrows(PluginContractException::class.java) { PluginOutput.stream("""{"url":"http://nas-name:22/x"}""", any) }
+    }
+
+    @Test fun `under any, a public IPv6 literal is refused without calling it local`() {
+        val any = EffectiveHosts(listOf("declared.example.com"), anyPublicLiveHost = true)
+        val e = assertThrows(PluginContractException::class.java) { PluginOutput.stream("""{"url":"http://[2001:4860:4860::8888]/1.m3u8"}""", any) }
+        assertEquals("Los canales solo pueden usar direcciones IPv4 públicas o nombres de dominio", e.message)
+        val lan = assertThrows(PluginContractException::class.java) { PluginOutput.stream("""{"url":"http://10.0.0.2/1.m3u8"}""", any) }
+        assertEquals("El video apunta a 10.0.0.2, una dirección local", lan.message)
+    }
 }

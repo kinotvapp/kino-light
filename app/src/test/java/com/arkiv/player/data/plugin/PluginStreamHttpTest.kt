@@ -171,4 +171,26 @@ class PluginStreamHttpTest {
         assertEquals("host no permitido: 192.168.1.1", e.message)
         assertEquals(1, server.requestCount)
     }
+
+    @Test fun `with any public live host a hex-number name reaches DNS and a loopback answer is refused`() {
+        val dns = recordingDns { listOf(InetAddress.getByAddress(it, byteArrayOf(127, 0, 0, 1))) }
+        assertThrows(UnknownHostException::class.java) { get(anyClient(dns), "http://0x7f000001/1.m3u8") }
+        assertEquals(listOf("0x7f000001"), lookups)
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test fun `under any a side-loaded subtitle is gated strictly on every hop, a segment is not`() {
+        val any = EffectiveHosts(listOf("localhost"), anyPublicLiveHost = true)
+        val subtitle = url("/a.vtt")
+        val client = PluginStreamHttp.client(OkHttpClient(), any, allowInsecureLocalhost = true, delegateDns = recordingDns(), strictOrigins = setOf(subtitle))
+        server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "http://subs.elsewhere.test:${server.port}/b.vtt"))
+        assertThrows(HostNotAllowedException::class.java) { get(client, subtitle) }
+        assertEquals(1, server.requestCount)
+        assertTrue(lookups.none { it == "subs.elsewhere.test" })
+        // The stream's own segment redirecting the same way is followed: "any" covers it.
+        server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "http://cdn.elsewhere.test:${server.port}/s.ts"))
+        server.enqueue(MockResponse().setBody("bytes"))
+        // (A public name here: under "any" the test-only localhost allowance never applies.)
+        get(client, "http://cdn.iptv-somewhere.test:${server.port}/seg1.ts").use { assertEquals("bytes", it.body!!.string()) }
+    }
 }

@@ -172,9 +172,9 @@ object ManifestParser {
             return invalid("capabilities", "El plugin debe declarar \"" + AT_LEAST_ONE_OF_CAPABILITIES.joinToString("\" o \"") + "\"")
         }
 
-        val liveStreamHostsAny = if (!o.has("liveStreamHosts")) false else {
+        // Below apiVersion 3 the field is unknown and ignored like any other (v1/v2 stay byte-for-byte).
+        val liveStreamHostsAny = if (!o.has("liveStreamHosts") || api < LIVE_STREAM_HOSTS_API_VERSION) false else {
             if (o.opt("liveStreamHosts") != LIVE_STREAM_HOSTS_ANY) return invalid("liveStreamHosts", "El campo \"liveStreamHosts\" solo admite \"$LIVE_STREAM_HOSTS_ANY\"")
-            if (api < LIVE_STREAM_HOSTS_API_VERSION) return invalid("liveStreamHosts", "\"liveStreamHosts\" necesita apiVersion $LIVE_STREAM_HOSTS_API_VERSION")
             if (CHANNELS !in caps) return invalid("liveStreamHosts", "\"liveStreamHosts\" necesita la capacidad \"$CHANNELS\"")
             true
         }

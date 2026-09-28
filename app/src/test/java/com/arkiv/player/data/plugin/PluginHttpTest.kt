@@ -292,4 +292,17 @@ class PluginHttpTest {
             "127.1", "2130706433", "010.0.0.1", "0x7f.0.0.1", "1.2.3.4.5", "1.2.3", "256.1.1.1", "", "example.com", "::1",
         ).forEach { assertTrue(it, !HostRules.isPublicIpv4Literal(it)) }
     }
+
+    @Test fun `under any, a typed server's name on another port or scheme falls back to the strict rules`() {
+        val any = EffectiveHosts(
+            listOf("declared.example.com"),
+            listOfNotNull(PluginHosts.userHostOf("http://nas-name:8096"), PluginHosts.userHostOf("https://myhome.duckdns.org")),
+            anyPublicLiveHost = true,
+        )
+        PluginHostGate.check("http://nas-name:8096/live/1.m3u8".toHttpUrl(), any)
+        PluginHostGate.check("https://myhome.duckdns.org/live/1.m3u8".toHttpUrl(), any)
+        listOf("http://nas-name:22/x", "https://nas-name:8096/x", "http://myhome.duckdns.org:80/admin", "http://NAS-NAME.:8080/x").forEach { u ->
+            assertThrows(u, HostNotAllowedException::class.java) { PluginHostGate.check(u.toHttpUrl(), any) }
+        }
+    }
 }

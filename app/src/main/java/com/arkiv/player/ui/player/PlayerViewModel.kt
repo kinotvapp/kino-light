@@ -1463,8 +1463,9 @@ class PlayerViewModel internal constructor(
             kind = SourceKind.PLUGIN,
             requestHeaders = play.headers,
             // A live channel's stream may reach any public host only when the installed record
-            // approved liveStreamHosts "any" (PluginAccess.Ready.liveHosts); VOD stays strict.
-            pluginHosts = if (live) ready?.liveHosts ?: approvedHosts else approvedHosts,
+            // approved liveStreamHosts "any", decided from the RESOLVED ref's kind (LIVE, of this
+            // plugin), never from the episode id; anything else stays strict.
+            pluginHosts = if (ready != null && pluginId != null) ready.streamHostsFor(pluginId, ref) else approvedHosts,
             pluginXuper = xuper,
             mime = play.mime,
             startPositionMs = startPos,

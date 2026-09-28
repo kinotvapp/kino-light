@@ -247,7 +247,9 @@ internal fun StreamExoPlayer(
     val prepared = remember(mediaUrl, subtitleConfigs, requestHeaders, mimeType, http, audioTracks, drm) {
         Log.i(TAG, "Creating ExoPlayer · url=${mediaUrl.take(80)} startMs=$startPositionMs subs=${subtitleConfigs.size} audioTracks=${audioTracks.size} drm=${drm != null}")
         val pluginFactories: PluginHttpFactories? = (http as? StreamHttp.PluginGated)?.let {
-            val streamClient = graph.pluginStreamClient(it.hosts, it.xuper)
+            // Under liveStreamHosts "any", side-loaded subtitles and audio tracks stay strict on every hop.
+            val sideUrls = if (it.hosts.anyPublicLiveHost) subtitleConfigs.map { c -> c.uri.toString() } + audioTracks.map { a -> a.url } else emptyList()
+            val streamClient = graph.pluginStreamClient(it.hosts, it.xuper, sideUrls)
             val licenseClient = if (it.hosts.anyPublicLiveHost) graph.pluginStreamClient(it.hosts.strict, it.xuper) else streamClient
             pluginHttpFactories(streamClient, requestHeaders, drm?.licenseHeaders.orEmpty(), licenseClient)
         }

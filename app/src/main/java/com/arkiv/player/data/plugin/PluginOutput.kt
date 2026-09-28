@@ -587,8 +587,10 @@ object PluginOutput {
     private fun checkUrl(url: String, hosts: EffectiveHosts, what: String) {
         val u = url.toHttpUrlOrNull() ?: throw PluginContractException("$what tiene una dirección inválida")
         if (hosts.userHostFor(u) != null) return
-        if (hosts.anyPublicLiveHost) {
+        // A typed server's name on another port or scheme falls through to the strict rules (see PluginHostGate.check).
+        if (hosts.anyPublicLiveHost && !hosts.isUserHostName(u.host)) {
             if (HostRules.isPublicIpv4Literal(u.host) || !HostRules.isLocalAddress(u.host)) return
+            if (':' in u.host) throw PluginContractException("Los canales solo pueden usar direcciones IPv4 públicas o nombres de dominio")
             throw PluginContractException("$what apunta a ${u.host.take(100)}, una dirección local")
         }
         if (!hosts.allowsScheme(u)) throw PluginContractException("$what debe usar https")

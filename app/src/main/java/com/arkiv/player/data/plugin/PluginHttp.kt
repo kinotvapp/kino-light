@@ -70,9 +70,11 @@ object PluginHostGate {
             }
             return
         }
-        if (hosts.anyPublicLiveHost) {
+        if (hosts.anyPublicLiveHost && !hosts.isUserHostName(url.host)) {
             // Any scheme HttpUrl knows (http or https) on a public IPv4 literal or a public NAME;
-            // PluginDns still refuses a name that resolves into the LAN, at connect time.
+            // PluginDns still refuses a name that resolves into the LAN, at connect time. A typed
+            // server's NAME on another port or scheme is not "any": PluginDns lets a typed name
+            // resolve into the LAN, so it keeps the strict rules below (exactly as typed, or refused).
             if (HostRules.isPublicIpv4Literal(url.host)) return
             if (!HostRules.isLocalAddress(url.host)) return
             throw HostNotAllowedException(url.host)

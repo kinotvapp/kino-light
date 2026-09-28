@@ -359,13 +359,14 @@ often a bare public IP. For that, and only that, a `channels` plugin may add:
 "liveStreamHosts": "any"
 ```
 
-`"any"` is the only value, it needs `"apiVersion": 3`, and it needs the `channels` capability
-(otherwise the manifest is refused with `"liveStreamHosts" necesita apiVersion 3` or
-`"liveStreamHosts" necesita la capacidad "channels"`).
+It is read only with `"apiVersion": 3` (an older manifest ignores it, like any field it does not
+know). There, `"any"` is the only value and it needs the `channels` capability: otherwise the
+manifest is refused with `El campo "liveStreamHosts" solo admite "any"` or
+`"liveStreamHosts" necesita la capacidad "channels"`.
 
-What it allows: **a live channel's stream** (the `url` of a channel's inline `stream`, the `url`
-`resolve` returns for a channel, or for an item of kind `"live"`) may be on **any public host**,
-over `http` or `https`, a public IPv4 address included. The player then fetches that manifest and
+What it allows: **a live channel's stream** (the `url` of a channel's inline `stream`, or the `url`
+`resolve` returns for a channel; items you mark as live are treated as channels) may be on **any
+public host**, over `http` or `https`, a public IPv4 address included (not an IPv6 literal). The player then fetches that manifest and
 its variants, segments and keys, and follows their redirects, under the same rule.
 
 What it never allows:
@@ -373,10 +374,13 @@ What it never allows:
 - the home network: private, loopback, link-local and carrier-grade NAT addresses, IPv6 literals,
   `localhost` and local names (`.local`, `.lan`, …), and a public name that resolves into any of
   them (refused when the player connects);
+- other ports or schemes of a server the person typed: that server is reached exactly as typed,
+  never "any";
 - `kino.fetch`: your own requests still reach only your `hosts` and the person's servers;
 - the playlist and XMLTV downloads a `{ playlist }` declaration asks Kino to make: those URLs must
   still be on your `hosts` (or the person's server);
-- subtitles, audio tracks and a `drm` block's `licenseUrl`: still your `hosts` only;
+- subtitles, audio tracks and a `drm` block's `licenseUrl`: still your `hosts` only, and every
+  redirect they make is judged the same way;
 - movies and episodes: a non-live `Stream` is checked exactly as before;
 - images: the poster rule (https, never local) does not change.
 

@@ -197,8 +197,13 @@ class ManifestParserTest {
         val caps = JSONArray(listOf("home", "resolve", "channels"))
         val ok = (ManifestParser.parse(base().put("apiVersion", 3).put("capabilities", caps).put("liveStreamHosts", "any").toString()) as ManifestResult.Valid).manifest
         assertTrue(ok.liveStreamHostsAny)
-        val v2 = ManifestParser.parse(base().put("apiVersion", 2).put("liveStreamHosts", "any").toString()) as ManifestResult.Invalid
-        assertEquals("\"liveStreamHosts\" necesita apiVersion 3", v2.message)
+        // v1/v2 are byte-for-byte as before: an unknown field there is ignored, never refused nor honoured.
+        listOf<Any>("any", "all", true).forEach { v ->
+            listOf(1, 2).forEach { api ->
+                val old = (ManifestParser.parse(base().put("apiVersion", api).put("liveStreamHosts", v).toString()) as ManifestResult.Valid).manifest
+                assertEquals(false, old.liveStreamHostsAny)
+            }
+        }
         val noChannels = ManifestParser.parse(base().put("apiVersion", 3).put("liveStreamHosts", "any").toString()) as ManifestResult.Invalid
         assertEquals("\"liveStreamHosts\" necesita la capacidad \"channels\"", noChannels.message)
         val other = ManifestParser.parse(base().put("apiVersion", 3).put("capabilities", caps).put("liveStreamHosts", "all").toString()) as ManifestResult.Invalid

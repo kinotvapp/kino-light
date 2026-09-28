@@ -1,6 +1,7 @@
 package com.arkiv.player.data.plugin
 
 import okhttp3.Dns
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Response
@@ -27,6 +28,9 @@ object PluginStreamHttp {
      * approved or typed), never from plugin output. `allowInsecureLocalhost` and `delegateDns`
      * exist for MockWebServer tests only. [xuper] is non-null only for a stream of the one plugin
      * [XuperPrivilege.grants] (see [PluginHostGate.check]); null leaves the gate exactly as it was.
+     * [strictOrigins]: the side-loaded subtitle and audio URLs of a stream whose [hosts] are relaxed
+     * (`anyPublicLiveHost`): a request that starts at one of them is gated on EVERY hop with
+     * [EffectiveHosts.strict], since "any" never covers a subtitle or an audio track.
      */
     fun client(
         base: OkHttpClient,
@@ -34,11 +38,12 @@ object PluginStreamHttp {
         allowInsecureLocalhost: Boolean = false,
         delegateDns: Dns = Dns.SYSTEM,
         xuper: XuperStreams? = null,
+        strictOrigins: Collection<String> = emptySet(),
     ): OkHttpClient = base.newBuilder()
         .followRedirects(false)
         .followSslRedirects(false)
         .dns(PluginDns(allowLoopback = allowInsecureLocalhost, delegate = delegateDns, userHostNames = hosts.userHostNames))
-        .addInterceptor(PluginStreamGate(hosts, allowInsecureLocalhost, xuper))
+        .addInterceptor(PluginStreamGate(hosts, allowInsecureLocalhost, xuper, strictOrigins.mapNotNull { it.toHttpUrlOrNull()?.toString() }.toSet()))
         .build()
 }
 
@@ -47,14 +52,17 @@ class PluginStreamGate(
     private val hosts: EffectiveHosts,
     private val allowInsecureLocalhost: Boolean = false,
     private val xuper: XuperStreams? = null,
+    /** Canonical URLs (`HttpUrl.toString()`) whose whole redirect chain is gated with [EffectiveHosts.strict]. */
+    private val strictOrigins: Set<String> = emptySet(),
 ) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         var request = chain.request()
+        val gate = if (hosts.anyPublicLiveHost && request.url.toString() in strictOrigins) hosts.strict else hosts
         var previous: okhttp3.HttpUrl? = null
         repeat(MAX_REDIRECTS + 1) {
             val from = previous
-            if (from == null) PluginHostGate.check(request.url, hosts, allowInsecureLocalhost, xuper)
-            else PluginHostGate.checkRedirect(from, request.url, hosts, allowInsecureLocalhost, xuper)
+            if (from == null) PluginHostGate.check(request.url, gate, allowInsecureLocalhost, xuper)
+            else PluginHostGate.checkRedirect(from, request.url, gate, allowInsecureLocalhost, xuper)
             val response = chain.proceed(request)
             val location = response.header("Location")
             if (response.code !in REDIRECTS || location == null) return response

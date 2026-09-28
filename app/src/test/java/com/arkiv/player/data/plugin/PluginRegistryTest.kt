@@ -213,4 +213,15 @@ class PluginRegistryTest {
         install("pb", "B")
         assertEquals(registry.find("pb")!!.hosts, (registry.accessFor("pb") as PluginAccess.Ready).liveHosts)
     }
+
+    @Test fun `the player's stream hosts relax only for a LIVE ref of that same plugin`() {
+        install("pa", "A") { copy(hosts = listOf("api.example.com"), liveStreamHostsAny = true) }
+        val ready = registry.accessFor("pa") as PluginAccess.Ready
+        val live = PluginRef("pa", "c1", PluginRef.LIVE, "ch-1").encode()
+        assertEquals(ready.liveHosts, ready.streamHostsFor("pa", live))
+        assertTrue(ready.streamHostsFor("pa", live).anyPublicLiveHost)
+        // A movie ref played through a live episode id, another plugin's live ref, or garbage: strict.
+        listOf(PluginRef("pa", "m1", PluginRef.MOVIE, "m-1").encode(), PluginRef("pb", "c1", PluginRef.LIVE, "ch-1").encode(), "nope")
+            .forEach { assertEquals(it, ready.hosts, ready.streamHostsFor("pa", it)) }
+    }
 }

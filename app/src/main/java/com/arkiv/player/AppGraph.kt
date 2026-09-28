@@ -458,13 +458,16 @@ class AppGraph(context: Context) {
      * servers typed in its settings, carried in `PlayerData.pluginHosts`) on every request and
      * redirect hop. See PluginStreamHttp.
      *
+     * [strictOrigins]: the side-loaded subtitle/audio URLs, gated strictly on every hop when [hosts]
+     * are relaxed for a live channel (see PluginStreamHttp.client).
+     *
      * [xuper] (`PlayerData.pluginXuper`, from `PluginAccess.Ready.xuper`: [XuperPrivilege.grants] on
      * the installed record) hands the gate the SAME [xuperStreams] the bridge writes and
      * [PluginContentSource] reads -- never a second table, or a URL accepted at resolve time would
      * be refused at playback. False for every other plugin: the gate is then exactly as before.
      */
-    fun pluginStreamClient(hosts: EffectiveHosts, xuper: Boolean = false): okhttp3.OkHttpClient =
-        PluginStreamHttp.client(pluginBaseHttp, hosts, xuper = xuperStreams.takeIf { xuper })
+    fun pluginStreamClient(hosts: EffectiveHosts, xuper: Boolean = false, strictOrigins: Collection<String> = emptySet()): okhttp3.OkHttpClient =
+        PluginStreamHttp.client(pluginBaseHttp, hosts, xuper = xuperStreams.takeIf { xuper }, strictOrigins = strictOrigins)
 
     /** The live PluginHttp of each open runtime, so the pool can reset its per-call request budget. */
     private val pluginHttps = java.util.concurrent.ConcurrentHashMap<String, PluginHttp>()

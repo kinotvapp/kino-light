@@ -122,10 +122,10 @@ export function validateManifest(text, { knownPermissions = contract.permissions
     return bad("capabilities", `El plugin debe declarar "${contract.capabilities.atLeastOneOf.join('" o "')}"`);
   }
   let liveStreamHostsAny = false;
-  if (o.liveStreamHosts !== undefined) {
+  // Below its apiVersion the field is unknown and ignored like any other (v1/v2 stay as they were).
+  if (o.liveStreamHosts !== undefined && o.apiVersion >= m.liveStreamHosts.apiVersion) {
     const lsh = m.liveStreamHosts;
     if (o.liveStreamHosts !== lsh.value) return bad("liveStreamHosts", `El campo "liveStreamHosts" solo admite "${lsh.value}"`);
-    if (o.apiVersion < lsh.apiVersion) return bad("liveStreamHosts", `"liveStreamHosts" necesita apiVersion ${lsh.apiVersion}`);
     if (!caps.includes(lsh.requires)) return bad("liveStreamHosts", `"liveStreamHosts" necesita la capacidad "${lsh.requires}"`);
     liveStreamHostsAny = true;
   }

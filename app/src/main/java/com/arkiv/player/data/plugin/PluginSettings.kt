@@ -223,6 +223,9 @@ data class EffectiveHosts(
     /** A user host's NAME (not an IP literal): the DNS gate lets it resolve into the LAN. */
     val userHostNames: Set<String> get() = user.map { it.host }.filterNot { PluginHosts.isIpLiteral(it) }.toSet()
 
+    /** [host] (any case, trailing dot ignored) is the name of a server the person typed, on whatever port or scheme. */
+    fun isUserHostName(host: String): Boolean = host.lowercase().trimEnd('.') in userHostNames
+
     /** "Se conectará a: …": declared hosts, then the configured servers. */
     val labels: List<String> get() = declared.filterNot(PluginHosts::isReservedInvalid) + user.map { it.label }
 }
