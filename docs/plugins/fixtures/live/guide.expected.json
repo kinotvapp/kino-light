@@ -1,4 +1,5 @@
-{"truncated":false,
+{"query":{"from":"2026-09-27T00:00:00Z","to":"2026-09-28T00:00:00Z","wantedIds":["canal1.co","dep"]},
+ "truncated":false,
  "displayNames":{"canal1.co":["Canal Uno","Channel One"],"dep":["Deportes 24/7"]},
  "programmes":{
   "canal1.co":[
