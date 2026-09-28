@@ -110,6 +110,22 @@ class XmltvParserTest {
         assertTrue("took ${elapsedMs}ms, looks like it tried to fetch", elapsedMs < 5000)
     }
 
+    @Test fun `a DOCTYPE is a clean refusal, reported by the parser itself rather than read from an error message`() {
+        // Past the 8 KB head scan and with no entity, so only the parser's own doctype report can refuse it.
+        val padding = "<!-- ${"x".repeat(8300)} -->"
+        val xml = "<?xml version=\"1.0\"?>$padding<!DOCTYPE tv><tv><programme start=\"20260927120000 +0000\" stop=\"20260927130000 +0000\" channel=\"x\"><title>Hi</title></programme></tv>"
+        assertEquals(XmltvGuide(emptyMap(), emptyMap(), truncated = false), XmltvParser.parse(ByteArrayInputStream(xml.toByteArray()), from, to, wantedIds = null))
+    }
+
+    @Test fun `an unrelated parse error that mentions DOCTYPE keeps what was read, it is not a refusal`() {
+        // The parser's message names the element ("The element type "DOCTYPE" must be terminated…"):
+        // a broken tail, never a declared doctype.
+        val xml = "<tv><programme start=\"20260927120000 +0000\" stop=\"20260927130000 +0000\" channel=\"c\"><title>Uno</title></programme><DOCTYPE></tv>"
+        val g = XmltvParser.parse(ByteArrayInputStream(xml.toByteArray()), from, to, wantedIds = null)
+        assertEquals(listOf("Uno"), g.programmes.getValue("c").map { it.title })
+        assertTrue(g.truncated)
+    }
+
     @Test fun `a parameter entity declaring guide is refused too`() {
         val xml = "<?xml version=\"1.0\"?><!DOCTYPE tv [<!ENTITY % p SYSTEM \"http://192.0.2.1/x.dtd\"> %p; ]><tv><programme start=\"20260927120000 +0000\" stop=\"20260927130000 +0000\" channel=\"x\"><title>Hi</title></programme></tv>"
         val g = XmltvParser.parse(ByteArrayInputStream(xml.toByteArray()), from, to, wantedIds = null)

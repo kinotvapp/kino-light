@@ -45,10 +45,12 @@ data class XmltvGuide(val displayNames: Map<String, List<String>>, val programme
  * 8 KB with comments) or of whether the entity is internal, external or a parameter entity
  * (billion-laughs needs none of those to be external): a [LexicalHandler] whose `startDTD` fires,
  * and throws, the moment the parser itself reports a doctype -- before it can fetch an external
- * subset or expand anything. `resolveEntity` is also overridden to hand back nothing, and on the
- * JVM `disallow-doctype-decl` plus secure processing are set too. Every feature toggle is wrapped
- * in `runCatching`: Android's Expat-backed parser doesn't recognise all of them, but it does
- * dispatch to the [LexicalHandler], which is what actually holds there.
+ * subset or expand anything. `resolveEntity` is also overridden to hand back nothing, and secure
+ * processing is set. A refusal is only ever that `startDTD` signal, never an error message read for
+ * the word "DOCTYPE": a parser that won't take the [LexicalHandler] gets `disallow-doctype-decl`
+ * instead, and a doctype there is its own fatal error (an empty, truncated guide). Every feature
+ * toggle is wrapped in `runCatching`: Android's Expat-backed parser doesn't recognise all of them,
+ * but it does dispatch to the [LexicalHandler], which is what actually holds there.
  *
  * The kit's `sdk` mirrors these same rules, both pinned to `docs/plugins/fixtures/live`.
  *
@@ -259,37 +261,39 @@ object XmltvParser {
             // declared is decoded as it streams (see the class KDoc). The bytes as they are otherwise.
             val source = sourceOf(buffered, maxBytes)
 
-            val parser = javax.xml.parsers.SAXParserFactory.newInstance().let { factory ->
-                listOf(
-                    "http://xml.org/sax/features/external-general-entities" to false,
-                    "http://xml.org/sax/features/external-parameter-entities" to false,
-                    "http://apache.org/xml/features/nonvalidating/load-external-dtd" to false,
-                    "http://apache.org/xml/features/disallow-doctype-decl" to true,
-                ).forEach { (feature, value) -> runCatching { factory.setFeature(feature, value) } }
-                runCatching { factory.setFeature(javax.xml.XMLConstants.FEATURE_SECURE_PROCESSING, true) }
-                factory.newSAXParser()
-            }
-            runCatching { parser.xmlReader.setProperty(LEXICAL_HANDLER_PROPERTY, handler) }
+            // The doctype refusal is the lexical handler's startDTD (a structural signal, never an error
+            // message). Only a parser that won't take the handler gets `disallow-doctype-decl` instead:
+            // there a doctype is its own fatal error, so it reads as a cut guide with nothing in it.
+            val parser = saxParser(disallowDoctype = false).takeIf { p ->
+                runCatching { p.xmlReader.setProperty(LEXICAL_HANDLER_PROPERTY, handler) }.isSuccess
+            } ?: saxParser(disallowDoctype = true)
             parser.parse(source, handler)
         } catch (e: Refused) {
             refused = true
         } catch (e: Stop) {
             truncated = true
         } catch (e: SAXException) {
-            when {
-                e.exception is Refused || e.cause is Refused -> refused = true
-                // Some parsers (Xerces included, with disallow-doctype-decl) refuse a doctype
-                // with their own fatal error instead of ever reaching startDTD.
-                e.message?.contains("DOCTYPE", ignoreCase = true) == true -> refused = true
-                e.exception is Stop || e.cause is Stop -> truncated = true
-                else -> truncated = true // a broken tail: keep what parsed, but say so
-            }
+            // Only our own startDTD signal is a refusal; any other error (even one whose message
+            // names an element "DOCTYPE") is a broken tail: keep what parsed, but say so.
+            if (e.exception is Refused || e.cause is Refused) refused = true else truncated = true
         } catch (e: IOException) {
             truncated = true // a truncated or corrupt (gzip) read: same idea, one layer down
         }
 
         if (refused) return XmltvGuide(emptyMap(), emptyMap())
         return XmltvGuide(names, progs.mapValues { (_, m) -> m.values.toList() }, truncated)
+    }
+
+    private fun saxParser(disallowDoctype: Boolean): javax.xml.parsers.SAXParser {
+        val factory = javax.xml.parsers.SAXParserFactory.newInstance()
+        listOf(
+            "http://xml.org/sax/features/external-general-entities" to false,
+            "http://xml.org/sax/features/external-parameter-entities" to false,
+            "http://apache.org/xml/features/nonvalidating/load-external-dtd" to false,
+        ).forEach { (feature, value) -> runCatching { factory.setFeature(feature, value) } }
+        if (disallowDoctype) runCatching { factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true) }
+        runCatching { factory.setFeature(javax.xml.XMLConstants.FEATURE_SECURE_PROCESSING, true) }
+        return factory.newSAXParser()
     }
 
     /**
