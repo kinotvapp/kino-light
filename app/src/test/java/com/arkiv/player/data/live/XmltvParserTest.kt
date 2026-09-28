@@ -188,4 +188,63 @@ class XmltvParserTest {
         val g = XmltvParser.parse(ByteArrayInputStream(original), from, to, wantedIds = null, maxBytes = cap)
         assertTrue(g.truncated)
     }
+
+    // --- Final fix pass: a non-native encoding streams, never materialised ---------------------
+
+    /** [prologue], then [chunk] over and over up to [size] bytes, then `</tv>`, all in windows-1252, made as read. */
+    private class GuideStream(prologue: String, chunk: String, private val size: Long) : java.io.InputStream() {
+        private val head = prologue.toByteArray(charset("windows-1252"))
+        private val body = chunk.toByteArray(charset("windows-1252"))
+        private val tail = "</tv>".toByteArray(Charsets.US_ASCII)
+        var pulled = 0L
+            private set
+        private var bodyPos = 0
+        private var done = false
+        private var tailPos = 0
+
+        override fun read(): Int {
+            val one = ByteArray(1)
+            return if (read(one, 0, 1) < 0) -1 else one[0].toInt() and 0xFF
+        }
+
+        override fun read(b: ByteArray, off: Int, len: Int): Int {
+            if (len == 0) return 0
+            var n = 0
+            while (n < len) {
+                val byte = when {
+                    pulled < head.size -> head[pulled.toInt()]
+                    !done -> body[bodyPos].also { bodyPos = (bodyPos + 1) % body.size; if (bodyPos == 0 && pulled + body.size >= size) done = true }
+                    tailPos < tail.size -> tail[tailPos++]
+                    else -> break
+                }
+                b[off + n++] = byte
+                pulled++
+            }
+            return if (n == 0) -1 else n
+        }
+    }
+
+    private val w1252Prologue = "<?xml version=\"1.0\" encoding=\"windows-1252\"?><tv>"
+    private val w1252Programme = "<programme start=\"20260927120000 +0000\" stop=\"20260927130000 +0000\" channel=\"c\"><title>Niñez “en vivo”</title></programme>"
+
+    @Test fun `a windows-1252 guide is parsed as it streams, never read whole first`() {
+        val source = GuideStream(w1252Prologue, w1252Programme, size = 40L * 1024 * 1024)
+        // Stop at the first deadline check (after 500 elements): only what the parser needed so far may have been read.
+        val g = XmltvParser.parse(source, from, to, wantedIds = null, maxBytes = 64L * 1024 * 1024, deadline = { true })
+        assertTrue(g.truncated)
+        assertTrue("read ${source.pulled} bytes of a 40 MB guide before the first element batch", source.pulled < 1024 * 1024)
+    }
+
+    @Test fun `a windows-1252 guide read as characters still refuses a DOCTYPE past the head scan`() {
+        val xml = w1252Prologue.removeSuffix("<tv>") + "<!-- ${"x".repeat(9000)} --><!DOCTYPE tv [<!ENTITY s \"LEAKED\">]><tv>" +
+            w1252Programme.replace("Niñez", "&s;") + "</tv>"
+        val g = XmltvParser.parse(ByteArrayInputStream(xml.toByteArray(charset("windows-1252"))), from, to, wantedIds = null)
+        assertEquals(XmltvGuide(emptyMap(), emptyMap(), truncated = false), g)
+    }
+
+    @Test fun `a windows-1252 guide over the byte cap keeps what it read`() {
+        val g = XmltvParser.parse(GuideStream(w1252Prologue, w1252Programme, size = 2L * 1024 * 1024), from, to, wantedIds = null, maxBytes = 256L * 1024)
+        assertTrue(g.truncated)
+        assertEquals("Niñez “en vivo”", g.programmes.getValue("c").first().title)
+    }
 }

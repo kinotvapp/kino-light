@@ -5,6 +5,8 @@ import java.io.BufferedInputStream
 import java.io.ByteArrayInputStream
 import java.io.IOException
 import java.io.InputStream
+import java.io.InputStreamReader
+import java.io.Reader
 import java.io.StringReader
 import java.time.LocalDateTime
 import java.time.ZoneOffset
@@ -54,11 +56,13 @@ data class XmltvGuide(val displayNames: Map<String, List<String>>, val programme
  * ISO-8859-1 and US-ASCII natively. A guide declaring anything else (`windows-1252` is common in
  * Latin-American XMLTV) is sniffed (BOM first, then the `encoding="..."` in the XML declaration,
  * both read from the same head bytes) and, when it names something Expat can't read itself,
- * transcoded up front with a `java.nio.charset.Charset` into a fresh UTF-8 stream with the
- * declaration rewritten to match -- re-capped at the same [PluginLiveContract.MAX_EPG_BYTES], so
- * the byte cap and the doctype refusal both still apply to what the parser actually reads. An
- * unrecognised charset name falls back to ISO-8859-1 (never a failure) rather than handing Expat
- * a declaration it can't honour.
+ * handed to the parser as a CHARACTER stream decoded as it is read by a `java.nio.charset.Charset`
+ * reader. A character stream is authoritative over the `encoding=` declaration in both Xerces and
+ * Android's ExpatReader (which feeds Expat UTF-16 it created the parser for), so nothing is
+ * rewritten and nothing is ever held whole: a 50 MB guide streams exactly like a UTF-8 one. The
+ * byte cap still applies to the raw bytes and, counted as UTF-8, to the characters the parser
+ * reads; the doctype refusal is the same handler either way. An unrecognised charset name falls
+ * back to ISO-8859-1 (never a failure) rather than handing Expat a declaration it can't honour.
  */
 object XmltvParser {
     private val TIME = Regex("""^(\d{14}|\d{12})\s*([+-]\d{4})?""")
@@ -127,7 +131,7 @@ object XmltvParser {
         maxPerChannel: Int = PluginLiveContract.MAX_GUIDE_ENTRIES_PER_CHANNEL,
         deadline: () -> Boolean = { false },
     ): XmltvGuide {
-        var buffered = BufferedInputStream(CappedInput(input, maxBytes), 64 * 1024)
+        val buffered = BufferedInputStream(CappedInput(input, maxBytes), 64 * 1024)
 
         val names = LinkedHashMap<String, List<String>>()
         val wanted = HashMap<String, Boolean>()
@@ -245,16 +249,15 @@ object XmltvParser {
         }
 
         try {
-            // Expat (Android) only reads UTF-8/UTF-16/ISO-8859-1/US-ASCII itself; anything else
-            // declared is transcoded up front into a fresh, re-capped UTF-8 stream (see the class
-            // KDoc). A no-op on the common case (no declaration, or one of those four already).
-            buffered = prepareEncoding(buffered, maxBytes)
-
             // A fast path only: most guides never declare a doctype, and this skips building
             // the SAX parser for them. It is not the defence (see the class KDoc) -- moved
             // inside this try (a truncated read here is as valid a "keep what was read" case as
             // one hit mid-parse) rather than left ahead of it where it used to throw uncaught.
             if (declaresEntity(buffered)) throw Refused()
+
+            // Expat (Android) only reads UTF-8/UTF-16/ISO-8859-1/US-ASCII itself; anything else
+            // declared is decoded as it streams (see the class KDoc). The bytes as they are otherwise.
+            val source = sourceOf(buffered, maxBytes)
 
             val parser = javax.xml.parsers.SAXParserFactory.newInstance().let { factory ->
                 listOf(
@@ -267,7 +270,7 @@ object XmltvParser {
                 factory.newSAXParser()
             }
             runCatching { parser.xmlReader.setProperty(LEXICAL_HANDLER_PROPERTY, handler) }
-            parser.parse(InputSource(buffered), handler)
+            parser.parse(source, handler)
         } catch (e: Refused) {
             refused = true
         } catch (e: Stop) {
@@ -290,11 +293,12 @@ object XmltvParser {
     }
 
     /**
-     * Transcodes to UTF-8, re-capped, when the declared encoding is one Expat can't read itself.
-     * A no-op (the same [buffered], untouched) whenever nothing was declared, or a BOM or the XML
-     * declaration names UTF-8, UTF-16 (either byte order) or ISO-8859-1/US-ASCII already.
+     * The parser's input: [buffered] itself whenever nothing was declared, or a BOM or the XML
+     * declaration names UTF-8, UTF-16 (either byte order) or ISO-8859-1/US-ASCII; else a character
+     * stream decoding it with the declared charset as the parser reads, never materialised, its
+     * characters capped at [maxBytes] counted as UTF-8 (on top of [buffered]'s own byte cap).
      */
-    private fun prepareEncoding(buffered: BufferedInputStream, maxBytes: Long): BufferedInputStream {
+    private fun sourceOf(buffered: BufferedInputStream, maxBytes: Long): InputSource {
         buffered.mark(HEAD_SCAN_BYTES)
         val head = ByteArray(HEAD_SCAN_BYTES)
         var read = 0
@@ -305,14 +309,11 @@ object XmltvParser {
         }
         buffered.reset()
 
-        val declared = sniffEncoding(head, read) ?: return buffered
-        if (declared.lowercase() in NATIVE_ENCODINGS) return buffered
+        val declared = sniffEncoding(head, read) ?: return InputSource(buffered)
+        if (declared.lowercase() in NATIVE_ENCODINGS) return InputSource(buffered)
 
         val charset = runCatching { java.nio.charset.Charset.forName(declared) }.getOrElse { Charsets.ISO_8859_1 }
-        val text = String(buffered.readBytes(), charset) // bounded already: buffered wraps a CappedInput
-        val rewritten = ENCODING_DECL.replace(text) { "encoding=\"UTF-8\"" }
-        val utf8Bytes = rewritten.toByteArray(Charsets.UTF_8)
-        return BufferedInputStream(CappedInput(ByteArrayInputStream(utf8Bytes), maxBytes), 64 * 1024)
+        return InputSource(CappedReader(InputStreamReader(buffered, charset), maxBytes))
     }
 
     /** A BOM first (authoritative when present), else the `encoding="..."` the XML declaration names. */
@@ -359,6 +360,27 @@ object XmltvParser {
             if (n > 0) { count += n; if (count > max) throw Stop() }
             return n
         }
+    }
+
+    /** Counts decoded characters as their UTF-8 size; throws [Stop] once past [max]. */
+    private class CappedReader(private val inner: Reader, private val max: Long) : Reader() {
+        private var count = 0L
+
+        override fun read(buf: CharArray, off: Int, len: Int): Int {
+            val n = inner.read(buf, off, len)
+            for (i in off until off + maxOf(n, 0)) {
+                val c = buf[i].code
+                count += when {
+                    c < 0x80 -> 1
+                    c < 0x800 || Character.isSurrogate(buf[i]) -> 2
+                    else -> 3
+                }
+            }
+            if (count > max) throw Stop()
+            return n
+        }
+
+        override fun close() = inner.close()
     }
 
     /** A silent, stackless signal that a cap was hit: unwinds the SAX parse, keeping what was read. */
