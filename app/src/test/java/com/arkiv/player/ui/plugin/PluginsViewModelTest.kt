@@ -19,6 +19,10 @@ import com.arkiv.player.data.plugin.catalog.CatalogOrigin
 import com.arkiv.player.data.plugin.catalog.CatalogProvider
 import com.arkiv.player.data.plugin.catalog.CatalogResult
 import com.arkiv.player.data.plugin.catalog.PluginCatalog
+import com.arkiv.player.data.plugin.discovery.DiscoveredPlugin
+import com.arkiv.player.data.plugin.discovery.DiscoveryOrigin
+import com.arkiv.player.data.plugin.discovery.DiscoveryResult
+import com.arkiv.player.data.plugin.discovery.PluginDiscoveryProvider
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
@@ -45,6 +49,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.io.IOException
 import java.util.concurrent.Executors
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -1107,5 +1112,98 @@ class PluginsViewModelTest {
         val plain = PluginsViewModel(FakeAdmin(), io = dispatcher)
         assertTrue(plain.catalog.value.rows.isEmpty())
         assertTrue(plain.art.value.isEmpty())
+    }
+
+    private class FakeDiscovery(
+        private val onDisk: DiscoveryResult = DiscoveryResult.NONE,
+        private val download: suspend (force: Boolean) -> DiscoveryResult,
+    ) : PluginDiscoveryProvider {
+        val forceFlags = mutableListOf<Boolean>()
+        override fun cached(): DiscoveryResult = onDisk
+        override suspend fun load(force: Boolean): DiscoveryResult { forceFlags += force; return download(force) }
+    }
+
+    private val xuper = DiscoveredPlugin("kinotvapp", "kino-plugin-xuper", "xuper", "Xuper", "Películas y series", 5)
+
+    @Test fun `community plugins come after the catalog, marked, deduped and marked installed`() {
+        val archive = entry("internet-archive", "kinotvapp/kino-plugin-archive")
+        val found = listOf(
+            DiscoveredPlugin("KinoTvApp", "Kino-Plugin-Archive", "archive-org", "Internet Archive", "", 9),
+            xuper,
+            DiscoveredPlugin("o", "r", "demo", "Demo", "", 1),
+        )
+        val admin = FakeAdmin().apply { plugins.value = listOf(installedPlugin) }
+        val vm = PluginsViewModel(admin, io = dispatcher, catalogProvider = FakeCatalog(archive), discovery = FakeDiscovery { DiscoveryResult(found, DiscoveryOrigin.FRESH) })
+        val rows = vm.community.value.rows
+        assertEquals(listOf("kinotvapp/kino-plugin-xuper", "o/r"), rows.map { it.entry.repo })
+        assertTrue(rows.all { it.community })
+        assertNull(rows[0].installed)
+        assertEquals(installedPlugin, rows[1].installed)
+        assertEquals(listOf(listOf("por kinotvapp"), listOf("por o")), rows.map { it.entry.tags })
+        assertFalse(vm.community.value.loading)
+        assertFalse(vm.catalog.value.rows.any { it.community })
+    }
+
+    @Test fun `installing a community plugin goes through the same preview and consent`() {
+        val admin = FakeAdmin().apply { previewResult = { preview } }
+        val vm = PluginsViewModel(admin, io = dispatcher, discovery = FakeDiscovery { DiscoveryResult(listOf(xuper), DiscoveryOrigin.FRESH) })
+        vm.installFromCatalog(vm.community.value.rows.single().entry)
+        assertEquals(listOf("kinotvapp/kino-plugin-xuper"), admin.previewed)
+        assertEquals(preview, vm.state.value.consent)
+        assertTrue(admin.installed.isEmpty())
+    }
+
+    @Test fun `opening searches when due, Actualizar forces a search`() {
+        val discovery = FakeDiscovery { DiscoveryResult.NONE }
+        val vm = PluginsViewModel(FakeAdmin(), io = dispatcher, discovery = discovery)
+        vm.refreshCommunity()
+        assertEquals(listOf(false, true), discovery.forceFlags)
+    }
+
+    @Test fun `a discovery that throws leaves the catalog alone and ends its own loading`() {
+        val vm = PluginsViewModel(
+            FakeAdmin(), io = dispatcher, catalogProvider = FakeCatalog(entry("a", "o/a")),
+            discovery = FakeDiscovery { throw IOException("offline") },
+        )
+        assertEquals(listOf("o/a"), vm.catalog.value.rows.map { it.entry.repo })
+        with(vm.community.value) {
+            assertFalse(loading)
+            assertFalse(refreshing)
+            assertTrue(rows.isEmpty())
+        }
+    }
+
+    @Test fun `the disk copy of the community list is there from the first frame while the search runs`() {
+        val gate = CompletableDeferred<DiscoveryResult>()
+        val vm = PluginsViewModel(
+            FakeAdmin(), io = dispatcher,
+            discovery = FakeDiscovery(DiscoveryResult(listOf(xuper), DiscoveryOrigin.CACHE)) { gate.await() },
+        )
+        assertEquals(listOf("kinotvapp/kino-plugin-xuper"), vm.community.value.rows.map { it.entry.repo })
+        assertFalse(vm.community.value.loading)
+        assertTrue(vm.community.value.refreshing)
+        gate.complete(DiscoveryResult.NONE)
+    }
+
+    @Test fun `the search box filters community rows too`() {
+        val vm = PluginsViewModel(FakeAdmin(), io = dispatcher, discovery = FakeDiscovery { DiscoveryResult(listOf(xuper), DiscoveryOrigin.FRESH) })
+        vm.onQueryChange("zzz")
+        assertTrue(vm.community.value.rows.isEmpty())
+        vm.onQueryChange("xup")
+        assertEquals(1, vm.community.value.rows.size)
+    }
+
+    @Test fun `community rows get their art requested like catalog rows`() {
+        val asked = mutableListOf<String>()
+        val art = object : CatalogArtProvider {
+            override fun cached(repo: String): CatalogArt? = null
+            override suspend fun refresh(repo: String): CatalogArt? { asked += repo; return null }
+            override fun retryFailed() = Unit
+        }
+        PluginsViewModel(
+            FakeAdmin(), io = dispatcher, catalogProvider = FakeCatalog(entry("a", "o/a")), artProvider = art,
+            discovery = FakeDiscovery { DiscoveryResult(listOf(xuper), DiscoveryOrigin.FRESH) },
+        )
+        assertTrue("o/a" in asked && "kinotvapp/kino-plugin-xuper" in asked)
     }
 }

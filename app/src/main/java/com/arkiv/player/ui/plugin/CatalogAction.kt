@@ -38,3 +38,17 @@ fun catalogActionOf(row: CatalogRow): CatalogAction {
  * goes first; every other row keeps the order the catalog gave it (the sort is stable).
  */
 fun legacyFirst(rows: List<CatalogRow>): List<CatalogRow> = rows.sortedByDescending { it.entry.legacyDefault }
+
+/**
+ * What a recommended or community card's action does: the action [catalogActionOf] says fits its state.
+ * An installed plugin that needs nothing does nothing. Phone, TV and the source picker share it.
+ */
+internal fun runCatalogAction(vm: PluginsViewModel, row: CatalogRow) {
+    val installed = row.installed
+    when (catalogActionOf(row)) {
+        CatalogAction.INSTALL -> vm.installFromCatalog(row.entry)
+        CatalogAction.CONFIGURE -> installed?.let { vm.openSettings(it.id) }
+        CatalogAction.ENABLE -> installed?.let { vm.setEnabled(it.id, true) }
+        CatalogAction.INSTALLED -> Unit
+    }
+}

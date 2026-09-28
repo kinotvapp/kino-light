@@ -2,16 +2,6 @@
   "schema": 1,
   "plugins": [
     {
-      "id": "xuper",
-      "repo": "kinotvapp/kino-plugin-xuper",
-      "name": "Xuper",
-      "description": "Películas y series. Lo que ya usabas en Kino.",
-      "tags": ["películas", "series"],
-      "legacyDefault": true,
-      "bundled": true,
-      "requires": ["xuper-bridge"]
-    },
-    {
       "id": "internet-archive",
       "repo": "kinotvapp/kino-plugin-archive",
       "name": "Internet Archive",

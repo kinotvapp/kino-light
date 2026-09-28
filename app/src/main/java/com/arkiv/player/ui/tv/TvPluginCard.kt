@@ -48,6 +48,7 @@ import com.arkiv.player.ui.plugin.CatalogRow
 import com.arkiv.player.ui.plugin.cardActionLabel
 import com.arkiv.player.ui.plugin.cardDescriptionLines
 import com.arkiv.player.ui.plugin.cardInitial
+import com.arkiv.player.ui.plugin.cardPill
 import com.arkiv.player.ui.plugin.cardStatusLabel
 import com.arkiv.player.ui.plugin.catalogActionOf
 import com.arkiv.player.ui.plugin.onTileColor
@@ -105,7 +106,7 @@ fun TvPluginCard(
         ),
     ) {
         Column(Modifier.clearAndSetSemantics { }) {
-            CardTile(name = entry.name, iconFile = art?.iconFile, tileColorArgb = tileColor(art), legacyDefault = entry.legacyDefault)
+            CardTile(name = entry.name, iconFile = art?.iconFile, tileColorArgb = tileColor(art), pill = cardPill(row))
             CardTexts(
                 name = entry.name,
                 description = entry.description,
@@ -122,18 +123,18 @@ fun TvPluginCard(
  * only checks that the file starts with the PNG signature, so a corrupt file reaches Coil, which reports
  * an error and the initial takes its place. The tile is never left blank.
  *
- * The "Lo que ya usabas" pill takes a row of its own at the top of the tile and the icon (or the initial)
+ * The pill ([cardPill]: "Lo que ya usabas" or "De la comunidad") takes a row of its own at the top of the tile and the icon (or the initial)
  * is centred in what is left, shrunk to fit it ([tileArtSize]) instead of running under the pill. Without
  * the pill the art has the whole tile. The pill is one line with an ellipsis, so a big font shortens it
  * instead of growing the tile out of 16:9.
  *
  * Internal, not private: [TvInstalledPluginCard] (the Instalados tab) draws the very same tile for an
- * installed plugin, never with [legacyDefault] (that pill is a Recomendados-only thing); it passes
+ * installed plugin, never with a [pill] (pills are a Recomendados-only thing); it passes
  * [iconFile] and [tileColorArgb] straight from its own model ([com.arkiv.player.ui.plugin.installedCardModel])
  * instead of a catalog [CatalogArt], so its own icon and colour (not just the catalog's) can win.
  */
 @Composable
-internal fun CardTile(name: String, iconFile: File?, tileColorArgb: Long, legacyDefault: Boolean) {
+internal fun CardTile(name: String, iconFile: File?, tileColorArgb: Long, pill: String?) {
     val tile = tileColorArgb
     var iconFailed by remember(iconFile) { mutableStateOf(false) }
     Column(
@@ -143,9 +144,9 @@ internal fun CardTile(name: String, iconFile: File?, tileColorArgb: Long, legacy
             .clip(RoundedCornerShape(topStart = CARD_CORNER, topEnd = CARD_CORNER))
             .background(Color(tile)),
     ) {
-        if (legacyDefault) {
+        if (pill != null) {
             Text(
-                text = "Lo que ya usabas",
+                text = pill,
                 style = MaterialTheme.typography.labelLarge,
                 color = Color.White,
                 maxLines = 1,

@@ -17,6 +17,11 @@ import com.arkiv.player.data.plugin.catalog.CatalogResult
 import com.arkiv.player.data.plugin.catalog.PluginCatalog
 import com.arkiv.player.data.plugin.catalog.PluginCatalogParser
 import com.arkiv.player.data.plugin.catalog.filterCatalog
+import com.arkiv.player.data.plugin.discovery.DiscoveredPlugin
+import com.arkiv.player.data.plugin.discovery.DiscoveryResult
+import com.arkiv.player.data.plugin.discovery.PluginDiscoveryProvider
+import com.arkiv.player.data.plugin.discovery.dedupeDiscovered
+import com.arkiv.player.data.plugin.discovery.ownerRepoKey
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -56,8 +61,11 @@ data class PluginsUiState(
     val query: String = "",
 )
 
-/** One catalog entry as the list shows it: [installed] is the plugin already installed from that repo, or null. */
-data class CatalogRow(val entry: CatalogEntry, val installed: InstalledPlugin?)
+/**
+ * One catalog entry as the list shows it: [installed] is the plugin already installed from that repo, or null.
+ * [community]: found by the GitHub search (`De la comunidad`), not in the catalog.
+ */
+data class CatalogRow(val entry: CatalogEntry, val installed: InstalledPlugin?, val community: Boolean = false)
 
 /**
  * What the recommended list shows. The rows are there from the first frame (the disk copy: the last good
@@ -76,6 +84,54 @@ data class CatalogUiState(
      * The screens do not read it.
      */
     val failures: Map<String, String> = emptyMap(),
+)
+
+/**
+ * What "De la comunidad" shows: plugins found by the GitHub search, as ordinary [CatalogRow]s
+ * ([CatalogRow.community] set) so the same cards, consent and install serve them. [loading] only while
+ * there is nothing at all to show and a search is pending; [refreshing] for the whole of any load.
+ */
+data class CommunityUiState(
+    val loading: Boolean = true,
+    val refreshing: Boolean = false,
+    val rows: List<CatalogRow> = emptyList(),
+)
+
+/** The default discovery: knows nothing and never searches, for the screens that show no community list. */
+internal object NoDiscovery : PluginDiscoveryProvider {
+    override fun cached(): DiscoveryResult = DiscoveryResult.NONE
+    override suspend fun load(force: Boolean): DiscoveryResult = DiscoveryResult.NONE
+}
+
+/**
+ * [discovered] as rows (ruling R5 via [dedupeDiscovered]): after dropping what the catalog already lists
+ * and what cannot be installed, filtered by [query] like the catalog, each marked with the installed
+ * plugin from the same `owner/repo` (any spelling). The card's one tag names the author.
+ */
+internal fun communityRows(
+    discovered: List<DiscoveredPlugin>,
+    catalog: List<CatalogEntry>,
+    installed: List<InstalledPlugin>,
+    query: String,
+): List<CatalogRow> {
+    val entries = dedupeDiscovered(discovered, catalog.map { it.repo }, installed).map { d ->
+        CatalogEntry(id = d.id, repo = d.address, name = d.name, description = d.description, tags = listOf("por ${d.owner}"))
+    }
+    return filterCatalog(entries, query).map { e ->
+        CatalogRow(e, installed.firstOrNull { ownerRepoKey(it.record.address) == e.repo.lowercase() }, community = true)
+    }
+}
+
+internal fun communityUiState(
+    result: DiscoveryResult,
+    refreshing: Boolean,
+    catalog: List<CatalogEntry>,
+    query: String,
+    installed: List<InstalledPlugin>,
+): CommunityUiState = CommunityUiState(
+    loading = refreshing && result.plugins.isEmpty(),
+    refreshing = refreshing,
+    rows = communityRows(result.plugins, catalog, installed, query),
 )
 
 /** What the seed line of the screen says and does; the phone and the TV screen both draw it. */
@@ -147,6 +203,8 @@ private fun catalogUiState(result: CatalogResult, refreshing: Boolean, query: St
  * [artProvider] is the art each listed row's own repo ships ([art]); the default knows none and makes
  * no calls, so only the screens that draw cards pay for it. Its refreshes run on [io]: the real
  * repository reads and parses files on the thread that calls it.
+ *
+ * [discovery] is the GitHub community list ([community]); the default knows none and never searches.
  */
 class PluginsViewModel(
     private val admin: PluginAdmin,
@@ -156,6 +214,7 @@ class PluginsViewModel(
         override fun cachedOrSeed() = EMPTY_SEED
     },
     private val artProvider: CatalogArtProvider = NoCatalogArt,
+    private val discovery: PluginDiscoveryProvider = NoDiscovery,
 ) : ViewModel() {
     val plugins: StateFlow<List<InstalledPlugin>> = admin.plugins
 
@@ -181,9 +240,23 @@ class PluginsViewModel(
             catalogUiState(loaded.value, refreshing.value, query.value, admin.plugins.value),
         )
 
+    private val discovered = MutableStateFlow(diskDiscovery())
+    private val discovering = MutableStateFlow(true)
+    private var communityLoad: Job? = null
+
+    /** "De la comunidad": the discovered plugins as rows, deduped against the catalog and the installed ones. */
+    val community: StateFlow<CommunityUiState> =
+        combine(discovered, discovering, loaded, query, admin.plugins) { result, isLoading, cat, q, installed ->
+            communityUiState(result, isLoading, cat.catalog.entries, q, installed)
+        }.stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            communityUiState(discovered.value, discovering.value, loaded.value.catalog.entries, query.value, admin.plugins.value),
+        )
+
     // What is on disk for the rows listed at construction, read here on the calling thread (a handful of
     // tiny files, like [diskCatalog]) so the very first [art] value already has it.
-    private val _art = MutableStateFlow(diskArt(catalog.value.rows.map { it.entry.repo }))
+    private val _art = MutableStateFlow(diskArt((catalog.value.rows + community.value.rows).map { it.entry.repo }))
 
     /**
      * The art of the listed rows, keyed by the entry's `repo` exactly as in the catalog. A repo with no art
@@ -201,10 +274,11 @@ class PluginsViewModel(
 
     init {
         loadCatalog(force = false)
+        loadCommunity(force = false)
         // Follows the rows as they are listed (the search filter, a reload, the download replacing the
         // disk copy), so a row that shows up later gets its art too.
         viewModelScope.launch {
-            catalog.map { state -> state.rows.map { it.entry.repo } }.distinctUntilChanged().collect { requestArt(it) }
+            combine(catalog, community) { c, m -> (c.rows + m.rows).map { it.entry.repo } }.distinctUntilChanged().collect { requestArt(it) }
         }
     }
 
@@ -220,6 +294,39 @@ class PluginsViewModel(
     fun reloadCatalog() {
         retryArt()
         loadCatalog(force = true)
+    }
+
+    /** "Actualizar" of "De la comunidad": asks for a new search (the discovery client decides whether GitHub may be asked) and retries the missing art. */
+    fun refreshCommunity() {
+        retryArt()
+        loadCommunity(force = true)
+    }
+
+    private fun diskDiscovery(): DiscoveryResult =
+        try {
+            discovery.cached()
+        } catch (e: Exception) {
+            DiscoveryResult.NONE
+        }
+
+    /**
+     * One load at a time: while one runs, another request is ignored (the screens disable "Actualizar"
+     * meanwhile). GitHub never breaks the screen: a failure keeps what is shown.
+     */
+    private fun loadCommunity(force: Boolean) {
+        if (communityLoad?.isActive == true) return
+        discovering.value = true
+        communityLoad = viewModelScope.launch {
+            try {
+                discovered.value = withContext(io) { discovery.load(force) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Keep what is on screen.
+            } finally {
+                discovering.value = false
+            }
+        }
     }
 
     /**
@@ -287,7 +394,7 @@ class PluginsViewModel(
         }
         val withArt = _art.value
         artRequests.entries.removeAll { (repo, request) -> !request.isActive && repo !in withArt }
-        requestArt(catalog.value.rows.map { it.entry.repo })
+        requestArt((catalog.value.rows + community.value.rows).map { it.entry.repo })
     }
 
     /**

@@ -621,6 +621,26 @@ class AppGraph(context: Context) {
         )
     }
 
+    /**
+     * Community plugins found on GitHub (topic `kino-plugin`) for Recomendados and "Elige tus fuentes".
+     * ONE instance: its single-flight lock and its minute spacing live in it. The search goes through
+     * its own gated client (see GithubApi); manifests through the installer's host, never
+     * [debugPluginFetcher]. Its folder is outside `plugins/`, so it cannot collide with a plugin's id.
+     */
+    val pluginDiscovery: com.arkiv.player.data.plugin.discovery.PluginDiscoveryProvider by lazy {
+        com.arkiv.player.data.plugin.discovery.PluginDiscovery(
+            transport = com.arkiv.player.data.plugin.discovery.OkHttpGithubTransport(
+                okhttp3.OkHttpClient.Builder()
+                    .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                    .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+                    .build(),
+                userAgent = "Kino/${BuildConfig.VERSION_NAME}",
+            ),
+            fetcher = RawGithubFetcher(pluginBaseHttp),
+            cacheFile = java.io.File(appContext.filesDir, "plugin-discovery/discovery.json"),
+        )
+    }
+
     val pluginAdmin: PluginAdmin by lazy {
         DefaultPluginAdmin(
             pluginRegistry, pluginInstaller, pluginRuntimes, pluginConfigStore,

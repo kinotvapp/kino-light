@@ -64,6 +64,7 @@ import com.arkiv.player.ui.plugin.AddPluginMode
 import com.arkiv.player.ui.plugin.CatalogAction
 import com.arkiv.player.ui.plugin.CatalogRow
 import com.arkiv.player.ui.plugin.CatalogUiState
+import com.arkiv.player.ui.plugin.CommunityUiState
 import com.arkiv.player.ui.plugin.FocusWhenReady
 import com.arkiv.player.ui.plugin.PluginConfigDialog
 import com.arkiv.player.ui.plugin.PluginConsentDialog
@@ -74,7 +75,6 @@ import com.arkiv.player.ui.plugin.addModalVisible
 import com.arkiv.player.ui.plugin.addRequestAfterConsent
 import com.arkiv.player.ui.plugin.addressAfterDialogDismissed
 import com.arkiv.player.ui.plugin.artForInstalled
-import com.arkiv.player.ui.plugin.catalogActionOf
 import com.arkiv.player.ui.plugin.catalogRefreshLine
 import com.arkiv.player.ui.plugin.handleAddPluginBack
 import com.arkiv.player.ui.plugin.initialPluginsTab
@@ -83,6 +83,7 @@ import com.arkiv.player.ui.plugin.installedGridLinesWithMessage
 import com.arkiv.player.ui.plugin.installedTabLabel
 import com.arkiv.player.ui.plugin.legacyFirst
 import com.arkiv.player.ui.plugin.rowMessagePluginId
+import com.arkiv.player.ui.plugin.runCatalogAction
 import com.arkiv.player.ui.rememberGraph
 import com.arkiv.player.ui.theme.ArkivRed
 import com.arkiv.player.ui.theme.ArkivTextSecondary
@@ -92,14 +93,14 @@ import kotlinx.coroutines.delay
 private const val INITIAL_FOCUS_GRACE_MS = 1_500L
 
 /** Recommended plugins per line of the grid. */
-private const val CATALOG_COLUMNS = 3
+internal const val TV_CATALOG_COLUMNS = 3
 
 /**
  * Room kept between a focused item and the edge of the list when the scroll brings it into view. The
  * focused card is scaled up (see [com.arkiv.player.ui.cardFocusScale]) and draws a 3 dp border: without
  * the margin a card scrolled to the edge would be cut by the list's bounds.
  */
-private val FOCUS_MARGIN = 12.dp
+internal val FOCUS_MARGIN = 12.dp
 
 /** An item of the grid that takes the whole line: everything but the cards. */
 private val FULL_WIDTH: LazyGridItemSpanScope.() -> GridItemSpan = { GridItemSpan(maxLineSpan) }
@@ -130,10 +131,10 @@ fun TvPluginsScreen(mode: AddPluginMode, onClose: () -> Unit) {
  * selected tab's body.
  *
  * - **Recomendados**: the search field, the notice while the list is only the copy shipped in the APK (with
- *   "Reintentar"), and the recommended plugins as cards ([TvPluginCard]) in [CATALOG_COLUMNS] columns of one
+ *   "Reintentar"), and the recommended plugins as cards ([TvPluginCard]) in [TV_CATALOG_COLUMNS] columns of one
  *   lazy grid.
  * - **Instalados**: the installed plugins as cards ([TvInstalledPluginCard]) in one lazy grid, the same
- *   [CATALOG_COLUMNS] columns as Recomendados; OK on a card opens its actions dialog
+ *   [TV_CATALOG_COLUMNS] columns as Recomendados; OK on a card opens its actions dialog
  *   ([TvInstalledActionsDialog]). With nothing installed, a line saying so and "Ver recomendados".
  * - **Agregar** opens [TvAddCustomPluginDialog] for the custom `usuario/repositorio`. Installing always goes
  *   through the consent sheet, and that sheet replaces the dialog while it is up (see [addModalVisible]).
@@ -167,15 +168,16 @@ internal fun TvPluginsContent(
     val graph = rememberGraph()
     val vm: PluginsViewModel = viewModel(
         key = "plugins",
-        factory = viewModelFactory { initializer { PluginsViewModel(graph.pluginAdmin, catalogProvider = graph.pluginCatalog, artProvider = graph.catalogArt) } },
+        factory = viewModelFactory { initializer { PluginsViewModel(graph.pluginAdmin, catalogProvider = graph.pluginCatalog, artProvider = graph.catalogArt, discovery = graph.pluginDiscovery) } },
     )
     val plugins by vm.plugins.collectAsStateWithLifecycle()
     val state by vm.state.collectAsStateWithLifecycle()
     val catalog by vm.catalog.collectAsStateWithLifecycle()
+    val community by vm.community.collectAsStateWithLifecycle()
     val art by vm.art.collectAsStateWithLifecycle()
     val rowMessageId = rowMessagePluginId(state, plugins)
     val rows = legacyFirst(catalog.rows)
-    val statusLines = remember(rows) { gridLinesWithStatus(rows, CATALOG_COLUMNS) }
+    val statusLines = remember(rows) { gridLinesWithStatus(rows, TV_CATALOG_COLUMNS) }
 
     var tab by rememberSaveable { mutableStateOf(initialPluginsTab(mode)) }
     var addRequested by rememberSaveable { mutableStateOf(false) }
@@ -284,6 +286,7 @@ internal fun TvPluginsContent(
                     vm = vm,
                     query = state.query,
                     catalog = catalog,
+                    community = community,
                     rows = rows,
                     statusLines = statusLines,
                     art = art,
@@ -415,8 +418,8 @@ private fun PluginsHeader(
 
 /**
  * Recomendados: the search field, the notice while the list is only the copy shipped in the APK, and the
- * recommended plugins, each a [TvPluginCard] in one cell of a [CATALOG_COLUMNS]-column grid. Everything but
- * the cards is a full-width item. Up from the search field leads to the selected tab ([selectedTabFocus]);
+ * recommended plugins, each a [TvPluginCard] in one cell of a [TV_CATALOG_COLUMNS]-column grid. Everything but
+ * the cards is a full-width item. "De la comunidad" follows the cards ([tvCommunityItems]). Up from the search field leads to the selected tab ([selectedTabFocus]);
  * the first card carries [firstRowModifier] (the initial focus, and Down from the header row).
  */
 @OptIn(ExperimentalFoundationApi::class)
@@ -425,6 +428,7 @@ private fun RecommendedTab(
     vm: PluginsViewModel,
     query: String,
     catalog: CatalogUiState,
+    community: CommunityUiState,
     rows: List<CatalogRow>,
     statusLines: List<Boolean>,
     art: Map<String, CatalogArt>,
@@ -435,7 +439,7 @@ private fun RecommendedTab(
 ) {
     val focusManager = LocalFocusManager.current
     LazyVerticalGrid(
-        columns = GridCells.Fixed(CATALOG_COLUMNS),
+        columns = GridCells.Fixed(TV_CATALOG_COLUMNS),
         modifier = modifier,
         contentPadding = PaddingValues(top = 16.dp, bottom = 24.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -497,7 +501,7 @@ private fun RecommendedTab(
                 art = art[row.entry.repo],
                 modifier = Modifier
                     .then(if (index == 0) firstRowModifier else Modifier)
-                    .then(if (cardHasNothingToTheRight(index, rows.lastIndex, CATALOG_COLUMNS)) Modifier.noFocusToTheRight() else Modifier),
+                    .then(if (cardHasNothingToTheRight(index, rows.lastIndex, TV_CATALOG_COLUMNS)) Modifier.noFocusToTheRight() else Modifier),
                 reserveStatusLine = statusLines.getOrElse(index) { false },
                 onClick = { runCatalogAction(vm, row) },
             )
@@ -507,12 +511,13 @@ private fun RecommendedTab(
                 Text("No hay plugins que coincidan.", style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary)
             }
         }
+        tvCommunityItems(community, art, TV_CATALOG_COLUMNS, onRefresh = vm::refreshCommunity, onAction = { runCatalogAction(vm, it) })
     }
 }
 
 /**
  * Instalados: the installed plugins as cards, one [TvInstalledPluginCard] per plugin in a lazy grid of
- * [CATALOG_COLUMNS] columns (the same [RecommendedTab] draws). With none installed it says so and offers
+ * [TV_CATALOG_COLUMNS] columns (the same [RecommendedTab] draws). With none installed it says so and offers
  * "Ver recomendados" ([onBrowseRecommended]). [message] goes to the card it is about, if any (see
  * [rowMessagePluginId]); every card of the message's own grid line reserves the room for it
  * ([installedGridLinesWithMessage]), as [RecommendedTab] does for a card's status.
@@ -568,7 +573,7 @@ private fun InstalledTab(
     }
 
     val messageIndex = rowMessageId?.let { id -> plugins.indexOfFirst { it.id == id } }?.takeIf { it >= 0 }
-    val messageLines = remember(plugins, messageIndex) { installedGridLinesWithMessage(plugins.size, messageIndex, CATALOG_COLUMNS) }
+    val messageLines = remember(plugins, messageIndex) { installedGridLinesWithMessage(plugins.size, messageIndex, TV_CATALOG_COLUMNS) }
     // A live plugin's "Lista recortada: …" line, per card (null = none), following its current
     // provider -- the same line as the phone's card. Plain text, never focusable: D-pad order is unchanged.
     val liveModule = rememberGraph().liveModule
@@ -578,10 +583,10 @@ private fun InstalledTab(
             flow.collectAsStateWithLifecycle(initialValue = null).value
         }
     }
-    val noticeLines = installedGridLinesReserving(notices.map { it != null }, CATALOG_COLUMNS)
+    val noticeLines = installedGridLinesReserving(notices.map { it != null }, TV_CATALOG_COLUMNS)
 
     LazyVerticalGrid(
-        columns = GridCells.Fixed(CATALOG_COLUMNS),
+        columns = GridCells.Fixed(TV_CATALOG_COLUMNS),
         modifier = modifier,
         contentPadding = PaddingValues(top = 16.dp, bottom = 24.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -598,7 +603,7 @@ private fun InstalledTab(
                 modifier = Modifier
                     .focusRequester(cardFocus.getValue(p.id))
                     .then(if (index == 0) Modifier.focusRequester(entryFocus).focusProperties { up = selectedTabFocus } else Modifier)
-                    .then(if (cardHasNothingToTheRight(index, plugins.lastIndex, CATALOG_COLUMNS)) Modifier.noFocusToTheRight() else Modifier),
+                    .then(if (cardHasNothingToTheRight(index, plugins.lastIndex, TV_CATALOG_COLUMNS)) Modifier.noFocusToTheRight() else Modifier),
                 onClick = { actionsPluginId = p.id },
             )
         }
@@ -615,21 +620,6 @@ private fun InstalledTab(
                 actionsPluginId = null
             },
         )
-    }
-}
-
-/**
- * What OK does on a recommended plugin's card: the action [catalogActionOf] says fits its state. An
- * installed plugin that needs nothing does nothing here (its card stays focusable, so the grid is still
- * walked one card at a time).
- */
-private fun runCatalogAction(vm: PluginsViewModel, row: CatalogRow) {
-    val installed = row.installed
-    when (catalogActionOf(row)) {
-        CatalogAction.INSTALL -> vm.installFromCatalog(row.entry)
-        CatalogAction.CONFIGURE -> installed?.let { vm.openSettings(it.id) }
-        CatalogAction.ENABLE -> installed?.let { vm.setEnabled(it.id, true) }
-        CatalogAction.INSTALLED -> Unit
     }
 }
 
@@ -682,7 +672,7 @@ internal fun installedFocusReturnTarget(returnId: String, remainingIds: List<Str
  * selected, a window that has just gone away) and `requestFocus()` throws until it does, hence the retry, as
  * in [FocusWhenReady].
  */
-private suspend fun requestFocusWhenReady(requester: FocusRequester) {
+internal suspend fun requestFocusWhenReady(requester: FocusRequester) {
     repeat(20) {
         if (runCatching { requester.requestFocus() }.isSuccess) return
         delay(50)
@@ -732,11 +722,11 @@ internal fun Modifier.dpadDownTo(target: FocusRequester?): Modifier =
  * from the last card of a partly filled line to a card of the line above. Nothing is meant to be to the
  * right of these, so the key is consumed and focus stays where it is.
  */
-private fun Modifier.noFocusToTheRight(): Modifier = focusProperties { right = FocusRequester.Cancel }
+internal fun Modifier.noFocusToTheRight(): Modifier = focusProperties { right = FocusRequester.Cancel }
 
 /** The scroll of the lists: the minimal one that shows an item whole, with [marginPx] of room around it. */
 @OptIn(ExperimentalFoundationApi::class)
-private class KeepMarginBringIntoView(private val marginPx: Float) : BringIntoViewSpec {
+internal class KeepMarginBringIntoView(private val marginPx: Float) : BringIntoViewSpec {
     override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float =
         scrollDistanceWithMargin(offset, size, containerSize, marginPx)
 }

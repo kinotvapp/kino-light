@@ -86,7 +86,7 @@ internal fun InstalledPluginCard(
         shape = RoundedCornerShape(CARD_CORNER),
         colors = CardDefaults.cardColors(containerColor = ArkivSurface),
     ) {
-        CardTile(name = model.name, iconFile = model.iconFile, tileColorArgb = model.tileColorArgb, legacyDefault = false)
+        CardTile(name = model.name, iconFile = model.iconFile, tileColorArgb = model.tileColorArgb, pill = null)
         Column(
             modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 12.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),

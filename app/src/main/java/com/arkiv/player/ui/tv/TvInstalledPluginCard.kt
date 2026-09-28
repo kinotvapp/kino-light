@@ -72,7 +72,7 @@ internal fun TvInstalledPluginCard(
         ),
     ) {
         Column(Modifier.clearAndSetSemantics { }) {
-            CardTile(name = model.name, iconFile = model.iconFile, tileColorArgb = model.tileColorArgb, legacyDefault = false)
+            CardTile(name = model.name, iconFile = model.iconFile, tileColorArgb = model.tileColorArgb, pill = null)
             CardTexts(plugin, model, message, reserveMessageLines, liveNotice, reserveNoticeLines)
         }
     }

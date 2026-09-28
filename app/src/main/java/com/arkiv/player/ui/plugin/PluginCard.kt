@@ -105,7 +105,7 @@ fun PluginCard(
         shape = RoundedCornerShape(CARD_CORNER),
         colors = CardDefaults.cardColors(containerColor = ArkivSurface),
     ) {
-        CardTile(name = entry.name, iconFile = art?.iconFile, tileColorArgb = tileColor(art), legacyDefault = entry.legacyDefault)
+        CardTile(name = entry.name, iconFile = art?.iconFile, tileColorArgb = tileColor(art), pill = cardPill(row))
         Column(
             modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 12.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -157,7 +157,7 @@ fun PluginCard(
  * only checks that the file starts with the PNG signature, so a corrupt file reaches Coil, which reports
  * an error and the initial takes its place. The tile is never left blank.
  *
- * The "Lo que ya usabas" pill takes a row of its own at the top of the tile and the icon (or the initial)
+ * The pill ([cardPill]: "Lo que ya usabas" or "De la comunidad") takes a row of its own at the top of the tile and the icon (or the initial)
  * is centred in what is left, shrunk to fit it ([tileArtSize]): the tile is only ~89 dp tall on a phone, so
  * a pill drawn over a fixed-size icon would cover part of it. Without the pill the art has the whole tile.
  * The pill is one line with an ellipsis, so a big font shortens it instead of growing the tile out of 16:9.
@@ -166,12 +166,12 @@ fun PluginCard(
  * sizes; once the TV pass is done both can share one composable.
  *
  * Internal, not private: [InstalledPluginCard] (the Instalados tab) draws the very same tile for an
- * installed plugin, never with [legacyDefault] (that pill is a Recomendados-only thing); it passes
+ * installed plugin, never with a [pill] (pills are a Recomendados-only thing); it passes
  * [iconFile] and [tileColorArgb] straight from its own model ([installedCardModel]) instead of a catalog
  * [CatalogArt], so its own icon and colour (not just the catalog's) can win.
  */
 @Composable
-internal fun CardTile(name: String, iconFile: File?, tileColorArgb: Long, legacyDefault: Boolean) {
+internal fun CardTile(name: String, iconFile: File?, tileColorArgb: Long, pill: String?) {
     val tile = tileColorArgb
     var iconFailed by remember(iconFile) { mutableStateOf(false) }
     Column(
@@ -181,10 +181,10 @@ internal fun CardTile(name: String, iconFile: File?, tileColorArgb: Long, legacy
             .clip(RoundedCornerShape(topStart = CARD_CORNER, topEnd = CARD_CORNER))
             .background(Color(tile)),
     ) {
-        if (legacyDefault) {
+        if (pill != null) {
             // Solid, not the translucent MetaChip: it sits on a tile of any colour.
             Text(
-                text = "Lo que ya usabas",
+                text = pill,
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.SemiBold,
                 color = Color.White,

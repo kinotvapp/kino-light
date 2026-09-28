@@ -3,6 +3,7 @@ package com.arkiv.player.ui.plugin
 import com.arkiv.player.data.plugin.PluginColors
 import com.arkiv.player.data.plugin.PluginStatus
 import com.arkiv.player.data.plugin.catalog.CatalogArt
+import com.arkiv.player.data.plugin.catalog.CatalogEntry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -191,5 +192,12 @@ class CatalogCardStyleTest {
     @Test fun `a smaller space never gives bigger art`() {
         val sizes = (0..120 step 4).map { tileArtSize(availableHeight = it.toFloat(), nominal = 72f) }
         assertEquals(sizes.sorted(), sizes)
+    }
+
+    @Test fun `the tile pill is what you already used, else community, else none`() {
+        val entry = CatalogEntry("x", "o/x", "X", "")
+        assertEquals("Lo que ya usabas", cardPill(CatalogRow(entry.copy(legacyDefault = true), null)))
+        assertEquals("De la comunidad", cardPill(CatalogRow(entry, null, community = true)))
+        assertEquals(null, cardPill(CatalogRow(entry, null)))
     }
 }

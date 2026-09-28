@@ -82,7 +82,7 @@ internal fun handleAddPluginBack(mode: AddPluginMode, onClose: () -> Unit) {
 }
 
 /** Recommended plugins per line of the grid. */
-private const val CATALOG_COLUMNS = 2
+internal const val PHONE_CATALOG_COLUMNS = 2
 
 /** Space between the cards, in both directions, and between the full-width items. */
 private val GRID_SPACING = 12.dp
@@ -174,11 +174,12 @@ internal fun PluginsContent(mode: AddPluginMode, bottomInset: Dp, modifier: Modi
     val graph = rememberGraph()
     val vm: PluginsViewModel = viewModel(
         key = "plugins",
-        factory = viewModelFactory { initializer { PluginsViewModel(graph.pluginAdmin, catalogProvider = graph.pluginCatalog, artProvider = graph.catalogArt) } },
+        factory = viewModelFactory { initializer { PluginsViewModel(graph.pluginAdmin, catalogProvider = graph.pluginCatalog, artProvider = graph.catalogArt, discovery = graph.pluginDiscovery) } },
     )
     val plugins by vm.plugins.collectAsStateWithLifecycle()
     val state by vm.state.collectAsStateWithLifecycle()
     val catalog by vm.catalog.collectAsStateWithLifecycle()
+    val community by vm.community.collectAsStateWithLifecycle()
     val art by vm.art.collectAsStateWithLifecycle()
     val rowMessageId = rowMessagePluginId(state, plugins)
 
@@ -217,7 +218,7 @@ internal fun PluginsContent(mode: AddPluginMode, bottomInset: Dp, modifier: Modi
         )
         when (tab) {
             PluginsTab.RECOMMENDED -> RecommendedTab(
-                vm = vm, query = state.query, busy = state.busy, catalog = catalog, art = art,
+                vm = vm, query = state.query, busy = state.busy, catalog = catalog, community = community, art = art,
                 gridState = recommendedGrid, bottomInset = bottomInset,
                 modifier = Modifier.weight(1f),
             )
@@ -325,8 +326,8 @@ private fun PluginsTabRow(
 
 /**
  * Recomendados: the search box, the notice while the list is only the copy shipped in the APK, and the
- * recommended plugins, each a [PluginCard] in one cell of a two-column grid. Everything but the cards is a
- * full-width item.
+ * recommended plugins, each a [PluginCard] in one cell of a two-column grid, then "De la comunidad"
+ * ([communityItems]). Everything but the cards is a full-width item.
  */
 @Composable
 private fun RecommendedTab(
@@ -334,15 +335,16 @@ private fun RecommendedTab(
     query: String,
     busy: Boolean,
     catalog: CatalogUiState,
+    community: CommunityUiState,
     art: Map<String, CatalogArt>,
     gridState: LazyGridState,
     bottomInset: Dp,
     modifier: Modifier = Modifier,
 ) {
     val rows = legacyFirst(catalog.rows)
-    val statusLines = remember(rows) { gridLinesWithStatus(rows, CATALOG_COLUMNS) }
+    val statusLines = remember(rows) { gridLinesWithStatus(rows, PHONE_CATALOG_COLUMNS) }
     LazyVerticalGrid(
-        columns = GridCells.Fixed(CATALOG_COLUMNS),
+        columns = GridCells.Fixed(PHONE_CATALOG_COLUMNS),
         modifier = modifier,
         state = gridState,
         contentPadding = PaddingValues(start = SIDE_GUTTER, end = SIDE_GUTTER, top = 8.dp, bottom = bottomInset + 24.dp),
@@ -398,6 +400,10 @@ private fun RecommendedTab(
                 Text("No hay plugins que coincidan.", style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary)
             }
         }
+        communityItems(
+            community, art, busy = busy, columns = PHONE_CATALOG_COLUMNS,
+            onRefresh = vm::refreshCommunity, onAction = { runCatalogAction(vm, it) },
+        )
     }
 }
 
@@ -429,7 +435,7 @@ private fun InstalledTab(
         return
     }
     val messageIndex = rowMessageId?.let { id -> plugins.indexOfFirst { it.id == id } }?.takeIf { it >= 0 }
-    val messageLines = remember(plugins, messageIndex) { installedGridLinesWithMessage(plugins.size, messageIndex, CATALOG_COLUMNS) }
+    val messageLines = remember(plugins, messageIndex) { installedGridLinesWithMessage(plugins.size, messageIndex, PHONE_CATALOG_COLUMNS) }
     // A live plugin's "Lista recortada: …" line, per card (null = none), following its current provider.
     val liveModule = rememberGraph().liveModule
     val notices = plugins.map { p ->
@@ -438,9 +444,9 @@ private fun InstalledTab(
             flow.collectAsStateWithLifecycle(initialValue = null).value
         }
     }
-    val noticeLines = installedGridLinesReserving(notices.map { it != null }, CATALOG_COLUMNS)
+    val noticeLines = installedGridLinesReserving(notices.map { it != null }, PHONE_CATALOG_COLUMNS)
     LazyVerticalGrid(
-        columns = GridCells.Fixed(CATALOG_COLUMNS),
+        columns = GridCells.Fixed(PHONE_CATALOG_COLUMNS),
         modifier = modifier,
         state = gridState,
         contentPadding = PaddingValues(start = SIDE_GUTTER, end = SIDE_GUTTER, top = 8.dp, bottom = bottomInset + 24.dp),
@@ -459,19 +465,5 @@ private fun InstalledTab(
                 reserveNoticeLines = noticeLines.getOrElse(index) { false },
             )
         }
-    }
-}
-
-/**
- * What the button of a recommended plugin's card does: the action [catalogActionOf] says fits its state.
- * An installed plugin that needs nothing does nothing (its button is disabled anyway).
- */
-private fun runCatalogAction(vm: PluginsViewModel, row: CatalogRow) {
-    val installed = row.installed
-    when (catalogActionOf(row)) {
-        CatalogAction.INSTALL -> vm.installFromCatalog(row.entry)
-        CatalogAction.CONFIGURE -> installed?.let { vm.openSettings(it.id) }
-        CatalogAction.ENABLE -> installed?.let { vm.setEnabled(it.id, true) }
-        CatalogAction.INSTALLED -> Unit
     }
 }

@@ -17,10 +17,8 @@ class SeedCatalogTest {
         assertTrue(c.entries.first { it.id == "own-server" }.needsSetup)
     }
 
-    @Test fun `Xuper is in the seed but only visible to a build that has its bridge`() {
-        assertTrue(PluginCatalogParser.parse(seed, emptySet())!!.entries.none { it.id == "xuper" })
-        val withBridge = PluginCatalogParser.parse(seed, setOf("xuper-bridge"))!!.entries
-        assertEquals("xuper", withBridge.first().id)
-        assertTrue(withBridge.first().legacyDefault && withBridge.first().bundled)
+    @Test fun `the seed lists only Internet Archive and Tu servidor, like the published catalog`() {
+        val ids = PluginCatalogParser.parse(seed, capabilities = setOf("xuper-bridge"))!!.entries.map { it.id }
+        assertEquals(listOf("internet-archive", "own-server"), ids)
     }
 }
