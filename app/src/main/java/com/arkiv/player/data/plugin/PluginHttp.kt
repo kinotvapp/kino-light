@@ -1,8 +1,10 @@
 package com.arkiv.player.data.plugin
 
 import com.arkiv.player.data.net.DohDns
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.CookieJar
 import okhttp3.Dns
 import okhttp3.FormBody
@@ -19,6 +21,7 @@ import java.net.Inet6Address
 import java.net.InetAddress
 import java.net.UnknownHostException
 import java.util.Base64
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -176,17 +179,22 @@ class PluginDns(
  * contacted. Checking each `Location` first keeps the refusal on the device. `redirect: "manual"`
  * returns the 3xx itself.
  *
+ * With [reactiveApproval] set, a host that [PluginHostGate.isPromptableMiss] calls a genuine gap
+ * (not a hard refusal) is asked about in the moment instead of failing outright; see
+ * [ReactiveApproval] and [ensureHostAllowed]. Null (every existing caller) keeps today's behavior.
+ *
  * Runs on [Dispatchers.IO]; the cookie jar is written there too.
  */
 class PluginHttp(
     base: OkHttpClient,
     private val pluginId: String,
-    private val hosts: EffectiveHosts,
+    @Volatile private var hosts: EffectiveHosts,
     appVersion: String,
     private val cookies: PluginCookies? = null,
     private val allowInsecureLocalhost: Boolean = false,
     /** MockWebServer tests only, as in [PluginStreamHttp.client]: where a declared name resolves. Production keeps the system's. */
     delegateDns: Dns = Dns.SYSTEM,
+    private val reactiveApproval: ReactiveApproval? = null,
 ) {
     /** A request body as the prelude sends it; see [PluginHttp.Request.body]. */
     sealed interface Body {
@@ -218,8 +226,31 @@ class PluginHttp(
         val bytesBase64: String?,
     )
 
+    /**
+     * [PluginHttp]'s hook for a host the manifest never declared: ask [requester], and persist the
+     * answer via [onApproved]/[onRejected] (a [PluginRegistry] call, kept out of this class so it has
+     * no storage dependency of its own). [rejectedHosts] is a snapshot taken when the runtime opened;
+     * this instance also grows it in memory as new "no"s come in, so the SAME open runtime never asks
+     * about a host twice even before the registry write is visible elsewhere. Null disables the
+     * feature entirely: every existing caller and test keeps today's behavior unchanged.
+     */
+    class ReactiveApproval(
+        val pluginName: String,
+        val requester: HostApprovalRequester,
+        val onApproved: (host: String) -> Unit,
+        val onRejected: (host: String) -> Unit,
+        rejectedHosts: Set<String>,
+    ) {
+        @Volatile var rejectedHosts: Set<String> = rejectedHosts
+    }
+
     private val userAgent = "Kino/$appVersion (plugin $pluginId)"
     private val requests = AtomicInteger(0)
+    /**
+     * One in-flight [HostApprovalRequester.request] per host, so two concurrent misses on the same
+     * host share a single prompt; see [askOnce].
+     */
+    private val pendingApprovals = ConcurrentHashMap<String, CompletableDeferred<Boolean?>>()
     private val client: OkHttpClient = base.newBuilder()
         .followRedirects(false)
         .followSslRedirects(false)
@@ -246,7 +277,7 @@ class PluginHttp(
         }
     }
 
-    private fun doFetch(req: Request): Response {
+    private suspend fun doFetch(req: Request): Response {
         var url = req.url.toHttpUrlOrNull() ?: throw invalid("URL inválida: ${req.url.take(200)}")
         var method = req.method.uppercase().takeIf { it in METHODS } ?: throw invalid("método no permitido: ${req.method.take(20)}")
         var body = req.body
@@ -258,8 +289,7 @@ class PluginHttp(
         var previous: HttpUrl? = null
         repeat(MAX_REDIRECTS + 1) {
             val from = previous
-            if (from == null) PluginHostGate.check(url, hosts, allowInsecureLocalhost)
-            else PluginHostGate.checkRedirect(from, url, hosts, allowInsecureLocalhost)
+            ensureHostAllowed(from, url)
             if (requests.incrementAndGet() > MAX_REQUESTS_PER_CALL) {
                 throw invalid("demasiadas solicitudes en una sola llamada (máximo $MAX_REQUESTS_PER_CALL)")
             }
@@ -278,6 +308,66 @@ class PluginHttp(
             }
         }
         throw PluginFetchException("network", "demasiadas redirecciones")
+    }
+
+    /**
+     * [PluginHostGate.check]/[checkRedirect], with one recovery path: a promptable miss the person
+     * approves in the moment is added to [hosts] and persisted, then the same check is retried once.
+     */
+    private suspend fun ensureHostAllowed(from: HttpUrl?, url: HttpUrl) {
+        try {
+            checkOnce(from, url)
+        } catch (e: HostNotAllowedException) {
+            val ra = reactiveApproval
+            if (ra == null || !PluginHostGate.isPromptableMiss(url, hosts) ||
+                url.host in ra.rejectedHosts || hosts.declared.size >= ManifestParser.MAX_HOSTS
+            ) {
+                throw e
+            }
+            when (askOnce(ra, url.host)) {
+                true -> {
+                    hosts = hosts.copy(declared = hosts.declared + url.host)
+                    ra.onApproved(url.host)
+                    checkOnce(from, url)
+                }
+                false -> {
+                    ra.rejectedHosts = ra.rejectedHosts + url.host
+                    ra.onRejected(url.host)
+                    throw e
+                }
+                null -> throw PluginFetchException("timeout", "no hubo respuesta a tiempo para conectarse a ${url.host}")
+            }
+        }
+    }
+
+    private fun checkOnce(from: HttpUrl?, url: HttpUrl) {
+        if (from == null) PluginHostGate.check(url, hosts, allowInsecureLocalhost) else PluginHostGate.checkRedirect(from, url, hosts, allowInsecureLocalhost)
+    }
+
+    /**
+     * One prompt per host per [PluginHttp] instance: a second concurrent miss on the same host awaits
+     * the first's answer instead of asking twice. Deliberately not
+     * `CoroutineScope(currentCoroutineContext()).async { … }`: that would parent the shared deferred to
+     * whichever caller happens to win the race, so an unrelated cancellation further up THAT caller's
+     * own call stack (its own timeout, say) would cancel the answer for every other caller still
+     * waiting on the same host. A bare [CompletableDeferred] has no parent job: exactly one caller
+     * calls [HostApprovalRequester.request], every other caller only awaits a plain value, and no
+     * coroutine is left running once this function returns.
+     */
+    private suspend fun askOnce(ra: ReactiveApproval, host: String): Boolean? {
+        val mine = CompletableDeferred<Boolean?>()
+        val shared = pendingApprovals.putIfAbsent(host, mine) ?: mine
+        if (shared !== mine) return shared.await()
+        return try {
+            val answer = withTimeoutOrNull(REACTIVE_APPROVAL_TIMEOUT_MS) { ra.requester.request(pluginId, ra.pluginName, host) }
+            mine.complete(answer)
+            answer
+        } catch (e: Throwable) {
+            mine.completeExceptionally(e)
+            throw e
+        } finally {
+            pendingApprovals.remove(host, mine)
+        }
     }
 
     private fun response(resp: okhttp3.Response, url: HttpUrl): Response {
@@ -329,6 +419,8 @@ class PluginHttp(
         const val MAX_BODY_BYTES = 5 * 1024 * 1024
         const val MAX_REQUESTS_PER_CALL = 60
         const val MAX_REDIRECTS = 10
+        /** How long a `kino.fetch` waits for the person to answer a reactive host-approval prompt before failing as a timeout. See this plan's "Deviation from the spec" note for why this isn't a pause of the call's own clock. */
+        const val REACTIVE_APPROVAL_TIMEOUT_MS = 12_000L
         val METHODS = listOf("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE")
         val ERROR_CODES = listOf("host_not_allowed", "timeout", "network", "too_large", "invalid_request")
         /** `contract.json` `fetch.bodyKinds`; the prelude sends one of these in every request's `body.kind`. */

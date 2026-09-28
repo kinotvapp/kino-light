@@ -1,6 +1,8 @@
 package com.arkiv.player.data.plugin
 
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import okhttp3.Dns
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
@@ -40,6 +42,22 @@ class PluginHttpTest {
 
     private fun fetchError(h: PluginHttp, req: PluginHttp.Request): PluginFetchException =
         assertThrows(PluginFetchException::class.java) { runBlocking { h.fetch(req) } }
+
+    private fun approvingHttp(
+        hosts: EffectiveHosts,
+        approve: Boolean,
+        onApproved: (String) -> Unit = {},
+        onRejected: (String) -> Unit = {},
+        rejected: Set<String> = emptySet(),
+        delegateDns: Dns = Dns.SYSTEM,
+    ) = PluginHttp(
+        OkHttpClient(), "test", hosts, "1.0", cookies = jar(hosts), allowInsecureLocalhost = true, delegateDns = delegateDns,
+        reactiveApproval = PluginHttp.ReactiveApproval(
+            pluginName = "Plugin de prueba",
+            requester = HostApprovalRequester { _, _, _ -> approve },
+            onApproved = onApproved, onRejected = onRejected, rejectedHosts = rejected,
+        ),
+    )
 
     @Test fun `gate decisions`() {
         val hosts = EffectiveHosts(listOf("archive.org", "*.archive.org"))
@@ -324,5 +342,84 @@ class PluginHttpTest {
         assertFalse(PluginHostGate.isPromptableMiss("https://myhome.duckdns.org/x".toHttpUrl(), withHttpsUser))
         // The live "any host" carve-out is its own thing, never routed through reactive approval.
         assertFalse(PluginHostGate.isPromptableMiss("https://anything.example/x".toHttpUrl(), hosts.copy(anyPublicLiveHost = true)))
+    }
+
+    // `isPromptableMiss` requires https (Task 2), and this suite never sets up a real TLS listener
+    // (no other test in this file does either — everything else uses `allowInsecureLocalhost` +
+    // plain http on `localhost`). So this test proves the gate opened, not that bytes came back: an
+    // `offline` DNS makes `new-cdn.example` fail fast and deterministically with `UnknownHostException`
+    // -> `PluginFetchException("network", …)`. Getting THAT code back, instead of `host_not_allowed`,
+    // is exactly the proof the retried request got past the host check into real network I/O.
+    @Test fun `an approved new host is added to hosts, and a later request no longer fails as host_not_allowed`() = runTest {
+        var approvedHost: String? = null
+        val offline = object : Dns { override fun lookup(hostname: String): List<InetAddress> = throw java.net.UnknownHostException(hostname) }
+        val h = approvingHttp(EffectiveHosts(listOf("archive.org")), approve = true, onApproved = { approvedHost = it }, delegateDns = offline)
+        val e = fetchError(h, PluginHttp.Request("https://new-cdn.example/x"))
+        assertEquals("network", e.code)
+        assertEquals("new-cdn.example", approvedHost)
+    }
+
+    @Test fun `a rejected new host fails as host_not_allowed and is remembered via onRejected`() = runTest {
+        var rejectedHost: String? = null
+        val h = approvingHttp(EffectiveHosts(listOf("archive.org")), approve = false, onRejected = { rejectedHost = it })
+        val e = fetchError(h, PluginHttp.Request("https://new-cdn.example/x"))
+        assertEquals("host_not_allowed", e.code)
+        assertEquals("new-cdn.example", rejectedHost)
+    }
+
+    @Test fun `a host already in rejectedHosts is never asked again`() = runTest {
+        var asked = false
+        val h = PluginHttp(
+            OkHttpClient(), "test", EffectiveHosts(listOf("archive.org")), "1.0", allowInsecureLocalhost = true,
+            reactiveApproval = PluginHttp.ReactiveApproval(
+                "P", HostApprovalRequester { _, _, _ -> asked = true; true }, {}, {}, rejectedHosts = setOf("new-cdn.example"),
+            ),
+        )
+        val e = fetchError(h, PluginHttp.Request("https://new-cdn.example/x"))
+        assertEquals("host_not_allowed", e.code)
+        assertFalse(asked)
+    }
+
+    @Test fun `at the 20-host cap a new host is refused without asking`() = runTest {
+        var asked = false
+        val twenty = (1..20).map { "h$it.example.com" }
+        val h = PluginHttp(
+            OkHttpClient(), "test", EffectiveHosts(twenty), "1.0", allowInsecureLocalhost = true,
+            reactiveApproval = PluginHttp.ReactiveApproval("P", HostApprovalRequester { _, _, _ -> asked = true; true }, {}, {}, emptySet()),
+        )
+        val e = fetchError(h, PluginHttp.Request("https://h21.example.com/x"))
+        assertEquals("host_not_allowed", e.code)
+        assertFalse(asked)
+    }
+
+    @Test fun `an unanswered prompt fails as timeout, not host_not_allowed, and is never remembered`() = runTest {
+        var rejected = false
+        val h = PluginHttp(
+            OkHttpClient(), "test", EffectiveHosts(listOf("archive.org")), "1.0", allowInsecureLocalhost = true,
+            reactiveApproval = PluginHttp.ReactiveApproval(
+                "P",
+                HostApprovalRequester { _, _, _ -> kotlinx.coroutines.delay(PluginHttp.REACTIVE_APPROVAL_TIMEOUT_MS + 5_000); true },
+                {}, { rejected = true }, emptySet(),
+            ),
+        )
+        val e = fetchError(h, PluginHttp.Request("https://new-cdn.example/x"))
+        assertEquals("timeout", e.code)
+        assertFalse(rejected)
+    }
+
+    // Same "offline DNS" technique as the test above: what's under test is that the requester is
+    // invoked once, not whether either retried request ultimately succeeds.
+    @Test fun `two concurrent misses on the same host share one prompt`() = runTest {
+        var asks = 0
+        val offline = object : Dns { override fun lookup(hostname: String): List<InetAddress> = throw java.net.UnknownHostException(hostname) }
+        val h = PluginHttp(
+            OkHttpClient(), "test", EffectiveHosts(listOf("archive.org")), "1.0", allowInsecureLocalhost = true, delegateDns = offline,
+            reactiveApproval = PluginHttp.ReactiveApproval("P", HostApprovalRequester { _, _, _ -> asks++; kotlinx.coroutines.delay(50); true }, {}, {}, emptySet()),
+        )
+        val url = "https://new-cdn.example/x"
+        val r1 = async { runCatching { h.fetch(PluginHttp.Request(url)) } }
+        val r2 = async { runCatching { h.fetch(PluginHttp.Request(url)) } }
+        r1.await(); r2.await()
+        assertEquals(1, asks)
     }
 }
