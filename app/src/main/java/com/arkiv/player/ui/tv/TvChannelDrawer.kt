@@ -12,14 +12,18 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -37,6 +41,7 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
+import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
@@ -45,9 +50,12 @@ import com.arkiv.player.data.gateway.liveCode
 import com.arkiv.player.ui.live.CATEGORY_FAVORITES
 import com.arkiv.player.ui.live.DrawerFocus
 import com.arkiv.player.ui.live.DrawerIndex
+import com.arkiv.player.ui.live.FAVORITE_HINT
 import com.arkiv.player.ui.live.LiveViewModel
 import com.arkiv.player.ui.live.drawerProviderFor
+import com.arkiv.player.ui.live.favoriteNotice
 import com.arkiv.player.ui.live.filterChannels
+import com.arkiv.player.ui.live.neighborAfterRemoval
 import com.arkiv.player.ui.rememberGraph
 import com.arkiv.player.ui.theme.ArkivRed
 import com.arkiv.player.ui.theme.ArkivSurface
@@ -58,6 +66,12 @@ import kotlinx.coroutines.delay
 private val DRAWER_WIDTH = 560.dp
 private val CATEGORIES_WIDTH = 200.dp
 private val ITEM_HEIGHT = 52.dp
+
+/**
+ * A favourite's star on the TV's channel rows (drawer and guide). Amber, not the phone's red: a
+ * focused row IS red here, and a red star on it would vanish exactly when you're looking at it.
+ */
+internal val FAVORITE_STAR = Color(0xFFFFC83D)
 
 /**
  * The live channel drawer: opens with the left arrow over the video being watched, lists the
@@ -122,10 +136,65 @@ fun TvChannelDrawer(
     val channelsList = rememberLazyListState()
     val currentIndex = remember(channels, currentLiveCode) { DrawerIndex.indexFor(channels, currentLiveCode) }
 
+    // Favourites from the remote: a long OK on a row stars or unstars it (tv-material's
+    // `onLongClick`, fired by the key's first repeat, which also swallows that press's click so
+    // the channel isn't opened). Unstarring while "Favoritos" is on screen removes the row
+    // (LiveViewModel.toggleFavorite's `dropFromFavoritesList`), and Compose clears focus with the
+    // removed node: `refocusCode` is the row that takes it instead (neighborAfterRemoval), and
+    // `refocusPending` keeps the landing effect below from yanking focus back to the on-screen
+    // channel's row in the same frame (the removal shifts `currentIndex`).
+    var notice by remember { mutableStateOf<String?>(null) }
+    var noticeTick by remember { mutableIntStateOf(0) }
+    LaunchedEffect(noticeTick) {
+        if (notice == null) return@LaunchedEffect
+        delay(NOTICE_MS)
+        notice = null
+    }
+    val refocusRow = remember { FocusRequester() }
+    var refocusCode by remember { mutableStateOf<String?>(null) }
+    var removedCode by remember { mutableStateOf<String?>(null) }
+    var refocusPending by remember { mutableStateOf(false) }
+    fun toggleFavorite(channel: LiveChannel) {
+        val wasFavorite = channel.liveCode in state.favorites
+        if (wasFavorite && state.activeCategory == CATEGORY_FAVORITES) {
+            removedCode = channel.liveCode
+            refocusCode = neighborAfterRemoval(channels.map { it.liveCode }, channel.liveCode)
+            refocusPending = true
+        }
+        vm.toggleFavorite(channel, dropFromFavoritesList = true)
+        notice = favoriteNotice(added = !wasFavorite)
+        noticeTick++
+    }
+    LaunchedEffect(channels, removedCode) {
+        val gone = removedCode ?: return@LaunchedEffect
+        // Still listed: the model hasn't pruned it yet (the write is async).
+        if (channels.any { it.liveCode == gone }) return@LaunchedEffect
+        removedCode = null
+        if (refocusCode == null) {
+            // It was the last favourite: the list is empty, so the categories column takes focus
+            // (and the drawer's own state says so, or the arrows would read the wrong column).
+            refocusPending = false
+            onFocus(DrawerFocus.CATEGORIES)
+            return@LaunchedEffect
+        }
+        repeat(20) {
+            if (runCatching { refocusRow.requestFocus() }.isSuccess) {
+                refocusPending = false
+                refocusCode = null
+                return@LaunchedEffect
+            }
+            delay(50)
+        }
+        refocusPending = false
+    }
+
     // Android's focus takes a while to exist: the row to go to may not be composed yet when
     // `focus` changes. It retries for a short while instead of requesting it just once -- same
     // pattern TvLiveGuideScreen already uses for its initial chip.
     LaunchedEffect(focus, currentIndex, channels.isEmpty()) {
+        // A favourite just left the list under focus: the effect above hands focus to its
+        // neighbour, not to the on-screen channel's row.
+        if (refocusPending && focus == DrawerFocus.CHANNELS) return@LaunchedEffect
         val target = when (focus) {
             DrawerFocus.CATEGORIES -> categoriesFocus
             DrawerFocus.CHANNELS -> if (channels.isEmpty()) categoriesFocus else channelsFocus
@@ -196,42 +265,63 @@ fun TvChannelDrawer(
         }
 
         Column(Modifier.weight(1f).fillMaxHeight()) {
-            when {
-                // Its provider left the module (the player stops the channel with its own message).
-                state.moduleEmpty ->
-                    DrawerMessage("Este proveedor ya no está disponible")
-                state.error != null && state.channels.isEmpty() ->
-                    DrawerMessage(state.error!!)
-                state.loading && state.channels.isEmpty() ->
-                    DrawerMessage("Cargando canales…")
-                channels.isEmpty() && search.isNotBlank() ->
-                    DrawerMessage("Sin resultados para “$search”")
-                channels.isEmpty() ->
-                    DrawerMessage("Sin canales en esta categoría")
-                else -> LazyColumn(
-                    state = channelsList,
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                    contentPadding = PaddingValues(bottom = 16.dp),
-                ) {
-                    itemsIndexed(channels) { i, channel ->
-                        DrawerChannelRow(
-                            channel = channel,
-                            onScreen = channel.liveCode == currentLiveCode,
-                            // Choosing changes the channel and closes: the caller decides both
-                            // things. It's given the FILTERED list because that's the one
-                            // up/down zapping has to go through after -- if you searched
-                            // "deportes", zapping should move between those, not the whole
-                            // catalog.
-                            onClick = { onChooseChannel(channels, channel) },
-                            modifier = if (i == currentIndex) Modifier.focusRequester(channelsFocus) else Modifier,
-                        )
+            Box(Modifier.fillMaxWidth().weight(1f)) {
+                when {
+                    // Its provider left the module (the player stops the channel with its own message).
+                    state.moduleEmpty ->
+                        DrawerMessage("Este proveedor ya no está disponible")
+                    state.error != null && state.channels.isEmpty() ->
+                        DrawerMessage(state.error!!)
+                    state.loading && state.channels.isEmpty() ->
+                        DrawerMessage("Cargando canales…")
+                    channels.isEmpty() && search.isNotBlank() ->
+                        DrawerMessage("Sin resultados para “$search”")
+                    channels.isEmpty() && state.activeCategory == CATEGORY_FAVORITES ->
+                        DrawerMessage("Aún no tienes favoritos")
+                    channels.isEmpty() ->
+                        DrawerMessage("Sin canales en esta categoría")
+                    else -> LazyColumn(
+                        state = channelsList,
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                        contentPadding = PaddingValues(bottom = 16.dp),
+                    ) {
+                        itemsIndexed(channels) { i, channel ->
+                            var rowModifier: Modifier = if (i == currentIndex) Modifier.focusRequester(channelsFocus) else Modifier
+                            if (channel.liveCode == refocusCode) rowModifier = rowModifier.focusRequester(refocusRow)
+                            DrawerChannelRow(
+                                channel = channel,
+                                onScreen = channel.liveCode == currentLiveCode,
+                                isFavorite = channel.liveCode in state.favorites,
+                                // Choosing changes the channel and closes: the caller decides both
+                                // things. It's given the FILTERED list because that's the one
+                                // up/down zapping has to go through after -- if you searched
+                                // "deportes", zapping should move between those, not the whole
+                                // catalog.
+                                onClick = { onChooseChannel(channels, channel) },
+                                onLongClick = { toggleFavorite(channel) },
+                                modifier = rowModifier,
+                            )
+                        }
                     }
                 }
             }
+            // The only way to learn the long OK exists: nothing on a TV row can be hovered or
+            // tapped to discover it. Swapped for the confirmation for a moment after a toggle.
+            Text(
+                notice ?: FAVORITE_HINT,
+                style = MaterialTheme.typography.labelSmall,
+                color = if (notice != null) Color.White else ArkivTextSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 8.dp),
+            )
         }
     }
 }
+
+/** How long "Agregado a favoritos" / "Quitado de favoritos" replaces the hint. */
+private const val NOTICE_MS = 2000L
 
 /** Lazy list's `itemsIndexed`, with the channel's stable key. */
 private inline fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexed(
@@ -292,11 +382,14 @@ private fun DrawerItem(
 private fun DrawerChannelRow(
     channel: LiveChannel,
     onScreen: Boolean,
+    isFavorite: Boolean,
     onClick: () -> Unit,
+    onLongClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Surface(
         onClick = onClick,
+        onLongClick = onLongClick,
         modifier = modifier.fillMaxWidth().height(ITEM_HEIGHT),
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
         colors = ClickableSurfaceDefaults.colors(
@@ -326,6 +419,14 @@ private fun DrawerChannelRow(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
+            if (isFavorite) {
+                Icon(
+                    Icons.Default.Star,
+                    contentDescription = "Favorito",
+                    tint = FAVORITE_STAR,
+                    modifier = Modifier.padding(horizontal = 6.dp).size(18.dp),
+                )
+            }
             // Marks which one is being watched: without this, with the drawer covering half the
             // screen you lose track of where you're standing.
             if (onScreen) {

@@ -5,7 +5,6 @@ import androidx.lifecycle.viewModelScope
 import com.arkiv.player.data.db.LiveChannelCacheDao
 import com.arkiv.player.data.db.LiveChannelCacheEntity
 import com.arkiv.player.data.db.LiveFavoriteDao
-import com.arkiv.player.data.db.LiveFavoriteEntity
 import com.arkiv.player.data.gateway.LiveChannel
 import com.arkiv.player.data.gateway.LiveChannelKeys
 import com.arkiv.player.data.gateway.LiveProgram
@@ -579,10 +578,19 @@ class LiveViewModel(
         }
     }
 
-    fun toggleFavorite(c: LiveChannel) {
+    /**
+     * Stars or unstars [c]. [dropFromFavoritesList] is the TV's (drawer, guide): an unstarred
+     * channel leaves the "Favoritos" list on screen right away, since with a remote there's no star
+     * to see and tap again -- the list IS the feedback. The phone keeps the row (its star just
+     * empties) until the list is reloaded, so a mistaken tap can be undone in place.
+     */
+    fun toggleFavorite(c: LiveChannel, dropFromFavoritesList: Boolean = false) {
         viewModelScope.launch {
-            if (c.liveCode in _state.value.favorites) favoriteDao.delete(c.provider, c.code)
-            else favoriteDao.save(LiveFavoriteEntity(c.code, c.name, c.number, c.logo, provider = c.provider))
+            val wasFavorite = c.liveCode in _state.value.favorites
+            favoriteDao.toggle(c, wasFavorite)
+            if (wasFavorite && dropFromFavoritesList && _state.value.activeCategory == CATEGORY_FAVORITES) {
+                _state.update { s -> s.copy(channels = s.channels.filterNot { it.liveCode == c.liveCode }) }
+            }
         }
     }
 }

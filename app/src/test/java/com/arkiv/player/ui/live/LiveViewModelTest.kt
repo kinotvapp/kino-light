@@ -456,6 +456,50 @@ class LiveViewModelAsyncTest {
     }
 
     @Test
+    fun `the TV removes an unstarred channel from the Favoritos list it is showing`() = runTest(dispatcher) {
+        val (xuper, _) = twoProviders()
+        val favs = FakeFavoriteDao()
+        favs.save(LiveFavoriteEntity("c1", "C1", 1, null))
+        favs.save(LiveFavoriteEntity("c2", "C2", 2, null))
+        val vm = LiveViewModel(FakeModule(xuper), favs, FakeCacheDao())
+        advanceUntilIdle()
+        vm.chooseCategory(CATEGORY_FAVORITES)
+        advanceUntilIdle()
+        vm.toggleFavorite(ch("c1"), dropFromFavoritesList = true)
+        advanceUntilIdle()
+        assertEquals(setOf("c2"), vm.state.value.favorites)
+        assertEquals(listOf("c2"), vm.state.value.channels.map { it.liveCode })
+    }
+
+    @Test
+    fun `the phone keeps an unstarred channel on screen until the list is reloaded`() = runTest(dispatcher) {
+        val (xuper, _) = twoProviders()
+        val favs = FakeFavoriteDao()
+        favs.save(LiveFavoriteEntity("c1", "C1", 1, null))
+        val vm = LiveViewModel(FakeModule(xuper), favs, FakeCacheDao())
+        advanceUntilIdle()
+        vm.chooseCategory(CATEGORY_FAVORITES)
+        advanceUntilIdle()
+        vm.toggleFavorite(ch("c1"))
+        advanceUntilIdle()
+        assertEquals(emptySet<String>(), vm.state.value.favorites)
+        assertEquals(listOf("c1"), vm.state.value.channels.map { it.liveCode })
+    }
+
+    @Test
+    fun `starring from another category never prunes that category`() = runTest(dispatcher) {
+        val (xuper, _) = twoProviders()
+        val favs = FakeFavoriteDao()
+        favs.save(LiveFavoriteEntity("c1", "C1", 1, null))
+        val vm = LiveViewModel(FakeModule(xuper), favs, FakeCacheDao())
+        advanceUntilIdle()
+        assertEquals("76182", vm.state.value.activeCategory)
+        vm.toggleFavorite(ch("c1"), dropFromFavoritesList = true)
+        advanceUntilIdle()
+        assertEquals(listOf("c1"), vm.state.value.channels.map { it.liveCode })
+    }
+
+    @Test
     fun `when the active provider disappears the next one takes over, and none leaves an empty idle screen`() = runTest(dispatcher) {
         val (xuper, tv) = twoProviders()
         val module = FakeModule(xuper, tv)

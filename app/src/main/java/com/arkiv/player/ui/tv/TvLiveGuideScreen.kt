@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -61,10 +62,13 @@ import com.arkiv.player.data.gateway.LiveChannel
 import com.arkiv.player.data.gateway.liveCode
 import com.arkiv.player.data.live.LiveProviderTab
 import com.arkiv.player.ui.live.CATEGORY_FAVORITES
+import com.arkiv.player.ui.live.FAVORITE_HINT
 import com.arkiv.player.ui.live.LiveSearchView
 import com.arkiv.player.ui.live.LiveViewModel
 import com.arkiv.player.ui.live.LiveZappingSource
 import com.arkiv.player.ui.live.ProviderBadge
+import com.arkiv.player.ui.live.favoriteNotice
+import com.arkiv.player.ui.live.neighborAfterRemoval
 import com.arkiv.player.ui.live.TvGuideFocus
 import com.arkiv.player.ui.live.listOnScreen
 import com.arkiv.player.ui.live.liveSearchView
@@ -230,6 +234,53 @@ fun TvLiveGuideScreen(onWatchChannel: (LiveChannel) -> Unit, onBack: () -> Unit)
         )
     }
 
+    // Favourites from the remote: a long OK on any channel row stars or unstars it (tv-material's
+    // `onLongClick`: fired by the key's first repeat, and that press's click is swallowed, so the
+    // channel doesn't open). Unstarring on the "Favoritos" list removes the row
+    // (`dropFromFavoritesList`); Compose clears focus with the removed node, so it's handed to the
+    // neighbour row (neighborAfterRemoval) or, with the list emptied, to the "Favoritos" chip --
+    // before the screen-wide watch above would land it on the provider row instead.
+    var notice by remember { mutableStateOf<String?>(null) }
+    var noticeTick by remember { mutableIntStateOf(0) }
+    LaunchedEffect(noticeTick) {
+        if (notice == null) return@LaunchedEffect
+        delay(NOTICE_MS)
+        notice = null
+    }
+    val refocusRow = remember { FocusRequester() }
+    var refocusCode by remember { mutableStateOf<String?>(null) }
+    var removedCode by remember { mutableStateOf<String?>(null) }
+    var focusedRowCode by remember { mutableStateOf<String?>(null) }
+    fun toggleFavorite(channel: LiveChannel) {
+        val wasFavorite = channel.liveCode in state.favorites
+        if (wasFavorite && !searching && view == TvLocalView.NONE && state.activeCategory == CATEGORY_FAVORITES) {
+            removedCode = channel.liveCode
+            refocusCode = neighborAfterRemoval(channels.map { it.liveCode }, channel.liveCode)
+        }
+        vm.toggleFavorite(channel, dropFromFavoritesList = true)
+        notice = favoriteNotice(added = !wasFavorite)
+        noticeTick++
+    }
+    LaunchedEffect(channels, removedCode) {
+        val gone = removedCode ?: return@LaunchedEffect
+        // Still listed: the model hasn't pruned it yet (the write is async).
+        if (channels.any { it.liveCode == gone }) return@LaunchedEffect
+        removedCode = null
+        val target = refocusCode
+        retryFocus(
+            attempts = 20,
+            isAlreadyFocused = { if (target == null) chipsFocused else focusedRowCode == target },
+            wait = { delay(50) },
+            request = { (if (target == null) chipsFocus else refocusRow).requestFocus() },
+        )
+        refocusCode = null
+    }
+    val favoriteRow: (LiveChannel) -> Modifier = { channel ->
+        Modifier
+            .onFocusChanged { if (it.isFocused) focusedRowCode = channel.liveCode }
+            .then(if (channel.liveCode == refocusCode) Modifier.focusRequester(refocusRow) else Modifier)
+    }
+
     Column(
         modifier = Modifier.fillMaxSize().background(ArkivBlack)
             .onFocusChanged { screenHasFocus = it.hasFocus }
@@ -296,7 +347,15 @@ fun TvLiveGuideScreen(onWatchChannel: (LiveChannel) -> Unit, onBack: () -> Unit)
                     return@Column
                 }
                 if (searching) {
-                    TvSearchResults(searchView, state::tabOf, ::watchChannel)
+                    Box(Modifier.weight(1f).fillMaxWidth()) {
+                        TvSearchResults(
+                            searchView, state::tabOf, ::watchChannel,
+                            isFavorite = { it.liveCode in state.favorites },
+                            onToggleFavorite = ::toggleFavorite,
+                            rowModifier = favoriteRow,
+                        )
+                    }
+                    TvFavoriteHint(notice)
                     return@Column
                 }
                 if (state.showProviders) {
@@ -354,30 +413,37 @@ fun TvLiveGuideScreen(onWatchChannel: (LiveChannel) -> Unit, onBack: () -> Unit)
                 // The active provider's own note (a plugin list cut to the caps): "Lista recortada: …".
                 state.notice?.let { TvNoteLine(it) }
 
-                when {
-                    view == TvLocalView.RECENT && baseChannels.isEmpty() ->
-                        TvGuideMessage("Sin canales recientes", "Los canales que abras van a aparecer acá.")
-                    state.error != null && state.channels.isEmpty() ->
-                        TvGuideMessage(state.error!!, "Presiona OK para reintentar.") { vm.retry() }
-                    state.loading && state.channels.isEmpty() ->
-                        TvGuideMessage("Cargando canales…", null)
-                    baseChannels.isEmpty() ->
-                        TvGuideMessage("Sin canales", "No encontramos canales en esta categoría.")
-                    else -> LazyColumn(
-                        modifier = Modifier.weight(1f).fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                        contentPadding = PaddingValues(end = 24.dp, bottom = 16.dp),
-                    ) {
-                        items(channels, key = { it.liveCode }) { channel ->
-                            TvChannelRow(
-                                channel = channel,
-                                badge = state.tabOf(channel),
-                                onClick = { watchChannel(channel) },
-                                modifier = Modifier.height(ROW_HEIGHT),
-                            )
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    when {
+                        view == TvLocalView.RECENT && baseChannels.isEmpty() ->
+                            TvGuideMessage("Sin canales recientes", "Los canales que abras van a aparecer acá.")
+                        state.error != null && state.channels.isEmpty() ->
+                            TvGuideMessage(state.error!!, "Presiona OK para reintentar.") { vm.retry() }
+                        state.loading && state.channels.isEmpty() ->
+                            TvGuideMessage("Cargando canales…", null)
+                        baseChannels.isEmpty() && state.activeCategory == CATEGORY_FAVORITES ->
+                            TvGuideMessage("Aún no tienes favoritos", "Mantén OK sobre un canal para agregarlo.")
+                        baseChannels.isEmpty() ->
+                            TvGuideMessage("Sin canales", "No encontramos canales en esta categoría.")
+                        else -> LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            contentPadding = PaddingValues(end = 24.dp, bottom = 16.dp),
+                        ) {
+                            items(channels, key = { it.liveCode }) { channel ->
+                                TvChannelRow(
+                                    channel = channel,
+                                    badge = state.tabOf(channel),
+                                    isFavorite = channel.liveCode in state.favorites,
+                                    onClick = { watchChannel(channel) },
+                                    onLongClick = { toggleFavorite(channel) },
+                                    modifier = Modifier.height(ROW_HEIGHT).then(favoriteRow(channel)),
+                                )
+                            }
                         }
                     }
                 }
+                TvFavoriteHint(notice)
             }
         }
     }
@@ -393,6 +459,9 @@ private fun TvSearchResults(
     view: LiveSearchView,
     badgeOf: (LiveChannel) -> LiveProviderTab?,
     onWatch: (LiveChannel) -> Unit,
+    isFavorite: (LiveChannel) -> Boolean,
+    onToggleFavorite: (LiveChannel) -> Unit,
+    rowModifier: (LiveChannel) -> Modifier,
 ) {
     val note = when (view) {
         is LiveSearchView.Results -> view.note
@@ -411,8 +480,10 @@ private fun TvSearchResults(
                     TvChannelRow(
                         channel = channel,
                         badge = badgeOf(channel),
+                        isFavorite = isFavorite(channel),
                         onClick = { onWatch(channel) },
-                        modifier = Modifier.height(ROW_HEIGHT),
+                        onLongClick = { onToggleFavorite(channel) },
+                        modifier = Modifier.height(ROW_HEIGHT).then(rowModifier(channel)),
                     )
                 }
             }
@@ -421,6 +492,26 @@ private fun TvSearchResults(
             else -> TvGuideMessage("Buscando…", null)
         }
     }
+}
+
+/** How long "Agregado a favoritos" / "Quitado de favoritos" replaces the hint. */
+private const val NOTICE_MS = 2000L
+
+/**
+ * The line under the channel list: how to star a channel (nothing on a TV row can be hovered or
+ * tapped to discover a long press), swapped for the confirmation [notice] for a moment after one.
+ */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun TvFavoriteHint(notice: String?) {
+    Text(
+        notice ?: FAVORITE_HINT,
+        style = MaterialTheme.typography.bodySmall,
+        color = if (notice != null) Color.White else ArkivTextSecondary,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.padding(top = 8.dp),
+    )
 }
 
 /** A small secondary line above the list: a provider's notice or the search's not-loaded note. Never focusable. */
@@ -449,11 +540,14 @@ private fun TvNoteLine(text: String) {
 private fun TvChannelRow(
     channel: LiveChannel,
     badge: LiveProviderTab?,
+    isFavorite: Boolean,
     onClick: () -> Unit,
+    onLongClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Surface(
         onClick = onClick,
+        onLongClick = onLongClick,
         modifier = modifier.fillMaxWidth(),
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
         colors = ClickableSurfaceDefaults.colors(
@@ -502,6 +596,14 @@ private fun TvChannelRow(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false),
                     )
+                    if (isFavorite) {
+                        Icon(
+                            Icons.Default.Star,
+                            contentDescription = "Favorito",
+                            tint = FAVORITE_STAR,
+                            modifier = Modifier.padding(start = 8.dp).size(20.dp),
+                        )
+                    }
                     // Which provider the row is from, only with more than one ("CNN · Tu servidor").
                     badge?.let { ProviderBadge(it, Modifier.padding(start = 8.dp)) }
                 }

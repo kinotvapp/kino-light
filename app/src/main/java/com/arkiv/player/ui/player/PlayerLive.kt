@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -50,9 +51,12 @@ import com.arkiv.player.data.live.LiveModule
 import com.arkiv.player.ui.live.DrawerAction
 import com.arkiv.player.ui.live.DrawerDpad
 import com.arkiv.player.ui.live.DrawerFocus
+import com.arkiv.player.ui.live.FAVORITE_HINT
 import com.arkiv.player.ui.live.currentProgram
+import com.arkiv.player.ui.live.favoriteNotice
 import com.arkiv.player.ui.theme.ArkivSurface
 import com.arkiv.player.ui.theme.ArkivTextSecondary
+import com.arkiv.player.ui.tv.FAVORITE_STAR
 import com.arkiv.player.ui.tv.TvChannelDrawer
 import kotlinx.coroutines.delay
 
@@ -100,10 +104,24 @@ internal class LiveState {
     var drawerFocus by mutableStateOf(DrawerFocus.CHANNELS)
         private set
 
+    /**
+     * "Agregado a favoritos" / "Quitado de favoritos" on the channel card, right after a long OK on
+     * the TV. Cleared by the next announcement, so it never outlives the card it came with.
+     */
+    var favoriteMessage by mutableStateOf<String?>(null)
+        private set
+
     /** VOD's `bump()` equivalent: announces the channel and resets the 3 s countdown. */
     fun showInfo() {
+        favoriteMessage = null
         infoVisible = true
         infoTick++
+    }
+
+    /** The long OK's confirmation: the card comes up (the star on it shows the new state) with the line. */
+    fun announceFavorite(added: Boolean) {
+        showInfo()
+        favoriteMessage = favoriteNotice(added)
     }
 
     fun hideInfo() {
@@ -224,12 +242,18 @@ internal fun BoxScope.LiveCastBand(
  *
  * Brings its own two effects along —loading the channel's EPG and the 3 s countdown— because they
  * only compose in live mode and are of no use to anyone else.
+ *
+ * [isFavorite] puts the star next to the name. [favoriteHint] (TV) adds the line that teaches the
+ * long OK, the only way to star a channel from the remote; right after one, the confirmation
+ * ([LiveState.favoriteMessage]) takes its place.
  */
 @Composable
 internal fun BoxScope.ChannelCard(
     state: LiveState,
     channel: LiveChannel?,
     module: LiveModule,
+    isFavorite: Boolean,
+    favoriteHint: Boolean,
 ) {
     LaunchedEffect(channel?.liveCode) { state.loadEpg(channel, module) }
     LaunchedEffect(state.infoTick) {
@@ -271,17 +295,33 @@ internal fun BoxScope.ChannelCard(
                 }
             }
             Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
-                Text(
-                    channel?.name.orEmpty(),
-                    color = Color.White,
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        channel?.name.orEmpty(),
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    if (isFavorite) {
+                        Icon(
+                            Icons.Default.Star,
+                            contentDescription = "Favorito",
+                            tint = FAVORITE_STAR,
+                            modifier = Modifier.padding(start = 8.dp).size(18.dp),
+                        )
+                    }
+                }
                 // Nothing if there's no EPG for this channel yet -- same criterion as the
                 // grid/guide (LiveScreen/TvLiveGuideScreen): no fixed placeholder, no "loading".
                 state.current?.let { p -> ProgramLine("Ahora: ${p.title}", Color.White.copy(alpha = 0.85f)) }
                 state.next?.let { p -> ProgramLine("A continuación: ${p.title}", ArkivTextSecondary) }
+                val favoriteLine = state.favoriteMessage
+                when {
+                    favoriteLine != null -> ProgramLine(favoriteLine, Color.White)
+                    favoriteHint -> ProgramLine(FAVORITE_HINT, ArkivTextSecondary)
+                }
             }
         }
     }

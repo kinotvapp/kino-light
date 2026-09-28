@@ -100,6 +100,7 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import com.arkiv.player.ui.live.DrawerAction
 import com.arkiv.player.ui.live.DrawerDpad
+import com.arkiv.player.ui.live.toggle
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
@@ -686,6 +687,9 @@ private fun PlayerContent(
     // (channel card, EPG and drawer) lives in `PlayerLive.kt`; from here only the video's key
     // listener moves it, which stays this screen's own.
     val liveState = rememberLiveState()
+    val liveFavoriteDao = remember { graph.database.liveFavoriteDao() }
+    val liveFavorites by remember { liveFavoriteDao.flowAll() }.collectAsStateWithLifecycle(initialValue = emptyList())
+    val liveOkPress = remember { LiveOkPress() }
     val liveChannel by vm.liveChannel.collectAsStateWithLifecycle()
     // Task 15: publish the channel name for NowPlayingPublisher (only runs on TV, but it costs
     // nothing to have it also set here on the phone). Without this the remote miniplayer's bar, on
@@ -2666,6 +2670,18 @@ private fun PlayerContent(
     // `magisPlayer`/`livePlayer`/`dituPlayer` hadn't been published yet) and not the player that's
     // genuinely playing anymore. Same pattern as `currentPlayer` above.
     val currentTogglePlayPause by rememberUpdatedState { togglePlayPause() }
+    // TV, an En vivo channel on screen: a long OK stars/unstars it (LiveOkPress). Read from the
+    // DAO at the moment of the press, not from a composed snapshot, since the listener is built once.
+    val currentToggleLiveFavorite by rememberUpdatedState {
+        val channel = vm.liveChannel.value
+        if (channel != null) {
+            scope.launch {
+                val wasFavorite = liveFavoriteDao.isFavorite(channel.provider, channel.code)
+                liveFavoriteDao.toggle(channel, wasFavorite)
+                liveState.announceFavorite(added = !wasFavorite)
+            }
+        }
+    }
     val currentSeekBy by rememberUpdatedState { deltaMs: Long -> seekBy(deltaMs) }
 
     val onOpenEpisodesState = rememberUpdatedState(onOpenEpisodes)
@@ -2706,6 +2722,26 @@ private fun PlayerContent(
                         tv.isFocusable = true
                         tv.isFocusableInTouchMode = true
                         tv.setOnKeyListener { _, keyCode, event ->
+                            // En vivo channel, OK/center: short = play/pause, long = favourite.
+                            // Both halves of the press come here (see LiveOkPress for why the short
+                            // one now acts on release). MEDIA_PLAY_PAUSE & co. keep acting on down.
+                            if (isLive && isModuleLive && !markers.marking && !controls.visible &&
+                                keyCode in LIVE_OK_KEYS
+                            ) {
+                                val heldMs = event.eventTime - event.downTime
+                                val action = when {
+                                    event.action == KeyEvent.ACTION_DOWN -> liveOkPress.onDown(event.repeatCount, heldMs)
+                                    event.action == KeyEvent.ACTION_UP && event.isCanceled -> { liveOkPress.onUp(0); LiveOkPress.Action.NONE }
+                                    event.action == KeyEvent.ACTION_UP -> liveOkPress.onUp(heldMs)
+                                    else -> LiveOkPress.Action.NONE
+                                }
+                                when (action) {
+                                    LiveOkPress.Action.SHORT -> currentTogglePlayPause()
+                                    LiveOkPress.Action.LONG -> currentToggleLiveFavorite()
+                                    LiveOkPress.Action.NONE -> Unit
+                                }
+                                return@setOnKeyListener true
+                            }
                             if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
                             if (markers.marking) return@setOnKeyListener false
                             // With the controls overlay visible, Android's focus is already on
@@ -3950,7 +3986,15 @@ private fun PlayerContent(
             }
             // This card is for the En vivo module's channels (any provider): the channel and its
             // provider's guide. Caracol and a plugin's `live` card don't have it.
-            if (isModuleLive) ChannelCard(state = liveState, channel = liveChannel, module = graph.liveModule)
+            if (isModuleLive) {
+                ChannelCard(
+                    state = liveState,
+                    channel = liveChannel,
+                    module = graph.liveModule,
+                    isFavorite = liveChannel?.let { c -> liveFavorites.any { it.provider == c.provider && it.code == c.code } } == true,
+                    favoriteHint = isTv,
+                )
+            }
         }
 
         // Whether the button HAD focus. It's a latch, not the live reading of `isFocused`: when
