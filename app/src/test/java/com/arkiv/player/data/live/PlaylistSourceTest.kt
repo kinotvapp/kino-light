@@ -110,6 +110,30 @@ class PlaylistSourceTest {
         assertNull(cold.entries(false))
     }
 
+    @Test fun `a list holds only the channel budget it was given, and is parsed again only when a cut list gets more`() = runBlocking {
+        val big = "#EXTM3U\n" + (0 until 100).joinToString("") { "#EXTINF:-1,C$it\nhttps://live.example.com/$it.m3u8\n" }
+        val s = PlaylistSource(PluginPlaylist("https://lists.example.com/big.m3u"), { _, _, _ -> big.toByteArray() }, tmp.root, { now }, {}, parseGate = Semaphore(1))
+        var parses = 0
+        s.beforeRead = { parses++ }
+        val ten = s.entries(false, maxEntries = 10)!!
+        assertEquals(listOf(10, 100, 1), listOf(ten.entries.size, ten.total, parses))
+        assertSame(ten, s.entries(false, maxEntries = 10))
+        // Less budget: trimmed from memory, the file not read again.
+        val five = s.entries(false, maxEntries = 5)!!
+        assertEquals(listOf(5, 100, 1), listOf(five.entries.size, five.total, parses))
+        assertSame(five, s.entries(false, maxEntries = 5))
+        // More budget for a list that was cut: read again.
+        val fifty = s.entries(false, maxEntries = 50)!!
+        assertEquals(listOf(50, 100, 2), listOf(fifty.entries.size, fifty.total, parses))
+        // A list that was never cut serves any budget as it is.
+        val small = source("https://lists.example.com/a.m3u")
+        var smallParses = 0
+        small.beforeRead = { smallParses++ }
+        val all = small.entries(false, maxEntries = 10)!!
+        assertSame(all, small.entries(false, maxEntries = 5000))
+        assertEquals(1, smallParses)
+    }
+
     @Test fun `a list being parsed is never evicted for size`() = runBlocking {
         val s = source("https://lists.example.com/a.m3u")
         var survived = false

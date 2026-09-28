@@ -94,6 +94,18 @@ class PluginLivePlaylistTest {
         assertEquals("Lista recortada: 5000 de 5010 canales", p.notice.value)
     }
 
+    @Test fun `a later playlist gets only the channels left, and is still counted in the notice`() = runBlocking {
+        val first = "#EXTM3U\n" + (0 until 4990).joinToString("") { "#EXTINF:-1 group-title=\"A\",A$it\nhttps://live.example.com/a$it.m3u8\n" }
+        val second = "#EXTM3U\n" + (0 until 30).joinToString("") { "#EXTINF:-1 group-title=\"B\",B$it\nhttps://live.example.com/b$it.m3u8\n" }
+        val p = PluginLiveProvider(plugin, PluginCaller { _, _, _, _ ->
+            """[{"playlist":{"url":"https://lists.example.com/one.m3u","format":"m3u"}},{"playlist":{"url":"https://lists.example.com/two.m3u","format":"m3u"}}]"""
+        }, fetcher = { url, _, _ -> (if (url.endsWith("one.m3u")) first else second).toByteArray() }, cacheDir = tmp.newFolder(), clock = { now }, log = {})
+        val cats = p.categories(false)
+        assertEquals(listOf("A", "B"), cats.map { it.name })
+        assertEquals(10, p.channels(cats[1].id).size)
+        assertEquals("Lista recortada: 5000 de 5020 canales", p.notice.value)
+    }
+
     private fun custom(m3u: String, epg: ByteArray?, playlistJson: String, cache: File = tmp.newFolder()): Pair<PluginLiveProvider, MutableList<String>> {
         val got = mutableListOf<String>()
         val p = PluginLiveProvider(plugin, PluginCaller { _, _, _, _ -> "[{\"playlist\":$playlistJson}]" },

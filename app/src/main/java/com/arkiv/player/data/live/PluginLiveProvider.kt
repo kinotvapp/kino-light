@@ -225,7 +225,13 @@ class PluginLiveProvider(
                         PlaylistSource.pruneLiveDir(dir, keys, PlaylistSource.MAX_LIVE_CACHE_BYTES) { log("[$pluginId] $it") }
                     }
                 }
-                val results = list.map { it to it.entries(force = it.key == forceKey) }
+                // Each list gets only the channels the earlier ones left: never 10 × 5000 parsed entries held.
+                var left = PluginLiveContract.MAX_CHANNELS_PER_PROVIDER
+                val results = list.map { s ->
+                    val r = s.entries(force = s.key == forceKey, maxEntries = left)
+                    left = (left - (r?.entries?.size ?: 0)).coerceAtLeast(0)
+                    s to r
+                }
                 val cats = lock.withLock { pluginCategories }
                 val byKey = LinkedHashMap<String, M3uResult?>().apply { results.forEach { (s, r) -> put(s.key, r) } }
                 val declared = list.map { it.playlist }

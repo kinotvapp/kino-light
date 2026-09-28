@@ -21,6 +21,9 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
  *   rotation, ignore `refreshHours` and orphan a copy per token. The current full URL is still what
  *   is downloaded.
  * - The parsed list is kept in memory while its bytes are fresh, so a second screen parses nothing.
+ *   It holds at most the channel budget [entries] was given (what the provider's earlier playlists
+ *   left): a smaller budget trims it in memory, a larger one parses the file again only when the
+ *   list was actually cut.
  *   After a failed download the parsed list (or, first time, the stale copy) stands [RETRY_MS]
  *   before trying again; the stale copy is never parsed again while a parsed one is on hand.
  * - Parsing streams from the file on [Dispatchers.Default] against its time budget, under
@@ -53,6 +56,8 @@ internal class PlaylistSource(
     /** Test seam: runs between the M3U encoding sniff and the read (a file vanishing mid-parse). */
     @Volatile internal var beforeRead: (File) -> Unit = {}
     private var parsed: M3uResult? = null
+    /** The budget [parsed] was parsed or trimmed to. */
+    private var parsedMax = 0
     private var parsedUntil = 0L
 
     private val refreshMs get() = playlist.refreshHours * 3_600_000L
@@ -67,17 +72,20 @@ internal class PlaylistSource(
         return true
     }
 
-    /** Null = never downloaded and the download failed, or no [cacheDir]. */
-    suspend fun entries(force: Boolean): M3uResult? {
+    /**
+     * At most [maxEntries] entries ([M3uResult.total] still counts them all). Null = never
+     * downloaded and the download failed, or no [cacheDir].
+     */
+    suspend fun entries(force: Boolean, maxEntries: Int = PluginLiveContract.MAX_CHANNELS_PER_PROVIDER): M3uResult? {
         if (cacheDir == null) return null
-        if (!force) parsed?.takeIf { clock() < parsedUntil }?.let { return it }
+        if (!force && clock() < parsedUntil) fitted(maxEntries)?.let { return it }
         val file = fileOf("m3u")
         val state = refresh(playlist.url, file, PluginLiveContract.MAX_PLAYLIST_BYTES, force)
         if (state == Refresh.FAILED) {
             parsedUntil = clock() + RETRY_MS
             // Offline: the list already parsed is as good as the stale copy, without parsing it again.
-            parsed?.let { return it }
-            if (!file.exists()) return null
+            fitted(maxEntries)?.let { return it }
+            if (!file.exists()) return parsed
         }
         val pl = playlist
         val result = try {
@@ -86,7 +94,7 @@ internal class PlaylistSource(
                     inUse(file) {
                         val until = System.currentTimeMillis() + PluginLiveContract.PLAYLIST_PARSE_BUDGET_MS
                         M3uParser.parse(
-                            file, deadline = { System.currentTimeMillis() > until },
+                            file, maxEntries = maxEntries, deadline = { System.currentTimeMillis() > until },
                             hide = { isHiddenGroup(it.group, pl) }, allow = entryAllowed, beforeRead = beforeRead,
                         )
                     }
@@ -102,8 +110,24 @@ internal class PlaylistSource(
         }
         if (result.stoppedEarly) log("playlist ${pl.url.take(100)}: parse stopped at its time budget (${result.entries.size} entries)")
         parsed = result
+        parsedMax = maxEntries
         if (state != Refresh.FAILED) parsedUntil = withContext(Dispatchers.IO) { file.lastModified() } + refreshMs
         return result
+    }
+
+    /**
+     * [parsed] within [max] entries, without reading the file: as it is (same budget, or a list
+     * that was never cut), trimmed (a smaller budget; kept trimmed), or null when a cut list needs
+     * more than it holds.
+     */
+    private fun fitted(max: Int): M3uResult? {
+        val p = parsed ?: return null
+        return when {
+            max == parsedMax -> p
+            max < parsedMax -> p.copy(entries = p.entries.take(max)).also { parsed = it; parsedMax = max }
+            p.entries.size >= p.total && !p.stoppedEarly -> p.also { parsedMax = max }
+            else -> null
+        }
     }
 
     /** Null = no EPG, or it could not be downloaded nor read from disk. A truncated guide is returned as is. */
