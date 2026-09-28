@@ -1,0 +1,3 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- What not to do: <!DOCTYPE tv SYSTEM "tv.dtd"> -->
+<tv><channel id="c"><display-name>Canal <![CDATA[<!DOCTYPE no>]]></display-name></channel><programme start="20260927120000 +0000" stop="20260927130000 +0000" channel="c"><title>Hola</title><!-- <!DOCTYPE x> --></programme></tv>

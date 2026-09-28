@@ -1088,12 +1088,21 @@ node sdk/run.mjs live playlist ./lista.m3u --epg ./guia.xml.gz
   in the answer, it downloads the list as the app would (your `headers`, your `hosts` or the person's
   server only, every redirect too) and prints, on stderr, the same summary as `live playlist` and
   the list's groups as the categories people will see.
-- `live channels <categoryId> [cursor]` calls `liveChannels({ categoryId, cursor })`, and
-  `live guide <id,id>` calls `guide()` with those ids and a 24-hour window starting two hours ago.
+- `live channels <categoryId> [cursor]` calls `liveChannels({ categoryId, cursor })`, then plays the
+  first channel that has a `ref` and no `stream` the way Kino would: it sends that `ref` to
+  `resolve()` and checks the answer as a live channel's (so `"liveStreamHosts": "any"` applies). With
+  `validate.mjs --run liveChannels`, a refused answer there is a problem.
+- `resolve <ref> --live` checks a `resolve()` answer as a live channel's. Without `--live` the kit
+  cannot know the `ref` is a channel's and applies the strict rule; when only that stops the URL
+  and your manifest has `"liveStreamHosts": "any"`, it says "si este ref es de un canal en vivo,
+  prueba con --live".
+- `live guide <id,id>` calls `guide()` with those ids and a 24-hour window starting two hours ago.
 - `live playlist <url|file>` needs no plugin: it reads any M3U list with Kino's own rules and prints
   `N canales en M categorías; K entradas descartadas; L ocultas (adultos)`, the categories, and the
   first 20 channels as `group › name  url`. With `--epg <url|file>` it also shows what each of those
-  20 has on now, or "sin guía". Use it on a list before you write a line of plugin.
+  20 has on now, or "sin guía". A guide that declares a DOCTYPE is refused, as in the app, and the
+  command says so: "La guía declara un DOCTYPE; Kino la rechaza por seguridad". Use it on a list
+  before you write a line of plugin.
 
 The kit reads lists and guides with `sdk/live-playlist.mjs`, a copy of the app's readers pinned to
 the same test files (`docs/plugins/fixtures/live` in Kino's repository): what it keeps is what Kino
@@ -1104,6 +1113,9 @@ you can iterate fast. Before you publish, install the plugin in the app and try 
 differences:
 
 - `kino.html.select` throws (it uses Jsoup, which exists only in the app).
+- The kit's XMLTV reader is a tolerant regex walk, not the app's XML parser. It gives the app's answer
+  on every shared test guide, but on malformed XML in mid-document it may keep more than the app
+  (which stops at the first error and keeps what it read up to there).
 - The rejection trap of [section 6](#6-limits-and-engine-quirks): Node catches what Kino would not.
 - Node has globals Kino lacks (`setTimeout`, `fetch`, `Buffer`, ...): the plugin may pass under Node
   and fail in Kino. Kino's `URL` has no punycode.

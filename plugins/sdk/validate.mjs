@@ -15,7 +15,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { checkOutput, contract, kb, requiredExports, validateManifest } from "./contract.mjs";
 import { createKino } from "./kino-shim.mjs";
-import { call, parseArgs } from "./run.mjs";
+import { call, parseArgs, resolveFirstLiveRef } from "./run.mjs";
 import { loadPlaylist } from "./live-playlist.mjs";
 
 // Every return carries { ok, problems, drops, output } — even the early ones, before a `kino` even
@@ -75,6 +75,11 @@ export async function validate(dirArg, { run = null, args = [], config = {}, rep
         const checkedOut = checkOutput(run, await call(plugin, run, args), m, servers);
         output = checkedOut.value;
         drops.push(...checkedOut.drops);
+        // Playing a listed channel sends its ref to resolve() as a live channel's: follow the first.
+        if (run === "liveChannels") {
+          const r = await resolveFirstLiveRef(plugin, output, m, servers);
+          if (r && r.error) problems.push(`resolve(${r.ref}) ${r.error}`);
+        }
         // The app downloads and parses each declared playlist itself: one that fails or comes out
         // empty would show nothing.
         for (const p of run === "liveCategories" ? output.playlists : []) {

@@ -587,7 +587,11 @@ function guide(value, drop) {
  * lines the app writes). Throws, with the app's message, when the app would refuse it outright.
  * [servers]: the url settings' values (`--config`), which the app allows like declared hosts.
  */
-export function checkOutput(fn, value, manifest, servers = []) {
+/**
+ * `liveChannel`: the `resolve` answer is for a live channel's ref (the app knows; the kit is told),
+ * so `liveStreamHosts: "any"` applies to its stream URL.
+ */
+export function checkOutput(fn, value, manifest, servers = [], { liveChannel = false } = {}) {
   const drops = [];
   const drop = (m) => { drops.push(m); };
   const ctx = {
@@ -606,7 +610,7 @@ export function checkOutput(fn, value, manifest, servers = []) {
     case "home": return { value: rows(parsed, ctx, drop), drops };
     case "episodes": return { value: episodes(parsed, drop, servers), drops };
     // Widevine is the `drm` capability (apiVersion 2 by the manifest rules): without it every DRM-shaped key refuses the stream.
-    case "resolve": return { value: stream(parsed, { manifest, servers, allowDrm: manifest.capabilities.includes("drm") }), drops };
+    case "resolve": return { value: stream(parsed, { manifest, servers, allowDrm: manifest.capabilities.includes("drm"), liveChannel }), drops };
     case "liveCategories": return { value: liveCategories(parsed, { manifest, servers }, drop), drops };
     case "liveChannels": return { value: liveChannels(parsed, { manifest, servers, allowDrm: manifest.capabilities.includes("drm") }, drop), drops };
     case "guide": return { value: guide(parsed, drop), drops };

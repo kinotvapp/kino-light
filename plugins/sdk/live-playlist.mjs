@@ -314,7 +314,8 @@ const firstChild = (inner, tag) => {
 };
 
 /**
- * An XMLTV guide (plain or gzip), read by the app's rules: `{ displayNames, programmes, truncated }`.
+ * An XMLTV guide (plain or gzip), read by the app's rules: `{ displayNames, programmes, truncated }`,
+ * plus `refused: true` when it was turned down for declaring a DOCTYPE.
  * Only the wanted channels (`wantedIds`, or any display name whose `normaliseName` is in
  * `wantedNames`; `wantedIds` null wants every channel, at most 5000) inside `[from, to)`, each list
  * sorted by start, one per start time, the earliest `maxPerChannel` kept. A document with any
@@ -335,8 +336,12 @@ export function parseXmltv(buffer, { from, to, wantedIds = null, wantedNames = n
   const decoded = decodeXml(bytes, maxBytes);
   const text = decoded.text;
   truncated = truncated || decoded.truncated;
-  const refused = { displayNames: {}, programmes: {}, truncated: false };
-  if (text.slice(0, HEAD_SCAN_BYTES).includes("<!ENTITY") || /<!DOCTYPE/i.test(text)) return refused;
+  // `refused` marks a guide turned down on purpose (the app returns the same empty guide, silently).
+  const refused = { displayNames: {}, programmes: {}, truncated: false, refused: true };
+  // The app's fast path scans the raw head for `<!ENTITY`, comments included: so does this.
+  if (text.slice(0, HEAD_SCAN_BYTES).includes("<!ENTITY")) return refused;
+  // The app refuses a real DOCTYPE structurally; a "<!DOCTYPE" inside a comment or CDATA is text.
+  if (/<!DOCTYPE/i.test(text.replace(/<!--[\s\S]*?(?:-->|$)|<!\[CDATA\[[\s\S]*?(?:\]\]>|$)/g, ""))) return refused;
 
   const names = new Map();
   const wanted = new Map();

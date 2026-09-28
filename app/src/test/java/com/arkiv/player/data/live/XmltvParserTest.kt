@@ -163,6 +163,10 @@ class XmltvParserTest {
         assertEquals(expectedFrom("guide-windows1252.expected.json"), parseFile("guide-windows1252.xml", wanted = null))
     }
 
+    @Test fun `a DOCTYPE only inside a comment or CDATA is not a DOCTYPE, the guide parses`() {
+        assertEquals(expectedFrom("guide-doctype-comment.expected.json"), parseFile("guide-doctype-comment.xml", wanted = null))
+    }
+
     @Test fun `an unrecognised declared charset falls back to ISO-8859-1, never fails`() {
         val xml = "<?xml version=\"1.0\" encoding=\"totally-bogus-charset\"?><tv><channel id=\"n\"><display-name>Niños</display-name></channel><programme start=\"20260927120000 +0000\" stop=\"20260927130000 +0000\" channel=\"n\"><title>Niñez</title></programme></tv>"
         val bytes = xml.toByteArray(Charsets.ISO_8859_1)

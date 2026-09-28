@@ -18,6 +18,7 @@
 //   --replay <file>        answer kino.fetch from <file> only: offline and repeatable
 //   --raw                  print the plugin's answer as it returned it, without the app's checks
 //   --epg <url|file>       live playlist only: the XMLTV guide to show what is on now
+//   --live                 resolve only: the ref is a live channel's (liveStreamHosts "any" applies)
 // The first argument is the plugin's entry file or the folder that holds kino-plugin.json. The
 // result goes to stdout as JSON; everything else (kino.log, console.*, dropped entries, errors)
 // goes to stderr.
@@ -45,7 +46,7 @@ function fail(message) {
 }
 
 export function parseArgs(argv) {
-  const opts = { config: {}, record: null, replay: null, raw: false, epg: null };
+  const opts = { config: {}, record: null, replay: null, raw: false, epg: null, live: false };
   const rest = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -58,6 +59,7 @@ export function parseArgs(argv) {
     else if (a === "--replay") opts.replay = argv[++i];
     else if (a === "--raw") opts.raw = true;
     else if (a === "--epg") opts.epg = argv[++i];
+    else if (a === "--live") opts.live = true;
     else rest.push(a);
   }
   return { opts, rest };
@@ -128,9 +130,25 @@ async function main() {
       process.stdout.write(JSON.stringify(out === undefined ? null : out, null, 2) + "\n");
       return 0;
     }
-    const { value, drops } = checkOutput(fn, out, manifest, servers);
+    let checked;
+    try {
+      checked = checkOutput(fn, out, manifest, servers, { liveChannel: fn === "resolve" && opts.live });
+    } catch (e) {
+      // Refused only by host, and a live channel's ref would pass: say how to check it as one.
+      if (fn === "resolve" && !opts.live && manifest.liveStreamHostsAny) {
+        try { checkOutput(fn, out, manifest, servers, { liveChannel: true }); stderr("si este ref es de un canal en vivo, prueba con --live"); } catch { /* refused either way */ }
+      }
+      throw e;
+    }
+    const { value, drops } = checked;
     drops.forEach((d) => stderr(`[dropped by Kino] ${d}`));
     process.stdout.write(JSON.stringify(value, null, 2) + "\n");
+    // Playing a listed channel: its ref goes to resolve() as a live channel's.
+    if (fn === "liveChannels") {
+      const r = await resolveFirstLiveRef(plugin, value, manifest, servers);
+      if (r) stderr(r.error ? `resolve(${r.ref}) ✗ ${r.error}` : `resolve(${r.ref}) → ${r.url}`);
+      if (r && r.error) return 1;
+    }
     // The app downloads each declared playlist itself: do the same, and say what it would show.
     let failed = false;
     for (const p of fn === "liveCategories" ? value.playlists : []) {
@@ -155,6 +173,21 @@ async function main() {
   }
 }
 
+/**
+ * The first listed channel that plays through a ref (no inline stream), resolved and checked the way
+ * the app plays a channel: `{ ref, url }`, `{ ref, error }`, or null when there is none to try.
+ */
+export async function resolveFirstLiveRef(plugin, page, manifest, servers) {
+  const c = (page.items || []).find((x) => x.ref && !x.stream);
+  if (!c || typeof plugin.resolve !== "function") return null;
+  try {
+    const { value } = checkOutput("resolve", await plugin.resolve(c.ref), manifest, servers, { liveChannel: true });
+    return { ref: c.ref, url: value.url };
+  } catch (e) {
+    return { ref: c.ref, error: e && e.code ? `[${e.code}] ${e.message}` : String(e && e.message ? e.message : e) };
+  }
+}
+
 /** Reads a local file, or downloads an http(s) URL under `maxBytes`. */
 async function readSource(src, maxBytes) {
   if (/^https?:\/\//i.test(src)) return download(src, { maxBytes });
@@ -167,7 +200,8 @@ async function livePlaylist(src, epg) {
     const s = summarisePlaylist(await readSource(src, contract.live.maxPlaylistBytes));
     const guide = epg ? guideFor(s, await readSource(epg, contract.live.maxEpgBytes)) : null;
     if (guide && guide.truncated) stderr("[guide] cut short (byte cap, a cut download or a broken tail): what was read is kept");
-    process.stdout.write([...summaryLines(s), ...s.categories.map((c) => `categoría ${c.title} (${c.count})`), "", ...channelLines(s, { guide })].join("\n") + "\n");
+    const refusal = guide && guide.refused ? ["La guía declara un DOCTYPE; Kino la rechaza por seguridad"] : [];
+    process.stdout.write([...summaryLines(s), ...refusal, ...s.categories.map((c) => `categoría ${c.title} (${c.count})`), "", ...channelLines(s, { guide })].join("\n") + "\n");
     return s.channels ? 0 : 1;
   } catch (e) {
     return fail(`${src}: ${e.message}`);

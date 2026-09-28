@@ -2,7 +2,7 @@
 // The kit against the same rules and vectors the app's JVM tests use.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { gzipSync } from "node:zlib";
@@ -840,9 +840,11 @@ test("liveStreamHosts any is read only on v3, and needs channels there", () => {
 
 // ---------- live channels: the kit's own M3U/XMLTV readers (apiVersion 3) ----------
 
-// The shared corpus the app's JVM tests read too. It lives in Kino's repo (docs/plugins/fixtures/live)
-// or, in a published plugin repo, next to contract.json (fixtures/live); absent in both, skip.
-const fixtures = [join(here, "..", "..", "..", "docs", "plugins", "fixtures", "live"), join(here, "..", "..", "fixtures", "live")].find((d) => existsSync(d));
+// The shared corpus the app's JVM tests read too. It lives only in Kino's repo
+// (docs/plugins/fixtures/live); a published plugin repo (sdk/ and contract.json at its root) doesn't
+// ship it, so these tests skip there.
+const fixturesDir = join(here, "..", "..", "..", "docs", "plugins", "fixtures", "live");
+const fixtures = existsSync(fixturesDir) ? fixturesDir : null;
 const needFixtures = (t) => { if (!fixtures) t.skip("no shared live fixtures around this kit"); return !!fixtures; };
 const M3U_FIXTURES = ["basic", "bom-crlf", "latin1", "broken", "headers", "unterminated-quote", "huge-line"];
 
@@ -886,7 +888,7 @@ test("the kit's XMLTV reader gives the app's answer on every shared guide, plain
   if (!needFixtures(t)) return;
   const iso = (g) => Object.fromEntries(Object.entries(g.programmes).map(([k, l]) =>
     [k, l.map((p) => ({ title: p.title, start: new Date(p.start).toISOString().replace(".000", ""), end: new Date(p.end).toISOString().replace(".000", ""), description: p.description }))]));
-  const cases = [["guide.xml", "guide"], ["guide.xml.gz", "guide"], ["guide-latin1.xml", "guide-latin1"], ["guide-windows1252.xml", "guide-windows1252"], ["guide-xxe.xml", "guide-xxe"]];
+  const cases = [["guide.xml", "guide"], ["guide.xml.gz", "guide"], ["guide-latin1.xml", "guide-latin1"], ["guide-windows1252.xml", "guide-windows1252"], ["guide-xxe.xml", "guide-xxe"], ["guide-doctype-comment.xml", "guide-doctype-comment"]];
   for (const [file, expected] of cases) {
     const want = JSON.parse(readFileSync(join(fixtures, `${expected}.expected.json`), "utf8"));
     // The window and the wanted ids come from the fixture's own "query", as in the app's test.
@@ -915,7 +917,7 @@ test("the kit's XMLTV reader: every DOCTYPE refused, caps, times and a broken ta
   const to = Date.parse("2026-09-28T00:00:00Z");
   const prog = (ch, start, stop, title) => `<programme start="${start}" stop="${stop}" channel="${ch}"><title>${title}</title></programme>`;
   const padded = `<?xml version="1.0"?><!-- ${"x".repeat(8300)} --><!DOCTYPE tv [<!ENTITY s "LEAKED">]><tv>${prog("x", "20260927120000 +0000", "20260927130000 +0000", "&s;")}</tv>`;
-  assert.deepEqual(parseXmltv(Buffer.from(padded), { from, to }), { displayNames: {}, programmes: {}, truncated: false });
+  assert.deepEqual(parseXmltv(Buffer.from(padded), { from, to }), { displayNames: {}, programmes: {}, truncated: false, refused: true });
   const utf16 = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(`<?xml version="1.0" encoding="UTF-16"?><!DOCTYPE tv SYSTEM "http://192.0.2.1/x.dtd"><tv>${prog("x", "20260927120000", "20260927130000", "Hi")}</tv>`, "utf16le")]);
   assert.deepEqual(parseXmltv(utf16, { from, to }).programmes, {});
   // The earliest per channel survive the cap, whatever the document order.
@@ -1034,4 +1036,77 @@ test("liveStreamHosts any: a channel's inline stream may be on any public host, 
   assert.deepEqual(page.value.items[0].stream.subtitles, []);
   const strict = validateManifest(manifest({ apiVersion: 3, hosts: ["cdn.example.com"], capabilities: ["home", "resolve", "channels"] })).manifest;
   assert.deepEqual(checkOutput("liveChannels", { items: [{ id: "c", title: "C", stream: { url: "https://iptv.example.org/c.m3u8" } }] }, strict).value.items, []);
+});
+
+test("every guide in the shared corpus has its .expected.json and is checked here", (t) => {
+  if (!needFixtures(t)) return;
+  const guides = readdirSync(fixtures).filter((f) => /\.xml(\.gz)?$/.test(f)).sort();
+  assert.deepEqual(guides, ["guide-doctype-comment.xml", "guide-latin1.xml", "guide-windows1252.xml", "guide-xxe.xml", "guide.xml", "guide.xml.gz"]);
+});
+
+test("run.mjs live playlist --epg says why a guide declaring a DOCTYPE shows nothing", (t) => {
+  if (!needFixtures(t)) return;
+  const out = execFileSync(process.execPath, [join(here, "..", "run.mjs"), "live", "playlist", join(fixtures, "basic.m3u"), "--epg", join(fixtures, "guide-xxe.xml")], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  assert.match(out, /La guía declara un DOCTYPE; Kino la rechaza por seguridad/);
+});
+
+// A token-per-channel plugin under liveStreamHosts "any": resolve() of a channel's ref answers a URL
+// on any public host, which the app accepts because the ref is a live channel's.
+function anyLivePlugin(resolveUrl) {
+  const dir = mkdtempSync(join(tmpdir(), "kino-anylive-"));
+  writeFileSync(join(dir, "kino-plugin.json"), manifest({ apiVersion: 3, hosts: ["api.example.com"], capabilities: ["home", "resolve", "channels"], liveStreamHosts: "any" }));
+  writeFileSync(join(dir, "plugin.js"), `export async function home(){ return [] }
+export async function liveCategories(){ return [{ id: "news", title: "Noticias" }] }
+export async function liveChannels(){ return { items: [{ id: "c1", title: "Uno", ref: "r1" }, { id: "c2", title: "Dos", ref: "r2" }] } }
+export async function resolve(ref){ return { url: ${JSON.stringify(resolveUrl)} + "?ref=" + ref } }`);
+  return dir;
+}
+const runCli = (args) => {
+  const r = spawnSync(process.execPath, [join(here, "..", "run.mjs"), ...args], { encoding: "utf8" });
+  return { code: r.status, stdout: r.stdout, stderr: r.stderr };
+};
+
+test("checkOutput resolve: liveStreamHosts any applies only when the ref is a live channel's", () => {
+  const m = validateManifest(manifest({ apiVersion: 3, hosts: ["api.example.com"], capabilities: ["home", "resolve", "channels"], liveStreamHosts: "any" })).manifest;
+  assert.throws(() => checkOutput("resolve", { url: "http://8.8.8.8/a.m3u8" }, m), /no declaró|https/);
+  assert.equal(checkOutput("resolve", { url: "http://8.8.8.8/a.m3u8" }, m, [], { liveChannel: true }).value.url, "http://8.8.8.8/a.m3u8");
+  assert.throws(() => checkOutput("resolve", { url: "http://192.168.1.4/a.m3u8" }, m, [], { liveChannel: true }), /local/);
+});
+
+test("run.mjs resolve: refused by host under any gives the --live hint, and --live accepts it", () => {
+  const dir = anyLivePlugin("http://8.8.8.8/live.m3u8");
+  try {
+    const plain = runCli([dir, "resolve", "r1"]);
+    assert.equal(plain.code, 1);
+    assert.match(plain.stderr, /si este ref es de un canal en vivo, prueba con --live/);
+    const live = runCli([dir, "resolve", "r1", "--live"]);
+    assert.equal(live.code, 0, live.stderr);
+    assert.equal(JSON.parse(live.stdout).url, "http://8.8.8.8/live.m3u8?ref=r1");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("run.mjs live channels resolves the first channel's ref as a live channel", () => {
+  const dir = anyLivePlugin("http://8.8.8.8/live.m3u8");
+  try {
+    const r = runCli([dir, "live", "channels", "news"]);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stderr, /resolve\(r1\) → http:\/\/8\.8\.8\.8\/live\.m3u8\?ref=r1/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("validate --run liveChannels follows the first ref through resolve as a live channel", async () => {
+  const ok = anyLivePlugin("http://8.8.8.8/live.m3u8");
+  const local = anyLivePlugin("http://192.168.1.4/live.m3u8");
+  try {
+    assert.deepEqual((await validate(ok, { run: "liveChannels", args: ["news"] })).problems, []);
+    const bad = await validate(local, { run: "liveChannels", args: ["news"] });
+    assert.ok(bad.problems.some((p) => p.startsWith("resolve(r1)") && p.includes("local")), bad.problems.join("\n"));
+  } finally {
+    rmSync(ok, { recursive: true, force: true });
+    rmSync(local, { recursive: true, force: true });
+  }
 });
