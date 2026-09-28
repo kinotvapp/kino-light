@@ -1,6 +1,12 @@
 package com.arkiv.player.ui.player
 
 import android.content.pm.ActivityInfo
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ScreenRotation
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.Color
 
 /**
  * What to request when the player's rotate button is tapped: the opposite of what's on screen
@@ -12,3 +18,18 @@ import android.content.pm.ActivityInfo
 internal fun nextPlayerOrientation(isLandscape: Boolean): Int =
     if (isLandscape) ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
     else ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+
+/**
+ * The phone's rotate button, shared by VOD's icon row and live's top band: requests
+ * [nextPlayerOrientation] on tap. Never composed on TV.
+ */
+@Composable
+internal fun PlayerRotateButton(isLandscape: Boolean, onRotate: (Int) -> Unit) {
+    IconButton(onClick = { onRotate(nextPlayerOrientation(isLandscape)) }) {
+        Icon(
+            Icons.Default.ScreenRotation,
+            contentDescription = if (isLandscape) "Cambiar a vertical" else "Cambiar a horizontal",
+            tint = Color.White,
+        )
+    }
+}

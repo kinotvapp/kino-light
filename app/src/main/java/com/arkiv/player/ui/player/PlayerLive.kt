@@ -186,12 +186,26 @@ internal fun rememberLiveState(): LiveState = remember { LiveState() }
  *
  * [castButtons] is a slot: the screen puts the same DLNA/Chromecast buttons VOD uses in there,
  * which depend on state that isn't live's own.
+ *
+ * [rotateButton] is the exception to "persistent": it's a control, not identity, so like VOD's it
+ * shows only while the interface is up ([LiveState.infoVisible], what a tap toggles) and fades with
+ * it. Left of the cast buttons, so their spot at the right end never moves. [autoHide]: same as
+ * [LiveCastBand]'s -- a channel with no [ChannelCard] has nobody else running the 3 s countdown.
  */
 @Composable
 internal fun BoxScope.LiveBanner(
     onBack: () -> Unit,
+    state: LiveState,
+    autoHide: Boolean,
+    rotateButton: @Composable () -> Unit,
     castButtons: @Composable () -> Unit,
 ) {
+    if (autoHide) {
+        LaunchedEffect(state.infoTick) {
+            delay(CARD_VISIBLE_MS)
+            state.hideInfo()
+        }
+    }
     Row(
         modifier = Modifier.align(Alignment.TopStart).fillMaxWidth().systemBarsPadding().padding(6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -200,12 +214,13 @@ internal fun BoxScope.LiveBanner(
             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Atrás", tint = Color.White)
         }
         Spacer(Modifier.weight(1f))
+        AnimatedVisibility(visible = state.infoVisible, enter = fadeIn(), exit = fadeOut()) { rotateButton() }
         castButtons()
     }
 }
 
 /**
- * Live mode's cast buttons on a phone held in LANDSCAPE. Unlike portrait's [LiveBanner] (persistent,
+ * Live mode's rotate + cast buttons on a phone held in LANDSCAPE. Unlike portrait's [LiveBanner] (persistent,
  * it carries the only back button), landscape keeps the video clean: the buttons show only while the
  * player's interface is up -- the same [LiveState.infoVisible] a tap toggles and the channel card
  * rides on -- and fade out with it. Top-right, so it never meets the card at the bottom.

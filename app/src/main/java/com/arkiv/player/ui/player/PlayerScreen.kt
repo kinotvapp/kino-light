@@ -45,7 +45,6 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
-import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Tune
@@ -3629,15 +3628,7 @@ private fun PlayerContent(
                             // wouldn't otherwise give -- most people keep it off. Scoped to this
                             // screen only: nextPlayerOrientation's KDoc has why the rest of the app
                             // never sees it.
-                            IconButton(onClick = {
-                                activity?.requestedOrientation = nextPlayerOrientation(isLandscape)
-                            }) {
-                                Icon(
-                                    Icons.Default.ScreenRotation,
-                                    contentDescription = if (isLandscape) "Cambiar a vertical" else "Cambiar a horizontal",
-                                    tint = Color.White,
-                                )
-                            }
+                            PlayerRotateButton(isLandscape) { activity?.requestedOrientation = it }
                             if (hasMarkersToFix) {
                                 ChapterMarkersMenu(
                                     state = markers,
@@ -3976,13 +3967,27 @@ private fun PlayerContent(
                     DlnaCastButtons(casting = casting, castContext = castContext, onDiscoverDlna = dlnaState::discover)
                 }
             }
+            // Rotate, same button and scope as VOD's (nextPlayerOrientation): zapping stays on this
+            // screen, so the forced orientation holds across channels and resets on leaving.
+            val liveRotateButton: @Composable () -> Unit = {
+                PlayerRotateButton(isLandscape) { activity?.requestedOrientation = it }
+            }
             if (!isTv && !isLandscape) {
-                // Portrait: the persistent band, back + cast.
-                LiveBanner(onBack = onBack, castButtons = liveCastButtons)
+                // Portrait: the persistent band, back + cast; rotate only while the interface is up.
+                LiveBanner(
+                    onBack = onBack,
+                    state = liveState,
+                    autoHide = !isModuleLive,
+                    rotateButton = liveRotateButton,
+                    castButtons = liveCastButtons,
+                )
             } else if (!isTv) {
                 // Landscape: no back (the fullscreen video stays clean, as the user asked), and
-                // the cast buttons only while the interface is up, hiding with it.
-                LiveCastBand(state = liveState, autoHide = !isModuleLive, castButtons = liveCastButtons)
+                // rotate + cast only while the interface is up, hiding with it.
+                LiveCastBand(state = liveState, autoHide = !isModuleLive) {
+                    liveRotateButton()
+                    liveCastButtons()
+                }
             }
             // This card is for the En vivo module's channels (any provider): the channel and its
             // provider's guide. Caracol and a plugin's `live` card don't have it.
