@@ -550,6 +550,7 @@ class PluginLiveProvider(
                 logo = (channel.logo ?: known?.logo).orEmpty(),
                 direct = playable,
             ),
+            adult = channel.adult || known?.adult == true,
         )
     }
 

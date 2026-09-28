@@ -26,8 +26,12 @@ import com.arkiv.player.playback.SourceKind
 import com.arkiv.player.ui.live.LiveController
 import com.arkiv.player.ui.live.LiveZapping
 import com.arkiv.player.ui.live.LiveZappingSource
+import com.arkiv.player.ui.live.ModuleChannelOpen
 import com.arkiv.player.ui.live.PluginLivePlay
 import com.arkiv.player.ui.live.channelForLiveCode
+import com.arkiv.player.ui.live.openModuleChannel
+import com.arkiv.player.ui.live.pluginReopenStillWanted
+import com.arkiv.player.ui.live.recentOf
 import com.arkiv.player.ui.live.pluginLivePlay
 import com.arkiv.player.ui.live.providerGone
 import com.arkiv.player.ui.live.zappingListFor
@@ -722,7 +726,9 @@ class PlayerViewModel internal constructor(
      * itself against the CDN -- that's [LiveHlsProxy]'s whole reason to exist (see its KDoc).
      */
     private fun openCurrentChannel() {
-        pluginOpenJob?.cancel()
+        // A plugin open still in flight belongs to the channel zapping just left; loadPlugin may
+        // have turned `resolving` on, and nothing else would turn it off.
+        pluginOpenJob?.let { if (it.isActive) { it.cancel(); _resolving.value = false } }
         val channel = zapping?.current ?: return
         if (channel.provider != LiveChannelKeys.XUPER) { openPluginChannel(channel); return }
         _liveChannel.value = channel
@@ -816,11 +822,7 @@ class PlayerViewModel internal constructor(
             // Through [AdultContent] and not a standalone `!canal.adult`: the rule is the same as
             // progress's and frames', and keeping it written in one single place is what stops one
             // of the three from being fixed tomorrow while the other two aren't.
-            if (AdultContent.shouldLog(channel.adult)) {
-                runCatching {
-                    liveRecentDao.record(LiveRecentEntity(channel.code, channel.name, System.currentTimeMillis(), provider = channel.provider))
-                }
-            }
+            recordRecent(channel)
             preheatNeighbors()
         }
     }
@@ -850,31 +852,34 @@ class PlayerViewModel internal constructor(
             reopenJob?.cancel()
             pluginLiveReopenJob?.cancel()
             pluginLiveReopens.reset()
-            val module = liveModule
-            val provider = module?.provider(channel.provider)
-            if (provider == null) {
-                _magisItem.value = null
-                _blocked.value = module?.blockedMessage(channel.provider) ?: "Este canal no está disponible ahora"
-                return@launch
-            }
-            val opening = try {
-                provider.open(channel)
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.w(PLAY, "openPluginChannel() ${channel.liveCode} failed: ${e.message}")
-                if (zapping?.current?.liveCode == channel.liveCode) {
+            val plugin = when (val result = openModuleChannel(liveModule, channel)) {
+                is ModuleChannelOpen.Gone -> {
                     _magisItem.value = null
-                    when (val outcome = PluginLoadFailure.from(e, provider.name)) {
-                        is PluginLoadFailure.Blocked -> _blocked.value = outcome.message
-                        is PluginLoadFailure.SetupRequired -> _pluginSetup.value = PluginSetupPrompt(outcome.pluginId, outcome.message)
-                        is PluginLoadFailure.Generic -> _error.value = outcome.message
-                    }
+                    _blocked.value = result.message
+                    return@launch
                 }
-                return@launch
+                is ModuleChannelOpen.Failed -> {
+                    Log.w(PLAY, "openPluginChannel() ${channel.liveCode} failed: ${result.error.message}")
+                    if (zapping?.current?.liveCode == channel.liveCode) {
+                        _magisItem.value = null
+                        when (val outcome = PluginLoadFailure.from(result.error, result.providerName)) {
+                            is PluginLoadFailure.Blocked -> _blocked.value = outcome.message
+                            is PluginLoadFailure.SetupRequired -> _pluginSetup.value = PluginSetupPrompt(outcome.pluginId, outcome.message)
+                            is PluginLoadFailure.Generic -> _error.value = outcome.message
+                        }
+                    }
+                    return@launch
+                }
+                is ModuleChannelOpen.Opened -> result.opening as? com.arkiv.player.data.live.LiveOpening.Plugin ?: run {
+                    // A plugin provider only ever answers Plugin; Xuper never reaches this path.
+                    Log.w(PLAY, "openPluginChannel() ${channel.liveCode}: ${result.opening::class.simpleName} is not a plugin opening")
+                    return@launch
+                }
             }
-            val plugin = opening as? com.arkiv.player.data.live.LiveOpening.Plugin ?: return@launch
             if (zapping?.current?.liveCode != channel.liveCode) return@launch
+            // A reopen the previous channel scheduled while this one was opening must not fire now.
+            pluginLiveReopenJob?.cancel()
+            pluginLiveReopens.reset()
             // Through null first, like every plugin re-resolve: the previous channel's item must
             // not stay on screen while this one resolves.
             _magisItem.value = null
@@ -885,10 +890,18 @@ class PlayerViewModel internal constructor(
                 if (mine) _magisItem.value = null
                 return@launch
             }
-            if (mine && AdultContent.shouldLog(channel.adult)) {
-                runCatching {
-                    liveRecentDao.record(LiveRecentEntity(channel.code, channel.name, System.currentTimeMillis(), provider = channel.provider))
-                }
+            if (mine) recordRecent(recentOf(channel, plugin))
+        }
+    }
+
+    /**
+     * Logs [channel] in the recents, keyed by code + provider. An adult channel is NOT recorded,
+     * through [AdultContent] (see the KDoc at [openCurrentChannel]'s call).
+     */
+    private suspend fun recordRecent(channel: LiveChannel) {
+        if (AdultContent.shouldLog(channel.adult)) {
+            runCatching {
+                liveRecentDao.record(LiveRecentEntity(channel.code, channel.name, System.currentTimeMillis(), provider = channel.provider))
             }
         }
     }
@@ -1121,8 +1134,11 @@ class PlayerViewModel internal constructor(
                 pluginLiveReopenJob?.cancel()
                 pluginLiveReopenJob = viewModelScope.launch {
                     delay(wait)
-                    // Leaving for another title during the wait wins: `load` replaced the item.
-                    if (_magisItem.value?.episodeId != item.episodeId) return@launch
+                    // Leaving for another title during the wait wins: `load` replaced the item. So
+                    // does zapping to another En vivo channel, even while the old stream is
+                    // still on screen because the new one is still opening.
+                    val moduleChannel = if (loadedEpisodeId?.let(PlayerSource::kindFor) == SourceKind.LIVE) zapping?.current else null
+                    if (!pluginReopenStillWanted(item.episodeId, _magisItem.value?.episodeId, moduleChannel)) return@launch
                     // Through null first: a re-resolve may bring back the exact same Stream, and an
                     // equal PlayerData would be dropped by StateFlow (see [onMagisExoError]).
                     _magisItem.value = null

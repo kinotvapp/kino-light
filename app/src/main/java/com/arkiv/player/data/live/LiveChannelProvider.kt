@@ -16,8 +16,12 @@ data class LiveProviderTab(val id: String, val name: String, val color: Long)
 sealed interface LiveOpening {
     /** Xuper: the local `LiveHlsProxy` URL, played by `LiveExoPlayer` (seed rotation, preheat, reopen policy). */
     data class Proxied(val url: String) : LiveOpening
-    /** A plugin: handed to `PluginLive`, resolved by `PlayerViewModel.loadPlugin` and played by `StreamExoPlayer`. */
-    data class Plugin(val channel: PluginLiveChannel) : LiveOpening
+    /**
+     * A plugin: handed to `PluginLive`, resolved by `PlayerViewModel.loadPlugin` and played by
+     * `StreamExoPlayer`. [adult] is the listed channel's mark, so recents never log it even when
+     * the player only had the bare live code.
+     */
+    data class Plugin(val channel: PluginLiveChannel, val adult: Boolean = false) : LiveOpening
 }
 
 /**

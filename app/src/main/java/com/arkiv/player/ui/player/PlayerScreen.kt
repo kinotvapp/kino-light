@@ -471,6 +471,10 @@ private fun PlayerContent(
             SourceKind.PLUGIN -> "de " + (graph.pluginRegistry.nameOf(
                 com.arkiv.player.data.plugin.PluginIds.pluginIdOfEpisode(episodeId),
             ) ?: "un plugin")
+            // An En vivo channel of a plugin (`live:plugin:<id>:<code>`): only its opens resolve.
+            SourceKind.LIVE -> com.arkiv.player.data.gateway.LiveChannelKeys.parse(episodeId.removePrefix(PlayerSource.LIVE_PREFIX))
+                ?.first?.let(com.arkiv.player.data.gateway.LiveChannelKeys::pluginIdOf)
+                ?.let { "de " + (graph.pluginRegistry.nameOf(it) ?: "un plugin") } ?: "web"
             else -> "web"
         }
     }
