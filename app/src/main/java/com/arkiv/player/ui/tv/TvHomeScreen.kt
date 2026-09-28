@@ -99,6 +99,7 @@ import com.arkiv.player.ui.home.homeEmptyCopy
 import com.arkiv.player.ui.home.homeShowsEmptyState
 import com.arkiv.player.ui.home.pluginHeroPick
 import com.arkiv.player.ui.home.tvHomeDefaultLanding
+import com.arkiv.player.ui.home.tvHomeLandingHeld
 import com.arkiv.player.ui.live.deviceCountry
 import com.arkiv.player.ui.EffectsAutoTune
 import com.arkiv.player.ui.KinoWordmark
@@ -440,6 +441,8 @@ fun TvHomeScreen(
     val emptyCopy = homeEmptyCopy(installedPlugins)
     val homeEmptyNow by rememberUpdatedState(homeEmpty)
     val emptySourcesFocus = remember { FocusRequester() }
+    // Real focus on the "Agregar plugin" button: the default landing only counts it once this is true.
+    var emptySourcesFocused by remember { mutableStateOf(false) }
     val liveTabs by graph.liveModule.tabs.collectAsStateWithLifecycle()
     // Same rule as the phone (homeLiveRow): drawn only with at least one channel to list, never as
     // "Ver más canales" alone; empty module, no row.
@@ -695,7 +698,8 @@ fun TvHomeScreen(
         var landed = false
         repeat(20) {
             if (landed) return@repeat
-            val target = when (tvHomeDefaultLanding(homeEmptyNow, hasContinueCard = firstFocusKey != null)) {
+            val landing = tvHomeDefaultLanding(homeEmptyNow, hasContinueCard = firstFocusKey != null)
+            val target = when (landing) {
                 TvHomeLanding.FIRST_CARD -> {
                     // Go back to the top BEFORE requesting focus: if the list is shifted, the first
                     // row isn't even composed and the requester doesn't exist, so retrying alone isn't
@@ -716,7 +720,8 @@ fun TvHomeScreen(
                 }
                 TvHomeLanding.TOP_BAR -> barFocus
             }
-            landed = runCatching { target.requestFocus() }.isSuccess
+            val requested = runCatching { target.requestFocus() }.isSuccess
+            landed = tvHomeLandingHeld(landing, requested, emptySourcesFocused)
             if (!landed) delay(50)
         }
     }
@@ -1083,7 +1088,9 @@ fun TvHomeScreen(
                                 TvCompactAction(
                                     label = emptyCopy.action,
                                     icon = Icons.Default.Add,
-                                    modifier = Modifier.focusRequester(emptySourcesFocus),
+                                    modifier = Modifier
+                                        .focusRequester(emptySourcesFocus)
+                                        .onFocusChanged { emptySourcesFocused = it.hasFocus },
                                     onClick = onOpenSourcePicker,
                                 )
                             }

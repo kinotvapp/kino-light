@@ -47,6 +47,13 @@ class HomeEmptyStateTest {
         assertEquals(TvHomeLanding.ADD_SOURCES, tvHomeDefaultLanding(homeEmpty = true, hasContinueCard = true))
     }
 
+    @Test fun `the Agregar plugin landing counts only once the button really holds focus`() {
+        assertFalse(tvHomeLandingHeld(TvHomeLanding.ADD_SOURCES, requestSucceeded = true, addSourcesFocused = false))
+        assertTrue(tvHomeLandingHeld(TvHomeLanding.ADD_SOURCES, requestSucceeded = true, addSourcesFocused = true))
+        assertTrue(tvHomeLandingHeld(TvHomeLanding.TOP_BAR, requestSucceeded = true, addSourcesFocused = false))
+        assertFalse(tvHomeLandingHeld(TvHomeLanding.FIRST_CARD, requestSucceeded = false, addSourcesFocused = false))
+    }
+
     @Test fun `focus goes back to the top bar only when the button vanished with it`() {
         assertTrue(emptyStateNeedsRefocus(wasEmpty = true, isEmpty = false, screenHasFocus = false))
         assertFalse(emptyStateNeedsRefocus(wasEmpty = true, isEmpty = false, screenHasFocus = true))

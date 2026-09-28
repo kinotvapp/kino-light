@@ -41,6 +41,14 @@ fun tvHomeDefaultLanding(homeEmpty: Boolean, hasContinueCard: Boolean): TvHomeLa
     else -> TvHomeLanding.TOP_BAR
 }
 
+/**
+ * Whether a landing attempt actually put focus where it aimed. `requestFocus()` not throwing does not
+ * mean the "Agregar plugin" button took focus (it may not be composed or attached yet), so that target
+ * counts only once the button reports focus itself; the others keep trusting the request.
+ */
+fun tvHomeLandingHeld(landing: TvHomeLanding, requestSucceeded: Boolean, addSourcesFocused: Boolean): Boolean =
+    if (landing == TvHomeLanding.ADD_SOURCES) addSourcesFocused else requestSucceeded
+
 /** The empty state's button left (a source became usable) and took focus with it: the top bar takes it. */
 fun emptyStateNeedsRefocus(wasEmpty: Boolean, isEmpty: Boolean, screenHasFocus: Boolean): Boolean =
     wasEmpty && !isEmpty && !screenHasFocus
