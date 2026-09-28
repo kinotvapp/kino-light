@@ -23,6 +23,31 @@ class HomeEmptyStateTest {
         assertFalse(homeShowsEmptyState(emptyList(), pluginRowCount = 0, liveAvailable = true))
     }
 
+    @Test fun `loading shows while a usable plugin is still answering and nothing else fills Home`() {
+        val usable = listOf(plugin(enabled = true))
+        assertTrue(homeShowsLoading(usable, pluginRowCount = 0, pluginRowsSettled = false, hasOtherContent = false))
+        // The first plugin row arrived: the spinner leaves at once, even if other plugins still answer.
+        assertFalse(homeShowsLoading(usable, pluginRowCount = 1, pluginRowsSettled = false, hasOtherContent = false))
+        // Every plugin answered with nothing or failed: no endless spinner, Home falls back to today's behaviour.
+        assertFalse(homeShowsLoading(usable, pluginRowCount = 0, pluginRowsSettled = true, hasOtherContent = false))
+        // A live row, continue watching or the library already fill Home: no spinner over them.
+        assertFalse(homeShowsLoading(usable, pluginRowCount = 0, pluginRowsSettled = false, hasOtherContent = true))
+    }
+
+    @Test fun `loading never shows without a usable plugin, so never together with the empty state`() {
+        for (plugins in listOf(emptyList(), listOf(plugin(enabled = false)))) {
+            assertFalse(homeShowsLoading(plugins, pluginRowCount = 0, pluginRowsSettled = false, hasOtherContent = false))
+            assertTrue(homeShowsEmptyState(plugins, pluginRowCount = 0, liveAvailable = false))
+        }
+        val usable = listOf(plugin(enabled = true))
+        assertTrue(homeShowsLoading(usable, 0, pluginRowsSettled = false, hasOtherContent = false))
+        assertFalse(homeShowsEmptyState(usable, pluginRowCount = 0, liveAvailable = false))
+    }
+
+    @Test fun `the loading copy`() {
+        assertEquals("Cargando tus fuentes…", HOME_LOADING_LINE)
+    }
+
     @Test fun `the copy is the spec's`() {
         assertEquals("Aún no tienes fuentes de contenido", EMPTY_HOME_TITLE)
         assertEquals("Agrega un plugin para ver películas, series o canales en vivo.", EMPTY_HOME_LINE)

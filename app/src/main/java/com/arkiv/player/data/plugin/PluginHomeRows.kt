@@ -7,6 +7,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 import org.json.JSONObject
 import java.io.File
 
@@ -20,6 +21,12 @@ data class PluginHomeRow(
     /** The plugin's own ref for "Ver más" (it declares `browse`), or null: no "Ver más" card. */
     val ref: String? = null,
 )
+
+/**
+ * One step of [PluginHomeRows.load]: the rows so far and whether every plugin has answered (with rows,
+ * nothing or a failure). Home shows its loading state only while [settled] is false and [rows] is empty.
+ */
+data class PluginHomeLoad(val rows: List<PluginHomeRow>, val settled: Boolean)
 
 /**
  * Home rows from every usable plugin with the `home` capability, asked in parallel. Each plugin's
@@ -72,11 +79,18 @@ class PluginHomeRows(
         const val MAX_CACHE_BYTES = 2 * 1024 * 1024
     }
 
-    fun rows(): Flow<List<PluginHomeRow>> = flow {
+    fun rows(): Flow<List<PluginHomeRow>> = load().map { it.rows }
+
+    /**
+     * [rows] plus whether the pass is over: the instant paint (cached rows, possibly none) is unsettled,
+     * the fresh rows after every plugin answered, failed or timed out ([PluginContentSource.HOME_TIMEOUT_MS])
+     * are settled. With no plugin to ask, a single settled empty step.
+     */
+    fun load(): Flow<PluginHomeLoad> = flow {
         // A plugin that still needs setup isn't asked: its calls would only fail with auth_required.
         val targets = plugins().filter { "home" in it.manifest.capabilities && !it.needsSetup }
         if (targets.isEmpty()) {
-            emit(emptyList())
+            emit(PluginHomeLoad(emptyList(), settled = true))
             return@flow
         }
         val cached = targets.associate { it.id to readCache(it.id) }
@@ -84,15 +98,18 @@ class PluginHomeRows(
         // revision no longer matching: that isn't "old", it's a DIFFERENT session's data -- and
         // configRevision is what still catches that across a process restart (fix round 3).
         emit(
-            assemble(targets) { p ->
-                cached[p.id]?.takeIf { it.sessionRevision == sessionRevision(p.id) && it.configRevision == p.configRevision && it.version == p.record.version }
-                    ?.let { parse(p, it.json) }.orEmpty()
-            },
+            PluginHomeLoad(
+                assemble(targets) { p ->
+                    cached[p.id]?.takeIf { it.sessionRevision == sessionRevision(p.id) && it.configRevision == p.configRevision && it.version == p.record.version }
+                        ?.let { parse(p, it.json) }.orEmpty()
+                },
+                settled = false,
+            ),
         )
         val fresh = coroutineScope {
             targets.map { p -> async { p.id to refresh(p, cached[p.id]) } }.awaitAll().toMap()
         }
-        emit(assemble(targets) { fresh[it.id].orEmpty() })
+        emit(PluginHomeLoad(assemble(targets) { fresh[it.id].orEmpty() }, settled = true))
     }
 
     private suspend fun refresh(p: InstalledPlugin, cached: Cached?): List<PluginRow> {

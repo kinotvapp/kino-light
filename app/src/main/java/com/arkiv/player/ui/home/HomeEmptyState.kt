@@ -29,6 +29,22 @@ fun homeEmptyCopy(plugins: List<InstalledPlugin>, isTv: Boolean): HomeEmptyCopy 
 fun homeShowsEmptyState(plugins: List<InstalledPlugin>, pluginRowCount: Int, liveAvailable: Boolean): Boolean =
     plugins.none { it.isUsable } && pluginRowCount == 0 && !liveAvailable
 
+internal const val HOME_LOADING_LINE = "Cargando tus fuentes…"
+
+/**
+ * The loading state: a usable plugin exists, its Home pass is not over yet ([pluginRowsSettled] false,
+ * see `PluginHomeLoad`) and no plugin row has arrived, while nothing else ([hasOtherContent]: a live
+ * row, continue watching, the library) fills Home. It leaves with the first row, and once every plugin
+ * answered with nothing or failed Home falls back to what it shows without plugin rows. Never together
+ * with [homeShowsEmptyState]: that one needs no usable plugin, this one at least one.
+ */
+fun homeShowsLoading(
+    plugins: List<InstalledPlugin>,
+    pluginRowCount: Int,
+    pluginRowsSettled: Boolean,
+    hasOtherContent: Boolean,
+): Boolean = plugins.any { it.isUsable } && pluginRowCount == 0 && !pluginRowsSettled && !hasOtherContent
+
 /** Where the TV Home puts focus when it opens and there is no card to restore. */
 enum class TvHomeLanding { ADD_SOURCES, FIRST_CARD, TOP_BAR }
 

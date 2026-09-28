@@ -59,11 +59,22 @@ class HomeViewModel(
      * these rows.
      */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    val pluginRows: StateFlow<List<com.arkiv.player.data.plugin.PluginHomeRow>> =
+    private val pluginLoad: StateFlow<com.arkiv.player.data.plugin.PluginHomeLoad> =
         merge(pluginsChanged.map { }, reload)
-            .flatMapLatest { pluginHome.rows() }
+            .flatMapLatest { pluginHome.load() }
             .flowOn(Dispatchers.IO)
-            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+            .stateIn(viewModelScope, SharingStarted.Lazily, com.arkiv.player.data.plugin.PluginHomeLoad(emptyList(), settled = false))
+
+    val pluginRows: StateFlow<List<com.arkiv.player.data.plugin.PluginHomeRow>> =
+        pluginLoad.map { it.rows }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    /**
+     * Whether the current plugin Home pass is over: every plugin answered, failed or timed out. False
+     * from the start (and again on a reload or plugin change) until then; drives Home's loading state
+     * (see [homeShowsLoading]), so a pass that ends with nothing never leaves a spinner behind.
+     */
+    val pluginRowsSettled: StateFlow<Boolean> =
+        pluginLoad.map { it.settled }.stateIn(viewModelScope, SharingStarted.Lazily, false)
 
     init {
         // Every time the library changes, resolves the art of the items that don't have it yet.

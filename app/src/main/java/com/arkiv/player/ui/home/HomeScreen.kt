@@ -142,6 +142,7 @@ fun HomeScreen(
     val continueWatching by vm.continueWatching.collectAsStateWithLifecycle()
     val artwork by vm.artwork.collectAsStateWithLifecycle()
     val pluginRows by vm.pluginRows.collectAsStateWithLifecycle()
+    val pluginRowsSettled by vm.pluginRowsSettled.collectAsStateWithLifecycle()
     val seedsExhausted by graph.seedsExhausted.collectAsStateWithLifecycle()
     val openPlugin = rememberTitleOpener(onOpenRoute = onOpenTitleRoute, onPlay = onPlayEpisode)
     val scope = rememberCoroutineScope()
@@ -208,6 +209,13 @@ fun HomeScreen(
         homeLiveRow(liveOn, recentChannels, countryChannels, available = liveTabs.map { it.id }.toSet())
     }
     val channelsRow = liveRow.orEmpty()
+    // Plugins still answering and nothing else on screen: a spinner instead of a blank Home (see homeShowsLoading).
+    val homeLoading = homeShowsLoading(
+        installedPlugins,
+        pluginRows.size,
+        pluginRowsSettled,
+        hasOtherContent = continueWatching.isNotEmpty() || channelsRow.isNotEmpty() || orderedLibrary.isNotEmpty(),
+    )
     // Belt-and-braces: when the row's first channel changes (it appears, or a new recent lands
     // first), start from it. LazyRow otherwise keeps its key-anchored first visible item and can
     // open scrolled to the end, the first card cut at the left edge (measured on the phone).
@@ -480,6 +488,20 @@ fun HomeScreen(
                         Spacer(Modifier.width(4.dp))
                         Text(emptyCopy.action)
                     }
+                }
+            }
+        }
+
+        // 5b. Plugins still answering with nothing else to show (homeShowsLoading). Always-present, keyed item.
+        item(key = "loading_sources") {
+            if (homeLoading) {
+                Column(
+                    Modifier.fillMaxWidth().padding(vertical = 96.dp),
+                    horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    androidx.compose.material3.CircularProgressIndicator(color = ArkivRed)
+                    Text(HOME_LOADING_LINE, style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary)
                 }
             }
         }

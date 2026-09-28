@@ -97,6 +97,8 @@ import com.arkiv.player.ui.home.TvHomeLanding
 import com.arkiv.player.ui.home.emptyStateNeedsRefocus
 import com.arkiv.player.ui.home.homeEmptyCopy
 import com.arkiv.player.ui.home.homeShowsEmptyState
+import com.arkiv.player.ui.home.homeShowsLoading
+import com.arkiv.player.ui.home.HOME_LOADING_LINE
 import com.arkiv.player.ui.home.pluginHeroPick
 import com.arkiv.player.ui.home.tvHomeDefaultLanding
 import com.arkiv.player.ui.home.tvHomeLandingHeld
@@ -377,6 +379,7 @@ fun TvHomeScreen(
     val continueWatching by vm.continueWatching.collectAsStateWithLifecycle()
     val artwork by vm.artwork.collectAsStateWithLifecycle()
     val pluginRows by vm.pluginRows.collectAsStateWithLifecycle()
+    val pluginRowsSettled by vm.pluginRowsSettled.collectAsStateWithLifecycle()
     val seedsExhausted by graph.seedsExhausted.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
@@ -449,6 +452,15 @@ fun TvHomeScreen(
     val channelsRow = remember(recentChannels, countryChannels, liveOn, liveTabs) {
         homeLiveRow(liveOn, recentChannels, countryChannels, available = liveTabs.map { it.id }.toSet()).orEmpty()
     }
+    // Plugins still answering and nothing else to show (the library feeds the hero): a centered spinner
+    // instead of a black Home. It holds no focus; the default landing stays on the top bar.
+    val homeLoading = homeShowsLoading(
+        installedPlugins,
+        pluginRows.size,
+        pluginRowsSettled,
+        hasOtherContent = continueWatching.isNotEmpty() || channelsRow.isNotEmpty() ||
+            showForYouRow(recommendations) || library.isNotEmpty(),
+    )
 
     // The row GROWS after being painted: recents come from Room (instant) and the country's may
     // come from the network. With a fresh cache (24h, see FRESHNESS_MS) they arrive fast enough
@@ -1150,6 +1162,19 @@ fun TvHomeScreen(
 
                     item(key = "rows_bottom_pad") { Spacer(Modifier.height(rowGap)) }
                 } // end of the rows' scrollable zone
+            }
+        }
+
+        // Plugins still answering (homeShowsLoading): centered over the whole screen, below the top bar's
+        // line of sight, and not focusable, so D-pad focus stays on the top bar.
+        if (homeLoading) {
+            Column(
+                Modifier.align(Alignment.Center).padding(top = 48.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                androidx.compose.material3.CircularProgressIndicator(color = ArkivRed, modifier = Modifier.size(40.dp))
+                Text(HOME_LOADING_LINE, style = MaterialTheme.typography.titleMedium, color = ArkivTextSecondary)
             }
         }
     }

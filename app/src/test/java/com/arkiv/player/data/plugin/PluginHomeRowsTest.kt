@@ -51,6 +51,25 @@ class PluginHomeRowsTest {
         assertEquals("plugin:a", rows[0].items.single().source)
     }
 
+    @Test fun `load is unsettled on the instant paint and settled once every plugin answered`() = runTest {
+        val emissions = home(listOf(plugin("a"), plugin("b")), CountingCaller { rowJson }).load().toList()
+        assertEquals(listOf(false, true), emissions.map { it.settled })
+        assertEquals(emptyList<PluginHomeRow>(), emissions.first().rows)
+        assertEquals(listOf("a", "b"), emissions.last().rows.map { it.pluginId })
+    }
+
+    @Test fun `load settles with no rows when every plugin failed`() = runTest {
+        val caller = CountingCaller { throw PluginTimeoutException("home", 20_000) }
+        val last = home(listOf(plugin("a")), caller).load().toList().last()
+        assertTrue(last.settled)
+        assertEquals(emptyList<PluginHomeRow>(), last.rows)
+    }
+
+    @Test fun `load is settled at once when no plugin has the home capability`() = runTest {
+        val emissions = home(listOf(plugin("c", setOf("search", "resolve"))), CountingCaller { rowJson }).load().toList()
+        assertEquals(listOf(PluginHomeLoad(emptyList(), settled = true)), emissions)
+    }
+
     @Test fun `plugins without the home capability are not asked`() = runTest {
         val caller = CountingCaller { rowJson }
         assertEquals(emptyList<PluginHomeRow>(), home(listOf(plugin("c", setOf("search", "resolve"))), caller).rows().toList().last())
