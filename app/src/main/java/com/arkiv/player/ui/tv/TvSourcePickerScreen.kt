@@ -47,6 +47,7 @@ import com.arkiv.player.ui.plugin.SOURCE_PICKER_SKIP
 import com.arkiv.player.ui.plugin.SOURCE_PICKER_TITLE
 import com.arkiv.player.ui.plugin.legacyFirst
 import com.arkiv.player.ui.plugin.pickerCanFinish
+import com.arkiv.player.ui.plugin.pickerCanSkip
 import com.arkiv.player.ui.plugin.pickerNeedsRefocus
 import com.arkiv.player.ui.plugin.runCatalogAction
 import com.arkiv.player.ui.plugin.sourcePickerViewModel
@@ -73,6 +74,7 @@ private const val PICKER_FOCUS_ATTEMPTS = 30
  *   [TvCompactAction] that stays focusable while disabled, so a state change never throws focus out.
  * - If the rows change under the focused card, or a dialog closes, and nothing here holds focus, it goes
  *   back to the first card (or "Ahora no") ([pickerNeedsRefocus]).
+ * - "Ahora no" is dimmed while an install runs ([pickerCanSkip]) but stays focusable.
  * - Back and both buttons call [onFinish].
  */
 @OptIn(ExperimentalFoundationApi::class)
@@ -176,6 +178,9 @@ fun TvSourcePickerScreen(onFinish: () -> Unit) {
             TvCompactAction(
                 label = SOURCE_PICKER_SKIP,
                 modifier = Modifier.focusRequester(skipFocus).onFocusChanged { skipFocused = it.hasFocus },
+                // Dimmed but still focusable while an install runs (see TvCompactAction), so disabling it never
+                // throws focus out, and the refocus lands on it only when there is no card to take it.
+                enabled = pickerCanSkip(state.busy),
                 onClick = onFinish,
             )
             TvCompactAction(label = SOURCE_PICKER_DONE, enabled = pickerCanFinish(plugins), onClick = onFinish)

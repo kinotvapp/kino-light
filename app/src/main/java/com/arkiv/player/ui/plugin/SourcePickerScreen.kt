@@ -36,7 +36,8 @@ import com.arkiv.player.ui.tv.gridLinesWithStatus
 /**
  * "Elige tus fuentes" on the phone: title and one line, what an action answers, then one grid with the
  * recommended cards and "De la comunidad" ([communityItems]), and at the bottom "Ahora no" and "Listo"
- * ([pickerCanFinish]). Both buttons and system Back call [onFinish] (rulings R9, R10). Installing opens the
+ * ([pickerCanFinish]); "Ahora no" is off while an install runs ([pickerCanSkip]). Both buttons and system Back
+ * call [onFinish] (rulings R9, R10). Installing opens the
  * consent sheet and, for a plugin that needs setup, Configurar, both over this screen; the card then reads
  * "Instalado".
  */
@@ -87,7 +88,10 @@ fun SourcePickerScreen(onFinish: () -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TextButton(onClick = onFinish) { Text(SOURCE_PICKER_SKIP, color = ArkivTextSecondary) }
+            val canSkip = pickerCanSkip(state.busy)
+            TextButton(onClick = onFinish, enabled = canSkip) {
+                Text(SOURCE_PICKER_SKIP, color = ArkivTextSecondary.copy(alpha = if (canSkip) 1f else 0.4f))
+            }
             Button(
                 onClick = onFinish,
                 enabled = pickerCanFinish(plugins),

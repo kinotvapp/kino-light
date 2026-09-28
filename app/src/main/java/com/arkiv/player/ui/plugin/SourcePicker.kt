@@ -37,11 +37,25 @@ internal fun pickerNeedsRefocus(initialFocusPlaced: Boolean, screenHasFocus: Boo
  * Every way out of the picker ("Listo", "Ahora no", system Back; ruling R9) ends here: the done flag is
  * written FIRST, so the picker never opens by itself again even if navigation fails, then it pops back to
  * what was under it, or goes Home when nothing was ([goHome]).
+ *
+ * Navigation runs only while the picker is still the current destination ([isShowing]): during the
+ * NavHost's exit fade the picker stays composed and clickable, and a second tap on "Listo" would otherwise
+ * pop Home itself and leave a blank NavHost.
  */
-internal fun leaveSourcePicker(prefs: OnboardingPrefs, popBack: () -> Boolean, goHome: () -> Unit) {
+internal fun leaveSourcePicker(prefs: OnboardingPrefs, isShowing: () -> Boolean, popBack: () -> Boolean, goHome: () -> Unit) {
     prefs.setSourcePickerDone(true)
+    if (!isShowing()) return
     if (!popBack()) goHome()
 }
+
+/**
+ * "Ahora no" is off while an install or check runs: leaving then would drop the picker's view model and
+ * cancel the install half-way. Back stays active (ruling R9).
+ */
+internal fun pickerCanSkip(busy: Boolean): Boolean = !busy
+
+/** The auto-open (ruling R8) only lands over Home, never over a player a notification deep link opened. */
+internal fun pickerAutoOpensOver(currentRoute: String?): Boolean = currentRoute == "home"
 
 /** The picker's own [PluginsViewModel], scoped to its route: catalog, art and community discovery. */
 @Composable

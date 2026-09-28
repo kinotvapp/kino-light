@@ -90,6 +90,7 @@ fun ArkivTvRoot(
     fun finishSourcePicker() {
         com.arkiv.player.ui.plugin.leaveSourcePicker(
             graph.settings,
+            isShowing = { navController.currentDestination?.route == com.arkiv.player.ui.plugin.SOURCE_PICKER_ROUTE },
             popBack = { navController.popBackStack() },
             goHome = { navController.navigate("home") },
         )
@@ -108,8 +109,8 @@ fun ArkivTvRoot(
                 graph.settings.onboardingKind, graph.settings.sourcePickerDone, graph.pluginAdmin.plugins.value,
             )
         }
-        if (open) {
-            navController.currentBackStackEntryFlow.first()
+        // Only over Home: a notification deep link may already have opened the player.
+        if (open && com.arkiv.player.ui.plugin.pickerAutoOpensOver(navController.currentBackStackEntryFlow.first().destination.route)) {
             openSourcePicker()
         }
     }

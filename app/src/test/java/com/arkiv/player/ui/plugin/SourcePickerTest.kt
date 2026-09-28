@@ -50,7 +50,7 @@ class SourcePickerTest {
     @Test fun `leaving the picker marks it done and pops back to what was under it`() {
         val prefs = FakePrefs()
         var wentHome = false
-        leaveSourcePicker(prefs, popBack = { true }, goHome = { wentHome = true })
+        leaveSourcePicker(prefs, isShowing = { true }, popBack = { true }, goHome = { wentHome = true })
         assertTrue(prefs.sourcePickerDone)
         assertFalse(wentHome)
     }
@@ -58,7 +58,7 @@ class SourcePickerTest {
     @Test fun `leaving the picker with nothing under it marks it done and goes Home`() {
         val prefs = FakePrefs()
         var wentHome = false
-        leaveSourcePicker(prefs, popBack = { false }, goHome = { wentHome = true })
+        leaveSourcePicker(prefs, isShowing = { true }, popBack = { false }, goHome = { wentHome = true })
         assertTrue(prefs.sourcePickerDone)
         assertTrue(wentHome)
     }
@@ -66,7 +66,29 @@ class SourcePickerTest {
     @Test fun `the done flag is on disk before navigation runs, so a crash there cannot reopen it`() {
         val prefs = FakePrefs()
         var doneWhenPopped: Boolean? = null
-        leaveSourcePicker(prefs, popBack = { doneWhenPopped = prefs.sourcePickerDone; true }, goHome = {})
+        leaveSourcePicker(prefs, isShowing = { true }, popBack = { doneWhenPopped = prefs.sourcePickerDone; true }, goHome = {})
         assertEquals(true, doneWhenPopped)
+    }
+
+    @Test fun `a second leave while the picker fades out neither pops Home nor navigates`() {
+        val prefs = FakePrefs()
+        var pops = 0
+        var wentHome = false
+        leaveSourcePicker(prefs, isShowing = { false }, popBack = { pops++; true }, goHome = { wentHome = true })
+        assertEquals(0, pops)
+        assertFalse(wentHome)
+        assertTrue(prefs.sourcePickerDone)
+    }
+
+    @Test fun `the picker opens by itself only over Home, never over a deep-linked player`() {
+        assertTrue(pickerAutoOpensOver("home"))
+        assertFalse(pickerAutoOpensOver("player/{episodeId}"))
+        assertFalse(pickerAutoOpensOver(SOURCE_PICKER_ROUTE))
+        assertFalse(pickerAutoOpensOver(null))
+    }
+
+    @Test fun `Ahora no is off while an install runs`() {
+        assertTrue(pickerCanSkip(busy = false))
+        assertFalse(pickerCanSkip(busy = true))
     }
 }
