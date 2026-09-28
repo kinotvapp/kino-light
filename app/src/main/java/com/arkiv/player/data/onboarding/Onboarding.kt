@@ -62,17 +62,25 @@ object Onboarding {
         kind != null && !hasSource(plugins)
 
     /**
-     * [opensPickerOnStart], decided only once [warmedUp] is true: warm-up runs the updating device's Xuper
-     * migration before it flips (`AppGraph.warmUpCredentials`), and the root may compose earlier (the
-     * splash stops waiting after a cap), so judging before then would flash the picker at someone who is
-     * about to get Xuper installed. [kind] and [plugins] are read after the wait, never before.
+     * [opensPickerOnStart], decided only once [ready] is true (`AppGraph.pickerDecisionReady`): for an
+     * updating device that is after this start's Xuper migration step ([decisionWaitsForMigration]), so
+     * nobody about to get Xuper installed sees the picker flash; for any other device it is as soon as the
+     * kind is recorded, never the rest of warm-up. [kind] and [plugins] are read after the wait, never before.
      */
-    suspend fun opensPickerAfterWarmUp(
-        warmedUp: Flow<Boolean>,
+    suspend fun opensPickerWhenReady(
+        ready: Flow<Boolean>,
         kind: () -> OnboardingKind?,
         plugins: () -> List<InstalledPlugin>,
     ): Boolean {
-        warmedUp.first { it }
+        ready.first { it }
         return opensPickerOnStart(kind(), plugins())
     }
+
+    /**
+     * Whether warm-up holds the start decision until its Xuper migration step ran: only for an updating
+     * device, the only kind that runs it ([runsXuperMigration]). Any other kind is decided as soon as it is
+     * recorded, so the slow rest of warm-up (the 3DES, the registry, a GitHub preview) never leaves Home
+     * usable without a source.
+     */
+    fun decisionWaitsForMigration(kind: OnboardingKind?): Boolean = runsXuperMigration(kind)
 }

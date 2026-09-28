@@ -242,6 +242,16 @@ class AppGraph(context: Context) {
      *  installs flip it immediately (nothing to warm -> the activation screen shows at once). */
     val warmedUp: kotlinx.coroutines.flow.StateFlow<Boolean> = _warmedUp
 
+    private val _pickerDecisionReady = kotlinx.coroutines.flow.MutableStateFlow(false)
+    /**
+     * Flips true once the roots may decide whether the mandatory source picker opens
+     * (`Onboarding.opensPickerWhenReady`): right after the onboarding kind is recorded, or, for an
+     * updating device, right after its Xuper migration step
+     * ([com.arkiv.player.data.onboarding.Onboarding.decisionWaitsForMigration]).
+     * Never waits for the rest of warm-up, and flips in its `finally` too, so it can never hang.
+     */
+    val pickerDecisionReady: kotlinx.coroutines.flow.StateFlow<Boolean> = _pickerDecisionReady
+
     suspend fun warmUpCredentials() {
         val t0 = android.os.SystemClock.elapsedRealtime()
         var built = false
@@ -253,6 +263,9 @@ class AppGraph(context: Context) {
             // Must stay BEFORE the fresh-install early return (ruling R11: the kind is decided from
             // whether credentials existed on the first start of this build).
             runCatching { com.arkiv.player.data.onboarding.Onboarding.classifyOnce(settings, activated) }
+            if (!com.arkiv.player.data.onboarding.Onboarding.decisionWaitsForMigration(settings.onboardingKind)) {
+                _pickerDecisionReady.value = true
+            }
             if (!activated) return // fresh install: nothing to warm
             magisPortal   // -> MagisCrypto(...) -> NativeCredentialResolver.magisActivate (the slow part)
             magisSession  // depends on magisPortal + magisStore; warm it too
@@ -290,6 +303,8 @@ class AppGraph(context: Context) {
                 )
             }
                 .onFailure { android.util.Log.w("KinoPlugin", "warm-up: Xuper plugin not auto-installed: ${it.javaClass.simpleName}") }
+            // The migration step ran (or failed): an updating device's picker decision may be made now.
+            _pickerDecisionReady.value = true
             // Start the live gate's watcher now (it's eager but lazily built): from here on,
             // switching the Xuper plugin off drops the live sessions even before a screen reads it.
             xuperLive
@@ -301,6 +316,7 @@ class AppGraph(context: Context) {
         } catch (_: Throwable) {
             // The UI must never hang on a warm-up failure; it will retry the chain on demand.
         } finally {
+            _pickerDecisionReady.value = true
             _warmedUp.value = true
             // Telemetry: a warm-up this slow is what makes a weak device risk an ANR at startup
             // (the splash waits for it -- see MainActivity). Report the duration so we can see it.

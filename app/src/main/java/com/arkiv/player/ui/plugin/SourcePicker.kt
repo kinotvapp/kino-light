@@ -3,12 +3,30 @@ package com.arkiv.player.ui.plugin
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.arkiv.player.data.onboarding.Onboarding
 import com.arkiv.player.data.plugin.InstalledPlugin
+import com.arkiv.player.data.plugin.catalog.CatalogArt
+import com.arkiv.player.data.plugin.catalog.CatalogEntry
+import com.arkiv.player.ui.theme.ArkivBlack
+import com.arkiv.player.ui.theme.ArkivRed
 import com.arkiv.player.ui.rememberGraph
 
 /*
@@ -64,12 +82,17 @@ internal fun onSourcePickerBack(mandatory: Boolean, exitApp: () -> Unit, popBack
     if (mandatory) exitApp() else popBack()
 }
 
-/** Leaves the app from the picker: the Activity finishes, as Back on the TV's Home does. */
+/**
+ * Leaves the app from the picker: the task goes to the back, exactly what system Back does on a phone's
+ * root screen since Android 12. Never `finish()`: a finished MainActivity relaunched in the same process
+ * stayed on the splash forever (fix round 1, seen on a Redmi), and the task kept in the back returns
+ * straight to this picker, which is still the only thing to use.
+ */
 internal fun exitFromSourcePicker(context: Context) {
     var c: Context? = context
     while (c is ContextWrapper) {
         if (c is Activity) {
-            c.finish()
+            c.moveTaskToBack(true)
             return
         }
         c = c.baseContext
@@ -77,10 +100,77 @@ internal fun exitFromSourcePicker(context: Context) {
 }
 
 /**
- * The auto-open only lands over Home, never over a player a notification deep link opened: the root waits
- * until Home is showing (back from that player) and opens it then.
+ * Where the start picker may open: over any route but a player a notification deep link opened (the root
+ * waits until the person leaves it). Nothing else is reachable before then: [SourceDecisionCover] hides it.
  */
-internal fun pickerAutoOpensOver(currentRoute: String?): Boolean = currentRoute == "home"
+internal fun pickerMayOpenOver(currentRoute: String?): Boolean = currentRoute != null && !isPlayerRoute(currentRoute)
+
+private fun isPlayerRoute(route: String): Boolean = route.startsWith("player/")
+
+/** Where the root's start decision is: still deciding, deciding to open the picker, or settled. */
+internal enum class StartGate { DECIDING, OPENING, DONE }
+
+/**
+ * Whether [SourceDecisionCover] hides the app: until the start decision is settled ([StartGate.DONE]), over
+ * everything but a deep-linked player. The picker itself is navigated to before the gate becomes DONE.
+ */
+internal fun startCoverShows(gate: StartGate, currentRoute: String?): Boolean =
+    gate != StartGate.DONE && !(currentRoute != null && isPlayerRoute(currentRoute))
+
+/**
+ * Re-checked right before the start picker is navigated to: the decision may be old (it waited for a
+ * deep-linked player, or a restored back stack already went through "Listo"), and a source installed
+ * meanwhile means it must not open.
+ */
+internal fun startPickerStillNeeded(plugins: List<InstalledPlugin>): Boolean = !Onboarding.hasSource(plugins)
+
+internal const val PICKER_INSTALLED_TITLE = "Tus plugins"
+
+/**
+ * The person's own plugins that are switched off or damaged and that no recommended or community card
+ * ([shown]) already carries: without them, someone whose only plugin is off (a custom address, or offline
+ * with only the seed catalog) would have nothing to press in a mandatory picker. Each row keeps its installed
+ * address as its repo, so its action ([catalogActionOf]: "Activar", or "Instalar" to reinstall damaged files)
+ * works on exactly that plugin.
+ */
+internal fun pickerInstalledRows(plugins: List<InstalledPlugin>, shown: List<CatalogRow>): List<CatalogRow> {
+    val onCards = shown.mapNotNull { it.installed?.id }.toSet()
+    return plugins
+        .filter { (!it.record.enabled || it.record.damaged) && it.id !in onCards }
+        .map { p ->
+            CatalogRow(
+                CatalogEntry(id = p.id, repo = p.record.address, name = p.manifest.name, description = p.manifest.description),
+                installed = p,
+            )
+        }
+}
+
+/** A card's art for an installed plugin: its own color and icon. */
+internal fun installedCardArt(plugin: InstalledPlugin?): CatalogArt? =
+    plugin?.let { CatalogArt(it.manifest.color, it.iconFile) }
+
+/**
+ * What covers the app while the start decision is not settled ([startCoverShows]): black, a spinner, every
+ * tap and key swallowed, focus held (TV), and Back leaving the app like the picker's own Back. Never Home.
+ */
+@Composable
+internal fun SourceDecisionCover() {
+    val context = LocalContext.current
+    val focus = remember { FocusRequester() }
+    BackHandler { exitFromSourcePicker(context) }
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(ArkivBlack)
+            .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent().changes.forEach { it.consume() } } }
+            .focusRequester(focus)
+            .focusable(),
+        contentAlignment = Alignment.Center,
+    ) {
+        CircularProgressIndicator(color = ArkivRed)
+    }
+    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+}
 
 /** The picker's own [PluginsViewModel], scoped to its route: catalog, art and community discovery. */
 @Composable
@@ -95,3 +185,4 @@ internal fun sourcePickerViewModel(): PluginsViewModel {
         },
     )
 }
+

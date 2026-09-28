@@ -34,7 +34,8 @@ import com.arkiv.player.ui.tv.gridLinesWithStatus
 
 /**
  * "Elige tus fuentes" on the phone: title and one line, what an action answers, then one grid with the
- * recommended cards and "De la comunidad" ([communityItems]), and at the bottom "Listo", enabled once a
+ * person's own switched-off or damaged plugins ([pickerInstalledRows], so there is always a card to act on),
+ * the recommended cards and "De la comunidad" ([communityItems]), and at the bottom "Listo", enabled once a
  * plugin is installed and switched on ([pickerCanFinish]); it calls [onFinish]. The picker is mandatory:
  * there is no skip. System Back calls [onBack] ([onSourcePickerBack]: leaves the app when the picker was
  * opened at start).
@@ -52,6 +53,8 @@ fun SourcePickerScreen(onFinish: () -> Unit, onBack: () -> Unit) {
     val art by vm.art.collectAsStateWithLifecycle()
     val rows = legacyFirst(catalog.rows)
     val statusLines = remember(rows) { gridLinesWithStatus(rows, PHONE_CATALOG_COLUMNS) }
+    val installedRows = pickerInstalledRows(plugins, rows + community.rows)
+    val installedLines = remember(installedRows) { gridLinesWithStatus(installedRows, PHONE_CATALOG_COLUMNS) }
 
     Column(Modifier.fillMaxSize().background(ArkivBlack).systemBarsPadding()) {
         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -69,6 +72,20 @@ fun SourcePickerScreen(onFinish: () -> Unit, onBack: () -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            if (installedRows.isNotEmpty()) {
+                item(key = "installed-header", span = { GridItemSpan(maxLineSpan) }) {
+                    Text(PICKER_INSTALLED_TITLE, style = MaterialTheme.typography.titleSmall, color = Color.White)
+                }
+                itemsIndexed(installedRows, key = { _, row -> "installed-${row.entry.id}" }) { index, row ->
+                    PluginCard(
+                        row = row,
+                        art = installedCardArt(row.installed),
+                        reserveStatusLine = installedLines.getOrElse(index) { false },
+                        enabled = !state.busy,
+                        onAction = { runCatalogAction(vm, row) },
+                    )
+                }
+            }
             item(key = "recommended-header", span = { GridItemSpan(maxLineSpan) }) {
                 Text(RECOMMENDED_TITLE, style = MaterialTheme.typography.titleSmall, color = Color.White)
             }

@@ -224,29 +224,38 @@ fun ArkivRoot(
 
     // Mandatory picker (spec amendment 2026-09-28): whoever has no installed-and-enabled plugin gets it at
     // every start of this root, new or updating device -- right after activation too (this root composes
-    // fresh when MainActivity's onActivated fires). Judged only once warm-up is done, i.e. after an updating
-    // device's Xuper migration ran. Read on IO: the registry's first read touches disk.
+    // fresh when MainActivity's onActivated fires). Decided as soon as the kind is recorded, or for an
+    // updating device right after its Xuper migration step (`AppGraph.pickerDecisionReady`), never the rest
+    // of warm-up; until then SourceDecisionCover hides the app. Read on IO: the registry's first read touches disk.
     // Once per composition of this root: a plugin removed mid-session leaves the empty Home until next start.
-    // The NavHost sits inside the Scaffold's subcomposition, so its graph may not be set when this effect
-    // starts: the first back-stack entry is awaited before navigating.
+    var startGate by remember { androidx.compose.runtime.mutableStateOf(com.arkiv.player.ui.plugin.StartGate.DECIDING) }
     LaunchedEffect(Unit) {
         val open = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            com.arkiv.player.data.onboarding.Onboarding.opensPickerAfterWarmUp(
-                graph.warmedUp, { graph.settings.onboardingKind }, { graph.pluginAdmin.plugins.value },
+            com.arkiv.player.data.onboarding.Onboarding.opensPickerWhenReady(
+                graph.pickerDecisionReady, { graph.settings.onboardingKind }, { graph.pluginRegistry.plugins.value },
             )
         }
-        // Only over Home: a notification deep link may have opened the player; the picker then waits for
-        // the person to come back to Home, so Home is never usable without a source.
         if (open) {
-            navController.currentBackStackEntryFlow.first { com.arkiv.player.ui.plugin.pickerAutoOpensOver(it.destination.route) }
-            sourcePickerMandatory = true
-            openSourcePicker()
+            startGate = com.arkiv.player.ui.plugin.StartGate.OPENING
+            // Over any route but a deep-linked player: the picker waits until the person leaves it.
+            navController.currentBackStackEntryFlow.first { com.arkiv.player.ui.plugin.pickerMayOpenOver(it.destination.route) }
+            // The decision may be old by now (a restored back stack, a source installed meanwhile).
+            if (com.arkiv.player.ui.plugin.startPickerStillNeeded(graph.pluginRegistry.plugins.value)) {
+                sourcePickerMandatory = true
+                // Only Home stays under it, so nothing else is one Back away (and Back there leaves the app).
+                navController.navigate(com.arkiv.player.ui.plugin.SOURCE_PICKER_ROUTE) {
+                    popUpTo(navController.graph.findStartDestination().id)
+                    launchSingleTop = true
+                }
+            }
         }
+        startGate = com.arkiv.player.ui.plugin.StartGate.DONE
     }
 
     val isWide = isLandscapeTablet()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
 
+    androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
     ModalNavigationDrawer(
         drawerState = drawerState,
         gesturesEnabled = isTab && !isWide,
@@ -633,4 +642,6 @@ fun ArkivRoot(
     }
     } // end Row
     } // end ModalNavigationDrawer
+    if (com.arkiv.player.ui.plugin.startCoverShows(startGate, currentRoute)) com.arkiv.player.ui.plugin.SourceDecisionCover()
+    } // end Box
 }

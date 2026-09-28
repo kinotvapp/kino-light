@@ -46,7 +46,9 @@ fun legacyFirst(rows: List<CatalogRow>): List<CatalogRow> = rows.sortedByDescend
 internal fun runCatalogAction(vm: PluginsViewModel, row: CatalogRow) {
     val installed = row.installed
     when (catalogActionOf(row)) {
-        CatalogAction.INSTALL -> vm.installFromCatalog(row.entry)
+        // Damaged: reinstall from where it was installed, not the row's catalog address (a legacy Xuper on a
+        // row naming the new repo would be refused on the id clash).
+        CatalogAction.INSTALL -> if (installed != null) vm.reinstall(installed) else vm.installFromCatalog(row.entry)
         CatalogAction.CONFIGURE -> installed?.let { vm.openSettings(it.id) }
         CatalogAction.ENABLE -> installed?.let { vm.setEnabled(it.id, true) }
         CatalogAction.INSTALLED -> Unit

@@ -39,12 +39,15 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.arkiv.player.ui.player.WAIT_BETWEEN_FOCUS_ATTEMPTS_MS
 import com.arkiv.player.ui.player.retryFocus
 import com.arkiv.player.ui.plugin.PluginConfigDialog
+import com.arkiv.player.ui.plugin.PICKER_INSTALLED_TITLE
 import com.arkiv.player.ui.plugin.PluginConsentDialog
 import com.arkiv.player.ui.plugin.RECOMMENDED_TITLE
 import com.arkiv.player.ui.plugin.SOURCE_PICKER_DONE
 import com.arkiv.player.ui.plugin.SOURCE_PICKER_LINE
 import com.arkiv.player.ui.plugin.SOURCE_PICKER_TITLE
+import com.arkiv.player.ui.plugin.installedCardArt
 import com.arkiv.player.ui.plugin.legacyFirst
+import com.arkiv.player.ui.plugin.pickerInstalledRows
 import com.arkiv.player.ui.plugin.pickerCanFinish
 import com.arkiv.player.ui.plugin.pickerNeedsRefocus
 import com.arkiv.player.ui.plugin.runCatalogAction
@@ -63,7 +66,8 @@ private const val PICKER_FOCUS_GRACE_MS = 1_500L
 private const val PICKER_FOCUS_ATTEMPTS = 30
 
 /**
- * "Elige tus fuentes" on the TV. Laid out like [com.arkiv.player.ui.plugin.SourcePickerScreen], for the D-pad:
+ * "Elige tus fuentes" on the TV. Laid out like [com.arkiv.player.ui.plugin.SourcePickerScreen] ("Tus plugins" for
+ * the person's switched-off or damaged ones first), for the D-pad:
  * - Initial focus is the first recommended card (its action is "Instalar"); if there is no card within
  *   [PICKER_FOCUS_GRACE_MS], or it will not take focus, "Listo" does. "Listo" and not the community
  *   "Actualizar": it sits outside the lazy grid, so it is always composed and on screen whatever the
@@ -89,6 +93,8 @@ fun TvSourcePickerScreen(onFinish: () -> Unit, onBack: () -> Unit) {
     val art by vm.art.collectAsStateWithLifecycle()
     val rows = legacyFirst(catalog.rows)
     val statusLines = remember(rows) { gridLinesWithStatus(rows, TV_CATALOG_COLUMNS) }
+    val installedRows = pickerInstalledRows(plugins, rows + community.rows)
+    val installedLines = remember(installedRows) { gridLinesWithStatus(installedRows, TV_CATALOG_COLUMNS) }
 
     val firstCardFocus = remember { FocusRequester() }
     val doneFocus = remember { FocusRequester() }
@@ -123,7 +129,7 @@ fun TvSourcePickerScreen(onFinish: () -> Unit, onBack: () -> Unit) {
         landFocus()
         placed = true
     }
-    val cardKeys = rows.map { it.entry.id } + community.rows.map { it.entry.repo }
+    val cardKeys = installedRows.map { "installed-${it.entry.id}" } + rows.map { it.entry.id } + community.rows.map { it.entry.repo }
     LaunchedEffect(cardKeys, plugins.size, dialogOpen) {
         // A frame for a removed node (or a closed dialog) to clear focus before asking who holds it.
         delay(WAIT_BETWEEN_FOCUS_ATTEMPTS_MS)
@@ -148,6 +154,20 @@ fun TvSourcePickerScreen(onFinish: () -> Unit, onBack: () -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
+                if (installedRows.isNotEmpty()) {
+                    item(key = "installed-header", span = { GridItemSpan(maxLineSpan) }) {
+                        Text(PICKER_INSTALLED_TITLE, style = MaterialTheme.typography.titleMedium, color = Color.White)
+                    }
+                    itemsIndexed(installedRows, key = { _, row -> "installed-${row.entry.id}" }) { index, row ->
+                        TvPluginCard(
+                            row = row,
+                            art = installedCardArt(row.installed),
+                            modifier = if (cardHasNothingToTheRight(index, installedRows.lastIndex, TV_CATALOG_COLUMNS)) Modifier.noFocusToTheRight() else Modifier,
+                            reserveStatusLine = installedLines.getOrElse(index) { false },
+                            onClick = { runCatalogAction(vm, row) },
+                        )
+                    }
+                }
                 item(key = "recommended-header", span = { GridItemSpan(maxLineSpan) }) {
                     Text(RECOMMENDED_TITLE, style = MaterialTheme.typography.titleMedium, color = Color.White)
                 }

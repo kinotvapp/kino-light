@@ -1144,6 +1144,31 @@ class PluginsViewModelTest {
         assertFalse(vm.catalog.value.rows.any { it.community })
     }
 
+    // Fix round 1: a damaged plugin is reinstalled from the address it was installed from, never from the
+    // row's catalog address: a legacy Xuper (kinotvapp) on a row naming the new repo would be refused on the id clash.
+    @Test fun `reinstalling a damaged legacy Xuper from its catalog row previews the legacy address`() {
+        val legacy = InstalledPlugin(
+            manifest.copy(id = "xuper"),
+            InstalledRecord("kinotvapp/kino-plugin-xuper", "1.0.0", "x", emptyList(), 0L, damaged = true),
+            null,
+        )
+        val admin = FakeAdmin().apply { plugins.value = listOf(legacy); previewResult = { preview } }
+        val vm = vm(admin, FakeCatalog(entry("xuper", "xuper-plugin/kino-plugin-xuper")))
+        val row = vm.catalog.value.rows.single()
+        assertEquals(legacy, row.installed)
+        runCatalogAction(vm, row)
+        assertEquals(listOf("kinotvapp/kino-plugin-xuper"), admin.previewed)
+        assertEquals(preview, vm.state.value.consent)
+    }
+
+    @Test fun `reinstalling a damaged plugin with a ref from the picker previews exactly its installed address`() {
+        val broken = InstalledPlugin(manifest, InstalledRecord("o/r@dev", "1.0.0", "x", emptyList(), 0L, damaged = true), null)
+        val admin = FakeAdmin().apply { plugins.value = listOf(broken); previewResult = { preview } }
+        val vm = vm(admin)
+        runCatalogAction(vm, pickerInstalledRows(listOf(broken), emptyList()).single())
+        assertEquals(listOf("o/r@dev"), admin.previewed)
+    }
+
     @Test fun `installing a community plugin goes through the same preview and consent`() {
         val admin = FakeAdmin().apply { previewResult = { preview } }
         val vm = PluginsViewModel(admin, io = dispatcher, discovery = FakeDiscovery { DiscoveryResult(listOf(xuper), DiscoveryOrigin.FRESH) })

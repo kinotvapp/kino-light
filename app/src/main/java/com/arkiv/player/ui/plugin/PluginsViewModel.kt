@@ -432,6 +432,14 @@ class PluginsViewModel(
     }
 
     /**
+     * Installs [plugin] again from the exact address it was installed from (a damaged one's way back):
+     * the same preview and consent as any install, which the installer treats as an update of that plugin.
+     */
+    fun reinstall(plugin: InstalledPlugin) {
+        busy(pluginId = null) { _state.update { it.copy(consent = admin.preview(plugin.record.address)) } }
+    }
+
+    /**
      * The custom address the person is typing. It also drops the message of an earlier action and the row it
      * was about: what a previous try said is not news about a new address, so the Plugins screens change it
      * to "" both when their "Agregar" dialog opens and when it is dismissed.

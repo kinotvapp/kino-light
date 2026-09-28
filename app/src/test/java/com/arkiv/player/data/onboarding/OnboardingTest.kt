@@ -73,19 +73,27 @@ class OnboardingTest {
         assertFalse(Onboarding.opensPickerOnStart(null, plugins = emptyList()))
     }
 
-    @Test fun `the start decision waits for warm-up, so an updating device is judged after its Xuper migration`() = runTest {
-        val warmedUp = MutableStateFlow(false)
+    @Test fun `the start decision waits for its gate, so an updating device is judged after its Xuper migration`() = runTest {
+        val ready = MutableStateFlow(false)
         var installed = emptyList<InstalledPlugin>()
-        val decision = async { Onboarding.opensPickerAfterWarmUp(warmedUp, { OnboardingKind.LEGACY }, { installed }) }
+        val decision = async { Onboarding.opensPickerWhenReady(ready, { OnboardingKind.LEGACY }, { installed }) }
         runCurrent()
         assertFalse(decision.isCompleted) // nothing judged while the migration may still be running
         installed = listOf(plugin(enabled = true)) // the migration installed Xuper
-        warmedUp.value = true
+        ready.value = true
         assertFalse(decision.await())
     }
 
-    @Test fun `after warm-up, an updating device whose migration installed nothing gets the picker`() = runTest {
-        assertTrue(Onboarding.opensPickerAfterWarmUp(MutableStateFlow(true), { OnboardingKind.LEGACY }, { emptyList() }))
+    @Test fun `after its gate, an updating device whose migration installed nothing gets the picker`() = runTest {
+        assertTrue(Onboarding.opensPickerWhenReady(MutableStateFlow(true), { OnboardingKind.LEGACY }, { emptyList() }))
+    }
+
+    // Fix round 1: only an updating device has a migration to wait for; the rest of warm-up (3DES, the
+    // registry, the GitHub preview) must never hold the decision back.
+    @Test fun `only an updating device's start decision waits for the migration step`() {
+        assertTrue(Onboarding.decisionWaitsForMigration(OnboardingKind.LEGACY))
+        assertFalse(Onboarding.decisionWaitsForMigration(OnboardingKind.NEW))
+        assertFalse(Onboarding.decisionWaitsForMigration(null))
     }
 
     @Test fun `the kind survives as its wire value, an unknown value reads as unrecorded`() {

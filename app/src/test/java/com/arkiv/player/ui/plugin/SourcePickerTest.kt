@@ -62,11 +62,59 @@ class SourcePickerTest {
         assertFalse(wentHome)
     }
 
-    @Test fun `the picker opens by itself only over Home, never over a deep-linked player`() {
-        assertTrue(pickerAutoOpensOver("home"))
-        assertFalse(pickerAutoOpensOver("player/{episodeId}"))
-        assertFalse(pickerAutoOpensOver(SOURCE_PICKER_ROUTE))
-        assertFalse(pickerAutoOpensOver(null))
+    @Test fun `the start picker opens over any route but a deep-linked player`() {
+        assertTrue(pickerMayOpenOver("home"))
+        assertTrue(pickerMayOpenOver("settings"))
+        assertTrue(pickerMayOpenOver("search?kind={kind}&tmdbId={tmdbId}&anilistId={anilistId}"))
+        assertTrue(pickerMayOpenOver(SOURCE_PICKER_ROUTE))
+        assertFalse(pickerMayOpenOver("player/{episodeId}"))
+        assertFalse(pickerMayOpenOver(null))
+    }
+
+    @Test fun `the start cover hides everything but a deep-linked player until the picker is up or not needed`() {
+        assertTrue(startCoverShows(StartGate.DECIDING, "home"))
+        assertTrue(startCoverShows(StartGate.OPENING, "settings"))
+        assertFalse(startCoverShows(StartGate.DECIDING, "player/{episodeId}"))
+        assertFalse(startCoverShows(StartGate.OPENING, "player/{episodeId}"))
+        assertFalse(startCoverShows(StartGate.DONE, "home"))
+    }
+
+    @Test fun `the start picker is opened only if there is still no source right before navigating`() {
+        assertTrue(startPickerStillNeeded(emptyList()))
+        assertTrue(startPickerStillNeeded(listOf(plugin(enabled = false))))
+        assertFalse(startPickerStillNeeded(listOf(plugin(enabled = true))))
+    }
+
+    @Test fun `leaving the app from the picker sends the task to the back and never finishes the Activity`() {
+        var moved = false
+        var finished = false
+        val activity = object : android.app.Activity() {
+            override fun moveTaskToBack(nonRoot: Boolean): Boolean { moved = nonRoot; return true }
+            override fun finish() { finished = true }
+        }
+        exitFromSourcePicker(activity)
+        assertTrue(moved)
+        assertFalse(finished)
+    }
+
+    private fun installed(id: String, address: String, enabled: Boolean = true, damaged: Boolean = false) = InstalledPlugin(
+        PluginManifest(id, id.uppercase(), "1.0.0", 1, "plugin.js", "Lo de $id", "", "", listOf("example.com"), setOf("search", "resolve"), "#112233", null),
+        InstalledRecord(address, "1.0.0", "x", listOf("example.com"), 0L, enabled = enabled, damaged = damaged),
+        iconFile = null,
+    )
+
+    @Test fun `the picker lists the person's disabled or damaged plugins that no other card shows`() {
+        val off = installed("off", "someone/custom", enabled = false)
+        val broken = installed("broken", "someone/broken@dev", damaged = true)
+        val fine = installed("fine", "someone/fine")
+        val offInCatalog = installed("cat", "kinotvapp/kino-plugin-archive", enabled = false)
+        val shown = listOf(CatalogRow(com.arkiv.player.data.plugin.catalog.CatalogEntry("cat", "kinotvapp/kino-plugin-archive", "Cat", ""), offInCatalog))
+        val rows = pickerInstalledRows(listOf(off, broken, fine, offInCatalog), shown)
+        assertEquals(listOf("off", "broken"), rows.map { it.entry.id })
+        assertEquals(listOf("someone/custom", "someone/broken@dev"), rows.map { it.entry.repo })
+        assertEquals(listOf("OFF", "BROKEN"), rows.map { it.entry.name })
+        assertEquals(listOf(off, broken), rows.map { it.installed })
+        assertEquals(listOf(CatalogAction.ENABLE, CatalogAction.INSTALL), rows.map { catalogActionOf(it) })
     }
 
     @Test fun `Back on the picker opened at start leaves the app and never reveals Home`() {

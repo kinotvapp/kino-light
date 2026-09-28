@@ -23,6 +23,8 @@ import com.arkiv.player.playback.MagisEphemeral
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
+import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -104,24 +106,32 @@ fun ArkivTvRoot(
 
     // Mandatory picker (spec amendment 2026-09-28): whoever has no installed-and-enabled plugin gets it at
     // every start of this root, new or updating device -- right after activation too (this root composes
-    // fresh when MainActivity's onActivated fires). Judged only once warm-up is done, i.e. after an updating
-    // device's Xuper migration ran. Read on IO: the registry's first read touches disk.
+    // fresh when MainActivity's onActivated fires). Decided as soon as the kind is recorded, or for an
+    // updating device right after its Xuper migration step (`AppGraph.pickerDecisionReady`), never the rest
+    // of warm-up; until then SourceDecisionCover hides the app. Read on IO: the registry's first read touches disk.
     // Once per composition of this root: a plugin removed mid-session leaves the empty Home until next start.
-    // Effects run after this composition applied, so the NavHost below has set its graph; the first
-    // back-stack entry is still awaited so a navigate can never race it.
+    var startGate by remember { androidx.compose.runtime.mutableStateOf(com.arkiv.player.ui.plugin.StartGate.DECIDING) }
     LaunchedEffect(Unit) {
         val open = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            com.arkiv.player.data.onboarding.Onboarding.opensPickerAfterWarmUp(
-                graph.warmedUp, { graph.settings.onboardingKind }, { graph.pluginAdmin.plugins.value },
+            com.arkiv.player.data.onboarding.Onboarding.opensPickerWhenReady(
+                graph.pickerDecisionReady, { graph.settings.onboardingKind }, { graph.pluginRegistry.plugins.value },
             )
         }
-        // Only over Home: a notification deep link may have opened the player; the picker then waits for
-        // the person to come back to Home, so Home is never usable without a source.
         if (open) {
-            navController.currentBackStackEntryFlow.first { com.arkiv.player.ui.plugin.pickerAutoOpensOver(it.destination.route) }
-            sourcePickerMandatory = true
-            openSourcePicker()
+            startGate = com.arkiv.player.ui.plugin.StartGate.OPENING
+            // Over any route but a deep-linked player: the picker waits until the person leaves it.
+            navController.currentBackStackEntryFlow.first { com.arkiv.player.ui.plugin.pickerMayOpenOver(it.destination.route) }
+            // The decision may be old by now (a restored back stack, a source installed meanwhile).
+            if (com.arkiv.player.ui.plugin.startPickerStillNeeded(graph.pluginRegistry.plugins.value)) {
+                sourcePickerMandatory = true
+                // Only Home stays under it, so nothing else is one Back away (and Back there leaves the app).
+                navController.navigate(com.arkiv.player.ui.plugin.SOURCE_PICKER_ROUTE) {
+                    popUpTo(navController.graph.findStartDestination().id)
+                    launchSingleTop = true
+                }
+            }
         }
+        startGate = com.arkiv.player.ui.plugin.StartGate.DONE
     }
 
     LaunchedEffect(deepLinkEpisodeId) {
@@ -131,6 +141,8 @@ fun ArkivTvRoot(
         }
     }
 
+    val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route
+    androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
     NavHost(
         navController = navController,
         startDestination = "home",
@@ -393,6 +405,8 @@ fun ArkivTvRoot(
             )
         }
     }
+    if (com.arkiv.player.ui.plugin.startCoverShows(startGate, currentRoute)) com.arkiv.player.ui.plugin.SourceDecisionCover()
+    } // end Box
 }
 
 /** Unwraps the Context until finding the Activity (to inject key events). */
