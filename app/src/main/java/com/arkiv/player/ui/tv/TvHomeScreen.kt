@@ -31,6 +31,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.LiveTv
@@ -48,6 +49,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -90,8 +92,15 @@ import com.arkiv.player.data.plugin.PluginHomeRow
 import com.arkiv.player.data.gateway.LiveChannel
 import com.arkiv.player.data.gateway.liveCode
 import com.arkiv.player.thumbnails.ThumbnailChoice
+import com.arkiv.player.ui.home.EMPTY_HOME_ACTION
+import com.arkiv.player.ui.home.EMPTY_HOME_LINE
+import com.arkiv.player.ui.home.EMPTY_HOME_TITLE
 import com.arkiv.player.ui.home.HomeViewModel
+import com.arkiv.player.ui.home.TvHomeLanding
+import com.arkiv.player.ui.home.emptyStateNeedsRefocus
+import com.arkiv.player.ui.home.homeShowsEmptyState
 import com.arkiv.player.ui.home.pluginHeroPick
+import com.arkiv.player.ui.home.tvHomeDefaultLanding
 import com.arkiv.player.ui.live.deviceCountry
 import com.arkiv.player.ui.EffectsAutoTune
 import com.arkiv.player.ui.KinoWordmark
@@ -335,6 +344,8 @@ fun TvHomeScreen(
     onOpenTitleRoute: (String) -> Unit,
     /** "Ver más" of a plugin row that carries a `ref` (the plugin declares `browse`). */
     onBrowsePluginRow: (com.arkiv.player.ui.plugin.PluginMoreTarget) -> Unit = {},
+    /** "Agregar plugin" of the empty state: opens "Elige tus fuentes". */
+    onOpenSourcePicker: () -> Unit = {},
 ) {
     val graph = rememberGraph()
     val vm: HomeViewModel = viewModel(
@@ -404,6 +415,10 @@ fun TvHomeScreen(
     }
     // The module's providers right now: a switched-off plugin's recents leave the row (they are kept, not deleted).
     val liveOn by graph.liveModule.available.collectAsStateWithLifecycle()
+    val installedPlugins by graph.pluginAdmin.plugins.collectAsStateWithLifecycle()
+    val homeEmpty = homeShowsEmptyState(installedPlugins, pluginRows.size, liveOn)
+    val homeEmptyNow by rememberUpdatedState(homeEmpty)
+    val emptySourcesFocus = remember { FocusRequester() }
     val liveTabs by graph.liveModule.tabs.collectAsStateWithLifecycle()
     // Same rule as the phone (homeLiveRow): drawn only with at least one channel to list, never as
     // "Ver más canales" alone; empty module, no row.
@@ -614,6 +629,17 @@ fun TvHomeScreen(
             request = { barFocus.requestFocus() },
         )
     }
+
+    // The empty state's button can leave while it holds focus (a source became usable): the top bar takes it.
+    var lastHomeEmpty by remember { mutableStateOf(homeEmpty) }
+    LaunchedEffect(homeEmpty) {
+        val was = lastHomeEmpty
+        lastHomeEmpty = homeEmpty
+        delay(WAIT_BETWEEN_FOCUS_ATTEMPTS_MS)
+        if (emptyStateNeedsRefocus(was, homeEmpty, screenHasFocus)) {
+            retryFocus(isAlreadyFocused = { libraryFocused }, wait = { delay(WAIT_BETWEEN_FOCUS_ATTEMPTS_MS) }, request = { barFocus.requestFocus() })
+        }
+    }
     val firstFocusKey = continueWatching.firstOrNull()?.episodeId
     // True once focus is back on the card `cardToRestore` names: from then on the default landing
     // below must not take it away (a late "Continuar viendo" changes `firstFocusKey`).
@@ -655,7 +681,11 @@ fun TvHomeScreen(
                 runCatching { rowsListState.scrollToItem(0) }
                 landed = runCatching { firstCardFocus.requestFocus() }.isSuccess
             } else {
-                landed = runCatching { barFocus.requestFocus() }.isSuccess
+                val target = when (tvHomeDefaultLanding(homeEmptyNow)) {
+                    TvHomeLanding.ADD_SOURCES -> emptySourcesFocus
+                    TvHomeLanding.TOP_BAR -> barFocus
+                }
+                landed = runCatching { target.requestFocus() }.isSuccess
             }
             if (!landed) delay(50)
         }
@@ -1009,6 +1039,24 @@ fun TvHomeScreen(
                                 }
                             }
                             Spacer(Modifier.height(rowGap))
+                        }
+                    }
+
+                    if (homeEmpty) {
+                        item(key = "empty_sources") {
+                            Column(
+                                Modifier.fillMaxWidth().padding(horizontal = 48.dp, vertical = 12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text(EMPTY_HOME_TITLE, style = MaterialTheme.typography.titleLarge, color = Color.White)
+                                Text(EMPTY_HOME_LINE, style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary)
+                                TvCompactAction(
+                                    label = EMPTY_HOME_ACTION,
+                                    icon = Icons.Default.Add,
+                                    modifier = Modifier.focusRequester(emptySourcesFocus),
+                                    onClick = onOpenSourcePicker,
+                                )
+                            }
                         }
                     }
 

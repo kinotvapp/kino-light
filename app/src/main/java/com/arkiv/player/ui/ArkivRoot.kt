@@ -364,6 +364,7 @@ fun ArkivRoot(
                     onOpenLibrary = { navController.navigate("library") },
                     contentPadding = padding,
                     onBrowsePluginRow = { navController.navigate(com.arkiv.player.ui.plugin.PluginMoreTarget.route(it)) },
+                    onOpenSourcePicker = { openSourcePicker() },
                 )
             }
             composable("live") {

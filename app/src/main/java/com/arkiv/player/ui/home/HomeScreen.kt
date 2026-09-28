@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SignalWifiOff
@@ -126,6 +127,8 @@ fun HomeScreen(
     contentPadding: PaddingValues,
     /** "Ver más" of a plugin row that carries a `ref` (the plugin declares `browse`). */
     onBrowsePluginRow: (com.arkiv.player.ui.plugin.PluginMoreTarget) -> Unit = {},
+    /** "Agregar plugin" of the empty state: opens "Elige tus fuentes". */
+    onOpenSourcePicker: () -> Unit = {},
 ) {
     val graph = rememberGraph()
     val sizes = homeSizes()
@@ -196,6 +199,8 @@ fun HomeScreen(
     }
     // The module's providers right now: a switched-off plugin's recents leave the row (they are kept, not deleted).
     val liveOn by graph.liveModule.available.collectAsStateWithLifecycle()
+    val installedPlugins by graph.pluginAdmin.plugins.collectAsStateWithLifecycle()
+    val homeEmpty = homeShowsEmptyState(installedPlugins, pluginRows.size, liveOn)
     val liveTabs by graph.liveModule.tabs.collectAsStateWithLifecycle()
     // null = no row (empty module, or no channel to list yet); never just "Ver más canales".
     val liveRow = remember(recentChannels, countryChannels, liveOn, liveTabs) {
@@ -456,7 +461,29 @@ fun HomeScreen(
             }
         }
 
-        // 5. Plugin rows (Xuper's among them): each titled by the plugin's row with the plugin as a chip.
+        // 5. Nothing can fill Home (spec 2026-09-28 §5): say so and offer the picker. Always-present, keyed
+        // item -- see the hero comment above.
+        item(key = "empty_sources") {
+            if (homeEmpty) {
+                Column(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(EMPTY_HOME_TITLE, style = MaterialTheme.typography.titleMedium, color = Color.White)
+                    Text(EMPTY_HOME_LINE, style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary)
+                    Button(
+                        onClick = onOpenSourcePicker,
+                        colors = ButtonDefaults.buttonColors(containerColor = ArkivRed, contentColor = Color.White),
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null)
+                        Spacer(Modifier.width(4.dp))
+                        Text(EMPTY_HOME_ACTION)
+                    }
+                }
+            }
+        }
+
+        // 6. Plugin rows (Xuper's among them): each titled by the plugin's row with the plugin as a chip.
         pluginRows.forEach { row ->
             item(key = "plugin-${row.pluginId}-${row.id}") {
                 PluginRow(

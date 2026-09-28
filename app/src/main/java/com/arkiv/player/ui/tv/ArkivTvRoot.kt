@@ -152,6 +152,7 @@ fun ArkivTvRoot(
                 onOpenCategoriasHome = { navController.navigate("categorias_home") },
                 onOpenTitleRoute = { route -> navController.navigate(route) { launchSingleTop = true } },
                 onBrowsePluginRow = { navController.navigate(com.arkiv.player.ui.plugin.PluginMoreTarget.route(it)) },
+                onOpenSourcePicker = { openSourcePicker() },
             )
         }
         composable(
