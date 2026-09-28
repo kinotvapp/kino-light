@@ -37,6 +37,9 @@ class XuperLiveProvider(
     override suspend fun guide(channels: List<LiveChannel>): Pair<Map<String, List<LiveProgram>>, List<String>> =
         catalog.epg(channels.filter { it.provider == id }.map { it.code })
 
+    /** Nothing beyond the Room channel cache, which the search already reads for every provider. */
+    override suspend fun knownChannels(): List<LiveChannel> = emptyList()
+
     override suspend fun open(channel: LiveChannel): LiveOpening = LiveOpening.Proxied(controller.open(channel.code))
 
     companion object {

@@ -363,4 +363,27 @@ class PluginLiveProviderTest {
         assertTrue(runCatching { p.guide(listOf(LiveChannel("c1", "Uno", 1, null, provider = provider))) }.exceptionOrNull() is CancellationException)
         assertEquals(2, caller.calls.size)
     }
+
+    @Test fun `known channels are the listed categories' channels, and unlisted categories are reported, with no extra call`() = runBlocking {
+        val caller = Caller { fn, arg ->
+            when (fn) {
+                "liveCategories" -> """[{"id":"news","title":"Noticias"},{"id":"kids","title":"Infantil"}]"""
+                else -> if (JSONObject(arg).getString("categoryId") == "news") """{"items":[{"id":"c1","title":"Uno","ref":"r1"}]}""" else """{"items":[]}"""
+            }
+        }
+        val p = live(caller)
+        assertEquals(emptyList<LiveChannel>(), p.knownChannels())
+        assertEquals(true, p.hasUnloadedCategories())
+        p.categories(false)
+        assertEquals(true, p.hasUnloadedCategories())
+        p.channels("news")
+        assertEquals(listOf("plugin:demo:c1"), p.knownChannels().map { it.liveCode })
+        assertEquals(true, p.hasUnloadedCategories())
+        p.channels("kids")
+        assertEquals(false, p.hasUnloadedCategories())
+        val asked = caller.calls.size
+        p.knownChannels()
+        p.hasUnloadedCategories()
+        assertEquals(asked, caller.calls.size)
+    }
 }

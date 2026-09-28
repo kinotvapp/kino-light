@@ -220,4 +220,13 @@ class PluginLivePlaylistTest {
         p.playlistReadHook = { it.delete() }
         assertEquals(listOf("Noticias propias", "Noticias", "Infantil"), p.categories(false).map { it.name })
     }
+
+    @Test fun `every parsed playlist entry is a known channel, without listing its categories`() = runBlocking {
+        val p = provider()
+        val cats = p.categories(false)
+        val all = cats.drop(1).flatMap { p.channels(it.id) }
+        assertEquals(all.map { it.liveCode }.toSet(), p.knownChannels().map { it.liveCode }.toSet())
+        assertTrue(all.isNotEmpty())
+        assertEquals(listOf("liveCategories"), calls)
+    }
 }

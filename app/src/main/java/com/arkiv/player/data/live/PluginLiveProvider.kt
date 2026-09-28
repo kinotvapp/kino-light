@@ -102,6 +102,10 @@ class PluginLiveProvider(
     /** The whole `liveCategories` answer; its playlists are Task 8's. */
     private var catalogCache: Pair<Long, PluginLiveCatalog>? = null
     private val channelsCache = HashMap<String, ChannelList>()
+    /** The plugin categories (not playlist groups) listed at least once by this instance; read lock-free by [hasUnloadedCategories]. */
+    private val listedCategories: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+    /** Whether `liveCategories` ever answered for this instance. */
+    @Volatile private var categoriesKnown = false
     private val guideCache = HashMap<String, Pair<Long, List<LiveProgram>>>()
     private var guideOffUntil = 0L
     /** Listings being fetched, by key: a second asker waits for the same answer. */
@@ -136,7 +140,7 @@ class PluginLiveProvider(
     private val sources = LinkedHashMap<String, PlaylistSource>()
     /** Each playlist's grouping by key, rebuilt when a list or the plugin's categories change (under [lock]). */
     private val groups = LinkedHashMap<String, PlaylistGroups>()
-    private var pluginCategories: List<ProviderCategory> = emptyList()
+    @Volatile private var pluginCategories: List<ProviderCategory> = emptyList()
     /** The plugin categories and parsed lists (by key) the current [groups] were built from; the same again regroups nothing. */
     private var groupedCategories: List<ProviderCategory>? = null
     private var groupedResults: Map<String, M3uResult?> = emptyMap()
@@ -167,6 +171,7 @@ class PluginLiveProvider(
         val catalog = catalog()
         lock.withLock {
             pluginCategories = catalog.categories.map { ProviderCategory(it.id, it.title) }
+            categoriesKnown = true
             reconcile(catalog.playlists)
         }
         ensurePlaylists(null)
@@ -323,6 +328,7 @@ class PluginLiveProvider(
         val all = items.map { it.toChannel() }
         val direct = items.mapNotNull { item -> item.stream?.let { item.id to PluginContentSource.livePlayable(it) } }.toMap()
         lock.withLock {
+            listedCategories += categoryId
             if (all.isNotEmpty()) channelsCache[categoryId] = ChannelList(clock() + LIST_TTL_MS, all, direct)
             else channelsCache.remove(categoryId)
         }
@@ -363,6 +369,18 @@ class PluginLiveProvider(
             }
         }
     }
+
+    /**
+     * Every parsed playlist entry that was kept and every listed category's channels, straight from
+     * memory. Not [owned]: it asks nothing, so a closed instance just answers what it had.
+     */
+    override suspend fun knownChannels(): List<LiveChannel> = lock.withLock {
+        groups.values.flatMap { g -> g.byCategory.values.flatten() } + channelsCache.values.flatMap { it.channels }
+    }.distinctBy { it.code }
+
+    /** True until `liveCategories` answered and each of the plugin's own categories was listed once. */
+    override fun hasUnloadedCategories(): Boolean =
+        !categoriesKnown || pluginCategories.any { it.id !in listedCategories }
 
     override suspend fun guide(channels: List<LiveChannel>): Pair<Map<String, List<LiveProgram>>, List<String>> = owned { guideNow(channels) }
 

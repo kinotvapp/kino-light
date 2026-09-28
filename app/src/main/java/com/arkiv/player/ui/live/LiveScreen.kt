@@ -251,7 +251,7 @@ fun LiveScreen(
                 }
             }
             state.error != null && state.channels.isEmpty() -> {
-                ErrorWithRetry(state.error!!) { state.activeCategory?.let(vm::chooseCategory) }
+                ErrorWithRetry(state.error!!) { vm.retry() }
             }
             state.loading && state.channels.isEmpty() -> {
                 PlaceholderGrid(gridPadding)

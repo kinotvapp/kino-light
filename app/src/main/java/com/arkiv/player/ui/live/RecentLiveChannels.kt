@@ -5,6 +5,7 @@ import com.arkiv.player.data.db.LiveChannelCacheEntity
 import com.arkiv.player.data.db.LiveRecentEntity
 import com.arkiv.player.data.gateway.LiveChannel
 import com.arkiv.player.data.gateway.LiveChannelKeys
+import com.arkiv.player.data.gateway.liveCode
 import com.arkiv.player.data.live.LiveProviderTab
 
 /**
@@ -57,11 +58,13 @@ suspend fun liveCacheForRecents(recent: List<LiveRecentEntity>, dao: LiveChannel
  * module ([available]), with number/logo from what the screen already loaded when it has them.
  * A provider switched off hides its recents; they come back with it.
  */
-fun recentsForScreen(raw: List<LiveRecentEntity>, loaded: List<LiveChannel>, available: Set<String>): List<LiveChannel> =
-    raw.filter { it.provider in available }.map { r ->
-        loaded.firstOrNull { it.provider == r.provider && it.code == r.code }?.copy(name = r.nombre)
+fun recentsForScreen(raw: List<LiveRecentEntity>, loaded: List<LiveChannel>, available: Set<String>): List<LiveChannel> {
+    val byLiveCode = loaded.associateBy { it.liveCode }
+    return raw.filter { it.provider in available }.map { r ->
+        byLiveCode[LiveChannelKeys.liveCode(r.provider, r.code)]?.copy(name = r.nombre)
             ?: LiveChannel(r.code, r.nombre, 0, null, provider = r.provider)
     }
+}
 
 /** The badge to draw on [channel]'s card: its provider's tab, only when the module has more than one provider. */
 fun providerBadge(channel: LiveChannel, tabs: List<LiveProviderTab>): LiveProviderTab? =

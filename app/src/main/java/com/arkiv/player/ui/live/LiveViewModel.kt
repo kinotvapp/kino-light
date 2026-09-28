@@ -14,14 +14,27 @@ import com.arkiv.player.data.live.LiveChannelProvider
 import com.arkiv.player.data.live.LiveModule
 import com.arkiv.player.data.live.LiveProviderTab
 import com.arkiv.player.data.live.ProviderCategory
+import com.arkiv.player.data.live.XuperLiveProvider
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapLatest
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.text.Normalizer
@@ -32,16 +45,28 @@ private const val EPG_RETRY_MS = 10_000L
 /** Synthetic category (no provider has it): the favourites of every available provider, from [LiveFavoriteDao]. */
 const val CATEGORY_FAVORITES = "__favoritos__"
 
-internal fun String.normalized(): String =
-    Normalizer.normalize(this, Normalizer.Form.NFD).replace(Regex("\\p{Mn}+"), "").lowercase()
+/** How long the cross-provider search waits for typing to settle. */
+private const val SEARCH_DEBOUNCE_MS = 150L
 
-/** By name (no accents or case) or by exact channel number. */
+private val COMBINING_MARKS = Regex("\\p{Mn}+")
+
+internal fun String.normalized(): String =
+    Normalizer.normalize(this, Normalizer.Form.NFD).replace(COMBINING_MARKS, "").lowercase()
+
+/** By name (no accents or case) or by exact channel number (only a numbered channel: 0 means "no number"). */
 fun filterChannels(channels: List<LiveChannel>, text: String): List<LiveChannel> {
     val q = text.trim()
     if (q.isEmpty()) return channels
     val normalized = q.normalized()
-    return channels.filter { it.name.normalized().contains(normalized) || it.number.toString() == q }
+    return channels.filter { it.name.normalized().contains(normalized) || (it.number > 0 && it.number.toString() == q) }
 }
+
+/**
+ * The En vivo search across every provider (Amendment A1) for [query]: [results] as
+ * [searchAcrossProviders] orders them, and [notLoaded] the names of providers with categories
+ * never listed, whose channels may be missing (see [notLoadedYetNote]).
+ */
+data class CrossSearch(val query: String, val results: List<LiveChannel>, val notLoaded: List<String>)
 
 /**
  * Fraction [0,1] of the current program's progress, for the grid's thin "Now on screen" bar.
@@ -116,9 +141,37 @@ class LiveViewModel(
      * zapping and the drawer never cross providers. Null everywhere else.
      */
     private val onlyProvider: String? = null,
+    /** Where the cross-provider search indexes and matches; tests pass their own. */
+    searchDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) : ViewModel() {
     private val _state = MutableStateFlow(LiveUiState())
     val state: StateFlow<LiveUiState> = _state
+
+    /**
+     * Per provider, in the module's order, every channel the search can see, names pre-normalised:
+     * what the provider holds in memory, then its Room rows (Xuper's only from categories the 18+
+     * lock allows), one entry per live code. Null = to be rebuilt. Rebuilt when a query starts
+     * (blank to non-blank) and after a provider change; a successful section load is merged in.
+     * Replaced whole, never mutated, so the search thread can read it while the main thread swaps it.
+     */
+    @Volatile private var searchIndex: List<Pair<String, List<SearchEntry>>>? = null
+    /** Bumped when [searchIndex] changes under a query already shown: that query is searched again. */
+    private val searchVersion = MutableStateFlow(0)
+    /** Only touched inside the [crossSearch] pipeline (sequential). */
+    private var lastQueryBlank = true
+
+    /**
+     * The En vivo search across every provider (Amendment A1); null while the query is blank (the
+     * screens show their normal per-provider view). The TV drawer's model ([onlyProvider]) searches
+     * its own provider only. Debounced, and computed off the main thread.
+     */
+    @OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
+    val crossSearch: StateFlow<CrossSearch?> =
+        combine(_state.map { it.search.trim() }.distinctUntilChanged(), searchVersion) { q, _ -> q }
+            .debounce(SEARCH_DEBOUNCE_MS)
+            .mapLatest { q -> crossSearchFor(q) }
+            .flowOn(searchDispatcher)
+            .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     /**
      * The current section load's Job. Cancelling the previous one before launching a new one
@@ -164,6 +217,7 @@ class LiveViewModel(
      * if the module swapped the instance), else the next one takes over, else the module is empty.
      */
     private fun onProviders(list: List<LiveChannelProvider>) {
+        invalidateSearch()
         val visible = visibleProviders(list)
         val tabs = visible.map { LiveProviderTab(it.id, it.name, it.color) }
         val before = _state.value.providers
@@ -179,7 +233,7 @@ class LiveViewModel(
             }
             return
         }
-        val next = tabs.firstOrNull()?.id
+        val next = visible.firstOrNull()
         if (next == null) {
             loadJob?.cancel()
             noticeJob?.cancel()
@@ -191,7 +245,8 @@ class LiveViewModel(
                 )
             }
         } else {
-            chooseProvider(next)
+            // Favourites span providers: they stay on screen, only re-filtered.
+            openProvider(next, keepFavorites = s.activeCategory == CATEGORY_FAVORITES)
         }
     }
 
@@ -215,7 +270,21 @@ class LiveViewModel(
     /** A provider chip: its categories, opening on its initial category (from cache first) or, lacking one, its first. */
     fun chooseProvider(id: String) {
         if (onlyProvider != null && id != onlyProvider) return
-        val provider = module.provider(id) ?: return
+        openProvider(module.provider(id) ?: return, keepFavorites = false)
+    }
+
+    /**
+     * After a [CancellationException] in a coroutine of ours: rethrows when it is ours, else says
+     * whether [provider] was replaced in the module (the call is dropped quietly: the replacement
+     * re-reads the section). Not replaced means an ordinary failure, so no spinner is left hanging.
+     */
+    private suspend fun replaced(id: String, provider: LiveChannelProvider): Boolean {
+        currentCoroutineContext().ensureActive()
+        return module.provider(id) !== provider
+    }
+
+    private fun openProvider(provider: LiveChannelProvider, keepFavorites: Boolean) {
+        val id = provider.id
         loadJob?.cancel()
         activeInstance = provider
         _state.update {
@@ -225,24 +294,29 @@ class LiveViewModel(
             )
         }
         watchNotice(provider)
+        if (keepFavorites) { load(id, CATEGORY_FAVORITES); return }
         val initial = provider.initialCategory()
         if (initial != null) { load(id, initial); return }
         loadJob = viewModelScope.launch {
             _state.update { it.copy(loading = true) }
-            val cats = try {
+            val cats: List<ProviderCategory>? = try {
                 provider.categories(adultsUnlocked())
             } catch (e: CancellationException) {
-                // Our own cancellation, or the provider was closed: then its replacement re-opens it (onProviders).
-                currentCoroutineContext().ensureActive()
-                return@launch
+                if (replaced(id, provider)) return@launch
+                null
             } catch (e: Exception) {
-                emptyList()
+                null
             }
             if (_state.value.activeProvider != id) return@launch
+            if (cats == null) {
+                _state.update { it.copy(loading = false, error = "No se pudo cargar los canales") }
+                return@launch
+            }
             _state.update { it.copy(categories = cats, hasGuide = provider.hasGuide()) }
             val first = cats.firstOrNull()?.id
             if (first == null) {
-                _state.update { it.copy(loading = false, error = "No se pudo cargar los canales") }
+                // It answered, with nothing: an empty provider, not a failure.
+                _state.update { it.copy(loading = false, error = null) }
             } else {
                 load(id, first)
             }
@@ -261,6 +335,17 @@ class LiveViewModel(
         val s = _state.value
         val category = s.activeCategory ?: return
         load(s.activeProvider, category, force = true)
+    }
+
+    /**
+     * The error screen's "Reintentar": the active category again, or, when the provider never got
+     * as far as one (its categories failed), the provider opened again.
+     */
+    fun retry() {
+        val s = _state.value
+        val category = s.activeCategory
+        if (category != null) { load(s.activeProvider, category); return }
+        s.activeProvider?.let(::chooseProvider)
     }
 
     fun search(text: String) = _state.update { it.copy(search = text) }
@@ -291,6 +376,21 @@ class LiveViewModel(
                 val channels = favs.map { LiveChannel(it.code, it.nombre, it.numero, it.logo, provider = it.provider) }
                 _state.update { it.copy(channels = channels, loading = false) }
                 requestEpg(channels.take(40))
+                // Opened straight on favourites (its provider took over): its chips still come.
+                val owner = providerId?.let(module::provider)
+                if (owner != null && _state.value.categories.isEmpty()) {
+                    val cats = try {
+                        owner.categories(adultsUnlocked())
+                    } catch (e: CancellationException) {
+                        currentCoroutineContext().ensureActive()
+                        null
+                    } catch (e: Exception) {
+                        null
+                    }
+                    if (cats != null && _state.value.activeProvider == providerId && _state.value.categories.isEmpty()) {
+                        _state.update { it.copy(categories = cats) }
+                    }
+                }
                 return@launch
             }
 
@@ -305,6 +405,14 @@ class LiveViewModel(
                 requestEpg(cached.take(40))
             }
 
+            fun fail() {
+                // With the cache already painted, a down provider doesn't empty the screen.
+                if (stillActive()) {
+                    _state.update {
+                        it.copy(loading = false, error = if (it.channels.isEmpty()) "No se pudo cargar los canales" else null)
+                    }
+                }
+            }
             val fresh = try {
                 if (_state.value.categories.isEmpty()) {
                     val cats = provider.categories(adultsUnlocked())
@@ -312,29 +420,82 @@ class LiveViewModel(
                 }
                 provider.channels(category, force)
             } catch (e: CancellationException) {
-                // Our own cancellation (a newer load), or the provider was closed by the module:
-                // then its replacement re-reads this section (onProviders). Never an error.
-                currentCoroutineContext().ensureActive()
+                // Our own cancellation (a newer load) rethrows; a provider closed by the module is
+                // re-read from its replacement (onProviders), never an error.
+                if (!replaced(providerId, provider)) fail()
                 return@launch
             } catch (e: Exception) {
-                // With the cache already painted, a down provider doesn't empty the screen.
-                if (stillActive()) {
-                    _state.update {
-                        it.copy(loading = false, error = if (it.channels.isEmpty()) "No se pudo cargar los canales" else null)
-                    }
-                }
+                fail()
                 return@launch
             }
             val nowMs = System.currentTimeMillis()
             cacheDao.replace(providerId, category, fresh.map {
                 LiveChannelCacheEntity(it.code, category, it.name, it.number, it.logo, nowMs, provider = providerId, ref = it.ref)
             })
+            mergeIntoSearch(providerId, fresh)
             if (stillActive()) {
                 // A plugin learns whether it has a guide (a playlist EPG) only once it listed.
                 _state.update { it.copy(channels = fresh, loading = false, error = null, hasGuide = provider.hasGuide()) }
                 requestEpg(fresh.take(40))
             }
         }
+    }
+
+    private fun invalidateSearch() {
+        searchIndex = null
+        searchVersion.update { it + 1 }
+    }
+
+    /** A freshly listed section joins an index already built, so a query on screen finds it. */
+    private fun mergeIntoSearch(providerId: String, fresh: List<LiveChannel>) {
+        val idx = searchIndex ?: return
+        if (fresh.isEmpty() || idx.none { it.first == providerId }) return
+        searchIndex = idx.map { (id, entries) ->
+            if (id != providerId) return@map id to entries
+            val have = entries.mapTo(HashSet()) { it.channel.liveCode }
+            id to (entries + searchIndexOf(fresh.filter { it.liveCode !in have }))
+        }
+        searchVersion.update { it + 1 }
+    }
+
+    private suspend fun crossSearchFor(q: String): CrossSearch? {
+        if (q.isEmpty()) { lastQueryBlank = true; return null }
+        val providers = visibleProviders(module.providers.value)
+        val index = searchIndex?.takeIf { !lastQueryBlank } ?: buildSearchIndex(providers).also { searchIndex = it }
+        lastQueryBlank = false
+        return CrossSearch(
+            query = q,
+            results = searchAcrossProviders(q, index.map { it.second }),
+            notLoaded = providers.filter { it.hasUnloadedCategories() }.map { it.name },
+        )
+    }
+
+    private suspend fun buildSearchIndex(providers: List<LiveChannelProvider>): List<Pair<String, List<SearchEntry>>> =
+        providers.map { p ->
+            val memory = quietly { p.knownChannels() }.orEmpty()
+            val allowed = if (p.id == LiveChannelKeys.XUPER) xuperSearchCategories(p) else null
+            val rows = quietly { cacheDao.byProvider(p.id) }.orEmpty()
+                .filter { allowed == null || it.categoria in allowed }
+                .map { LiveChannel(it.code, it.nombre, it.numero, it.logo, provider = it.provider, ref = it.ref) }
+            p.id to searchIndexOf((memory + rows).distinctBy { it.liveCode })
+        }
+
+    /**
+     * The Xuper cache categories the search may read: the ones the portal offers under the current
+     * 18+ lock, plus its "all channels" one. A channel cached from an adults category never shows
+     * while adults are locked. The portal failing leaves only "all channels".
+     */
+    private suspend fun xuperSearchCategories(p: LiveChannelProvider): Set<String> =
+        quietly { p.categories(adultsUnlocked()) }.orEmpty().mapTo(HashSet()) { it.id } + XuperLiveProvider.ALL_CATEGORY_ID
+
+    /** [block]'s value, or null on any failure; our own cancellation still ends the caller. */
+    private suspend fun <T> quietly(block: suspend () -> T): T? = try {
+        block()
+    } catch (e: CancellationException) {
+        currentCoroutineContext().ensureActive()
+        null
+    } catch (e: Exception) {
+        null
     }
 
     /**

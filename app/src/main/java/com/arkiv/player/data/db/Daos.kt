@@ -600,6 +600,10 @@ interface LiveChannelCacheDao {
     @Query("SELECT * FROM live_channels_cache WHERE provider = :provider AND code IN (:codes)")
     suspend fun byCodes(provider: String, codes: List<String>): List<LiveChannelCacheEntity>
 
+    /** Every cached row of ONE provider, any category (the En vivo search across providers). */
+    @Query("SELECT * FROM live_channels_cache WHERE provider = :provider ORDER BY numero")
+    suspend fun byProvider(provider: String): List<LiveChannelCacheEntity>
+
     @Query("DELETE FROM live_channels_cache WHERE provider = :provider AND categoria = :category")
     suspend fun clear(provider: String, category: String)
 

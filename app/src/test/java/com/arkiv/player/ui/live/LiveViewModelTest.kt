@@ -22,7 +22,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -155,8 +157,14 @@ private class FakeCacheDao : LiveChannelCacheDao {
         store[LiveChannelKeys.XUPER to category.toString()] = rows
     }
 
+    fun preload(provider: String, category: String, rows: List<LiveChannelCacheEntity>) {
+        store[provider to category] = rows
+    }
+
     override suspend fun byCategory(provider: String, category: String): List<LiveChannelCacheEntity> =
         store[provider to category].orEmpty()
+    override suspend fun byProvider(provider: String): List<LiveChannelCacheEntity> =
+        store.filterKeys { it.first == provider }.values.flatten().sortedBy { it.numero }
     // No test in this file exercises this (they're all about chooseCategory/byCategory);
     // minimal implementation to satisfy the interface.
     override suspend fun byCodes(provider: String, codes: List<String>): List<LiveChannelCacheEntity> =
@@ -196,7 +204,17 @@ private class FakeProvider(
     val noticeFlow = MutableStateFlow<String?>(null)
     override val notice: StateFlow<String?> = noticeFlow
     var closed = false
-    override suspend fun categories(includeAdults: Boolean) = categoriesResult
+    /** Categories only offered with the 18+ section unlocked. */
+    var adultCategories: List<ProviderCategory> = emptyList()
+    var categoriesFail = false
+    var known: List<LiveChannel> = emptyList()
+    var unloaded = false
+    override suspend fun categories(includeAdults: Boolean): List<ProviderCategory> {
+        if (categoriesFail) throw java.io.IOException("sin red")
+        return categoriesResult + (if (includeAdults) adultCategories else emptyList())
+    }
+    override suspend fun knownChannels() = known
+    override fun hasUnloadedCategories() = unloaded
     override suspend fun channels(categoryId: String, force: Boolean): List<LiveChannel> {
         channelsGate?.await()
         return channelsByCategory[categoryId].orEmpty()
@@ -536,11 +554,12 @@ class LiveViewModelAsyncTest {
         // LiveCatalog's order: the old instance is closed first, then the new list is published.
         val tv2 = FakeProvider(tvId, "Tu servidor", categoriesResult = listOf(ProviderCategory("news", "Noticias")))
         tv2.channelsByCategory["news"] = listOf(ch("c2", tvId))
+        val errors = mutableListOf<String?>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect { errors += it.error } }
         tv.close()
-        advanceUntilIdle()
-        assertEquals(null, vm.state.value.error)
         module.providers.value = listOf(xuper, tv2)
         advanceUntilIdle()
+        assertEquals("never shown as an error, not even for a moment", listOf<String?>(null), errors.distinct())
         val s = vm.state.value
         assertEquals(tvId, s.activeProvider)
         assertEquals(null, s.error)
@@ -588,5 +607,189 @@ class LiveViewModelAsyncTest {
         vm.chooseProvider("xuper")
         advanceUntilIdle()
         assertEquals(null, vm.state.value.notice)
+    }
+
+    @Test
+    fun `a cancelled call from a provider still in the module is an ordinary failure, never a hanging spinner`() = runTest(dispatcher) {
+        val (xuper, tv) = twoProviders()
+        tv.channelsGate = CompletableDeferred()
+        val vm = LiveViewModel(FakeModule(xuper, tv), FakeFavoriteDao(), FakeCacheDao())
+        advanceUntilIdle()
+        vm.chooseProvider(tvId)
+        advanceUntilIdle()
+        tv.close() // not replaced: the module still lists this very instance
+        advanceUntilIdle()
+        assertEquals(false, vm.state.value.loading)
+        assertEquals("No se pudo cargar los canales", vm.state.value.error)
+    }
+
+    @Test
+    fun `retry after a plugin's first open failed opens it again`() = runTest(dispatcher) {
+        val (xuper, tv) = twoProviders()
+        tv.categoriesFail = true
+        val vm = LiveViewModel(FakeModule(xuper, tv), FakeFavoriteDao(), FakeCacheDao())
+        advanceUntilIdle()
+        vm.chooseProvider(tvId)
+        advanceUntilIdle()
+        assertEquals("No se pudo cargar los canales", vm.state.value.error)
+        assertEquals(null, vm.state.value.activeCategory)
+        tv.categoriesFail = false
+        vm.retry()
+        advanceUntilIdle()
+        assertEquals(null, vm.state.value.error)
+        assertEquals("news", vm.state.value.activeCategory)
+        assertEquals(listOf("plugin:tv:c1"), vm.state.value.channels.map { it.liveCode })
+    }
+
+    @Test
+    fun `retry reloads the active category`() = runTest(dispatcher) {
+        val (xuper, tv) = twoProviders()
+        val gate = CompletableDeferred<Unit>()
+        tv.channelsGate = gate
+        val vm = LiveViewModel(FakeModule(xuper, tv), FakeFavoriteDao(), FakeCacheDao())
+        advanceUntilIdle()
+        vm.chooseProvider(tvId)
+        advanceUntilIdle()
+        gate.completeExceptionally(java.io.IOException("sin red"))
+        advanceUntilIdle()
+        assertEquals("No se pudo cargar los canales", vm.state.value.error)
+        tv.channelsGate = null
+        vm.retry()
+        advanceUntilIdle()
+        assertEquals(null, vm.state.value.error)
+        assertEquals(listOf("plugin:tv:c1"), vm.state.value.channels.map { it.liveCode })
+    }
+
+    @Test
+    fun `a provider with no categories at all is empty, not a failure`() = runTest(dispatcher) {
+        val (xuper, tv) = twoProviders()
+        tv.categoriesResult = emptyList()
+        val vm = LiveViewModel(FakeModule(xuper, tv), FakeFavoriteDao(), FakeCacheDao())
+        advanceUntilIdle()
+        vm.chooseProvider(tvId)
+        advanceUntilIdle()
+        assertEquals(null, vm.state.value.error)
+        assertEquals(false, vm.state.value.loading)
+        assertEquals(emptyList<LiveChannel>(), vm.state.value.channels)
+    }
+
+    @Test
+    fun `favourites stay on screen when the active provider vanishes`() = runTest(dispatcher) {
+        val (xuper, tv) = twoProviders()
+        val favs = FakeFavoriteDao()
+        favs.save(LiveFavoriteEntity("c1", "C1", 1, null))
+        favs.save(LiveFavoriteEntity("c1", "C1", 1, null, provider = tvId))
+        val module = FakeModule(xuper, tv)
+        val vm = LiveViewModel(module, favs, FakeCacheDao())
+        advanceUntilIdle()
+        vm.chooseCategory(CATEGORY_FAVORITES)
+        advanceUntilIdle()
+        module.providers.value = listOf(tv)
+        advanceUntilIdle()
+        val s = vm.state.value
+        assertEquals(tvId, s.activeProvider)
+        assertEquals(CATEGORY_FAVORITES, s.activeCategory)
+        assertEquals(listOf("plugin:tv:c1"), s.channels.map { it.liveCode })
+        assertEquals(listOf("news"), s.categories.map { it.id })
+    }
+
+    // --- Cross-provider search (Amendment A1) ---
+
+    private fun row(code: String, name: String, category: String, provider: String = "xuper", number: Int = 1) =
+        LiveChannelCacheEntity(code, category, name, number, null, 0L, provider)
+
+    private fun searchVm(module: FakeModule, cache: FakeCacheDao, adults: Boolean = false, only: String? = null) =
+        LiveViewModel(module, FakeFavoriteDao(), cache, adultsUnlocked = { adults }, onlyProvider = only, searchDispatcher = dispatcher)
+
+    @Test
+    fun `the search finds a non-active provider's cached channels, Xuper first`() = runTest(dispatcher) {
+        val (xuper, tv) = twoProviders()
+        val cache = FakeCacheDao()
+        cache.preload(tvId, "sports", listOf(row("n9", "Noticias 24", "sports", tvId)))
+        // Not in "76182": opening Xuper replaces that category's rows with what it lists.
+        xuper.categoriesResult += ProviderCategory("5", "Noticias")
+        cache.preload("xuper", "5", listOf(row("x9", "Noticias Caracol", "5")))
+        val vm = searchVm(FakeModule(xuper, tv), cache)
+        advanceUntilIdle()
+        assertEquals(null, vm.crossSearch.value)
+        vm.search("noticias")
+        advanceUntilIdle()
+        val r = vm.crossSearch.value!!
+        assertEquals("noticias", r.query)
+        assertEquals(listOf("x9", "plugin:tv:n9"), r.results.map { it.liveCode })
+        vm.search("  ")
+        advanceUntilIdle()
+        assertEquals(null, vm.crossSearch.value)
+    }
+
+    @Test
+    fun `a plugin's channels in memory are searched too, deduped with its rows`() = runTest(dispatcher) {
+        val (xuper, tv) = twoProviders()
+        tv.known = listOf(ch("p1", tvId).copy(name = "Canal Playlist"), ch("n9", tvId).copy(name = "Canal Noticias"))
+        val cache = FakeCacheDao()
+        cache.preload(tvId, "sports", listOf(row("n9", "Canal Noticias", "sports", tvId)))
+        val vm = searchVm(FakeModule(xuper, tv), cache)
+        advanceUntilIdle()
+        vm.search("canal")
+        advanceUntilIdle()
+        assertEquals(listOf("plugin:tv:p1", "plugin:tv:n9"), vm.crossSearch.value!!.results.map { it.liveCode })
+    }
+
+    @Test
+    fun `the search never shows an 18+ category's channels while adults are locked`() = runTest(dispatcher) {
+        val (xuper, tv) = twoProviders()
+        xuper.adultCategories = listOf(ProviderCategory("999", "Adultos"))
+        val cache = FakeCacheDao()
+        cache.preload("xuper", "999", listOf(row("a1", "Canal Rojo", "999")))
+        xuper.categoriesResult += ProviderCategory("5", "Noticias")
+        cache.preload("xuper", "5", listOf(row("b1", "Canal Azul", "5")))
+        val locked = searchVm(FakeModule(xuper, tv), cache)
+        advanceUntilIdle()
+        locked.search("canal")
+        advanceUntilIdle()
+        assertEquals(listOf("b1"), locked.crossSearch.value!!.results.map { it.liveCode })
+        val unlocked = searchVm(FakeModule(xuper, tv), cache, adults = true)
+        advanceUntilIdle()
+        unlocked.search("canal")
+        advanceUntilIdle()
+        assertEquals(setOf("a1", "b1"), unlocked.crossSearch.value!!.results.map { it.liveCode }.toSet())
+    }
+
+    @Test
+    fun `the search says which providers still have unloaded categories`() = runTest(dispatcher) {
+        val (xuper, tv) = twoProviders()
+        tv.unloaded = true
+        val vm = searchVm(FakeModule(xuper, tv), FakeCacheDao())
+        advanceUntilIdle()
+        vm.search("x")
+        advanceUntilIdle()
+        assertEquals(listOf("Tu servidor"), vm.crossSearch.value!!.notLoaded)
+    }
+
+    @Test
+    fun `the drawer's search stays inside its own provider`() = runTest(dispatcher) {
+        val (xuper, tv) = twoProviders()
+        val cache = FakeCacheDao()
+        cache.preload(tvId, "sports", listOf(row("n9", "Noticias 24", "sports", tvId)))
+        cache.preload("xuper", "76182", listOf(row("x9", "Noticias Caracol", "76182")))
+        val vm = searchVm(FakeModule(xuper, tv), cache, only = tvId)
+        advanceUntilIdle()
+        vm.search("noticias")
+        advanceUntilIdle()
+        assertEquals(listOf("plugin:tv:n9"), vm.crossSearch.value!!.results.map { it.liveCode })
+    }
+
+    @Test
+    fun `a section loaded after the search started joins its results`() = runTest(dispatcher) {
+        val (xuper, tv) = twoProviders()
+        tv.channelsByCategory["news"] = listOf(ch("c1", tvId).copy(name = "Noticias Ya"))
+        val vm = searchVm(FakeModule(xuper, tv), FakeCacheDao())
+        advanceUntilIdle()
+        vm.search("noticias")
+        advanceUntilIdle()
+        assertEquals(emptyList<String>(), vm.crossSearch.value!!.results.map { it.liveCode })
+        vm.chooseProvider(tvId)
+        advanceUntilIdle()
+        assertEquals(listOf("plugin:tv:c1"), vm.crossSearch.value!!.results.map { it.liveCode })
     }
 }

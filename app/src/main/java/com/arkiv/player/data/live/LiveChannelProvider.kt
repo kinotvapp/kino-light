@@ -52,6 +52,16 @@ interface LiveChannelProvider {
      */
     fun close() {}
 
+    /**
+     * The channels this provider already holds in memory (listed categories, parsed playlists),
+     * for the En vivo search across providers. Never a plugin call, a download or a throw, so it
+     * can run on every search; channels never loaded are simply not here. Default: none.
+     */
+    suspend fun knownChannels(): List<LiveChannel> = emptyList()
+
+    /** Whether some of this provider's categories were never listed, so [knownChannels] misses them. Memory only. */
+    fun hasUnloadedCategories(): Boolean = false
+
     /** A note the screens show over this provider's channels (a plugin's "Lista recortada…"); null = none. */
     val notice: StateFlow<String?> get() = NO_NOTICE
 }
