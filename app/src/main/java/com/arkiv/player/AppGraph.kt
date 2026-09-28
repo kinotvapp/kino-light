@@ -459,6 +459,8 @@ class AppGraph(context: Context) {
         okhttp3.OkHttpClient.Builder()
             .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
             .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+            // raw.githubusercontent.com (install, updates, catalog art) resolves like every other host.
+            .dns(com.arkiv.player.data.net.DohDns)
             .build()
     }
 
@@ -668,6 +670,7 @@ class AppGraph(context: Context) {
                 okhttp3.OkHttpClient.Builder()
                     .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
                     .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+                    .dns(com.arkiv.player.data.net.DohDns)
                     .build(),
                 userAgent = "Kino/${BuildConfig.VERSION_NAME}",
             ),
