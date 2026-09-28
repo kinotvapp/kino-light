@@ -82,7 +82,7 @@ class SettingsStore(context: Context) : com.arkiv.player.data.onboarding.Onboard
     val recentsPurged: Boolean
         get() = prefs.getBoolean(KEY_RECENTS_PURGED, false)
 
-    // Onboarding (spec 2026-09-28 §4): recorded once per device; nothing observes them, they're read at start.
+    // Onboarding (spec 2026-09-28 §4): recorded once per device; nothing observes it, it's read at start.
     override val onboardingKind: com.arkiv.player.data.onboarding.OnboardingKind?
         get() = com.arkiv.player.data.onboarding.OnboardingKind.fromWire(prefs.getString(KEY_ONBOARDING_KIND, null))
 
@@ -92,12 +92,6 @@ class SettingsStore(context: Context) : com.arkiv.player.data.onboarding.Onboard
     override fun setOnboardingKind(kind: com.arkiv.player.data.onboarding.OnboardingKind) {
         val saved = prefs.edit().putString(KEY_ONBOARDING_KIND, kind.wire).commit()
         if (!saved) Log.w(TAG_MIGRATION, "onboarding kind commit failed; a fresh classification may run again next start")
-    }
-
-    override val sourcePickerDone: Boolean get() = prefs.getBoolean(KEY_SOURCE_PICKER_DONE, false)
-
-    override fun setSourcePickerDone(done: Boolean) {
-        prefs.edit().putBoolean(KEY_SOURCE_PICKER_DONE, done).apply()
     }
 
     fun setDimLevel(v: Int) { prefs.edit().putInt(KEY_DIM_LEVEL, v).apply(); _dimLevel.value = v }
@@ -293,7 +287,6 @@ class SettingsStore(context: Context) : com.arkiv.player.data.onboarding.Onboard
         private const val KEY_ADULTS_CODE = "codigoAdultos"
         private const val KEY_RECENTS_PURGED = "recientesPurgados2026_08_14"
         private const val KEY_ONBOARDING_KIND = "onboarding_kind"
-        private const val KEY_SOURCE_PICKER_DONE = "source_picker_done"
 
         private const val KEY_FOR_YOU_LAST_ATTEMPT = "para_ti_ultimo_intento"
         private const val KEY_FOR_YOU_MODEL_FAILURE = "para_ti_fallo_modelo"

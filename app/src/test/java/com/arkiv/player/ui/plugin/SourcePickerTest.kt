@@ -1,7 +1,7 @@
 package com.arkiv.player.ui.plugin
 
+import com.arkiv.player.data.onboarding.Onboarding
 import com.arkiv.player.data.onboarding.OnboardingKind
-import com.arkiv.player.data.onboarding.OnboardingPrefs
 import com.arkiv.player.data.plugin.InstalledPlugin
 import com.arkiv.player.data.plugin.InstalledRecord
 import com.arkiv.player.data.plugin.PluginManifest
@@ -11,33 +11,28 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SourcePickerTest {
-    private fun plugin(enabled: Boolean) = InstalledPlugin(
+    private fun plugin(enabled: Boolean, unresponsive: Boolean = false) = InstalledPlugin(
         PluginManifest("demo", "Demo", "1.0.0", 1, "plugin.js", "", "", "", listOf("example.com"), setOf("search", "resolve"), null, null),
-        InstalledRecord("o/r", "1.0.0", "x", listOf("example.com"), 0L, enabled = enabled),
+        InstalledRecord("o/r", "1.0.0", "x", listOf("example.com"), 0L, enabled = enabled, unresponsive = unresponsive),
         iconFile = null,
     )
-
-    private class FakePrefs : OnboardingPrefs {
-        private var pickerDone = false
-        override val onboardingKind: OnboardingKind? = OnboardingKind.NEW
-        override val sourcePickerDone: Boolean get() = pickerDone
-        override fun setOnboardingKind(kind: OnboardingKind) = Unit
-        override fun setSourcePickerDone(done: Boolean) { pickerDone = done }
-    }
 
     @Test fun `the copy is the spec's`() {
         assertEquals("sources", SOURCE_PICKER_ROUTE)
         assertEquals("Elige tus fuentes", SOURCE_PICKER_TITLE)
         assertEquals("Instala las fuentes que quieras usar. Puedes cambiarlas cuando quieras en Ajustes ▸ Plugins.", SOURCE_PICKER_LINE)
         assertEquals("Listo", SOURCE_PICKER_DONE)
-        assertEquals("Ahora no", SOURCE_PICKER_SKIP)
         assertEquals("Recomendados", RECOMMENDED_TITLE)
     }
 
-    @Test fun `Listo needs at least one installed plugin, in any state`() {
+    @Test fun `Listo needs at least one installed and enabled plugin, the same rule that reopens the picker`() {
         assertFalse(pickerCanFinish(emptyList()))
-        assertTrue(pickerCanFinish(listOf(plugin(enabled = false))))
+        assertFalse(pickerCanFinish(listOf(plugin(enabled = false))))
         assertTrue(pickerCanFinish(listOf(plugin(enabled = true))))
+        assertTrue(pickerCanFinish(listOf(plugin(enabled = true, unresponsive = true))))
+        for (plugins in listOf(emptyList(), listOf(plugin(enabled = false)), listOf(plugin(enabled = true)))) {
+            assertEquals(pickerCanFinish(plugins), !Onboarding.opensPickerOnStart(OnboardingKind.NEW, plugins))
+        }
     }
 
     @Test fun `the TV picker takes focus back only once placed, when nothing of it holds focus and no dialog is up`() {
@@ -47,37 +42,24 @@ class SourcePickerTest {
         assertFalse(pickerNeedsRefocus(initialFocusPlaced = true, screenHasFocus = false, dialogOpen = true))
     }
 
-    @Test fun `leaving the picker marks it done and pops back to what was under it`() {
-        val prefs = FakePrefs()
+    @Test fun `Listo pops back to what was under the picker`() {
         var wentHome = false
-        leaveSourcePicker(prefs, isShowing = { true }, popBack = { true }, goHome = { wentHome = true })
-        assertTrue(prefs.sourcePickerDone)
+        leaveSourcePicker(isShowing = { true }, popBack = { true }, goHome = { wentHome = true })
         assertFalse(wentHome)
     }
 
-    @Test fun `leaving the picker with nothing under it marks it done and goes Home`() {
-        val prefs = FakePrefs()
+    @Test fun `Listo with nothing under the picker goes Home`() {
         var wentHome = false
-        leaveSourcePicker(prefs, isShowing = { true }, popBack = { false }, goHome = { wentHome = true })
-        assertTrue(prefs.sourcePickerDone)
+        leaveSourcePicker(isShowing = { true }, popBack = { false }, goHome = { wentHome = true })
         assertTrue(wentHome)
     }
 
-    @Test fun `the done flag is on disk before navigation runs, so a crash there cannot reopen it`() {
-        val prefs = FakePrefs()
-        var doneWhenPopped: Boolean? = null
-        leaveSourcePicker(prefs, isShowing = { true }, popBack = { doneWhenPopped = prefs.sourcePickerDone; true }, goHome = {})
-        assertEquals(true, doneWhenPopped)
-    }
-
-    @Test fun `a second leave while the picker fades out neither pops Home nor navigates`() {
-        val prefs = FakePrefs()
+    @Test fun `a second Listo while the picker fades out neither pops Home nor navigates`() {
         var pops = 0
         var wentHome = false
-        leaveSourcePicker(prefs, isShowing = { false }, popBack = { pops++; true }, goHome = { wentHome = true })
+        leaveSourcePicker(isShowing = { false }, popBack = { pops++; true }, goHome = { wentHome = true })
         assertEquals(0, pops)
         assertFalse(wentHome)
-        assertTrue(prefs.sourcePickerDone)
     }
 
     @Test fun `the picker opens by itself only over Home, never over a deep-linked player`() {
@@ -87,8 +69,19 @@ class SourcePickerTest {
         assertFalse(pickerAutoOpensOver(null))
     }
 
-    @Test fun `Ahora no is off while an install runs`() {
-        assertTrue(pickerCanSkip(busy = false))
-        assertFalse(pickerCanSkip(busy = true))
+    @Test fun `Back on the picker opened at start leaves the app and never reveals Home`() {
+        var exited = false
+        var pops = 0
+        onSourcePickerBack(mandatory = true, exitApp = { exited = true }, popBack = { pops++ })
+        assertTrue(exited)
+        assertEquals(0, pops)
+    }
+
+    @Test fun `Back on the picker opened from the empty Home mid-session goes back to that Home`() {
+        var exited = false
+        var pops = 0
+        onSourcePickerBack(mandatory = false, exitApp = { exited = true }, popBack = { pops++ })
+        assertFalse(exited)
+        assertEquals(1, pops)
     }
 }

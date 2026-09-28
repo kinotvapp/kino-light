@@ -86,10 +86,14 @@ fun ArkivTvRoot(
         goToPlayer("${com.arkiv.player.playback.PlayerSource.LIVE_PREFIX}$liveCode")
     }
 
-    /** "Listo" / "Ahora no" / Back of the source picker (ruling R9): never opens by itself again, back to Home. */
+    // True while the picker on screen is the one opened at start for want of a source: Back then leaves the
+    // app. One opened from the empty Home mid-session (a last plugin removed) is not: Back returns there.
+    var sourcePickerMandatory by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
+
+    /** "Listo" of the source picker: back to Home. */
     fun finishSourcePicker() {
+        sourcePickerMandatory = false
         com.arkiv.player.ui.plugin.leaveSourcePicker(
-            graph.settings,
             isShowing = { navController.currentDestination?.route == com.arkiv.player.ui.plugin.SOURCE_PICKER_ROUTE },
             popBack = { navController.popBackStack() },
             goHome = { navController.navigate("home") },
@@ -98,19 +102,24 @@ fun ArkivTvRoot(
 
     fun openSourcePicker() = navController.navigate(com.arkiv.player.ui.plugin.SOURCE_PICKER_ROUTE) { launchSingleTop = true }
 
-    // Ruling R8: a new device that never finished the picker and has nothing usable gets it right away,
-    // which is right after activation (this root composes fresh when MainActivity's onActivated fires)
-    // and again after a start that died mid-picker. Read on IO: the registry's first read touches disk.
+    // Mandatory picker (spec amendment 2026-09-28): whoever has no installed-and-enabled plugin gets it at
+    // every start of this root, new or updating device -- right after activation too (this root composes
+    // fresh when MainActivity's onActivated fires). Judged only once warm-up is done, i.e. after an updating
+    // device's Xuper migration ran. Read on IO: the registry's first read touches disk.
+    // Once per composition of this root: a plugin removed mid-session leaves the empty Home until next start.
     // Effects run after this composition applied, so the NavHost below has set its graph; the first
     // back-stack entry is still awaited so a navigate can never race it.
     LaunchedEffect(Unit) {
         val open = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            com.arkiv.player.data.onboarding.Onboarding.opensPickerOnStart(
-                graph.settings.onboardingKind, graph.settings.sourcePickerDone, graph.pluginAdmin.plugins.value,
+            com.arkiv.player.data.onboarding.Onboarding.opensPickerAfterWarmUp(
+                graph.warmedUp, { graph.settings.onboardingKind }, { graph.pluginAdmin.plugins.value },
             )
         }
-        // Only over Home: a notification deep link may already have opened the player.
-        if (open && com.arkiv.player.ui.plugin.pickerAutoOpensOver(navController.currentBackStackEntryFlow.first().destination.route)) {
+        // Only over Home: a notification deep link may have opened the player; the picker then waits for
+        // the person to come back to Home, so Home is never usable without a source.
+        if (open) {
+            navController.currentBackStackEntryFlow.first { com.arkiv.player.ui.plugin.pickerAutoOpensOver(it.destination.route) }
+            sourcePickerMandatory = true
             openSourcePicker()
         }
     }
@@ -372,7 +381,16 @@ fun ArkivTvRoot(
             )
         }
         composable(com.arkiv.player.ui.plugin.SOURCE_PICKER_ROUTE) {
-            TvSourcePickerScreen(onFinish = { finishSourcePicker() })
+            TvSourcePickerScreen(
+                onFinish = { finishSourcePicker() },
+                onBack = {
+                    com.arkiv.player.ui.plugin.onSourcePickerBack(
+                        sourcePickerMandatory,
+                        exitApp = { com.arkiv.player.ui.plugin.exitFromSourcePicker(context) },
+                        popBack = { navController.popBackStack() },
+                    )
+                },
+            )
         }
     }
 }

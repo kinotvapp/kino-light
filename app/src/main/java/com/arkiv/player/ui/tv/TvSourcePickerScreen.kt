@@ -43,11 +43,9 @@ import com.arkiv.player.ui.plugin.PluginConsentDialog
 import com.arkiv.player.ui.plugin.RECOMMENDED_TITLE
 import com.arkiv.player.ui.plugin.SOURCE_PICKER_DONE
 import com.arkiv.player.ui.plugin.SOURCE_PICKER_LINE
-import com.arkiv.player.ui.plugin.SOURCE_PICKER_SKIP
 import com.arkiv.player.ui.plugin.SOURCE_PICKER_TITLE
 import com.arkiv.player.ui.plugin.legacyFirst
 import com.arkiv.player.ui.plugin.pickerCanFinish
-import com.arkiv.player.ui.plugin.pickerCanSkip
 import com.arkiv.player.ui.plugin.pickerNeedsRefocus
 import com.arkiv.player.ui.plugin.runCatalogAction
 import com.arkiv.player.ui.plugin.sourcePickerViewModel
@@ -58,7 +56,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 
-/** How long the first card has to show up for the initial focus before "Ahora no" takes it instead. */
+/** How long the first card has to show up for the initial focus before "Listo" takes it instead. */
 private const val PICKER_FOCUS_GRACE_MS = 1_500L
 
 /** Attempts per focus target, [WAIT_BETWEEN_FOCUS_ATTEMPTS_MS] apart: about a second each. */
@@ -67,20 +65,22 @@ private const val PICKER_FOCUS_ATTEMPTS = 30
 /**
  * "Elige tus fuentes" on the TV. Laid out like [com.arkiv.player.ui.plugin.SourcePickerScreen], for the D-pad:
  * - Initial focus is the first recommended card (its action is "Instalar"); if there is no card within
- *   [PICKER_FOCUS_GRACE_MS], or it will not take focus, "Ahora no" does.
+ *   [PICKER_FOCUS_GRACE_MS], or it will not take focus, "Listo" does. "Listo" and not the community
+ *   "Actualizar": it sits outside the lazy grid, so it is always composed and on screen whatever the
+ *   community list is doing (loading, empty offline, scrolled away), and it stays focusable while disabled.
  * - Success is each target's OWN focus state, never `requestFocus()`'s return (it reports nothing; see
  *   [retryFocus]).
  * - The cards stay focusable in every state (an installed one reads "Instalado"), and "Listo" is a
  *   [TvCompactAction] that stays focusable while disabled, so a state change never throws focus out.
  * - If the rows change under the focused card, or a dialog closes, and nothing here holds focus, it goes
- *   back to the first card (or "Ahora no") ([pickerNeedsRefocus]).
- * - "Ahora no" is dimmed while an install runs ([pickerCanSkip]) but stays focusable.
- * - Back and both buttons call [onFinish].
+ *   back to the first card (or "Listo") ([pickerNeedsRefocus]).
+ * - The picker is mandatory: "Listo" ([pickerCanFinish]) calls [onFinish]; there is no skip. Back calls
+ *   [onBack] ([com.arkiv.player.ui.plugin.onSourcePickerBack]: leaves the app when opened at start).
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun TvSourcePickerScreen(onFinish: () -> Unit) {
-    BackHandler(onBack = onFinish)
+fun TvSourcePickerScreen(onFinish: () -> Unit, onBack: () -> Unit) {
+    BackHandler(onBack = onBack)
     val vm = sourcePickerViewModel()
     val plugins by vm.plugins.collectAsStateWithLifecycle()
     val state by vm.state.collectAsStateWithLifecycle()
@@ -91,15 +91,15 @@ fun TvSourcePickerScreen(onFinish: () -> Unit) {
     val statusLines = remember(rows) { gridLinesWithStatus(rows, TV_CATALOG_COLUMNS) }
 
     val firstCardFocus = remember { FocusRequester() }
-    val skipFocus = remember { FocusRequester() }
+    val doneFocus = remember { FocusRequester() }
     var firstCardFocused by remember { mutableStateOf(false) }
-    var skipFocused by remember { mutableStateOf(false) }
+    var doneFocused by remember { mutableStateOf(false) }
     var placed by remember { mutableStateOf(false) }
     var screenHasFocus by remember { mutableStateOf(false) }
     val dialogOpen = state.consent != null || state.configuring != null
     val hasCards by rememberUpdatedState(rows.isNotEmpty())
 
-    // The first card when there is one and it takes focus, "Ahora no" otherwise.
+    // The first card when there is one and it takes focus, "Listo" otherwise.
     suspend fun landFocus() {
         if (hasCards && retryFocus(
                 attempts = PICKER_FOCUS_ATTEMPTS,
@@ -112,9 +112,9 @@ fun TvSourcePickerScreen(onFinish: () -> Unit) {
         }
         retryFocus(
             attempts = PICKER_FOCUS_ATTEMPTS,
-            isAlreadyFocused = { skipFocused },
+            isAlreadyFocused = { doneFocused },
             wait = { delay(WAIT_BETWEEN_FOCUS_ATTEMPTS_MS) },
-            request = { skipFocus.requestFocus() },
+            request = { doneFocus.requestFocus() },
         )
     }
 
@@ -176,14 +176,13 @@ fun TvSourcePickerScreen(onFinish: () -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.End),
         ) {
             TvCompactAction(
-                label = SOURCE_PICKER_SKIP,
-                modifier = Modifier.focusRequester(skipFocus).onFocusChanged { skipFocused = it.hasFocus },
-                // Dimmed but still focusable while an install runs (see TvCompactAction), so disabling it never
-                // throws focus out, and the refocus lands on it only when there is no card to take it.
-                enabled = pickerCanSkip(state.busy),
+                label = SOURCE_PICKER_DONE,
+                // Dimmed but still focusable until a source is installed (see TvCompactAction), so the refocus
+                // can land on it when there is no card to take it, and enabling it never moves focus.
+                modifier = Modifier.focusRequester(doneFocus).onFocusChanged { doneFocused = it.hasFocus },
+                enabled = pickerCanFinish(plugins),
                 onClick = onFinish,
             )
-            TvCompactAction(label = SOURCE_PICKER_DONE, enabled = pickerCanFinish(plugins), onClick = onFinish)
         }
     }
     state.consent?.let { PluginConsentDialog(it, onInstall = vm::confirmInstall, onCancel = vm::cancelConsent) }

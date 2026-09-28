@@ -1,16 +1,21 @@
 package com.arkiv.player.ui.plugin
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.compose.runtime.Composable
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
-import com.arkiv.player.data.onboarding.OnboardingPrefs
+import com.arkiv.player.data.onboarding.Onboarding
 import com.arkiv.player.data.plugin.InstalledPlugin
 import com.arkiv.player.ui.rememberGraph
 
 /*
  * "Elige tus fuentes" (spec 2026-09-28 §3): the recommended catalog and the community list, with the same
  * cards, consent, install and Configurar as Ajustes ▸ Plugins ▸ Recomendados. Phone and TV share this file.
+ * Mandatory since the 2026-09-28 amendment: there is no way past it but "Listo" with a source installed;
+ * Back on the picker opened at start leaves the app ([onSourcePickerBack]).
  */
 
 /** The picker's route in both roots. Not a tab: no top bar, no drawer. */
@@ -19,11 +24,13 @@ const val SOURCE_PICKER_ROUTE = "sources"
 internal const val SOURCE_PICKER_TITLE = "Elige tus fuentes"
 internal const val SOURCE_PICKER_LINE = "Instala las fuentes que quieras usar. Puedes cambiarlas cuando quieras en Ajustes ▸ Plugins."
 internal const val SOURCE_PICKER_DONE = "Listo"
-internal const val SOURCE_PICKER_SKIP = "Ahora no"
 internal const val RECOMMENDED_TITLE = "Recomendados"
 
-/** Ruling R10: "Listo" does something once at least one plugin is installed, whatever its state. */
-internal fun pickerCanFinish(plugins: List<InstalledPlugin>): Boolean = plugins.isNotEmpty()
+/**
+ * "Listo" does something once at least one plugin is installed and switched on ([Onboarding.hasSource]):
+ * the same rule that reopens the picker at start, so leaving it never leads to it again next time.
+ */
+internal fun pickerCanFinish(plugins: List<InstalledPlugin>): Boolean = Onboarding.hasSource(plugins)
 
 /**
  * The TV picker lost focus to nothing (a card that held it left the list, a refresh replaced the rows, a
@@ -34,27 +41,45 @@ internal fun pickerNeedsRefocus(initialFocusPlaced: Boolean, screenHasFocus: Boo
     initialFocusPlaced && !screenHasFocus && !dialogOpen
 
 /**
- * Every way out of the picker ("Listo", "Ahora no", system Back; ruling R9) ends here: the done flag is
- * written FIRST, so the picker never opens by itself again even if navigation fails, then it pops back to
- * what was under it, or goes Home when nothing was ([goHome]).
+ * "Listo": pops back to what was under the picker, or goes Home when nothing was ([goHome]). Nothing is
+ * written: whether the picker opens at the next start depends only on the installed plugins
+ * ([Onboarding.opensPickerOnStart]).
  *
  * Navigation runs only while the picker is still the current destination ([isShowing]): during the
  * NavHost's exit fade the picker stays composed and clickable, and a second tap on "Listo" would otherwise
  * pop Home itself and leave a blank NavHost.
  */
-internal fun leaveSourcePicker(prefs: OnboardingPrefs, isShowing: () -> Boolean, popBack: () -> Boolean, goHome: () -> Unit) {
-    prefs.setSourcePickerDone(true)
+internal fun leaveSourcePicker(isShowing: () -> Boolean, popBack: () -> Boolean, goHome: () -> Unit) {
     if (!isShowing()) return
     if (!popBack()) goHome()
 }
 
 /**
- * "Ahora no" is off while an install or check runs: leaving then would drop the picker's view model and
- * cancel the install half-way. Back stays active (ruling R9).
+ * System Back on the picker (phone and TV). [mandatory] (the root opened it at start because there is no
+ * source): leaves the app ([exitApp]), never revealing the Home under it; the next start opens it again.
+ * Otherwise the person opened it from the empty Home they were allowed to keep for the rest of the session
+ * (a last plugin removed mid-session), and Back returns there ([popBack]).
  */
-internal fun pickerCanSkip(busy: Boolean): Boolean = !busy
+internal fun onSourcePickerBack(mandatory: Boolean, exitApp: () -> Unit, popBack: () -> Unit) {
+    if (mandatory) exitApp() else popBack()
+}
 
-/** The auto-open (ruling R8) only lands over Home, never over a player a notification deep link opened. */
+/** Leaves the app from the picker: the Activity finishes, as Back on the TV's Home does. */
+internal fun exitFromSourcePicker(context: Context) {
+    var c: Context? = context
+    while (c is ContextWrapper) {
+        if (c is Activity) {
+            c.finish()
+            return
+        }
+        c = c.baseContext
+    }
+}
+
+/**
+ * The auto-open only lands over Home, never over a player a notification deep link opened: the root waits
+ * until Home is showing (back from that player) and opens it then.
+ */
 internal fun pickerAutoOpensOver(currentRoute: String?): Boolean = currentRoute == "home"
 
 /** The picker's own [PluginsViewModel], scoped to its route: catalog, art and community discovery. */

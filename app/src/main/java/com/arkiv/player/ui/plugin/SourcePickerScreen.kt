@@ -19,7 +19,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -35,15 +34,16 @@ import com.arkiv.player.ui.tv.gridLinesWithStatus
 
 /**
  * "Elige tus fuentes" on the phone: title and one line, what an action answers, then one grid with the
- * recommended cards and "De la comunidad" ([communityItems]), and at the bottom "Ahora no" and "Listo"
- * ([pickerCanFinish]); "Ahora no" is off while an install runs ([pickerCanSkip]). Both buttons and system Back
- * call [onFinish] (rulings R9, R10). Installing opens the
- * consent sheet and, for a plugin that needs setup, Configurar, both over this screen; the card then reads
- * "Instalado".
+ * recommended cards and "De la comunidad" ([communityItems]), and at the bottom "Listo", enabled once a
+ * plugin is installed and switched on ([pickerCanFinish]); it calls [onFinish]. The picker is mandatory:
+ * there is no skip. System Back calls [onBack] ([onSourcePickerBack]: leaves the app when the picker was
+ * opened at start).
+ * Installing opens the consent sheet and, for a plugin that needs setup, Configurar, both over this screen;
+ * the card then reads "Instalado".
  */
 @Composable
-fun SourcePickerScreen(onFinish: () -> Unit) {
-    BackHandler(onBack = onFinish)
+fun SourcePickerScreen(onFinish: () -> Unit, onBack: () -> Unit) {
+    BackHandler(onBack = onBack)
     val vm = sourcePickerViewModel()
     val plugins by vm.plugins.collectAsStateWithLifecycle()
     val state by vm.state.collectAsStateWithLifecycle()
@@ -88,10 +88,6 @@ fun SourcePickerScreen(onFinish: () -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            val canSkip = pickerCanSkip(state.busy)
-            TextButton(onClick = onFinish, enabled = canSkip) {
-                Text(SOURCE_PICKER_SKIP, color = ArkivTextSecondary.copy(alpha = if (canSkip) 1f else 0.4f))
-            }
             Button(
                 onClick = onFinish,
                 enabled = pickerCanFinish(plugins),
