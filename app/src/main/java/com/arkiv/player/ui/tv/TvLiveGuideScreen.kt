@@ -234,9 +234,10 @@ fun TvLiveGuideScreen(onWatchChannel: (LiveChannel) -> Unit, onBack: () -> Unit)
         )
     }
 
-    // Favourites from the remote: a long OK on any channel row stars or unstars it (tv-material's
+    // Favourites from the remote: a long OK on any channel row opens TvFavoriteDialog (tv-material's
     // `onLongClick`: fired by the key's first repeat, and that press's click is swallowed, so the
-    // channel doesn't open). Unstarring on the "Favoritos" list removes the row
+    // channel doesn't open); its confirm button stars or unstars the channel, and focus comes back
+    // to the same row (`returnCode`). Unstarring on the "Favoritos" list removes the row
     // (`dropFromFavoritesList`); Compose clears focus with the removed node, so it's handed to the
     // neighbour row (neighborAfterRemoval) or, with the list emptied, to the "Favoritos" chip --
     // before the screen-wide watch above would land it on the provider row instead.
@@ -251,6 +252,13 @@ fun TvLiveGuideScreen(onWatchChannel: (LiveChannel) -> Unit, onBack: () -> Unit)
     var refocusCode by remember { mutableStateOf<String?>(null) }
     var removedCode by remember { mutableStateOf<String?>(null) }
     var focusedRowCode by remember { mutableStateOf<String?>(null) }
+    var confirmChannel by remember { mutableStateOf<LiveChannel?>(null) }
+    val returnRow = remember { FocusRequester() }
+    var returnCode by remember { mutableStateOf<String?>(null) }
+    fun askFavorite(channel: LiveChannel) {
+        returnCode = channel.liveCode
+        confirmChannel = channel
+    }
     fun toggleFavorite(channel: LiveChannel) {
         val wasFavorite = channel.liveCode in state.favorites
         if (wasFavorite && !searching && view == TvLocalView.NONE && state.activeCategory == CATEGORY_FAVORITES) {
@@ -260,6 +268,21 @@ fun TvLiveGuideScreen(onWatchChannel: (LiveChannel) -> Unit, onBack: () -> Unit)
         vm.toggleFavorite(channel, dropFromFavoritesList = true)
         notice = favoriteNotice(added = !wasFavorite)
         noticeTick++
+    }
+    // The dialog closed without removing its row: hand focus back to that row. (When the row did
+    // leave the list, the effect below moves focus instead, and this one stands down.)
+    LaunchedEffect(confirmChannel, returnCode) {
+        if (confirmChannel != null) return@LaunchedEffect
+        val code = returnCode ?: return@LaunchedEffect
+        if (code != removedCode) {
+            retryFocus(
+                attempts = 20,
+                isAlreadyFocused = { focusedRowCode == code },
+                wait = { delay(50) },
+                request = { returnRow.requestFocus() },
+            )
+        }
+        returnCode = null
     }
     LaunchedEffect(channels, removedCode) {
         val gone = removedCode ?: return@LaunchedEffect
@@ -279,6 +302,7 @@ fun TvLiveGuideScreen(onWatchChannel: (LiveChannel) -> Unit, onBack: () -> Unit)
         Modifier
             .onFocusChanged { if (it.isFocused) focusedRowCode = channel.liveCode }
             .then(if (channel.liveCode == refocusCode) Modifier.focusRequester(refocusRow) else Modifier)
+            .then(if (channel.liveCode == returnCode) Modifier.focusRequester(returnRow) else Modifier)
     }
 
     Column(
@@ -351,7 +375,7 @@ fun TvLiveGuideScreen(onWatchChannel: (LiveChannel) -> Unit, onBack: () -> Unit)
                         TvSearchResults(
                             searchView, state::tabOf, ::watchChannel,
                             isFavorite = { it.liveCode in state.favorites },
-                            onToggleFavorite = ::toggleFavorite,
+                            onToggleFavorite = ::askFavorite,
                             rowModifier = favoriteRow,
                         )
                     }
@@ -436,7 +460,7 @@ fun TvLiveGuideScreen(onWatchChannel: (LiveChannel) -> Unit, onBack: () -> Unit)
                                     badge = state.tabOf(channel),
                                     isFavorite = channel.liveCode in state.favorites,
                                     onClick = { watchChannel(channel) },
-                                    onLongClick = { toggleFavorite(channel) },
+                                    onLongClick = { askFavorite(channel) },
                                     modifier = Modifier.height(ROW_HEIGHT).then(favoriteRow(channel)),
                                 )
                             }
@@ -446,6 +470,18 @@ fun TvLiveGuideScreen(onWatchChannel: (LiveChannel) -> Unit, onBack: () -> Unit)
                 TvFavoriteHint(notice)
             }
         }
+    }
+
+    confirmChannel?.let { channel ->
+        TvFavoriteDialog(
+            channelName = channel.name,
+            isFavorite = channel.liveCode in state.favorites,
+            onConfirm = {
+                toggleFavorite(channel)
+                confirmChannel = null
+            },
+            onDismiss = { confirmChannel = null },
+        )
     }
 }
 

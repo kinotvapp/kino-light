@@ -136,9 +136,10 @@ fun TvChannelDrawer(
     val channelsList = rememberLazyListState()
     val currentIndex = remember(channels, currentLiveCode) { DrawerIndex.indexFor(channels, currentLiveCode) }
 
-    // Favourites from the remote: a long OK on a row stars or unstars it (tv-material's
+    // Favourites from the remote: a long OK on a row opens TvFavoriteDialog (tv-material's
     // `onLongClick`, fired by the key's first repeat, which also swallows that press's click so
-    // the channel isn't opened). Unstarring while "Favoritos" is on screen removes the row
+    // the channel isn't opened); its confirm button stars or unstars the channel, and focus comes
+    // back to the same row (`returnCode`). Unstarring while "Favoritos" is on screen removes the row
     // (LiveViewModel.toggleFavorite's `dropFromFavoritesList`), and Compose clears focus with the
     // removed node: `refocusCode` is the row that takes it instead (neighborAfterRemoval), and
     // `refocusPending` keeps the landing effect below from yanking focus back to the on-screen
@@ -154,6 +155,9 @@ fun TvChannelDrawer(
     var refocusCode by remember { mutableStateOf<String?>(null) }
     var removedCode by remember { mutableStateOf<String?>(null) }
     var refocusPending by remember { mutableStateOf(false) }
+    var confirmChannel by remember { mutableStateOf<LiveChannel?>(null) }
+    val returnRow = remember { FocusRequester() }
+    var returnCode by remember { mutableStateOf<String?>(null) }
     fun toggleFavorite(channel: LiveChannel) {
         val wasFavorite = channel.liveCode in state.favorites
         if (wasFavorite && state.activeCategory == CATEGORY_FAVORITES) {
@@ -164,6 +168,21 @@ fun TvChannelDrawer(
         vm.toggleFavorite(channel, dropFromFavoritesList = true)
         notice = favoriteNotice(added = !wasFavorite)
         noticeTick++
+    }
+    // The dialog closed without removing its row: hand focus back to that row. (When the row did
+    // leave the list, the effect below moves focus instead, and this one stands down.)
+    LaunchedEffect(confirmChannel, returnCode) {
+        if (confirmChannel != null) return@LaunchedEffect
+        val code = returnCode ?: return@LaunchedEffect
+        if (code == removedCode) { returnCode = null; return@LaunchedEffect }
+        repeat(20) {
+            if (runCatching { returnRow.requestFocus() }.isSuccess) {
+                returnCode = null
+                return@LaunchedEffect
+            }
+            delay(50)
+        }
+        returnCode = null
     }
     LaunchedEffect(channels, removedCode) {
         val gone = removedCode ?: return@LaunchedEffect
@@ -289,6 +308,7 @@ fun TvChannelDrawer(
                         itemsIndexed(channels) { i, channel ->
                             var rowModifier: Modifier = if (i == currentIndex) Modifier.focusRequester(channelsFocus) else Modifier
                             if (channel.liveCode == refocusCode) rowModifier = rowModifier.focusRequester(refocusRow)
+                            if (channel.liveCode == returnCode) rowModifier = rowModifier.focusRequester(returnRow)
                             DrawerChannelRow(
                                 channel = channel,
                                 onScreen = channel.liveCode == currentLiveCode,
@@ -299,7 +319,10 @@ fun TvChannelDrawer(
                                 // "deportes", zapping should move between those, not the whole
                                 // catalog.
                                 onClick = { onChooseChannel(channels, channel) },
-                                onLongClick = { toggleFavorite(channel) },
+                                onLongClick = {
+                                    returnCode = channel.liveCode
+                                    confirmChannel = channel
+                                },
                                 modifier = rowModifier,
                             )
                         }
@@ -317,6 +340,18 @@ fun TvChannelDrawer(
                 modifier = Modifier.padding(top = 8.dp),
             )
         }
+    }
+
+    confirmChannel?.let { channel ->
+        TvFavoriteDialog(
+            channelName = channel.name,
+            isFavorite = channel.liveCode in state.favorites,
+            onConfirm = {
+                toggleFavorite(channel)
+                confirmChannel = null
+            },
+            onDismiss = { confirmChannel = null },
+        )
     }
 }
 

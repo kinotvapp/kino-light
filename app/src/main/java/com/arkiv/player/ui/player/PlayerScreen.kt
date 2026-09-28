@@ -99,7 +99,9 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import com.arkiv.player.ui.live.DrawerAction
 import com.arkiv.player.ui.live.DrawerDpad
+import com.arkiv.player.ui.live.liveKeyOpensFavoriteDialog
 import com.arkiv.player.ui.live.toggle
+import com.arkiv.player.ui.tv.TvFavoriteDialog
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
@@ -140,6 +142,7 @@ import com.arkiv.player.cast.CastProgress
 import com.arkiv.player.cast.localAudioFormat
 import com.arkiv.player.cast.localVideoFormat
 import com.arkiv.player.data.ChapterMarker
+import com.arkiv.player.data.gateway.LiveChannel
 import com.arkiv.player.data.gateway.liveCode
 import com.arkiv.player.data.magis.MagisAccountState
 import com.arkiv.player.data.plugin.XuperPrivilege
@@ -696,7 +699,9 @@ private fun PlayerContent(
     val liveState = rememberLiveState()
     val liveFavoriteDao = remember { graph.database.liveFavoriteDao() }
     val liveFavorites by remember { liveFavoriteDao.flowAll() }.collectAsStateWithLifecycle(initialValue = emptyList())
-    val liveOkPress = remember { LiveOkPress() }
+    // TV: the channel the "¿Agregar/Quitar … favoritos?" dialog is asking about (right arrow on the
+    // video), or null while it's closed.
+    var liveFavoriteConfirm by remember { mutableStateOf<LiveChannel?>(null) }
     val liveChannel by vm.liveChannel.collectAsStateWithLifecycle()
     // Task 15: publish the channel name for NowPlayingPublisher (only runs on TV, but it costs
     // nothing to have it also set here on the phone). Without this the remote miniplayer's bar, on
@@ -2789,17 +2794,13 @@ private fun PlayerContent(
     // `magisPlayer`/`livePlayer`/`dituPlayer` hadn't been published yet) and not the player that's
     // genuinely playing anymore. Same pattern as `currentPlayer` above.
     val currentTogglePlayPause by rememberUpdatedState { togglePlayPause() }
-    // TV, an En vivo channel on screen: a long OK stars/unstars it (LiveOkPress). Read from the
-    // DAO at the moment of the press, not from a composed snapshot, since the listener is built once.
-    val currentToggleLiveFavorite by rememberUpdatedState {
+    // TV, an En vivo channel on screen: the right arrow asks whether to star/unstar it
+    // (TvFavoriteDialog, composed further below). Reads the channel at the moment of the press,
+    // not a composed snapshot, since the listener is built once.
+    val currentAskLiveFavorite by rememberUpdatedState {
         val channel = vm.liveChannel.value
-        if (channel != null) {
-            scope.launch {
-                val wasFavorite = liveFavoriteDao.isFavorite(channel.provider, channel.code)
-                liveFavoriteDao.toggle(channel, wasFavorite)
-                liveState.announceFavorite(added = !wasFavorite)
-            }
-        }
+        if (channel != null) liveFavoriteConfirm = channel
+        channel != null
     }
     val currentSeekBy by rememberUpdatedState { deltaMs: Long -> seekBy(deltaMs) }
 
@@ -2841,26 +2842,6 @@ private fun PlayerContent(
                         tv.isFocusable = true
                         tv.isFocusableInTouchMode = true
                         tv.setOnKeyListener { _, keyCode, event ->
-                            // En vivo channel, OK/center: short = play/pause, long = favourite.
-                            // Both halves of the press come here (see LiveOkPress for why the short
-                            // one now acts on release). MEDIA_PLAY_PAUSE & co. keep acting on down.
-                            if (isLive && isModuleLive && !markers.marking && !controls.visible &&
-                                keyCode in LIVE_OK_KEYS
-                            ) {
-                                val heldMs = event.eventTime - event.downTime
-                                val action = when {
-                                    event.action == KeyEvent.ACTION_DOWN -> liveOkPress.onDown(event.repeatCount, heldMs)
-                                    event.action == KeyEvent.ACTION_UP && event.isCanceled -> { liveOkPress.onUp(0); LiveOkPress.Action.NONE }
-                                    event.action == KeyEvent.ACTION_UP -> liveOkPress.onUp(heldMs)
-                                    else -> LiveOkPress.Action.NONE
-                                }
-                                when (action) {
-                                    LiveOkPress.Action.SHORT -> currentTogglePlayPause()
-                                    LiveOkPress.Action.LONG -> currentToggleLiveFavorite()
-                                    LiveOkPress.Action.NONE -> Unit
-                                }
-                                return@setOnKeyListener true
-                            }
                             if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
                             if (markers.marking) return@setOnKeyListener false
                             // With the controls overlay visible, Android's focus is already on
@@ -2892,6 +2873,11 @@ private fun PlayerContent(
                                         liveState.openDrawer()
                                         return@setOnKeyListener true
                                     }
+                                }
+                                // Right, the one arrow live leaves free: the favourite dialog. It is
+                                // its own window, so the keys that follow go to it, not here.
+                                if (liveKeyOpensFavoriteDialog(keyCode, isModuleLive, liveState.drawerOpen)) {
+                                    return@setOnKeyListener currentAskLiveFavorite()
                                 }
                                 return@setOnKeyListener when (keyCode) {
                                     KeyEvent.KEYCODE_DPAD_UP ->
@@ -4295,6 +4281,38 @@ private fun PlayerContent(
     // returns focus to the video) doesn't leave a stale open state behind.
     LaunchedEffect(blocked != null) {
         if (blocked != null && liveState.drawerOpen) liveState.closeDrawer()
+        if (blocked != null) liveFavoriteConfirm = null
+    }
+
+    // The right arrow's "¿Agregar/Quitar <canal> … favoritos?" (TV, En vivo channel). The confirm
+    // button re-reads the DAO rather than trusting the star it opened with, then brings up the
+    // channel card with the new star and "Agregado/Quitado de favoritos".
+    liveFavoriteConfirm?.let { channel ->
+        TvFavoriteDialog(
+            channelName = channel.name,
+            isFavorite = liveFavorites.any { it.provider == channel.provider && it.code == channel.code },
+            onConfirm = {
+                liveFavoriteConfirm = null
+                scope.launch {
+                    val wasFavorite = liveFavoriteDao.isFavorite(channel.provider, channel.code)
+                    liveFavoriteDao.toggle(channel, wasFavorite)
+                    liveState.announceFavorite(added = !wasFavorite)
+                }
+            },
+            onDismiss = { liveFavoriteConfirm = null },
+        )
+    }
+    // Back to the video once the dialog closes, so zapping, the drawer and play/pause answer the
+    // remote again (same reason as the drawer's effect above).
+    var liveFavoriteDialogShown by remember { mutableStateOf(false) }
+    LaunchedEffect(liveFavoriteConfirm != null) {
+        if (liveFavoriteConfirm != null) { liveFavoriteDialogShown = true; return@LaunchedEffect }
+        if (!liveFavoriteDialogShown) return@LaunchedEffect
+        liveFavoriteDialogShown = false
+        repeat(10) {
+            if (videoView?.requestFocus() == true) return@LaunchedEffect
+            delay(50)
+        }
     }
     blocked?.let { message ->
         AlertDialog(

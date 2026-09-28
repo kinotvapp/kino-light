@@ -51,7 +51,7 @@ import com.arkiv.player.data.live.LiveModule
 import com.arkiv.player.ui.live.DrawerAction
 import com.arkiv.player.ui.live.DrawerDpad
 import com.arkiv.player.ui.live.DrawerFocus
-import com.arkiv.player.ui.live.FAVORITE_HINT
+import com.arkiv.player.ui.live.PLAYER_FAVORITE_HINT
 import com.arkiv.player.ui.live.currentProgram
 import com.arkiv.player.ui.live.favoriteNotice
 import com.arkiv.player.ui.theme.ArkivSurface
@@ -105,8 +105,8 @@ internal class LiveState {
         private set
 
     /**
-     * "Agregado a favoritos" / "Quitado de favoritos" on the channel card, right after a long OK on
-     * the TV. Cleared by the next announcement, so it never outlives the card it came with.
+     * "Agregado a favoritos" / "Quitado de favoritos" on the channel card, right after the TV's
+     * favourite dialog is confirmed. Cleared by the next announcement, so it never outlives the card it came with.
      */
     var favoriteMessage by mutableStateOf<String?>(null)
         private set
@@ -118,7 +118,7 @@ internal class LiveState {
         infoTick++
     }
 
-    /** The long OK's confirmation: the card comes up (the star on it shows the new state) with the line. */
+    /** The favourite dialog's confirmation: the card comes up (the star on it shows the new state) with the line. */
     fun announceFavorite(added: Boolean) {
         showInfo()
         favoriteMessage = favoriteNotice(added)
@@ -259,7 +259,7 @@ internal fun BoxScope.LiveCastBand(
  * only compose in live mode and are of no use to anyone else.
  *
  * [isFavorite] puts the star next to the name. [favoriteHint] (TV) adds the line that teaches the
- * long OK, the only way to star a channel from the remote; right after one, the confirmation
+ * right arrow, the player's way to star a channel from the remote; right after one, the confirmation
  * ([LiveState.favoriteMessage]) takes its place.
  */
 @Composable
@@ -335,7 +335,7 @@ internal fun BoxScope.ChannelCard(
                 val favoriteLine = state.favoriteMessage
                 when {
                     favoriteLine != null -> ProgramLine(favoriteLine, Color.White)
-                    favoriteHint -> ProgramLine(FAVORITE_HINT, ArkivTextSecondary)
+                    favoriteHint -> ProgramLine(PLAYER_FAVORITE_HINT, ArkivTextSecondary)
                 }
             }
         }
