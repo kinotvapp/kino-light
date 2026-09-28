@@ -32,7 +32,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.arkiv.player.data.magis.MagisAccountState
-import com.arkiv.player.ui.plugin.AddPluginMode
 import com.arkiv.player.ui.plugin.PluginsContent
 import com.arkiv.player.ui.readingWidth
 import com.arkiv.player.ui.rememberGraph
@@ -129,7 +128,6 @@ fun SettingsScreen(contentPadding: PaddingValues, onOpenDownloads: () -> Unit = 
                 // The keyboard lifts it by what it covers beyond the system bar, as the full-screen host does.
                 val bottomInset = contentPadding.calculateBottomPadding()
                 PluginsContent(
-                    mode = AddPluginMode.SETTINGS,
                     bottomInset = bottomInset,
                     modifier = Modifier
                         .weight(1f)

@@ -1,6 +1,5 @@
 package com.arkiv.player.ui.tv
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
@@ -42,7 +41,6 @@ import androidx.compose.ui.focus.FocusManager
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -60,12 +58,10 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.arkiv.player.data.plugin.InstalledPlugin
 import com.arkiv.player.data.plugin.catalog.CatalogArt
-import com.arkiv.player.ui.plugin.AddPluginMode
 import com.arkiv.player.ui.plugin.CatalogAction
 import com.arkiv.player.ui.plugin.CatalogRow
 import com.arkiv.player.ui.plugin.CatalogUiState
 import com.arkiv.player.ui.plugin.CommunityUiState
-import com.arkiv.player.ui.plugin.FocusWhenReady
 import com.arkiv.player.ui.plugin.PluginConfigDialog
 import com.arkiv.player.ui.plugin.PluginConsentDialog
 import com.arkiv.player.ui.plugin.PluginUninstallDialog
@@ -76,8 +72,6 @@ import com.arkiv.player.ui.plugin.addRequestAfterConsent
 import com.arkiv.player.ui.plugin.addressAfterDialogDismissed
 import com.arkiv.player.ui.plugin.artForInstalled
 import com.arkiv.player.ui.plugin.catalogRefreshLine
-import com.arkiv.player.ui.plugin.handleAddPluginBack
-import com.arkiv.player.ui.plugin.initialPluginsTab
 import com.arkiv.player.ui.plugin.installedGridLinesReserving
 import com.arkiv.player.ui.plugin.installedGridLinesWithMessage
 import com.arkiv.player.ui.plugin.installedTabLabel
@@ -88,9 +82,6 @@ import com.arkiv.player.ui.rememberGraph
 import com.arkiv.player.ui.theme.ArkivRed
 import com.arkiv.player.ui.theme.ArkivTextSecondary
 import kotlinx.coroutines.delay
-
-/** How long the text fields (and the header row) stay out of focus at most while the first recommended card takes it; see [TvPluginsContent]. */
-private const val INITIAL_FOCUS_GRACE_MS = 1_500L
 
 /** Recommended plugins per line of the grid. */
 internal const val TV_CATALOG_COLUMNS = 3
@@ -104,24 +95,6 @@ internal val FOCUS_MARGIN = 12.dp
 
 /** An item of the grid that takes the whole line: everything but the cards. */
 private val FULL_WIDTH: LazyGridItemSpanScope.() -> GridItemSpan = { GridItemSpan(maxLineSpan) }
-
-/**
- * The Plugins screen on the TV, full screen: its title over [TvPluginsContent], which is the screen itself.
- * Ajustes ▸ Plugins does NOT use this host (it shows [TvPluginsContent] inside its own pane); this one is the
- * first-launch picker's ([AddPluginMode.ONBOARDING], Phase 2, not wired yet), pre-wired here so that phase adds
- * a route and nothing else.
- *
- * Back closes it in [AddPluginMode.SETTINGS]; the onboarding picker has no way out, so it swallows Back.
- * The TV has no close button, so [mode] changes nothing else here.
- */
-@Composable
-fun TvPluginsScreen(mode: AddPluginMode, onClose: () -> Unit) {
-    BackHandler { handleAddPluginBack(mode, onClose) }
-    Column(modifier = Modifier.fillMaxSize().padding(horizontal = 64.dp, vertical = 32.dp)) {
-        Text("Plugins", style = MaterialTheme.typography.headlineMedium, color = Color.White)
-        TvPluginsContent(mode, Modifier.weight(1f).fillMaxWidth())
-    }
-}
 
 /**
  * What the Plugins screen shows on the TV, laid out for the D-pad: no title and no Back handling of its own
@@ -145,13 +118,10 @@ fun TvPluginsScreen(mode: AddPluginMode, onClose: () -> Unit) {
  * takes focus opens the keyboard by itself, and going down should not), or the first installed card.
  * Up from the search field and from the first installed card returns to the SELECTED tab.
  *
- * Initial focus is the first recommended card and no keyboard when the screen is the whole screen
- * ([requestInitialFocus], see the comment on [initialFocusPlaced] below). Hosted inside another screen's
- * chrome (Ajustes ▸ Plugins) it must NOT be requested: the person is walking that screen's own tab row, and
- * a card that took focus when the tab opened would steal it. The host then links the two levels itself:
- * [entryFocus] is put on the selected tab chip so the host can send Down from its own tab row there, and
- * Up from the header row leads to [upFocus] (the host's tab row) when there is one. Up from the search field
- * and from the first installed card still leads to the selected tab chip, one level down.
+ * Focus is not placed on a card when it opens: the person is walking Ajustes' own tab row. [entryFocus] is
+ * put on the selected tab chip of this content's header row, so the host can send Down from its own tab row
+ * there, and Up from the header row leads to [upFocus] (the host's tab row). Up from the search field and
+ * from the first installed card leads to the selected tab chip, one level down.
  *
  * The selected tab and whether the person asked for the dialog survive recreation ([rememberSaveable]); the
  * search text and the typed address live in the view model, so they survive switching tabs and the consent.
@@ -159,9 +129,7 @@ fun TvPluginsScreen(mode: AddPluginMode, onClose: () -> Unit) {
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun TvPluginsContent(
-    mode: AddPluginMode,
     modifier: Modifier = Modifier,
-    requestInitialFocus: Boolean = true,
     entryFocus: FocusRequester? = null,
     upFocus: FocusRequester? = null,
 ) {
@@ -179,7 +147,7 @@ internal fun TvPluginsContent(
     val rows = legacyFirst(catalog.rows)
     val statusLines = remember(rows) { gridLinesWithStatus(rows, TV_CATALOG_COLUMNS) }
 
-    var tab by rememberSaveable { mutableStateOf(initialPluginsTab(mode)) }
+    var tab by rememberSaveable { mutableStateOf(PluginsTab.RECOMMENDED) }
     var addRequested by rememberSaveable { mutableStateOf(false) }
     val dialogVisible = addModalVisible(addRequested, state)
 
@@ -194,36 +162,10 @@ internal fun TvPluginsContent(
     val addFocus = remember { FocusRequester() }
     val installedEntryFocus = remember { FocusRequester() }
 
-    // With [requestInitialFocus], initial focus goes to the first recommended card, with no keyboard. Two things
-    // make that fragile:
-    //  1. On a TV (non-touch mode) Android gives the window's Compose view focus on the first frame, and Compose
-    //     hands it to the first focusable node it finds. A focused text field opens the system keyboard by itself,
-    //     covering the grid, and the tabs would show a focus ring for the moment before the card takes it. So the
-    //     search field AND the header row (tabs and "Agregar") refuse focus (canFocus = false) until
-    //     [initialFocusPlaced]; the default focus then lands on another control ("Reintentar" or the first card)
-    //     and [FocusWhenReady] moves it to the first card a moment later.
-    //  2. The rows may arrive after the screen opens, and a requester on a card that is not composed throws, so
-    //     the request only runs while a row exists (and [FocusWhenReady] retries until the card is attached).
-    // [initialFocusPlaced] turns true, for good, as soon as that first card has focus. If that never happens
-    // (no rows, or the card could not take focus) it turns true anyway after [INITIAL_FOCUS_GRACE_MS], so the
-    // fields and the header are never unreachable. Once true nothing requests focus again, so a catalog that
-    // reloads or a search that filters never takes focus away from the person, and moving INTO the search field
-    // by D-pad (Up from the first line of cards) works, keyboard included, as it always did.
-    // Without [requestInitialFocus] there is nothing to place: the host already has focus (on its own tab row,
-    // which comes before this content and takes the window's default focus), so the fields and the header are
-    // focusable from the start.
+    // Hosted in Ajustes' pane, the content never places focus itself: the person is walking Ajustes' tab row
+    // (see the host). [firstRowFocus] is where Down from the header row leads.
     val firstRowFocus = remember { FocusRequester() }
-    var initialFocusPlaced by remember { mutableStateOf(!requestInitialFocus) }
-    if (!initialFocusPlaced && tab == PluginsTab.RECOMMENDED && rows.isNotEmpty()) FocusWhenReady(firstRowFocus)
-    LaunchedEffect(Unit) {
-        if (requestInitialFocus) {
-            delay(INITIAL_FOCUS_GRACE_MS)
-            initialFocusPlaced = true
-        }
-    }
-    val firstRowModifier = Modifier
-        .focusRequester(firstRowFocus)
-        .onFocusChanged { if (it.hasFocus) initialFocusPlaced = true }
+    val firstRowModifier = Modifier.focusRequester(firstRowFocus)
 
     // The dialog is a window of its own: when it goes away (Cancelar, Back, or the consent sheet taking over)
     // the person finds the "Agregar" button that opened it focused again. A consent that did not come from
@@ -259,7 +201,6 @@ internal fun TvPluginsContent(
             tab = tab,
             installedCount = plugins.size,
             busy = state.busy,
-            focusable = initialFocusPlaced,
             tabFocus = tabFocus,
             addFocus = addFocus,
             entryFocus = entryFocus,
@@ -292,7 +233,6 @@ internal fun TvPluginsContent(
                     art = art,
                     selectedTabFocus = selectedTabFocus,
                     firstRowModifier = firstRowModifier,
-                    fieldsCanFocus = initialFocusPlaced,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
                 PluginsTab.INSTALLED -> InstalledTab(
@@ -347,10 +287,9 @@ internal fun TvPluginsContent(
 
 /**
  * The header row: the tabs on the left ([TvTab], the same piece and style as Ajustes' tab row) and "Agregar"
- * at the end. [focusable] is false only while the initial focus is being placed (see [TvPluginsContent]).
- * "Agregar" is ignored, not disabled, while [busy], so focus is never thrown out from under the person.
- * [downTarget] is where Down leads, or null to let the key take its usual course. [upFocus] is where Up
- * leads (the host's tab row above the header), or null when nothing lies above. [entryFocus] is the host's
+ * at the end. "Agregar" is ignored, not disabled, while [busy], so focus is never thrown out from under the
+ * person. [downTarget] is where Down leads, or null to let the key take its usual course. [upFocus] is where
+ * Up leads (the host's tab row above the header), or null when nothing lies above. [entryFocus] is the host's
  * way in: it is attached to the SELECTED tab chip, wherever the selection is (nobody uses it while the row
  * recomposes, unlike the per-chip [tabFocus]).
  *
@@ -362,7 +301,6 @@ private fun PluginsHeader(
     tab: PluginsTab,
     installedCount: Int,
     busy: Boolean,
-    focusable: Boolean,
     tabFocus: Map<PluginsTab, FocusRequester>,
     addFocus: FocusRequester,
     entryFocus: FocusRequester?,
@@ -391,7 +329,6 @@ private fun PluginsHeader(
                         .focusRequester(tabFocus.getValue(t))
                         .then(if (t == tab && entryFocus != null) Modifier.focusRequester(entryFocus) else Modifier)
                         .focusProperties {
-                            canFocus = focusable
                             if (upFocus != null) up = upFocus
                         }
                         .dpadDownTo(downTarget),
@@ -406,7 +343,6 @@ private fun PluginsHeader(
                 .focusRequester(addFocus)
                 // Nothing lies to the right of the button, which is the last thing of the row.
                 .focusProperties {
-                    canFocus = focusable
                     right = FocusRequester.Cancel
                     if (upFocus != null) up = upFocus
                 }
@@ -434,7 +370,6 @@ private fun RecommendedTab(
     art: Map<String, CatalogArt>,
     selectedTabFocus: FocusRequester,
     firstRowModifier: Modifier,
-    fieldsCanFocus: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val focusManager = LocalFocusManager.current
@@ -458,7 +393,7 @@ private fun RecommendedTab(
                     .fillMaxWidth(0.6f)
                     .noFocusToTheRight()
                     // Up leaves the field for the selected tab (see dpadLeavesTheField): the header row sits right above it.
-                    .focusProperties { canFocus = fieldsCanFocus; up = selectedTabFocus }
+                    .focusProperties { up = selectedTabFocus }
                     .dpadLeavesTheField(focusManager),
             )
         }

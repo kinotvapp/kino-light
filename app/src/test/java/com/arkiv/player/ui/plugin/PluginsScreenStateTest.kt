@@ -16,14 +16,6 @@ class PluginsScreenStateTest {
     private val installed = InstalledPlugin(manifest, InstalledRecord("o/r", "1.0.0", "x", listOf("example.com"), 0L), iconFile = null)
     private val draft = PluginConfigDraft(pluginId = "demo", pluginName = "Demo", settings = emptyList(), values = emptyMap())
 
-    @Test fun `the screen opens on Recomendados from Ajustes`() {
-        assertEquals(PluginsTab.RECOMMENDED, initialPluginsTab(AddPluginMode.SETTINGS))
-    }
-
-    @Test fun `the screen opens on Recomendados in the first-launch picker`() {
-        assertEquals(PluginsTab.RECOMMENDED, initialPluginsTab(AddPluginMode.ONBOARDING))
-    }
-
     @Test fun `the Agregar modal shows when it was requested and nothing else is open`() {
         assertTrue(addModalVisible(requested = true, state = PluginsUiState()))
     }

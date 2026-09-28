@@ -27,7 +27,6 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import kotlinx.coroutines.delay
 import com.arkiv.player.data.magis.MagisAccountState
-import com.arkiv.player.ui.plugin.AddPluginMode
 import com.arkiv.player.ui.rememberGraph
 
 /**
@@ -146,9 +145,7 @@ fun TvSettingsScreen() {
             // Ajustes' tab row. Down from that row enters the content's header, Up from it comes back here to the
             // selected tab. Back is not handled: it closes Ajustes, as on every other tab.
             TvPluginsContent(
-                mode = AddPluginMode.SETTINGS,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
-                requestInitialFocus = false,
                 entryFocus = pluginsEntryFocus,
                 upFocus = selectedTabFocus,
             )

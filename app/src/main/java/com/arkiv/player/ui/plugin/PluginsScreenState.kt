@@ -10,15 +10,6 @@ package com.arkiv.player.ui.plugin
 enum class PluginsTab { RECOMMENDED, INSTALLED }
 
 /**
- * Which tab a screen opens on. Both entries give [PluginsTab.RECOMMENDED]: from Ajustes the person is
- * usually looking for something new, and the first-launch picker has nothing installed yet.
- */
-internal fun initialPluginsTab(mode: AddPluginMode): PluginsTab = when (mode) {
-    AddPluginMode.SETTINGS -> PluginsTab.RECOMMENDED
-    AddPluginMode.ONBOARDING -> PluginsTab.RECOMMENDED
-}
-
-/**
  * Whether the "Agregar" modal must be shown. It needs the person's request ([requested]) and it yields to
  * anything that takes over the screen: the consent sheet (a preview succeeded, so the modal has done its
  * job and closes by itself), Configurar and the uninstall confirmation, which must never stack under it.

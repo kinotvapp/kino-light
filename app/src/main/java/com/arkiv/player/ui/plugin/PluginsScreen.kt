@@ -1,15 +1,11 @@
 package com.arkiv.player.ui.plugin
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.consumeWindowInsets
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -21,24 +17,19 @@ import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PrimaryScrollableTabRow
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -58,28 +49,11 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.arkiv.player.data.plugin.InstalledPlugin
 import com.arkiv.player.data.plugin.catalog.CatalogArt
-import com.arkiv.player.ui.readingWidth
 import com.arkiv.player.ui.rememberGraph
 import com.arkiv.player.ui.theme.ArkivBlack
 import com.arkiv.player.ui.theme.ArkivRed
 import com.arkiv.player.ui.theme.ArkivTextSecondary
 import com.arkiv.player.ui.tv.gridLinesWithStatus
-
-/**
- * How the Plugins content is shown. [SETTINGS] is the person's own visit, from Ajustes ▸ Plugins: it can be
- * left, so a full-screen host draws a back arrow and system Back closes it. [ONBOARDING] is the mandatory
- * first-launch picker (Phase 2, not wired yet): it has no way out, so it draws no back arrow and swallows
- * system Back.
- */
-enum class AddPluginMode { ONBOARDING, SETTINGS }
-
-/** Whether the person can leave the screen: the back arrow is drawn and system Back closes it. */
-internal val AddPluginMode.canClose: Boolean get() = this == AddPluginMode.SETTINGS
-
-/** What system Back does in [mode]: closes the screen when it has a way out, nothing otherwise. Both screens use it. */
-internal fun handleAddPluginBack(mode: AddPluginMode, onClose: () -> Unit) {
-    if (mode.canClose) onClose()
-}
 
 /** Recommended plugins per line of the grid. */
 internal const val PHONE_CATALOG_COLUMNS = 2
@@ -100,61 +74,15 @@ private val MIN_TARGET = 48.dp
 private val ADD_CONTAINER = ArkivRed.copy(alpha = 0.30f)
 
 /**
- * The Plugins screen on the phone as a full screen: a top bar with the title "Plugins" (and a back arrow when
- * [mode] can be left, see [AddPluginMode.canClose]) over [PluginsContent], which is the screen itself. Ajustes ▸
- * Plugins does NOT use this host (it shows [PluginsContent] under its own header and chips); this one is the
- * first-launch picker's ([AddPluginMode.ONBOARDING], Phase 2, not wired yet), pre-wired here so that phase adds
- * a route and nothing else.
- *
- * System Back closes it in [AddPluginMode.SETTINGS] and is swallowed in [AddPluginMode.ONBOARDING].
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun PluginsScreen(mode: AddPluginMode, onClose: () -> Unit) {
-    BackHandler { handleAddPluginBack(mode, onClose) }
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Plugins", maxLines = 1) },
-                navigationIcon = {
-                    if (mode.canClose) {
-                        IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver") }
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = ArkivBlack, titleContentColor = Color.White, navigationIconContentColor = Color.White,
-                ),
-            )
-        },
-        containerColor = ArkivBlack,
-    ) { padding ->
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-            PluginsContent(
-                mode = mode,
-                bottomInset = padding.calculateBottomPadding(),
-                modifier = Modifier
-                    .readingWidth()
-                    .fillMaxSize()
-                    .padding(top = padding.calculateTopPadding())
-                    // The bottom inset is taken by the list's own padding; the keyboard then only adds
-                    // what it covers on top of it.
-                    .consumeWindowInsets(padding)
-                    .imePadding(),
-            )
-        }
-    }
-}
-
-/**
- * What the Plugins screen shows on the phone: no title, no back arrow and no Back handling of its own (the
- * host adds them: [PluginsScreen], or Ajustes ▸ Plugins under its own header) and no insets (the host
- * pads the top and the keyboard; [bottomInset] is the system bar it leaves at the bottom, which the lists
- * keep clear). From top to bottom: what an action answers (the progress bar and, on its own line, the
- * message), ONE row with the two tabs **Recomendados** and **Instalados (n)** and, at its end, the
- * **Agregar** button, and the selected tab's body. **Recomendados**: search the recommended plugins (cards
- * in a two-column grid) and install one. **Instalados**: manage what is installed. **Agregar** opens a modal
- * to add one by `usuario/repositorio` ([AddCustomPluginModal]). Installing always goes through the consent
- * sheet, whichever tab or modal it starts from.
+ * What the Plugins screen shows on the phone, hosted by Ajustes ▸ Plugins under its own header: no title,
+ * no back arrow and no Back handling of its own, and no insets (the host pads the top and the keyboard;
+ * [bottomInset] is the system bar it leaves at the bottom, which the lists keep clear). From top to bottom:
+ * what an action answers (the progress bar and, on its own line, the message), ONE row with the two tabs
+ * **Recomendados** and **Instalados (n)** and, at its end, the **Agregar** button, and the selected tab's
+ * body. **Recomendados**: search the recommended plugins (cards in a two-column grid) and install one.
+ * **Instalados**: manage what is installed. **Agregar** opens a modal to add one by `usuario/repositorio`
+ * ([AddCustomPluginModal]). Installing always goes through the consent sheet, whichever tab or modal it
+ * starts from.
  *
  * "Agregar" is icon-only (a plus, no label): hosted in Ajustes ▸ Plugins this content has very little
  * height to spare (Ajustes' own chip row sits above it), so every dp the header can give back to the lists
@@ -170,7 +98,7 @@ fun PluginsScreen(mode: AddPluginMode, onClose: () -> Unit) {
  * setup opens likewise. The search text lives in the view model, so it survives switching tabs.
  */
 @Composable
-internal fun PluginsContent(mode: AddPluginMode, bottomInset: Dp, modifier: Modifier = Modifier) {
+internal fun PluginsContent(bottomInset: Dp, modifier: Modifier = Modifier) {
     val graph = rememberGraph()
     val vm: PluginsViewModel = viewModel(
         key = "plugins",
@@ -185,7 +113,7 @@ internal fun PluginsContent(mode: AddPluginMode, bottomInset: Dp, modifier: Modi
 
     // The screen's own state, kept across rotation: the selected tab and whether the person asked for the
     // modal. Hoisted list states keep each tab's scroll position while the other tab is showing.
-    var tab by rememberSaveable { mutableStateOf(initialPluginsTab(mode)) }
+    var tab by rememberSaveable { mutableStateOf(PluginsTab.RECOMMENDED) }
     var addRequested by rememberSaveable { mutableStateOf(false) }
     val recommendedGrid = rememberLazyGridState()
     val installedGrid = rememberLazyGridState()
