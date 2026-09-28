@@ -88,8 +88,10 @@ class SettingsStore(context: Context) : com.arkiv.player.data.onboarding.Onboard
 
     // commit(), not apply(): written once, from warm-up on IO, and it must be on disk before the person
     // can activate -- a lost "new" record would reclassify an activated device as updating next start.
+    /** Blocking (commit()); call off the main thread. */
     override fun setOnboardingKind(kind: com.arkiv.player.data.onboarding.OnboardingKind) {
-        prefs.edit().putString(KEY_ONBOARDING_KIND, kind.wire).commit()
+        val saved = prefs.edit().putString(KEY_ONBOARDING_KIND, kind.wire).commit()
+        if (!saved) Log.w(TAG_MIGRATION, "onboarding kind commit failed; a fresh classification may run again next start")
     }
 
     override val sourcePickerDone: Boolean get() = prefs.getBoolean(KEY_SOURCE_PICKER_DONE, false)

@@ -250,6 +250,8 @@ class AppGraph(context: Context) {
             // Recorded once, on this build's first start, BEFORE the early return below: a device that was
             // already activated is an updating one (keeps the Xuper migration, never sees the source
             // picker); anything else is new. See data/onboarding/Onboarding.
+            // Must stay BEFORE the fresh-install early return (ruling R11: the kind is decided from
+            // whether credentials existed on the first start of this build).
             runCatching { com.arkiv.player.data.onboarding.Onboarding.classifyOnce(settings, activated) }
             if (!activated) return // fresh install: nothing to warm
             magisPortal   // -> MagisCrypto(...) -> NativeCredentialResolver.magisActivate (the slow part)

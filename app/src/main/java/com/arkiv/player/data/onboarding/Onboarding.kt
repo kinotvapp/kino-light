@@ -20,6 +20,8 @@ enum class OnboardingKind(val wire: String) {
 interface OnboardingPrefs {
     /** Null until [Onboarding.classifyOnce] has run on this build. */
     val onboardingKind: OnboardingKind?
+
+    /** Blocking (commit()); call off the main thread. */
     fun setOnboardingKind(kind: OnboardingKind)
 
     /** "Listo" or "Ahora no" was pressed once: the picker never opens by itself again. */
