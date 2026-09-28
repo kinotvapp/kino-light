@@ -593,7 +593,7 @@ LiveCategory = { id: string, title: string, country?: string, adult?: boolean }
 Playlist     = { playlist: { url: string, format: "m3u", headers?: Record<string, string>,
                              epg?: { url: string, format: "xmltv" }, refreshHours?: number,
                              hideGroups?: string[], resolve?: boolean } }
-LiveChannel  = { id: string, title: string, categoryId: string, ref?: string, stream?: Stream,
+LiveChannel  = { id: string, title: string, categoryId?: string, ref?: string, stream?: Stream,
                  logo?: string, number?: number, adult?: boolean }
 GuideEntry   = { channelId: string, title: string, start: number, end: number, description?: string }
 ```
@@ -631,7 +631,8 @@ The rules:
   entries and dropped. A repeated `id` in one answer is dropped. `title` is required.
 - `country` is an ISO 3166 two-letter code (`"CO"`), informational; anything else is ignored.
   `number` is 1 to 9999 (anything else counts as no number); `logo` follows the poster rules;
-  a `categoryId` that is not a valid id becomes empty.
+  `categoryId` is optional and informational (a channel is listed under the category
+  `liveChannels` was asked for); one that is not a valid id becomes empty.
 - Kino pages `liveChannels` until `next` is missing, repeats, or brings nothing new, at most 10
   pages per category.
 - Kino caches your categories and channels for 1 hour and your guide for 30 minutes.

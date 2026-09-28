@@ -195,7 +195,8 @@ interface KinoLiveChannel {
   title: string;
   ref?: string;
   stream?: KinoStream;
-  categoryId: string;
+  /** Informational: the channel is listed under the category it was asked for. Not a valid id = empty. */
+  categoryId?: string;
   /** https image, like a poster. */
   logo?: string;
   /** 1..9999. */
