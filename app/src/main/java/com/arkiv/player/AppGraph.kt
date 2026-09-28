@@ -477,6 +477,9 @@ class AppGraph(context: Context) {
         PluginRegistry(pluginStore) { p -> pluginConfigStore.setupState(p.manifest.id, p.manifest.settings) }.also { it.reload() }
     }
 
+    /** Bridges a plugin's undeclared-host prompt to the dialog `MainActivity` collects from [HostApprovalCenter.pending]. */
+    val hostApprovalCenter: HostApprovalCenter by lazy { HostApprovalCenter() }
+
     /**
      * The ONLY place `reload()`'s Keystore correctness (finding 5) actually touches the Keystore
      * (fix round 2, new breakage 1): `warmUpCredentials()` calls this on IO, BEFORE `contentSource`
@@ -583,7 +586,16 @@ class AppGraph(context: Context) {
         val cookies = PluginCookies(java.io.File(dataDir, PluginCookies.FILE_NAME), hosts)
         // Whatever jar this replaces is stopped from writing (see PluginJarRegistry's KDoc).
         pluginJars.put(id, cookies)
-        val http = PluginHttp(pluginBaseHttp, id, hosts, BuildConfig.VERSION_NAME, cookies = cookies)
+        val http = PluginHttp(
+            pluginBaseHttp, id, hosts, BuildConfig.VERSION_NAME, cookies = cookies,
+            reactiveApproval = PluginHttp.ReactiveApproval(
+                pluginName = plugin.manifest.name,
+                requester = hostApprovalCenter,
+                onApproved = { host -> pluginRegistry.addApprovedHost(id, host) },
+                onRejected = { host -> pluginRegistry.rejectHost(id, host) },
+                rejectedHosts = plugin.record.rejectedHosts.toSet(),
+            ),
+        )
         pluginHttps[id] = http
         val storage = PluginStorage(java.io.File(dataDir, "storage.json"))
         // Only the one recognized Xuper source gets the extra kino.xuper.* host functions -- see
