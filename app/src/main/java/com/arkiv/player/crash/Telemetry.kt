@@ -32,9 +32,17 @@ class LiveResolveFailed(message: String) : Exception(message)
  *  no pintó nada" symptom. Points at a dead session, a geo-block, or a portal change. */
 class EmptyCatalog(message: String) : Exception(message)
 
-/** The OTA download failed its integrity/HTTP check (sha mismatch, HTTP error). Surfaces
- *  deploy/CDN problems like the "app corrupta" mismatch without waiting for a user to say so. */
+/** The OTA APK could not be downloaded from ANY source (archive.org and its jsDelivr/unpkg mirrors): network
+ *  error, non-2xx or a sha256 mismatch on each. The message is constant (`ota: apk download failed`); the
+ *  versionCode and one failure class per source (`archive`, `jsdelivr`, `unpkg`: `dns`, `http_404`,
+ *  `sha_mismatch`...) travel as extras. Once per download attempt. See `ApkDownloader`. */
 class OtaDownloadFailed(message: String) : Exception(message)
+
+/** No OTA manifest source (archive.org, jsDelivr, unpkg) could be read, so the device cannot know whether a
+ *  new version exists. The message is constant (`ota: update check failed`); the extras carry only the
+ *  failure class per source (`dns`, `tls`, `timeout`, `offline`, `http_<code>`, `parse`...) and `reason`,
+ *  the first one. Once per app start. See `UpdateChecker`. */
+class OtaCheckFailed(message: String) : Exception(message)
 
 /** Activation of a device failed (a fresh install couldn't obtain its credentials, or a refresh
  *  couldn't re-apply them). The user is stuck on the activation screen. */

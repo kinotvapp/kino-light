@@ -92,7 +92,7 @@ class AppGraph(context: Context) {
     /** Starts the connectivity monitor; call from Application.onCreate. */
     fun startNetworkMonitor() { networkMonitor }  // access forces the lazy to initialize
 
-    val apkDownloader: ApkDownloader by lazy { ApkDownloader(appContext) }
+    val apkDownloader: ApkDownloader by lazy { ApkDownloader(appContext.cacheDir) }
 
     val credentialsStore: com.arkiv.player.data.credentials.RemoteCredentialsStore by lazy {
         com.arkiv.player.data.credentials.EncryptedRemoteCredentialsStore(appContext)
@@ -953,7 +953,7 @@ class AppGraph(context: Context) {
     // Staggered rollout: after an update is DETECTED we don't prompt right away. We wait a base delay
     // plus a random jitter -- rolled once at detection and persisted -- so a fleet of devices doesn't
     // all prompt (and download) at the same instant, and archive.org has time to finish publishing
-    // the APK (so the sha256 check passes). The prompt then surfaces on this session's timer or on
+    // the APK. The prompt then surfaces on this session's timer or on
     // the next app open, once that randomized time has passed.
     private val updateBaseDelayMs = java.util.concurrent.TimeUnit.HOURS.toMillis(1)
     private val updateJitterMs = java.util.concurrent.TimeUnit.HOURS.toMillis(6)
@@ -962,12 +962,13 @@ class AppGraph(context: Context) {
      * OTA check: called by [com.arkiv.player.data.update.UpdateWorker] and on app startup. Records a
      * newer version as a PENDING update (with its one-time staggered promote time) instead of
      * prompting immediately, then surfaces it via [promoteDueUpdate] if its time has already passed.
+     * A failed check (no source reachable) changes nothing: the next run (every 3 h) tries again.
      */
     suspend fun checkForUpdate() {
-        val info = updateChecker.check(BuildConfig.VERSION_CODE)
-        if (info != null) {
+        val result = updateChecker.check(BuildConfig.VERSION_CODE)
+        if (result is com.arkiv.player.data.update.UpdateCheckResult.Available) {
             val pending = pendingUpdateStore.putIfNew(
-                info, System.currentTimeMillis(), updateBaseDelayMs, updateJitterMs,
+                result.info, System.currentTimeMillis(), updateBaseDelayMs, updateJitterMs,
             )
             scheduleUpdatePromotion(pending)
         }
@@ -1016,7 +1017,12 @@ class AppGraph(context: Context) {
      * deferral (the person asked explicitly, so it shouldn't wait out the random delay). Does not
      * touch the pending-update state used by the automatic flow.
      */
-    suspend fun checkForUpdateNow(): UpdateInfo? = updateChecker.check(BuildConfig.VERSION_CODE)
+    suspend fun checkForUpdateNow(): com.arkiv.player.data.update.UpdateCheckResult =
+        updateChecker.check(BuildConfig.VERSION_CODE)
+
+    /** Downloads [info]'s APK, falling back to the mirrors' copies of the same release (see [ApkDownloader]). */
+    fun downloadUpdate(info: UpdateInfo): kotlinx.coroutines.flow.Flow<com.arkiv.player.data.update.DownloadState> =
+        apkDownloader.download(info) { updateChecker.mirrorApkUrls(info) }
 
     /**
      * Silent periodic refresh (see [com.arkiv.player.data.update.UpdateWorker]): only re-applies

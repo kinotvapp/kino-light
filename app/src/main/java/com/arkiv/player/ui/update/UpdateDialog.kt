@@ -18,6 +18,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
 import com.arkiv.player.AppGraph
 import com.arkiv.player.data.update.DownloadState
+import com.arkiv.player.data.update.UpdateCheckResult
 import com.arkiv.player.data.update.UpdateInfo
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -78,11 +79,11 @@ fun UpdateDialog(info: UpdateInfo, graph: AppGraph, onDismiss: () -> Unit) {
         error = null
         downloadJob = scope.launch {
             // Re-fetch the manifest (cache-busted) right before downloading, so we use the CURRENT
-            // url even when the pending this dialog opened with is stale (a CDN-cached older
-            // manifest pointing at an outdated version). Falls back to the pending info if the
+            // url and sha256 even when the pending this dialog opened with is stale (a CDN-cached
+            // older manifest pointing at an outdated version). Falls back to the pending info if the
             // re-check can't be made (offline). Covers both "Actualizar ahora" and "Reintentar".
-            val fresh = runCatching { graph.checkForUpdateNow() }.getOrNull() ?: info
-            graph.apkDownloader.download(fresh.url).collect { state ->
+            val fresh = (runCatching { graph.checkForUpdateNow() }.getOrNull() as? UpdateCheckResult.Available)?.info ?: info
+            graph.downloadUpdate(fresh).collect { state ->
                 when (state) {
                     is DownloadState.Downloading -> progress = state.progress
                     // Downloaded: hand it to the person via an "Instalar" button rather than
@@ -129,7 +130,7 @@ fun UpdateDialog(info: UpdateInfo, graph: AppGraph, onDismiss: () -> Unit) {
                 }
 
                 error?.let {
-                    Text("Error: $it", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
 
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {

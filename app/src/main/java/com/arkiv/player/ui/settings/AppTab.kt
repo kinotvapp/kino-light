@@ -34,8 +34,10 @@ import com.arkiv.player.data.credentials.SeedResult
 import com.arkiv.player.data.magis.SeedSwitchResult
 import com.arkiv.player.data.local.FileSizeFormat
 import com.arkiv.player.data.local.StorageUsage
+import com.arkiv.player.data.update.UpdateCheckResult
 import com.arkiv.player.data.update.UpdateInfo
 import com.arkiv.player.ui.rememberGraph
+import com.arkiv.player.ui.update.ManualUpdateCheck
 import com.arkiv.player.ui.update.UpdateDialog
 
 /** What belongs to the app and not to the content: updates and access to offline downloads. */
@@ -78,12 +80,14 @@ internal fun AppTab(onOpenDownloads: () -> Unit = {}) {
         checking = true
         scope.launch {
             // Manual check bypasses the staggered deferral: show a newer version right away.
-            val info = graph.checkForUpdateNow()
+            val result = graph.checkForUpdateNow()
             checking = false
-            if (info != null) {
-                manualUpdate = info
-            } else {
-                Toast.makeText(context, "Ya tienes la última versión", Toast.LENGTH_SHORT).show()
+            if (result is UpdateCheckResult.Available) manualUpdate = result.info
+            // A failed check must never read as "nothing new": that told people on an unreachable
+            // archive.org they were up to date.
+            ManualUpdateCheck.message(result)?.let { text ->
+                val length = if (result is UpdateCheckResult.Failed) Toast.LENGTH_LONG else Toast.LENGTH_SHORT
+                Toast.makeText(context, text, length).show()
             }
         }
     }
