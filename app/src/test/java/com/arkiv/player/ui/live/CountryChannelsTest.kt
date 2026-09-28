@@ -1,6 +1,7 @@
 package com.arkiv.player.ui.live
 
 import com.arkiv.player.data.gateway.LiveChannel
+import com.arkiv.player.data.gateway.liveCode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -119,5 +120,17 @@ class CountryChannelsTest {
             fromCountry = listOf(channel("b"), channel("b")),
         )
         assertEquals(listOf("a", "b"), row.map { it.code })
+    }
+
+    @Test
+    fun `the home row keeps only available providers and never repeats a live code`() {
+        val plugin = LiveChannel("c1", "Uno", 1, null, provider = "plugin:tv")
+        val gone = LiveChannel("z", "Z", 1, null, provider = "plugin:old")
+        val row = homeChannelsRow(
+            recent = listOf(plugin, gone, channel("c1")),
+            fromCountry = listOf(channel("c1"), channel("c2")),
+            available = setOf("xuper", "plugin:tv"),
+        )
+        assertEquals(listOf("plugin:tv:c1", "c1", "c2"), row.map { it.liveCode })
     }
 }

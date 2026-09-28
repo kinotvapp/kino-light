@@ -9,6 +9,14 @@ import com.arkiv.player.data.gateway.LiveCategory
 import com.arkiv.player.data.gateway.LiveChannel
 import com.arkiv.player.data.gateway.LiveChannelKeys
 import com.arkiv.player.data.gateway.LiveProgram
+import com.arkiv.player.data.gateway.liveCode
+import com.arkiv.player.data.live.LiveChannelProvider
+import com.arkiv.player.data.live.LiveModule
+import com.arkiv.player.data.live.LiveOpening
+import com.arkiv.player.data.live.ProviderCategory
+import com.arkiv.player.data.live.XuperLiveProvider
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -80,15 +88,11 @@ class LiveViewModelTest {
 
 // --- Test doubles -------------------------------------------------------------------------
 //
-// The project has no Mockito or mockk (see app/build.gradle.kts). LiveViewModel depends on
-// LiveCatalogGateway -the narrow interface defined next to LiveApi in data/gateway/LiveApi.kt,
-// with only the three operations this ViewModel consumes- and not on LiveApi directly, so this
-// double implements it directly, without inheriting from any production class or touching the
-// network. (An earlier version opened LiveApi with `open class`/`open fun` so it could be
-// inherited in the test; that was dropped in review for being the only open class in the whole
-// module with no architectural reason -see LiveCatalogGateway's KDoc for the full reasoning.)
-// LiveFavoriteDao/LiveChannelCacheDao were already interfaces and get implemented the same way,
-// with in-memory storage.
+// The project has no Mockito or mockk (see app/build.gradle.kts). LiveViewModel reads a
+// LiveModule; the Xuper tests wrap this gateway double in the real XuperLiveProvider
+// (xuperModule), so every Xuper behaviour they pin goes through the production provider. The
+// multi-provider tests use FakeModule/FakeProvider below. LiveFavoriteDao/LiveChannelCacheDao are
+// interfaces implemented with in-memory storage.
 private class FakeLiveApi : LiveCatalogGateway {
     var categoriesResult: List<LiveCategory> = emptyList()
     val channelsByCategory = mutableMapOf<Int, List<LiveChannel>>()
@@ -164,6 +168,52 @@ private class FakeCacheDao : LiveChannelCacheDao {
     // replace() uses the interface's default body (clear + save), not needed here.
 }
 
+private class FakeModule(vararg initial: LiveChannelProvider) : LiveModule {
+    override val providers = MutableStateFlow(initial.toList())
+    override fun blockedMessage(providerId: String) = "no está"
+}
+
+private fun xuperModule(api: LiveCatalogGateway) = FakeModule(
+    XuperLiveProvider(api, LiveController(resolver = { error("not used") }, urlFor = { "" })),
+)
+
+private class FakeProvider(
+    override val id: String,
+    override val name: String = id,
+    private val initial: String? = null,
+    var categoriesResult: List<ProviderCategory> = emptyList(),
+    val channelsByCategory: MutableMap<String, List<LiveChannel>> = mutableMapOf(),
+) : LiveChannelProvider {
+    override val color = 0L
+    val guideCalls = mutableListOf<List<String>>()
+    override fun initialCategory() = initial
+    var guide = true
+    override fun hasGuide() = guide
+    /** When set, [guide] answers every asked channel as "ask later" (a plugin past its per-pass cap). */
+    var guideLater = false
+    /** When set, [channels] waits on it: [close] fails it the way a closed PluginLiveProvider does. */
+    var channelsGate: CompletableDeferred<Unit>? = null
+    val noticeFlow = MutableStateFlow<String?>(null)
+    override val notice: StateFlow<String?> = noticeFlow
+    var closed = false
+    override suspend fun categories(includeAdults: Boolean) = categoriesResult
+    override suspend fun channels(categoryId: String, force: Boolean): List<LiveChannel> {
+        channelsGate?.await()
+        return channelsByCategory[categoryId].orEmpty()
+    }
+    override suspend fun guide(channels: List<LiveChannel>): Pair<Map<String, List<LiveProgram>>, List<String>> {
+        guideCalls += channels.map { it.code }
+        return emptyMap<String, List<LiveProgram>>() to (if (guideLater) channels.map { it.liveCode } else emptyList())
+    }
+    override suspend fun open(channel: LiveChannel): LiveOpening = LiveOpening.Proxied("x")
+    override fun close() {
+        closed = true
+        channelsGate?.completeExceptionally(CancellationException("$id closed"))
+    }
+}
+
+private fun ch(code: String, provider: String = "xuper", number: Int = 1) = LiveChannel(code, code.uppercase(), number, null, provider = provider)
+
 // --- The ViewModel's dynamic behavior ----------------------------------------------------
 //
 // The tests above only covered pure functions (filterChannels/programProgress); these exercise
@@ -192,15 +242,15 @@ class LiveViewModelAsyncTest {
         val gateA = CompletableDeferred<Unit>()
         api.gates[1] = gateA
 
-        val vm = LiveViewModel(api, FakeFavoriteDao(), FakeCacheDao())
-        advanceUntilIdle() // finishes the init's initial load (CATEGORY_ALL), unrelated to this
+        val vm = LiveViewModel(xuperModule(api), FakeFavoriteDao(), FakeCacheDao())
+        advanceUntilIdle() // finishes the init's initial load (Xuper's "76182"), unrelated to this
 
-        vm.chooseCategory(1) // A: gets stuck on the gate
+        vm.chooseCategory("1") // A: gets stuck on the gate
         advanceUntilIdle()
-        vm.chooseCategory(2) // B: requested AFTER, no gate -> resolves right away and wins the screen
+        vm.chooseCategory("2") // B: requested AFTER, no gate -> resolves right away and wins the screen
         advanceUntilIdle()
 
-        assertEquals(2, vm.state.value.activeCategory)
+        assertEquals("2", vm.state.value.activeCategory)
         assertEquals(listOf("b1"), vm.state.value.channels.map { it.code })
 
         gateA.complete(Unit) // A arrives LATE, after the user is already looking at B
@@ -209,7 +259,7 @@ class LiveViewModelAsyncTest {
         // A's stale response must not overwrite what the user has on screen (B): neither the
         // active chip nor the listed channels. Before the fix this failed with
         // activeCategory=2 but channels=["a1"] -- the exact bug the review described.
-        assertEquals(2, vm.state.value.activeCategory)
+        assertEquals("2", vm.state.value.activeCategory)
         assertEquals(listOf("b1"), vm.state.value.channels.map { it.code })
     }
 
@@ -224,10 +274,10 @@ class LiveViewModelAsyncTest {
             preload(category, listOf(LiveChannelCacheEntity("c1", category.toString(), "Canal 1", 1, null, 0L)))
         }
 
-        val vm = LiveViewModel(api, FakeFavoriteDao(), cacheDao)
-        advanceUntilIdle() // init: CATEGORY_ALL, no cache or channels -> doesn't request EPG, doesn't pollute the count
+        val vm = LiveViewModel(xuperModule(api), FakeFavoriteDao(), cacheDao)
+        advanceUntilIdle() // init: Xuper's "76182", no cache or channels -> doesn't request EPG, doesn't pollute the count
 
-        vm.chooseCategory(category)
+        vm.chooseCategory(category.toString())
         advanceUntilIdle()
 
         assertEquals(1, api.epgCalls.size)
@@ -251,9 +301,9 @@ class LiveViewModelAsyncTest {
             else mapOf(codes.first() to listOf(LiveProgram("Partido", 0, 10, ""))) to emptyList()
         }
 
-        val vm = LiveViewModel(api, FakeFavoriteDao(), FakeCacheDao())
+        val vm = LiveViewModel(xuperModule(api), FakeFavoriteDao(), FakeCacheDao())
         advanceUntilIdle()
-        vm.chooseCategory(category)
+        vm.chooseCategory(category.toString())
         // runCurrent(), not advanceUntilIdle(): the latter does NOT stop at the retry's 10s
         // delay() -it advances the virtual clock until draining EVERYTHING scheduled, sleeping
         // coroutines included-, so it would already have fired the retry before this check.
@@ -277,9 +327,9 @@ class LiveViewModelAsyncTest {
         api.channelsByCategory[category] = listOf(LiveChannel("c1", "Canal 1", 1, null))
         api.epgResponder = { codes -> emptyMap<String, List<LiveProgram>>() to codes }  // never has it
 
-        val vm = LiveViewModel(api, FakeFavoriteDao(), FakeCacheDao())
+        val vm = LiveViewModel(xuperModule(api), FakeFavoriteDao(), FakeCacheDao())
         advanceUntilIdle()
-        vm.chooseCategory(category)
+        vm.chooseCategory(category.toString())
         runCurrent()
         assertEquals(1, api.epgCalls.size)
 
@@ -303,16 +353,16 @@ class LiveViewModelAsyncTest {
         api.channelsByCategory[category] = listOf(LiveChannel("c1", "Canal 1", 1, null))
         api.epgResponder = { codes -> emptyMap<String, List<LiveProgram>>() to codes }
 
-        val vm = LiveViewModel(api, FakeFavoriteDao(), FakeCacheDao())
+        val vm = LiveViewModel(xuperModule(api), FakeFavoriteDao(), FakeCacheDao())
         advanceUntilIdle()
-        vm.chooseCategory(category)
+        vm.chooseCategory(category.toString())
         runCurrent()
         assertEquals(1, api.epgCalls.size)
 
         // Before the scheduled retry fires, another request (e.g. the user scrolled the row off
         // screen and back) ALREADY requests "c1" again -and this time the gateway does have it-.
         api.epgResponder = { codes -> mapOf("c1" to listOf(LiveProgram("Ya llego", 0, 10, ""))) to emptyList() }
-        vm.requestEpg(listOf("c1"))
+        vm.requestEpg(listOf(LiveChannel("c1", "Canal 1", 1, null)))
         runCurrent()
         assertEquals(2, api.epgCalls.size)
         assertEquals(listOf("Ya llego"), vm.state.value.programming["c1"]?.map { it.title })
@@ -323,5 +373,220 @@ class LiveViewModelAsyncTest {
         advanceTimeBy(10_000)
         advanceUntilIdle()
         assertEquals("must not request again what already arrived another way", 2, api.epgCalls.size)
+    }
+
+    // --- Providers (generic live module) ---
+
+    private val tvId = "plugin:tv"
+
+    private fun twoProviders(): Pair<FakeProvider, FakeProvider> {
+        val xuper = FakeProvider("xuper", "Xuper", initial = "76182", categoriesResult = listOf(ProviderCategory("76182", "Todos")))
+        xuper.channelsByCategory["76182"] = listOf(ch("c1"))
+        val tv = FakeProvider(tvId, "Tu servidor", categoriesResult = listOf(ProviderCategory("news", "Noticias")))
+        tv.channelsByCategory["news"] = listOf(ch("c1", tvId))
+        return xuper to tv
+    }
+
+    @Test
+    fun `the first provider opens on its initial category and every provider gets a chip`() = runTest(dispatcher) {
+        val (xuper, tv) = twoProviders()
+        val vm = LiveViewModel(FakeModule(xuper, tv), FakeFavoriteDao(), FakeCacheDao())
+        advanceUntilIdle()
+        val s = vm.state.value
+        assertEquals(listOf("xuper", tvId), s.providers.map { it.id })
+        assertTrue(s.showProviders)
+        assertEquals("xuper", s.activeProvider)
+        assertEquals("76182", s.activeCategory)
+        assertEquals(listOf("c1"), s.channels.map { it.liveCode })
+    }
+
+    @Test
+    fun `a provider without a known category opens its first one, cached under that provider`() = runTest(dispatcher) {
+        val (xuper, tv) = twoProviders()
+        val cache = FakeCacheDao()
+        val vm = LiveViewModel(FakeModule(xuper, tv), FakeFavoriteDao(), cache)
+        advanceUntilIdle()
+        vm.chooseProvider(tvId)
+        advanceUntilIdle()
+        assertEquals(tvId, vm.state.value.activeProvider)
+        assertEquals("news", vm.state.value.activeCategory)
+        assertEquals(listOf("plugin:tv:c1"), vm.state.value.channels.map { it.liveCode })
+        assertEquals(listOf("c1"), cache.byCategory(tvId, "news").map { it.code })
+        assertEquals(emptyList<String>(), cache.byCategory("xuper", "news").map { it.code })
+    }
+
+    @Test
+    fun `the same code in two providers is two favourites, listed together`() = runTest(dispatcher) {
+        val (xuper, tv) = twoProviders()
+        val vm = LiveViewModel(FakeModule(xuper, tv), FakeFavoriteDao(), FakeCacheDao())
+        advanceUntilIdle()
+        vm.toggleFavorite(ch("c1"))
+        vm.toggleFavorite(ch("c1", tvId))
+        advanceUntilIdle()
+        assertEquals(setOf("c1", "plugin:tv:c1"), vm.state.value.favorites)
+        vm.chooseCategory(CATEGORY_FAVORITES)
+        advanceUntilIdle()
+        assertEquals(setOf("c1", "plugin:tv:c1"), vm.state.value.channels.map { it.liveCode }.toSet())
+        vm.toggleFavorite(ch("c1", tvId))
+        advanceUntilIdle()
+        assertEquals(setOf("c1"), vm.state.value.favorites)
+    }
+
+    @Test
+    fun `when the active provider disappears the next one takes over, and none leaves an empty idle screen`() = runTest(dispatcher) {
+        val (xuper, tv) = twoProviders()
+        val module = FakeModule(xuper, tv)
+        val vm = LiveViewModel(module, FakeFavoriteDao(), FakeCacheDao())
+        advanceUntilIdle()
+        module.providers.value = listOf(tv)
+        advanceUntilIdle()
+        assertEquals(tvId, vm.state.value.activeProvider)
+        assertEquals(listOf("plugin:tv:c1"), vm.state.value.channels.map { it.liveCode })
+        assertEquals(false, vm.state.value.showProviders)
+        module.providers.value = emptyList()
+        advanceUntilIdle()
+        assertEquals(null, vm.state.value.activeProvider)
+        assertEquals(emptyList<LiveChannel>(), vm.state.value.channels)
+        assertEquals(false, vm.state.value.loading)
+        assertTrue(vm.state.value.moduleEmpty)
+    }
+
+    @Test
+    fun `favourites of a provider that is gone are hidden, never deleted`() = runTest(dispatcher) {
+        val (xuper, _) = twoProviders()
+        val favs = FakeFavoriteDao()
+        favs.save(LiveFavoriteEntity("c1", "C1", 1, null, provider = tvId))
+        favs.save(LiveFavoriteEntity("c1", "C1", 1, null))
+        val vm = LiveViewModel(FakeModule(xuper), favs, FakeCacheDao())
+        advanceUntilIdle()
+        vm.chooseCategory(CATEGORY_FAVORITES)
+        advanceUntilIdle()
+        assertEquals(listOf("c1"), vm.state.value.channels.map { it.liveCode })
+        assertEquals(2, favs.getAll().size)
+    }
+
+    @Test
+    fun `guide requests go to each channel's own provider`() = runTest(dispatcher) {
+        val (xuper, tv) = twoProviders()
+        val vm = LiveViewModel(FakeModule(xuper, tv), FakeFavoriteDao(), FakeCacheDao())
+        advanceUntilIdle()
+        xuper.guideCalls.clear()
+        vm.requestEpg(listOf(ch("a"), ch("b", tvId)))
+        advanceUntilIdle()
+        assertEquals(listOf(listOf("a")), xuper.guideCalls)
+        assertEquals(listOf(listOf("b")), tv.guideCalls)
+    }
+
+    @Test
+    fun `the drawer's model only sees the channel's own provider`() = runTest(dispatcher) {
+        val (xuper, tv) = twoProviders()
+        val favs = FakeFavoriteDao()
+        favs.save(LiveFavoriteEntity("c1", "C1", 1, null))
+        favs.save(LiveFavoriteEntity("c1", "C1", 1, null, provider = tvId))
+        val vm = LiveViewModel(FakeModule(xuper, tv), favs, FakeCacheDao(), onlyProvider = tvId)
+        advanceUntilIdle()
+        assertEquals(listOf(tvId), vm.state.value.providers.map { it.id })
+        vm.chooseCategory(CATEGORY_FAVORITES)
+        advanceUntilIdle()
+        assertEquals(listOf("plugin:tv:c1"), vm.state.value.channels.map { it.liveCode })
+    }
+
+    @Test
+    fun `the guide is offered only for a provider that can have one`() = runTest(dispatcher) {
+        val (xuper, tv) = twoProviders()
+        tv.guide = false
+        val vm = LiveViewModel(FakeModule(xuper, tv), FakeFavoriteDao(), FakeCacheDao())
+        advanceUntilIdle()
+        assertEquals(true, vm.state.value.hasGuide)
+        vm.chooseProvider(tvId)
+        advanceUntilIdle()
+        assertEquals(false, vm.state.value.hasGuide)
+    }
+
+    @Test
+    fun `a plugin's later guide channels are never retried on a timer, only on the next request`() = runTest(dispatcher) {
+        val (xuper, tv) = twoProviders()
+        tv.guideLater = true
+        val vm = LiveViewModel(FakeModule(xuper, tv), FakeFavoriteDao(), FakeCacheDao())
+        advanceUntilIdle()
+        vm.chooseProvider(tvId)
+        runCurrent()
+        advanceTimeBy(1)
+        runCurrent()
+        assertEquals(listOf(listOf("c1")), tv.guideCalls)
+        advanceTimeBy(60_000)
+        advanceUntilIdle()
+        assertEquals("no timed retry for a plugin provider", 1, tv.guideCalls.size)
+        vm.requestEpg(listOf(ch("c1", tvId)))
+        advanceUntilIdle()
+        assertEquals("the next natural request asks again", 2, tv.guideCalls.size)
+    }
+
+    @Test
+    fun `a provider replaced mid-load is re-read, never shown as an error`() = runTest(dispatcher) {
+        val (xuper, tv) = twoProviders()
+        val gate = CompletableDeferred<Unit>()
+        tv.channelsGate = gate
+        val module = FakeModule(xuper, tv)
+        val vm = LiveViewModel(module, FakeFavoriteDao(), FakeCacheDao())
+        advanceUntilIdle()
+        vm.chooseProvider(tvId)
+        advanceUntilIdle()
+        assertEquals(true, vm.state.value.loading)
+        // LiveCatalog's order: the old instance is closed first, then the new list is published.
+        val tv2 = FakeProvider(tvId, "Tu servidor", categoriesResult = listOf(ProviderCategory("news", "Noticias")))
+        tv2.channelsByCategory["news"] = listOf(ch("c2", tvId))
+        tv.close()
+        advanceUntilIdle()
+        assertEquals(null, vm.state.value.error)
+        module.providers.value = listOf(xuper, tv2)
+        advanceUntilIdle()
+        val s = vm.state.value
+        assertEquals(tvId, s.activeProvider)
+        assertEquals(null, s.error)
+        assertEquals(false, s.loading)
+        assertEquals(listOf("plugin:tv:c2"), s.channels.map { it.liveCode })
+    }
+
+    @Test
+    fun `a replaced provider's guide call ends quietly and frees its channels`() = runTest(dispatcher) {
+        val (xuper, tv) = twoProviders()
+        val module = FakeModule(xuper, tv)
+        val vm = LiveViewModel(module, FakeFavoriteDao(), FakeCacheDao())
+        advanceUntilIdle()
+        val closing = object : LiveChannelProvider by tv {
+            override suspend fun guide(channels: List<LiveChannel>): Pair<Map<String, List<LiveProgram>>, List<String>> =
+                throw CancellationException("closed")
+        }
+        module.providers.value = listOf(xuper, closing)
+        advanceUntilIdle()
+        vm.requestEpg(listOf(ch("z", tvId)))
+        advanceUntilIdle()
+        module.providers.value = listOf(xuper, tv)
+        advanceUntilIdle()
+        tv.guideCalls.clear()
+        vm.requestEpg(listOf(ch("z", tvId)))
+        advanceUntilIdle()
+        assertEquals(listOf(listOf("z")), tv.guideCalls)
+    }
+
+    @Test
+    fun `the active provider's playlist notice is in the state`() = runTest(dispatcher) {
+        val (xuper, tv) = twoProviders()
+        val vm = LiveViewModel(FakeModule(xuper, tv), FakeFavoriteDao(), FakeCacheDao())
+        advanceUntilIdle()
+        tv.noticeFlow.value = "Lista recortada: 5000 de 9000 canales"
+        advanceUntilIdle()
+        assertEquals(null, vm.state.value.notice)
+        vm.chooseProvider(tvId)
+        advanceUntilIdle()
+        assertEquals("Lista recortada: 5000 de 9000 canales", vm.state.value.notice)
+        tv.noticeFlow.value = null
+        advanceUntilIdle()
+        assertEquals(null, vm.state.value.notice)
+        tv.noticeFlow.value = "otra"
+        vm.chooseProvider("xuper")
+        advanceUntilIdle()
+        assertEquals(null, vm.state.value.notice)
     }
 }

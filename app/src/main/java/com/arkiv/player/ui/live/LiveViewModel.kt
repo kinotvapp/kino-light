@@ -6,13 +6,19 @@ import com.arkiv.player.data.db.LiveChannelCacheDao
 import com.arkiv.player.data.db.LiveChannelCacheEntity
 import com.arkiv.player.data.db.LiveFavoriteDao
 import com.arkiv.player.data.db.LiveFavoriteEntity
-import com.arkiv.player.data.gateway.LiveCatalogGateway
-import com.arkiv.player.data.gateway.LiveCategory
 import com.arkiv.player.data.gateway.LiveChannel
 import com.arkiv.player.data.gateway.LiveChannelKeys
 import com.arkiv.player.data.gateway.LiveProgram
+import com.arkiv.player.data.gateway.liveCode
+import com.arkiv.player.data.live.LiveChannelProvider
+import com.arkiv.player.data.live.LiveModule
+import com.arkiv.player.data.live.LiveProviderTab
+import com.arkiv.player.data.live.ProviderCategory
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
@@ -20,16 +26,13 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.text.Normalizer
 
-/** How long to wait before retrying the EPG the gateway returned in `missing`. See [LiveViewModel.requestEpg]. */
+/** How long to wait before retrying the Xuper EPG the portal returned in `missing`. See [LiveViewModel.requestEpg]. */
 private const val EPG_RETRY_MS = 10_000L
 
-/** Category id the portal uses for "all channels" (not our own convention). */
-const val CATEGORY_ALL = 76182
+/** Synthetic category (no provider has it): the favourites of every available provider, from [LiveFavoriteDao]. */
+const val CATEGORY_FAVORITES = "__favoritos__"
 
-/** Synthetic category (doesn't exist in the portal): filters by [LiveFavoriteDao] instead of the gateway. */
-const val CATEGORY_FAVORITES = -1
-
-private fun String.normalized(): String =
+internal fun String.normalized(): String =
     Normalizer.normalize(this, Normalizer.Form.NFD).replace(Regex("\\p{Mn}+"), "").lowercase()
 
 /** By name (no accents or case) or by exact channel number. */
@@ -52,37 +55,53 @@ fun programProgress(p: LiveProgram, nowSeconds: Long = System.currentTimeMillis(
 }
 
 data class LiveUiState(
-    val categories: List<LiveCategory> = emptyList(),
-    val activeCategory: Int = CATEGORY_ALL,
+    /** The module's providers, in order; the screen shows a chip row for them only when [showProviders]. */
+    val providers: List<LiveProviderTab> = emptyList(),
+    val activeProvider: String? = null,
+    /** The ACTIVE provider's categories. */
+    val categories: List<ProviderCategory> = emptyList(),
+    val activeCategory: String? = null,
     val channels: List<LiveChannel> = emptyList(),
+    /** Live codes (see [liveCode]): the same code under two providers is two favourites. */
     val favorites: Set<String> = emptySet(),
-    /** The current program per channel, for the grid. */
+    /** The current programme per live code, for the grid. */
     val current: Map<String, LiveProgram?> = emptyMap(),
-    /** The whole day per channel, for the guide (Task 12). */
+    /** The whole day per live code, for the guide. */
     val programming: Map<String, List<LiveProgram>> = emptyMap(),
     val search: String = "",
     val loading: Boolean = false,
     val error: String? = null,
+    /** The active provider can have programme data (spec: the UI hides the guide when neither a plugin guide nor a playlist EPG exists). */
+    val hasGuide: Boolean = true,
+    /** The active provider's note over its channels (a plugin's "Lista recortada: …"); null = none. */
+    val notice: String? = null,
+    /** The module has no provider left (the last plugin switched off, Xuper's gate closed): nothing to load or retry. */
+    val moduleEmpty: Boolean = false,
 ) {
     val visible: List<LiveChannel> get() = filterChannels(channels, search)
+    /** More than one provider: provider chips, and a badge on each channel. */
+    val showProviders: Boolean get() = providers.size > 1
+    fun tabOf(channel: LiveChannel): LiveProviderTab? = providerBadge(channel, providers)
 }
 
 /**
- * State and logic for the "Live" tab: categories, channels, search, and favorites.
+ * State and logic for the En vivo screens (phone tab, TV guide, TV channel drawer): providers,
+ * their categories and channels, search, favourites and the guide, read from a [LiveModule].
  *
- * Paints what's in the cache (Room) first and refreshes against [api] after -- see [load] --
- * so the section opens instantly and keeps showing the grid if the gateway is slow or down.
- * [com.arkiv.player.ui.live.LiveController] (per-channel session resolution) and
- * [com.arkiv.player.data.db.LiveRecentDao] (recents) are used directly by `LiveScreen`, not this
- * ViewModel: only what the guide (Task 12) also needs to reuse lives here.
+ * Paints what's in the cache (Room, per provider and category) first and refreshes against the
+ * provider after -- see [load] -- so a section opens instantly and keeps showing the grid if the
+ * provider is slow or down. Playback ([com.arkiv.player.data.live.LiveChannelProvider.open]) and
+ * [com.arkiv.player.data.db.LiveRecentDao] (recents) are not this ViewModel's.
  *
- * [api] is [LiveCatalogGateway] and not [com.arkiv.player.data.gateway.LiveApi] on purpose: it's
- * the narrow interface with the three operations this ViewModel actually consumes (see its KDoc
- * for the full reasoning). The production call site (`AppGraph`/`LiveScreen`) doesn't change a
- * line -- `LiveApi` implements the interface, so an instance of it fits here as-is.
+ * Providers come and go while a screen is open ([LiveModule.providers]): a plugin switched off,
+ * reconfigured or uninstalled. A replaced plugin provider is closed by the module, and a call
+ * still running into it ends with a [CancellationException] while this ViewModel's coroutine is
+ * still active. That is never an error to show: the section is simply re-read from the
+ * replacement when the new list arrives ([onProviders]). A provider that vanished hands the
+ * screen to the next one; with none left the state says [LiveUiState.moduleEmpty].
  */
 class LiveViewModel(
-    private val api: LiveCatalogGateway,
+    private val module: LiveModule,
     private val favoriteDao: LiveFavoriteDao,
     private val cacheDao: LiveChannelCacheDao,
     /**
@@ -92,34 +111,37 @@ class LiveViewModel(
      * tests use.
      */
     private val adultsUnlocked: () -> Boolean = { false },
+    /**
+     * The TV channel drawer's lock (spec §4): only this provider's categories and favourites, so
+     * zapping and the drawer never cross providers. Null everywhere else.
+     */
+    private val onlyProvider: String? = null,
 ) : ViewModel() {
     private val _state = MutableStateFlow(LiveUiState())
     val state: StateFlow<LiveUiState> = _state
 
     /**
-     * The current category load's Job. Cancelling the previous one before launching a new one
-     * avoids wasted network work when the user switches chips quickly -- but cancellation isn't
-     * instant and isn't enough on its own to guard the state: `runCatching` catches even
-     * `CancellationException`, so a coroutine cancelled while waiting for an HTTP response can
-     * still end up running its `onFailure` anyway (never its `onSuccess`: for `runCatching` to
-     * catch that exception, the cancellation had to intercept the call BEFORE it returned data,
-     * so that path never gets to write `channels`).
+     * The current section load's Job. Cancelling the previous one before launching a new one
+     * avoids wasted work when the user switches chips quickly -- but cancellation isn't instant
+     * and isn't enough on its own to guard the state: a coroutine cancelled while waiting for a
+     * response may still run code after it.
      *
-     * Through this specific path -a cancelled coroutine that still runs its `onFailure`- the only
-     * thing that could get corrupted without the `activeCategory` check inside [load] is
-     * `error`/`loading`: the OLD category writing "couldn't load" over the one the user is
-     * already looking at. `channels` getting overwritten by a stale response is a DIFFERENT race
-     * -two SUCCESSFUL requests coming back out of order, with no cancellation involved- and it's
-     * covered by the same check but on the `onSuccess` side (see [load]'s KDoc for that case,
+     * Every point in [load] that writes `channels`/`error`/`loading` first checks that its
+     * provider and category are still the active ones. `channels` getting overwritten by a stale
+     * response is a DIFFERENT race -two SUCCESSFUL requests coming back out of order, with no
+     * cancellation involved- and it's covered by the same check (see [load]'s KDoc for that case,
      * which is the one actually measured in review). Cancellation here is a "spend less"
-     * optimization; the `activeCategory` check on each branch is the correctness guarantee for
-     * what that branch can end up writing.
+     * optimization; the active check on each branch is the correctness guarantee.
      */
     private var loadJob: Job? = null
 
+    /** The provider instance the active section was loaded from: a different one in [onProviders] means it was replaced. */
+    private var activeInstance: LiveChannelProvider? = null
+    private var noticeJob: Job? = null
+
     /**
-     * Codes with an EPG request in flight right now -- see [requestEpg]'s KDoc. Lives outside the
-     * StateFlow on purpose: it's internal bookkeeping of "who's already requesting what", not
+     * Live codes with a guide request in flight right now -- see [requestEpg]'s KDoc. Lives outside
+     * the StateFlow on purpose: it's internal bookkeeping of "who's already requesting what", not
      * something the UI paints. No explicit synchronization because all of this runs confined to
      * `Dispatchers.Main` (the dispatcher behind `viewModelScope`): calls never overlap across
      * threads, they only interleave on the same thread.
@@ -129,94 +151,203 @@ class LiveViewModel(
     init {
         viewModelScope.launch {
             favoriteDao.flowAll().collect { favs ->
-                _state.update { it.copy(favorites = favs.map { f -> f.code }.toSet()) }
+                _state.update { it.copy(favorites = favs.map { f -> LiveChannelKeys.liveCode(f.provider, f.code) }.toSet()) }
             }
         }
-        load(CATEGORY_ALL)
+        viewModelScope.launch { module.providers.collect(::onProviders) }
     }
 
-    fun chooseCategory(id: Int) = load(id)
+    private fun visibleProviders(list: List<LiveChannelProvider>) = list.filter { onlyProvider == null || it.id == onlyProvider }
 
-    /** The "recargar" button: re-fetches the active category from the portal, bypassing the
-     *  in-process channel cache, and overwrites the Room cache with what comes back. */
-    fun reload() = load(_state.value.activeCategory, force = true)
+    /**
+     * The module's list changed: new chips; the active provider kept (re-read from its replacement
+     * if the module swapped the instance), else the next one takes over, else the module is empty.
+     */
+    private fun onProviders(list: List<LiveChannelProvider>) {
+        val visible = visibleProviders(list)
+        val tabs = visible.map { LiveProviderTab(it.id, it.name, it.color) }
+        val before = _state.value.providers
+        _state.update { it.copy(providers = tabs, moduleEmpty = tabs.isEmpty()) }
+        val s = _state.value
+        val active = s.activeProvider
+        val kept = visible.firstOrNull { it.id == active }
+        if (kept != null) {
+            when {
+                kept !== activeInstance -> reopen(kept, s.activeCategory)
+                // The favourites list spans providers: one gone (or back) changes it.
+                s.activeCategory == CATEGORY_FAVORITES && before != tabs -> load(active, CATEGORY_FAVORITES)
+            }
+            return
+        }
+        val next = tabs.firstOrNull()?.id
+        if (next == null) {
+            loadJob?.cancel()
+            noticeJob?.cancel()
+            activeInstance = null
+            _state.update {
+                it.copy(
+                    activeProvider = null, categories = emptyList(), activeCategory = null, channels = emptyList(),
+                    loading = false, error = null, hasGuide = true, notice = null,
+                )
+            }
+        } else {
+            chooseProvider(next)
+        }
+    }
+
+    /** The active provider's instance was replaced (its plugin changed): the same section, read from [provider]. */
+    private fun reopen(provider: LiveChannelProvider, category: String?) {
+        if (category == null) { chooseProvider(provider.id); return }
+        activeInstance = provider
+        watchNotice(provider)
+        _state.update { it.copy(categories = emptyList(), hasGuide = provider.hasGuide(), error = null) }
+        load(provider.id, category)
+    }
+
+    private fun watchNotice(provider: LiveChannelProvider) {
+        noticeJob?.cancel()
+        _state.update { it.copy(notice = provider.notice.value) }
+        noticeJob = viewModelScope.launch {
+            provider.notice.collect { n -> if (activeInstance === provider) _state.update { it.copy(notice = n) } }
+        }
+    }
+
+    /** A provider chip: its categories, opening on its initial category (from cache first) or, lacking one, its first. */
+    fun chooseProvider(id: String) {
+        if (onlyProvider != null && id != onlyProvider) return
+        val provider = module.provider(id) ?: return
+        loadJob?.cancel()
+        activeInstance = provider
+        _state.update {
+            it.copy(
+                activeProvider = id, categories = emptyList(), activeCategory = null, channels = emptyList(),
+                error = null, hasGuide = provider.hasGuide(),
+            )
+        }
+        watchNotice(provider)
+        val initial = provider.initialCategory()
+        if (initial != null) { load(id, initial); return }
+        loadJob = viewModelScope.launch {
+            _state.update { it.copy(loading = true) }
+            val cats = try {
+                provider.categories(adultsUnlocked())
+            } catch (e: CancellationException) {
+                // Our own cancellation, or the provider was closed: then its replacement re-opens it (onProviders).
+                currentCoroutineContext().ensureActive()
+                return@launch
+            } catch (e: Exception) {
+                emptyList()
+            }
+            if (_state.value.activeProvider != id) return@launch
+            _state.update { it.copy(categories = cats, hasGuide = provider.hasGuide()) }
+            val first = cats.firstOrNull()?.id
+            if (first == null) {
+                _state.update { it.copy(loading = false, error = "No se pudo cargar los canales") }
+            } else {
+                load(id, first)
+            }
+        }
+    }
+
+    fun chooseCategory(id: String) {
+        if (id == CATEGORY_FAVORITES) { load(_state.value.activeProvider, id); return }
+        val provider = _state.value.activeProvider ?: return
+        load(provider, id)
+    }
+
+    /** The "recargar" button: re-fetches the active category from its provider, bypassing its
+     *  in-memory caches, and overwrites the Room cache with what comes back. */
+    fun reload() {
+        val s = _state.value
+        val category = s.activeCategory ?: return
+        load(s.activeProvider, category, force = true)
+    }
 
     fun search(text: String) = _state.update { it.copy(search = text) }
 
     /**
-     * Paints what's in the local cache first and refreshes against the gateway after. That way
-     * the section opens instantly and keeps showing the grid if the gateway is slow or down --
+     * Paints what's in the local cache first and refreshes against the provider after. That way
+     * the section opens instantly and keeps showing the grid if the provider is slow or down --
      * in that case it only fails to play, with a concrete message.
      *
      * Tapping chips quickly is this screen's NORMAL interaction, not an edge case: if an old
      * category's (A) response arrives after the one for the category the user is already looking
      * at (B), that late response must not overwrite what's on screen -- that's why every point
-     * that writes `channels`/`error` first checks that `category` is still `activeCategory`.
-     * Without that check, the selected chip ended up being B with A's channels (measured in
-     * review). The cache IS always written even if the response arrives late: it's useful for the
-     * next time that category is requested, not just for this screen.
+     * that writes `channels`/`error` first checks that the provider and category are still the
+     * active ones. Without that check, the selected chip ended up being B with A's channels
+     * (measured in review). The cache IS always written even if the response arrives late: it's
+     * useful for the next time that category is requested, not just for this screen.
      */
-    private fun load(category: Int, force: Boolean = false) {
+    private fun load(providerId: String?, category: String, force: Boolean = false) {
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
             _state.update { it.copy(loading = true, error = null, activeCategory = category) }
 
             if (category == CATEGORY_FAVORITES) {
-                val favs = favoriteDao.flowAll().first()
+                val live = _state.value.providers.map { it.id }.toSet()
+                // Favourites of a provider that is gone are hidden, never deleted: they come back with it.
+                val favs = favoriteDao.flowAll().first().filter { it.provider in live }
                 if (_state.value.activeCategory != category) return@launch
-                val channels = favs.map { LiveChannel(it.code, it.nombre, it.numero, it.logo) }
+                val channels = favs.map { LiveChannel(it.code, it.nombre, it.numero, it.logo, provider = it.provider) }
                 _state.update { it.copy(channels = channels, loading = false) }
-                requestEpg(channels.take(40).map { it.code })
+                requestEpg(channels.take(40))
                 return@launch
             }
 
-            val cached = cacheDao.byCategory(LiveChannelKeys.XUPER, category.toString())
-                .map { LiveChannel(it.code, it.nombre, it.numero, it.logo) }
-            if (cached.isNotEmpty() && _state.value.activeCategory == category) {
+            val provider = providerId?.let(module::provider)
+            if (provider == null) { _state.update { it.copy(loading = false) }; return@launch }
+            fun stillActive() = _state.value.activeProvider == providerId && _state.value.activeCategory == category
+
+            val cached = cacheDao.byCategory(providerId, category)
+                .map { LiveChannel(it.code, it.nombre, it.numero, it.logo, provider = it.provider, ref = it.ref) }
+            if (cached.isNotEmpty() && stillActive()) {
                 _state.update { it.copy(channels = cached, loading = false) }
-                requestEpg(cached.take(40).map { it.code })
+                requestEpg(cached.take(40))
             }
 
-            runCatching {
+            val fresh = try {
                 if (_state.value.categories.isEmpty()) {
-                    val cats = api.categories(includeAdults = adultsUnlocked())
-                    _state.update { it.copy(categories = cats) }
+                    val cats = provider.categories(adultsUnlocked())
+                    if (_state.value.activeProvider == providerId) _state.update { it.copy(categories = cats) }
                 }
-                api.channels(category, force)
-            }.onSuccess { fresh ->
-                val nowMs = System.currentTimeMillis()
-                cacheDao.replace(LiveChannelKeys.XUPER, category.toString(), fresh.map {
-                    LiveChannelCacheEntity(it.code, category.toString(), it.name, it.number, it.logo, nowMs)
-                })
-                if (_state.value.activeCategory == category) {
-                    _state.update { it.copy(channels = fresh, loading = false, error = null) }
-                    requestEpg(fresh.take(40).map { it.code })
-                }
-            }.onFailure {
-                // With the cache already painted, a down gateway doesn't empty the screen.
-                if (_state.value.activeCategory == category) {
+                provider.channels(category, force)
+            } catch (e: CancellationException) {
+                // Our own cancellation (a newer load), or the provider was closed by the module:
+                // then its replacement re-reads this section (onProviders). Never an error.
+                currentCoroutineContext().ensureActive()
+                return@launch
+            } catch (e: Exception) {
+                // With the cache already painted, a down provider doesn't empty the screen.
+                if (stillActive()) {
                     _state.update {
-                        it.copy(
-                            loading = false,
-                            error = if (it.channels.isEmpty()) "No se pudo cargar los canales" else null,
-                        )
+                        it.copy(loading = false, error = if (it.channels.isEmpty()) "No se pudo cargar los canales" else null)
                     }
                 }
+                return@launch
+            }
+            val nowMs = System.currentTimeMillis()
+            cacheDao.replace(providerId, category, fresh.map {
+                LiveChannelCacheEntity(it.code, category, it.name, it.number, it.logo, nowMs, provider = providerId, ref = it.ref)
+            })
+            if (stillActive()) {
+                // A plugin learns whether it has a guide (a playlist EPG) only once it listed.
+                _state.update { it.copy(channels = fresh, loading = false, error = null, hasGuide = provider.hasGuide()) }
+                requestEpg(fresh.take(40))
             }
         }
     }
 
     /**
-     * Programming for those channels: stores the whole day (the guide uses it) and derives the
-     * current program (the grid uses it). Whatever the gateway doesn't have yet arrives on a
-     * later round; nothing is awaited here.
+     * Programming for those channels, each asked of its OWN provider: stores the whole day by
+     * live code (the guide uses it) and derives the current program (the grid uses it). Whatever
+     * a provider doesn't have yet arrives on a later round; nothing is awaited here.
      *
      * [load] calls this TWICE per normal load (once painting the cache, again with the fresh
      * response), almost always with the same list of codes. The original filter only looked at
      * `programming` (what had ALREADY come back), and the first call hadn't returned yet by the
      * time the second one checked that map -- it found it empty and requested the EPG again.
      * Measured: the gateway received TWO identical EPG requests per normal load, against an
-     * endpoint limited to 1 request every 1.5s, globally. [epgInFlight] marks a code as
+     * endpoint limited to 1 request every 1.5s, globally. [epgInFlight] marks a live code as
      * "requested" BEFORE launching the coroutine (not after it returns), so the second call sees
      * it and discards it.
      *
@@ -231,40 +362,50 @@ class LiveViewModel(
      * compete with the duplicate-request guard: if by the time it runs the code already arrived
      * another way (another load, another scroll), the `missing` filter below discards it on its
      * own.
+     *
+     * The timed retry is Xuper's only. A plugin provider's "ask later" list is the channels past
+     * its per-pass cap (200): they are simply asked on the next natural request (a scroll, a
+     * reload), never on a timer that would hammer the plugin. A provider replaced mid-call ends
+     * its call with a [CancellationException]: quietly, its channels freed for the next request.
      */
-    fun requestEpg(codes: List<String>, retry: Boolean = true) {
-        val missing = codes.filter { it !in _state.value.programming && it !in epgInFlight }
+    fun requestEpg(channels: List<LiveChannel>, retry: Boolean = true) {
+        val missing = channels.distinctBy { it.liveCode }
+            .filter { it.liveCode !in _state.value.programming && it.liveCode !in epgInFlight }
         if (missing.isEmpty()) return
-        epgInFlight.addAll(missing)
-        viewModelScope.launch {
-            var stillMissing: List<String> = emptyList()
-            try {
-                runCatching { api.epg(missing) }.onSuccess { (programsByChannel, notFound) ->
-                    stillMissing = notFound
+        epgInFlight.addAll(missing.map { it.liveCode })
+        missing.groupBy { it.provider }.forEach { (providerId, group) ->
+            val codes = group.map { it.liveCode }.toSet()
+            val provider = module.provider(providerId)
+            if (provider == null) { epgInFlight.removeAll(codes); return@forEach }
+            viewModelScope.launch {
+                var later: List<String> = emptyList()
+                try {
+                    val (programsByChannel, notFound) = provider.guide(group)
+                    later = notFound
                     val now = System.currentTimeMillis() / 1000
-                    val current = programsByChannel.mapValues { (_, progs) ->
-                        progs.firstOrNull { p -> now >= p.start && now < p.end }
-                    }
-                    _state.update {
-                        it.copy(programming = it.programming + programsByChannel, current = it.current + current)
-                    }
+                    val current = programsByChannel.mapValues { (_, progs) -> progs.firstOrNull { p -> now >= p.start && now < p.end } }
+                    _state.update { it.copy(programming = it.programming + programsByChannel, current = it.current + current) }
+                } catch (e: CancellationException) {
+                    // Rethrown when it is ours; a closed provider's call just ends (see the KDoc).
+                    currentCoroutineContext().ensureActive()
+                } catch (e: Exception) {
+                    // No guide this round: the grid keeps working without it.
+                } finally {
+                    // Whatever happens: frees the live codes so a future request -another load,
+                    // another scroll- can retry them. A failure must not block them forever.
+                    epgInFlight.removeAll(codes)
                 }
-            } finally {
-                // Whatever happens (success or failure): frees the codes so a future request
-                // -another load, another scroll- can retry them. A failure must not block them
-                // forever.
-                epgInFlight.removeAll(missing)
-            }
-            if (retry && stillMissing.isNotEmpty()) {
-                delay(EPG_RETRY_MS)
-                requestEpg(stillMissing, retry = false)
+                if (retry && providerId == LiveChannelKeys.XUPER && later.isNotEmpty()) {
+                    delay(EPG_RETRY_MS)
+                    requestEpg(group.filter { it.liveCode in later }, retry = false)
+                }
             }
         }
     }
 
     fun toggleFavorite(c: LiveChannel) {
         viewModelScope.launch {
-            if (c.code in _state.value.favorites) favoriteDao.delete(c.provider, c.code)
+            if (c.liveCode in _state.value.favorites) favoriteDao.delete(c.provider, c.code)
             else favoriteDao.save(LiveFavoriteEntity(c.code, c.name, c.number, c.logo, provider = c.provider))
         }
     }

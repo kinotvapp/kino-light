@@ -57,10 +57,12 @@ import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import coil.compose.AsyncImage
 import com.arkiv.player.data.gateway.LiveChannel
+import com.arkiv.player.data.gateway.liveCode
 import com.arkiv.player.ui.live.CATEGORY_FAVORITES
 import com.arkiv.player.ui.live.LiveViewModel
 import com.arkiv.player.ui.live.LiveZappingSource
 import com.arkiv.player.ui.live.filterChannels
+import com.arkiv.player.ui.live.recentsForScreen
 import com.arkiv.player.ui.rememberGraph
 import com.arkiv.player.ui.theme.ArkivBlack
 import com.arkiv.player.ui.theme.ArkivRed
@@ -130,7 +132,7 @@ fun TvLiveGuideScreen(onWatchChannel: (LiveChannel) -> Unit, onBack: () -> Unit)
         factory = viewModelFactory {
             initializer {
                 LiveViewModel(
-                    graph.liveCatalog, graph.database.liveFavoriteDao(),
+                    graph.liveModule, graph.database.liveFavoriteDao(),
                     graph.database.liveChannelCacheDao(),
                     // Read on EVERY load, not once: unlocking 18+ from Settings has to show up
                     // on returning to the screen, without restarting the app.
@@ -149,11 +151,8 @@ fun TvLiveGuideScreen(onWatchChannel: (LiveChannel) -> Unit, onBack: () -> Unit)
     // own, enriched with whatever's already loaded in state.channels if the channel shows up there.
     val recentDao = remember { graph.database.liveRecentDao() }
     val rawRecents by recentDao.flowRecent().collectAsStateWithLifecycle(initialValue = emptyList())
-    val recents = remember(rawRecents, state.channels) {
-        rawRecents.map { r ->
-            state.channels.find { it.code == r.code }?.copy(name = r.nombre)
-                ?: LiveChannel(r.code, r.nombre, 0, null)
-        }
+    val recents = remember(rawRecents, state.channels, state.providers) {
+        recentsForScreen(rawRecents, state.channels, state.providers.map { it.id }.toSet())
     }
 
     val baseChannels = if (view == TvLocalView.RECENT) recents else state.channels
@@ -274,7 +273,7 @@ fun TvLiveGuideScreen(onWatchChannel: (LiveChannel) -> Unit, onBack: () -> Unit)
                     view == TvLocalView.RECENT && baseChannels.isEmpty() ->
                         TvGuideMessage("Sin canales recientes", "Los canales que abras van a aparecer acá.")
                     state.error != null && state.channels.isEmpty() ->
-                        TvGuideMessage(state.error!!, "Presiona OK para reintentar.") { vm.chooseCategory(state.activeCategory) }
+                        TvGuideMessage(state.error!!, "Presiona OK para reintentar.") { state.activeCategory?.let(vm::chooseCategory) }
                     state.loading && state.channels.isEmpty() ->
                         TvGuideMessage("Cargando canales…", null)
                     search.isNotBlank() && channels.isEmpty() ->
@@ -286,7 +285,7 @@ fun TvLiveGuideScreen(onWatchChannel: (LiveChannel) -> Unit, onBack: () -> Unit)
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                         contentPadding = PaddingValues(end = 24.dp, bottom = 16.dp),
                     ) {
-                        items(channels, key = { it.code }) { channel ->
+                        items(channels, key = { it.liveCode }) { channel ->
                             TvChannelRow(
                                 channel = channel,
                                 onClick = { watchChannel(channel) },

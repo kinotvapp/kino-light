@@ -7,6 +7,7 @@ import com.arkiv.player.data.db.LiveChannelCacheDao
 import com.arkiv.player.data.db.LiveChannelCacheEntity
 import com.arkiv.player.data.gateway.LiveCatalogGateway
 import com.arkiv.player.data.gateway.LiveChannel
+import com.arkiv.player.data.gateway.liveCode
 import com.arkiv.player.data.gateway.LiveChannelKeys
 import java.util.Locale
 import java.util.TimeZone
@@ -91,18 +92,21 @@ fun deviceCountry(context: Context): String? {
  * row's total, not on each part: the row is a shortcut, and the full grid is one tap away, on the
  * "Ver más canales" card whoever paints the row closes it with.
  *
- * The dedup is by `code` (the portal's identifier), not by name: two different channels can be
- * named similarly, and the same channel can come with different names depending on the category.
+ * The dedup is by live code (provider + code), not by name: two different channels can be named
+ * similarly, the same channel can come with different names depending on the category, and a
+ * plugin's `c1` is not Xuper's `c1`. The country part is Xuper's only.
  */
 fun homeChannelsRow(
     recent: List<LiveChannel>,
     fromCountry: List<LiveChannel>,
+    /** The module's provider ids right now; null = no filter. Recents of a provider switched off are left out, not deleted. */
+    available: Set<String>? = null,
     limit: Int = HOME_ROW_LIMIT,
 ): List<LiveChannel> {
     val seen = HashSet<String>()
     // Recents first, already deduped among themselves just in case: `add` returns false on a repeat.
-    val row = recent.filter { seen.add(it.code) } + fromCountry.filter { seen.add(it.code) }
-    return row.take(limit)
+    fun keep(c: LiveChannel) = (available == null || c.provider in available) && seen.add(c.liveCode)
+    return (recent.filter(::keep) + fromCountry.filter(::keep)).take(limit)
 }
 
 /** Cap on the home row's cards, not counting "Ver más canales". */

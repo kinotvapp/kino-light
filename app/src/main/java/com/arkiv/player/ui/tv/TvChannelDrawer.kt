@@ -41,6 +41,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import com.arkiv.player.data.gateway.LiveChannel
+import com.arkiv.player.data.gateway.liveCode
 import com.arkiv.player.ui.live.CATEGORY_FAVORITES
 import com.arkiv.player.ui.live.DrawerFocus
 import com.arkiv.player.ui.live.DrawerIndex
@@ -86,7 +87,7 @@ fun TvChannelDrawer(
         factory = viewModelFactory {
             initializer {
                 LiveViewModel(
-                    graph.liveCatalog, graph.database.liveFavoriteDao(),
+                    graph.liveModule, graph.database.liveFavoriteDao(),
                     graph.database.liveChannelCacheDao(),
                     // Read on EVERY load, not once: unlocking 18+ from Settings has to show up
                     // on returning to the screen, without restarting the app.
@@ -203,7 +204,7 @@ fun TvChannelDrawer(
                     itemsIndexed(channels) { i, channel ->
                         DrawerChannelRow(
                             channel = channel,
-                            onScreen = channel.code == currentChannel,
+                            onScreen = channel.liveCode == currentChannel,
                             // Choosing changes the channel and closes: the caller decides both
                             // things. It's given the FILTERED list because that's the one
                             // up/down zapping has to go through after -- if you searched
@@ -223,7 +224,7 @@ fun TvChannelDrawer(
 private inline fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexed(
     channels: List<LiveChannel>,
     crossinline row: @Composable (Int, LiveChannel) -> Unit,
-) = items(count = channels.size, key = { channels[it].code }) { i -> row(i, channels[i]) }
+) = items(count = channels.size, key = { channels[it].liveCode }) { i -> row(i, channels[i]) }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable

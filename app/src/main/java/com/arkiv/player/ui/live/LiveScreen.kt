@@ -63,6 +63,8 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import coil.compose.AsyncImage
 import com.arkiv.player.data.gateway.LiveChannel
+import com.arkiv.player.data.gateway.LiveChannelKeys
+import com.arkiv.player.data.gateway.liveCode
 import com.arkiv.player.data.gateway.LiveProgram
 import com.arkiv.player.ui.components.EmptyState
 import com.arkiv.player.ui.rememberGraph
@@ -107,7 +109,7 @@ fun LiveScreen(
         factory = viewModelFactory {
             initializer {
                 LiveViewModel(
-                    graph.liveCatalog, graph.database.liveFavoriteDao(),
+                    graph.liveModule, graph.database.liveFavoriteDao(),
                     graph.database.liveChannelCacheDao(),
                     // Read on EVERY load, not once: unlocking 18+ from Settings has to show up
                     // on returning to the screen, without restarting the app.
@@ -123,27 +125,24 @@ fun LiveScreen(
     // the grid).
     var guideMode by rememberSaveable { mutableStateOf(false) }
 
-    // Recent: doesn't go through LiveViewModel.chooseCategory (it isn't a portal category), read
-    // directly from Room. With no number/logo of their own (Task 10 doesn't store them for
-    // "recent"), so they get enriched with whatever's already loaded in `state.channels`, if the
-    // channel shows up there.
+    // Recent: doesn't go through LiveViewModel.chooseCategory (it isn't a provider category),
+    // read directly from Room, only for providers still in the module (see recentsForScreen).
     val recentDao = remember { graph.database.liveRecentDao() }
     val rawRecents by recentDao.flowRecent().collectAsStateWithLifecycle(initialValue = emptyList())
-    val recents = remember(rawRecents, state.channels) {
-        rawRecents.map { r ->
-            state.channels.find { it.code == r.code }?.copy(name = r.nombre)
-                ?: LiveChannel(r.code, r.nombre, 0, null)
-        }
+    val recents = remember(rawRecents, state.channels, state.providers) {
+        recentsForScreen(rawRecents, state.channels, state.providers.map { it.id }.toSet())
     }
     LaunchedEffect(recents) {
-        if (recents.isNotEmpty()) vm.requestEpg(recents.map { it.code })
+        if (recents.isNotEmpty()) vm.requestEpg(recents)
     }
 
     // Preheat favorites (bounded): they're the channels most likely to be opened next, and
     // resolving costs ~3s (see LiveController) -- having them already resolved by the time the
     // live player exists (Task 14) is free and best-effort (preheat() never throws).
     LaunchedEffect(state.favorites) {
-        state.favorites.take(5).forEach { code -> launch { graph.liveController.preheat(code) } }
+        // Only Xuper's: preheating is its session machinery; a plugin channel has none.
+        state.favorites.mapNotNull { LiveChannelKeys.parse(it) }.filter { it.first == LiveChannelKeys.XUPER }
+            .take(5).forEach { (_, code) -> launch { graph.liveController.preheat(code) } }
     }
 
     // The list "entered with" (category/favorites, or recent) -- Task 14: it's the one the
@@ -252,7 +251,7 @@ fun LiveScreen(
                 }
             }
             state.error != null && state.channels.isEmpty() -> {
-                ErrorWithRetry(state.error!!) { vm.chooseCategory(state.activeCategory) }
+                ErrorWithRetry(state.error!!) { state.activeCategory?.let(vm::chooseCategory) }
             }
             state.loading && state.channels.isEmpty() -> {
                 PlaceholderGrid(gridPadding)
@@ -324,11 +323,11 @@ private fun ChannelGrid(
         verticalArrangement = Arrangement.spacedBy(16.dp),
         modifier = Modifier.fillMaxSize(),
     ) {
-        items(channels, key = { it.code }) { channel ->
+        items(channels, key = { it.liveCode }) { channel ->
             ChannelCard(
                 channel = channel,
-                currentProgram = current[channel.code],
-                isFavorite = channel.code in favorites,
+                currentProgram = current[channel.liveCode],
+                isFavorite = channel.liveCode in favorites,
                 onClick = { onOpen(channel) },
                 onLongClick = { onFavorite(channel) },
             )

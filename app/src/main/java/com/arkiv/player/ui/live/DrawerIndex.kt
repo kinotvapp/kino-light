@@ -1,6 +1,7 @@
 package com.arkiv.player.ui.live
 
 import com.arkiv.player.data.gateway.LiveChannel
+import com.arkiv.player.data.gateway.liveCode
 
 /**
  * Which row the channel drawer lands on when it opens: the one for the channel being watched.
@@ -20,10 +21,10 @@ object DrawerIndex {
      * Never returns -1: the result goes straight to `scrollToItem` and to deciding which row
      * carries the `FocusRequester`. With the channel outside the list --the first thing that
      * happens when typing in the search box-- it lands on the first result, which is what you want
-     * to look at at that moment.
+     * to look at at that moment. Matched by live code: Xuper's `c1` and a plugin's `c1` are two rows.
      */
-    fun indexFor(channels: List<LiveChannel>, currentChannel: String?): Int {
-        if (channels.isEmpty() || currentChannel.isNullOrBlank()) return 0
-        return channels.indexOfFirst { it.code == currentChannel }.coerceAtLeast(0)
+    fun indexFor(channels: List<LiveChannel>, currentLiveCode: String?): Int {
+        if (channels.isEmpty() || currentLiveCode.isNullOrBlank()) return 0
+        return channels.indexOfFirst { it.liveCode == currentLiveCode }.coerceAtLeast(0)
     }
 }

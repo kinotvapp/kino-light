@@ -149,7 +149,7 @@ class PluginLiveProvider(
     @Volatile internal var playlistReadHook: (java.io.File) -> Unit = {}
     private val _notice = MutableStateFlow<String?>(null)
     /** "Lista recortada: <kept> de <total> canales" when the caps cut this provider's playlists, else null. */
-    val notice: StateFlow<String?> = _notice
+    override val notice: StateFlow<String?> = _notice
 
     override fun initialCategory(): String? =
         catalogCache?.second?.categories?.firstOrNull()?.id ?: groups.values.firstNotNullOfOrNull { it.categories.firstOrNull() }?.id

@@ -47,6 +47,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.arkiv.player.data.gateway.LiveChannel
+import com.arkiv.player.data.gateway.liveCode
 import com.arkiv.player.data.gateway.LiveProgram
 import com.arkiv.player.ui.theme.ArkivRed
 import com.arkiv.player.ui.theme.ArkivSurfaceHigh
@@ -87,7 +88,7 @@ private fun timeOf(epochSeconds: Long): String =
  * source of truth (the day's list's first program containing the current instant), and passing
  * both maps would only open the door to them drifting out of sync.
  *
- * [onRequestEpg] fires with the codes that enter the `LazyColumn`'s visible window -detected by
+ * [onRequestEpg] fires with the channels that enter the `LazyColumn`'s visible window -detected by
  * [rememberLazyListState]'s index, not by recomposition- and filtered against [programming]:
  * the ones that already have their day loaded aren't requested again. [LiveViewModel.requestEpg]
  * already guards itself against duplicates (see its KDoc), but filtering here also avoids
@@ -98,7 +99,7 @@ fun LiveGuideList(
     channels: List<LiveChannel>,
     programming: Map<String, List<LiveProgram>>,
     onWatch: (LiveChannel) -> Unit,
-    onRequestEpg: (List<String>) -> Unit,
+    onRequestEpg: (List<LiveChannel>) -> Unit,
     contentPadding: PaddingValues = PaddingValues(),
 ) {
     val listState = rememberLazyListState()
@@ -115,15 +116,15 @@ fun LiveGuideList(
         snapshotFlow { listState.layoutInfo.visibleItemsInfo.map { it.index } }
             .distinctUntilChanged()
             .collect { indices ->
-                val missing = indices.mapNotNull { channels.getOrNull(it)?.code }
-                    .filter { it !in latestProgramming }
+                val missing = indices.mapNotNull { channels.getOrNull(it) }
+                    .filter { it.liveCode !in latestProgramming }
                 if (missing.isNotEmpty()) latestOnRequestEpg(missing)
             }
     }
 
     LazyColumn(state = listState, contentPadding = contentPadding, modifier = Modifier.fillMaxSize()) {
-        items(channels, key = { it.code }) { channel ->
-            GuideChannelRow(channel = channel, programs = programming[channel.code], onWatch = onWatch)
+        items(channels, key = { it.liveCode }) { channel ->
+            GuideChannelRow(channel = channel, programs = programming[channel.liveCode], onWatch = onWatch)
         }
     }
 }
@@ -134,7 +135,7 @@ private fun GuideChannelRow(
     programs: List<LiveProgram>?,
     onWatch: (LiveChannel) -> Unit,
 ) {
-    // rememberSaveable (not remember): the LazyColumn with key = channel.code tears down the
+    // rememberSaveable (not remember): the LazyColumn with key = channel.liveCode tears down the
     // composition of rows that leave the visible window -- without this, an expanded row would
     // collapse on its own when scrolled far away and back (same reason as DownloadGroupHeader in
     // DownloadsScreen).

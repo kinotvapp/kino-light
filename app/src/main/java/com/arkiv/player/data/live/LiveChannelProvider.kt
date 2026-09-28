@@ -3,6 +3,7 @@ package com.arkiv.player.data.live
 import com.arkiv.player.data.gateway.LiveChannel
 import com.arkiv.player.data.gateway.LiveProgram
 import com.arkiv.player.playback.PluginLiveChannel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
 /** One category of one provider. [id] is the provider's own (Xuper's portal number as text, a plugin's string id). */
@@ -50,7 +51,12 @@ interface LiveChannelProvider {
      * or uninstalled): work still running for it is cancelled and new work refused. Default: nothing.
      */
     fun close() {}
+
+    /** A note the screens show over this provider's channels (a plugin's "Lista recortada…"); null = none. */
+    val notice: StateFlow<String?> get() = NO_NOTICE
 }
+
+private val NO_NOTICE: StateFlow<String?> = MutableStateFlow(null)
 
 /** The En vivo module as screens and the player see it: its providers, in order, live. */
 interface LiveModule {

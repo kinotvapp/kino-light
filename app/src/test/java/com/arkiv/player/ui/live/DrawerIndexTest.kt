@@ -41,4 +41,10 @@ class DrawerIndexTest {
     @Test fun `with an empty list there's no valid index`() {
         assertEquals(0, DrawerIndex.indexFor(emptyList(), "a"))
     }
+
+    @Test fun `the current row is matched by live code, not by bare code`() {
+        val list = listOf(LiveChannel("c1", "RCN", 1, null), LiveChannel("c1", "Uno", 1, null, provider = "plugin:tv"))
+        assertEquals(1, DrawerIndex.indexFor(list, "plugin:tv:c1"))
+        assertEquals(0, DrawerIndex.indexFor(list, "c1"))
+    }
 }

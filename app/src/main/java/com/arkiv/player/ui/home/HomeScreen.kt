@@ -59,7 +59,6 @@ import coil.compose.AsyncImage
 import com.arkiv.player.data.db.LibraryRow
 import com.arkiv.player.data.db.LiveChannelCacheEntity
 import com.arkiv.player.data.gateway.LiveChannel
-import com.arkiv.player.data.gateway.LiveChannelKeys
 import com.arkiv.player.thumbnails.ThumbnailChoice
 import com.arkiv.player.ui.components.ContinueCard
 import com.arkiv.player.ui.components.SectionHeader
@@ -68,6 +67,7 @@ import com.arkiv.player.ui.live.LiveZappingSource
 import com.arkiv.player.ui.live.countryChannelsForHome
 import com.arkiv.player.ui.live.recentChannelsForHome
 import com.arkiv.player.ui.live.homeChannelsRow
+import com.arkiv.player.ui.live.liveCacheForRecents
 import com.arkiv.player.ui.isLandscapeTablet
 import com.arkiv.player.ui.titleinfo.rememberTitleOpener
 import com.arkiv.player.ui.rememberGraph
@@ -163,7 +163,7 @@ fun HomeScreen(
     var cacheByCode by remember { mutableStateOf<Map<String, LiveChannelCacheEntity>>(emptyMap()) }
     LaunchedEffect(rawRecent) {
         if (rawRecent.isNotEmpty()) {
-            cacheByCode = liveCacheDao.byCodes(LiveChannelKeys.XUPER, rawRecent.map { it.code }).associateBy { it.code }
+            cacheByCode = liveCacheForRecents(rawRecent, liveCacheDao)
         }
     }
     val recentChannels = remember(rawRecent, cacheByCode) {
