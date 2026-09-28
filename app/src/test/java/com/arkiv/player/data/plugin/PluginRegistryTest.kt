@@ -227,4 +227,35 @@ class PluginRegistryTest {
         listOf(PluginRef("pa", "m1", PluginRef.MOVIE, "m-1").encode(), PluginRef("pb", "c1", PluginRef.LIVE, "ch-1").encode(), "nope")
             .forEach { assertEquals(it, ready.hosts, ready.streamHostsFor("pa", it)) }
     }
+
+    @Test fun `addApprovedHost appends once and respects the 20-host cap`() {
+        install("pa", "A") { copy(hosts = listOf("example.com")) }
+        assertTrue(registry.addApprovedHost("pa", "cdn.example.com"))
+        assertEquals(listOf("example.com", "cdn.example.com"), registry.find("pa")!!.record.hosts)
+        assertFalse(registry.addApprovedHost("pa", "cdn.example.com")) // already there
+        assertEquals(listOf("example.com", "cdn.example.com"), registry.find("pa")!!.record.hosts)
+        val twenty = (1..18).map { "h$it.example.com" }
+        install("pb", "B") { copy(hosts = listOf("example.com") + twenty) } // 19 declared
+        assertTrue(registry.addApprovedHost("pb", "h19.example.com")) // now 20: allowed
+        assertFalse(registry.addApprovedHost("pb", "h20.example.com")) // 21st: refused
+        assertEquals(20, registry.find("pb")!!.record.hosts.size)
+    }
+
+    @Test fun `rejectHost remembers per plugin, forgetRejections clears it`() {
+        install("pa", "A")
+        install("pc", "C")
+        registry.rejectHost("pa", "evil.example")
+        assertEquals(listOf("evil.example"), registry.find("pa")!!.record.rejectedHosts)
+        assertTrue(registry.find("pc")!!.record.rejectedHosts.isEmpty())
+        registry.rejectHost("pa", "evil.example") // idempotent, no duplicate
+        assertEquals(listOf("evil.example"), registry.find("pa")!!.record.rejectedHosts)
+        registry.forgetRejections("pa")
+        assertTrue(registry.find("pa")!!.record.rejectedHosts.isEmpty())
+    }
+
+    @Test fun `InstalledRecord round-trips rejectedHosts through JSON`() {
+        val r = InstalledRecord("o/pa", "1.0.0", "sha", listOf("example.com"), 1L, rejectedHosts = listOf("evil.example"))
+        val back = InstalledRecord.fromJson(r.toJson())
+        assertEquals(listOf("evil.example"), back!!.rejectedHosts)
+    }
 }

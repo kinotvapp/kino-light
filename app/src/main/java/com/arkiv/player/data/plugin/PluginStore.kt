@@ -43,6 +43,8 @@ data class InstalledRecord(
     val liveStreamHostsAny: Boolean = false,
     /** A pending update newly asks for `liveStreamHosts: "any"`, shown on its consent sheet. */
     val pendingLiveStreamHostsAny: Boolean = false,
+    /** Hosts the person explicitly said "no" to via reactive approval; never prompted again for this plugin. */
+    val rejectedHosts: List<String> = emptyList(),
 ) {
     fun toJson(): String = JSONObject()
         .put("address", address).put("version", version).put("sha256", sha256)
@@ -60,6 +62,7 @@ data class InstalledRecord(
         .put("exports", JSONArray(exports))
         .put("liveStreamHostsAny", liveStreamHostsAny)
         .put("pendingLiveStreamHostsAny", pendingLiveStreamHostsAny)
+        .put("rejectedHosts", JSONArray(rejectedHosts))
         .toString()
 
     companion object {
@@ -83,6 +86,7 @@ data class InstalledRecord(
                 exports = list("exports"),
                 liveStreamHostsAny = o.optBoolean("liveStreamHostsAny"),
                 pendingLiveStreamHostsAny = o.optBoolean("pendingLiveStreamHostsAny"),
+                rejectedHosts = list("rejectedHosts"),
             )
         }.getOrNull()
     }
