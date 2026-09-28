@@ -29,6 +29,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -41,6 +43,8 @@ import com.arkiv.player.security.RootSignalCollector
 import com.arkiv.player.ui.ArkivRoot
 import com.arkiv.player.ui.ArkivSplash
 import com.arkiv.player.ui.LocalReducedEffects
+import com.arkiv.player.ui.plugin.FocusWhenReady
+import com.arkiv.player.ui.plugin.focusRing
 import com.arkiv.player.ui.rememberReducedEffects
 import com.arkiv.player.ui.theme.ArkivSurface
 import com.arkiv.player.ui.theme.ArkivTheme
@@ -128,6 +132,12 @@ class MainActivity : AppCompatActivity() {
                 // a reject -- respond(false) -- so the wait can never hang open forever unanswered.
                 val pendingHostApproval by graph.hostApprovalCenter.pending.collectAsState()
                 pendingHostApproval?.let { req ->
+                    // TV: a Compose Dialog here doesn't reliably pick up initial D-pad focus on its
+                    // own (same reason PluginConsentDialog/PluginUninstallDialog/UpdateDialog all do
+                    // this) -- without it, the remote could only reach "back" (a reject), leaving
+                    // "Permitir" practically unreachable.
+                    val approveFocus = remember { FocusRequester() }
+                    FocusWhenReady(approveFocus)
                     Dialog(onDismissRequest = { req.respond(false) }) {
                         Surface(
                             shape = RoundedCornerShape(16.dp),
@@ -145,8 +155,11 @@ class MainActivity : AppCompatActivity() {
                                     Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),
                                 ) {
-                                    TextButton(onClick = { req.respond(false) }) { Text("Rechazar") }
-                                    Button(onClick = { req.respond(true) }) { Text("Permitir") }
+                                    TextButton(onClick = { req.respond(false) }, modifier = Modifier.focusRing()) { Text("Rechazar") }
+                                    Button(
+                                        onClick = { req.respond(true) },
+                                        modifier = Modifier.focusRequester(approveFocus).focusRing(),
+                                    ) { Text("Permitir") }
                                 }
                             }
                         }
