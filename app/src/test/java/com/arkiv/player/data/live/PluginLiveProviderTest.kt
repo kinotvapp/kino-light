@@ -54,8 +54,10 @@ class PluginLiveProviderTest {
     }
 
     private var now = 1_000_000L
-    private fun live(caller: PluginCaller, cached: suspend (String) -> LiveChannelCacheEntity? = { null }) =
-        PluginLiveProvider(plugin, caller, cached, clock = { now }, log = {})
+    /** [plugin] with a `guide` export recorded: the only kind of plugin whose guide is ever asked. */
+    private val guided = plugin.copy(record = plugin.record.copy(exports = listOf("guide", "home", "liveCategories", "liveChannels", "resolve")))
+    private fun live(caller: PluginCaller, from: InstalledPlugin = plugin, cached: suspend (String) -> LiveChannelCacheEntity? = { null }) =
+        PluginLiveProvider(from, caller, cached, clock = { now }, log = {})
 
     @Test fun `identity comes from the plugin`() {
         val p = live(Caller { _, _ -> "[]" })
@@ -115,7 +117,7 @@ class PluginLiveProviderTest {
                 """{"channelId":"${ids.getString(it)}","title":"Noticiero","start":${o.getLong("from") + 60_000},"end":${o.getLong("from") + 120_000}}"""
             }
         }
-        val p = live(caller)
+        val p = live(caller, from = guided)
         val channels = (1..60).map { LiveChannel("c$it", "C$it", it, null, provider = provider) } +
             LiveChannel("x1", "Xuper", 1, null)
         val (guide, missing) = p.guide(channels)
@@ -136,7 +138,7 @@ class PluginLiveProviderTest {
             if (function == "guide") throw IllegalStateException("el plugin no exporta guide")
             """{"items":[{"id":"c1","title":"Uno","ref":"r1"}]}"""
         }
-        val p = live(caller)
+        val p = live(caller, from = guided)
         val c = LiveChannel("c1", "Uno", 1, null, provider = provider)
         assertEquals(emptyMap<String, Any>(), p.guide(listOf(c)).first)
         p.guide(listOf(c))
@@ -189,9 +191,16 @@ class PluginLiveProviderTest {
     }
 
     @Test fun `hasGuide follows the recorded exports`() {
-        val withGuide = plugin.copy(record = plugin.record.copy(exports = listOf("guide", "home", "liveCategories", "liveChannels", "resolve")))
-        assertEquals(true, PluginLiveProvider(withGuide, Caller { _, _ -> "[]" }, clock = { now }, log = {}).hasGuide())
+        assertEquals(true, live(Caller { _, _ -> "[]" }, from = guided).hasGuide())
         assertEquals(false, live(Caller { _, _ -> "[]" }).hasGuide())
+    }
+
+    @Test fun `a plugin that exports no guide is never asked for one, its channels answered empty`() = runBlocking {
+        val caller = Caller { function, _ -> error("no $function call expected") }
+        val (guide, later) = live(caller).guide(listOf(LiveChannel("c1", "Uno", 1, null, provider = provider)))
+        assertEquals(mapOf("plugin:demo:c1" to emptyList<Any>()), guide)
+        assertEquals(emptyList<String>(), later)
+        assertEquals(emptyList<Pair<String, String>>(), caller.calls)
     }
 
     @Test fun `an inline stream on an undeclared host plays only when liveStreamHosts any was approved`() = runBlocking {
@@ -252,7 +261,7 @@ class PluginLiveProviderTest {
                 """{"channelId":"${ids.getString(it)}","title":"T","start":${o.getLong("from") + 60_000},"end":${o.getLong("from") + 120_000}}"""
             }
         }
-        val p = live(caller)
+        val p = live(caller, from = guided)
         val c = listOf(LiveChannel("c1", "Uno", 1, null, provider = provider))
         val both = listOf(async { p.guide(c) }, async { p.guide(c) })
         repeat(3) { yield() }
@@ -276,7 +285,7 @@ class PluginLiveProviderTest {
     @Test fun `guide timeouts never mark the plugin unresponsive`() = runTest {
         val flagged = mutableListOf<String>()
         val pool = PluginRuntimePool(open = { TimingOut() }, onUnresponsive = { flagged += it }, scope = backgroundScope)
-        val p = PluginLiveProvider(plugin, pool, clock = { now }, log = {})
+        val p = PluginLiveProvider(guided, pool, clock = { now }, log = {})
         val c = listOf(LiveChannel("c1", "Uno", 1, null, provider = provider))
         repeat(5) {
             assertEquals(emptyMap<String, Any>(), p.guide(c).first)
@@ -293,7 +302,7 @@ class PluginLiveProviderTest {
                 """{"channelId":"${ids.getString(it)}","title":"T","start":${o.getLong("from") + 60_000},"end":${o.getLong("from") + 120_000}}"""
             }
         }
-        val p = live(caller)
+        val p = live(caller, from = guided)
         val channels = (1..250).map { LiveChannel("c$it", "C$it", it, null, provider = provider) }
         val (guide, later) = p.guide(channels)
         assertEquals(PluginLiveProvider.MAX_GUIDE_CHUNKS_PER_PASS, caller.calls.size)

@@ -522,6 +522,19 @@ class LiveViewModelAsyncTest {
     }
 
     @Test
+    fun `a provider that can have no guide is never asked for one`() = runTest(dispatcher) {
+        val (xuper, tv) = twoProviders()
+        tv.guide = false
+        val vm = LiveViewModel(FakeModule(xuper, tv), FakeFavoriteDao(), FakeCacheDao())
+        advanceUntilIdle()
+        vm.chooseProvider(tvId)
+        advanceUntilIdle()
+        vm.requestEpg(listOf(ch("c9", tvId)))
+        advanceUntilIdle()
+        assertEquals(emptyList<List<String>>(), tv.guideCalls)
+    }
+
+    @Test
     fun `a plugin's later guide channels are never retried on a timer, only on the next request`() = runTest(dispatcher) {
         val (xuper, tv) = twoProviders()
         tv.guideLater = true

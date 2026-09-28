@@ -159,7 +159,7 @@ class PluginLiveProvider(
         catalogCache?.second?.categories?.firstOrNull()?.id ?: groups.values.firstNotNullOfOrNull { it.categories.firstOrNull() }?.id
 
     override fun hasGuide(): Boolean =
-        "guide" in plugin.record.exports || catalogCache?.second?.playlists?.any { it.epgUrl.isNotEmpty() } == true
+        GUIDE_FUNCTION in plugin.record.exports || catalogCache?.second?.playlists?.any { it.epgUrl.isNotEmpty() } == true
 
     /**
      * [includeAdults] is unused: a plugin's own adult categories and channels never reach here
@@ -387,7 +387,12 @@ class PluginLiveProvider(
     private suspend fun guideNow(channels: List<LiveChannel>): Pair<Map<String, List<LiveProgram>>, List<String>> {
         val mine = channels.filter { it.provider == id }
         val (fromPlaylists, fromPlugin) = mine.partition { it.code.startsWith(PluginLiveContract.RESERVED_ID_PREFIX) }
-        val (out, later) = if (fromPlugin.isEmpty()) HashMap<String, List<LiveProgram>>() to emptyList() else pluginGuide(fromPlugin)
+        val (out, later) = when {
+            fromPlugin.isEmpty() -> HashMap<String, List<LiveProgram>>() to emptyList()
+            // No `guide` export recorded: never asked; its channels simply have no programmes.
+            GUIDE_FUNCTION !in plugin.record.exports -> fromPlugin.associateTo(HashMap()) { it.liveCode to emptyList<LiveProgram>() } to emptyList()
+            else -> pluginGuide(fromPlugin)
+        }
         if (fromPlaylists.isEmpty()) return out to later
         val all = HashMap(out)
         all.putAll(playlistGuide(fromPlaylists))
@@ -483,7 +488,7 @@ class PluginLiveProvider(
             val answer = try {
                 // Background: the guide is optional, its timeouts must not switch the plugin off for search, Home and play.
                 withContext(BackgroundPluginCall) {
-                    PluginCalls.callOrThrow(caller, pluginId, name, "guide", arg, PluginLiveContract.GUIDE_TIMEOUT_MS)
+                    PluginCalls.callOrThrow(caller, pluginId, name, GUIDE_FUNCTION, arg, PluginLiveContract.GUIDE_TIMEOUT_MS)
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -590,6 +595,8 @@ class PluginLiveProvider(
         const val MAX_RESCAN_CATEGORIES = 10
         /** Chunks of [PluginLiveContract.MAX_GUIDE_CHANNELS] one guide pass asks at most (200 channels). */
         const val MAX_GUIDE_CHUNKS_PER_PASS = 4
+        /** The optional plugin export for programmes; asked only when the installed record lists it. */
+        private const val GUIDE_FUNCTION = "guide"
         private const val CATALOG_KEY = "catalog"
         private const val CHANNELS_KEY = "channels:"
         private const val PLAYLISTS_KEY = "playlists:"

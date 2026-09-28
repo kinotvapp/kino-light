@@ -388,7 +388,9 @@ class LiveViewModel(
                         null
                     }
                     if (cats != null && _state.value.activeProvider == providerId && _state.value.categories.isEmpty()) {
-                        _state.update { it.copy(categories = cats) }
+                        _state.update { it.copy(categories = cats, hasGuide = owner.hasGuide()) }
+                        // A plugin knows it has a playlist guide only once it listed: its favourites ask again.
+                        requestEpg(channels.take(40))
                     }
                 }
                 return@launch
@@ -537,7 +539,8 @@ class LiveViewModel(
         missing.groupBy { it.provider }.forEach { (providerId, group) ->
             val codes = group.map { it.liveCode }.toSet()
             val provider = module.provider(providerId)
-            if (provider == null) { epgInFlight.removeAll(codes); return@forEach }
+            // A provider that can have no guide (a plugin without `guide` nor a playlist EPG) is never asked.
+            if (provider == null || !provider.hasGuide()) { epgInFlight.removeAll(codes); return@forEach }
             viewModelScope.launch {
                 var later: List<String> = emptyList()
                 try {
