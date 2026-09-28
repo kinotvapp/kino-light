@@ -9,7 +9,15 @@ import com.arkiv.player.data.plugin.PluginRef
  * A plugin's live channel on its way to the player: [ref] is the wrapped `plg1:` ref its
  * `resolve()` takes, [title] and [logo] what the card showed (the player's header and artwork).
  */
-data class PluginLiveChannel(val episodeId: String, val pluginId: String, val ref: String, val title: String, val logo: String)
+data class PluginLiveChannel(
+    val episodeId: String,
+    val pluginId: String,
+    val ref: String,
+    val title: String,
+    val logo: String,
+    /** A channel whose stream is already known (an inline `stream`, a playlist entry): `loadPlugin` plays it without calling `resolve()`. */
+    val direct: com.arkiv.player.data.gateway.GatewayPlayable? = null,
+)
 
 /**
  * A plugin's live channel on its way to the player (apiVersion 2's item kind `"live"`).

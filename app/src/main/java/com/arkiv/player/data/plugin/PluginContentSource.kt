@@ -142,22 +142,10 @@ class PluginContentSource(
         } catch (e: PluginContractException) {
             throw GatewayException("$name: ${e.message}", e)
         }
-        return GatewayPlayable(
-            kind = "plugin",
-            url = stream.url,
-            headers = stream.headers,
-            mime = stream.mime,
-            subtitles = stream.subtitles.map { GatewaySubtitle(it.lang, it.url, it.format) },
-            // A live channel has no length, whatever the plugin's Stream said: 0 = the player probes nothing.
-            durationMs = if (own.kind == PluginRef.LIVE) 0L else stream.durationMs,
-            // The same two fields Caracol's Widevine travels in: the player negotiates the license
-            // from them, and `PluginDownloadEligibility` refuses to save anything that has one.
-            drmLicenseUrl = stream.drm?.licenseUrl.orEmpty(),
-            drmLicenseHeaders = stream.drm?.licenseHeaders.orEmpty(),
-            expiresInSeconds = stream.expiresInSeconds,
-            // Not for a channel: a side file merged into a moving live window has nothing to stay
-            // aligned with. A channel's alternate audio belongs inside its own manifest.
-            audioTracks = if (own.kind == PluginRef.LIVE) emptyList() else stream.audioTracks.map { GatewayAudioTrack(it.lang, it.url, it.label) },
+        if (own.kind == PluginRef.LIVE) return livePlayable(stream)
+        return playable(stream).copy(
+            durationMs = stream.durationMs,
+            audioTracks = stream.audioTracks.map { GatewayAudioTrack(it.lang, it.url, it.label) },
         )
     }
 
@@ -204,27 +192,8 @@ class PluginContentSource(
         return SeriesListing(episodes, series, seasons)
     }
 
-    private suspend fun callOrThrow(function: String, argJson: String, timeoutMs: Long): String = try {
-        caller.call(id, function, argJson, timeoutMs)
-    } catch (e: CancellationException) {
-        throw e
-    } catch (e: PluginTimeoutException) {
-        throw GatewayException("$name no respondió a tiempo", e)
-    } catch (e: PluginErrorException) {
-        throw typed(e)
-    } catch (e: Exception) {
-        throw GatewayException("$name: ${e.message}", e)
-    }
-
-    /** A typed error as the screens expect it; an unknown code keeps the generic "<name>: <message>". */
-    private fun typed(e: PluginErrorException): RuntimeException {
-        val message = PluginErrors.userMessage(e.code, name) ?: return GatewayException("$name: ${e.message}", e)
-        return when (e.code) {
-            PluginErrors.AUTH_REQUIRED -> PluginSetupRequiredException(id, message)
-            PluginErrors.GEO_BLOCKED -> GatewayBlockedException(message)
-            else -> GatewayException(message, e)
-        }
-    }
+    private suspend fun callOrThrow(function: String, argJson: String, timeoutMs: Long): String =
+        PluginCalls.callOrThrow(caller, id, name, function, argJson, timeoutMs)
 
     private fun decodeOwn(ref: String): PluginRef =
         PluginRef.decode(ref)?.takeIf { it.pluginId == id } ?: throw GatewayException("Ese enlace no es de $name")
@@ -257,6 +226,29 @@ class PluginContentSource(
             .put("altTitles", JSONArray(ctx.altTitles.filter { it.isNotBlank() }.map { it.take(MAX_ALT_TITLE_CHARS) }.distinct().take(MAX_ALT_TITLES)))
             .put("cursor", cursor ?: JSONObject.NULL)
             .toString()
+
+        /**
+         * A live channel's already-checked [stream] as the player takes it: shared by `resolve` of a
+         * live ref and by a channel's inline `stream` (`data/live/PluginLiveProvider`), so both play alike.
+         */
+        internal fun livePlayable(stream: PluginStream): GatewayPlayable =
+            // A live channel has no length, whatever the plugin's Stream said: 0 = the player probes
+            // nothing. No side audio either: a side file merged into a moving live window has nothing
+            // to stay aligned with; a channel's alternate audio belongs inside its own manifest.
+            playable(stream).copy(durationMs = 0L, audioTracks = emptyList())
+
+        private fun playable(stream: PluginStream) = GatewayPlayable(
+            kind = "plugin",
+            url = stream.url,
+            headers = stream.headers,
+            mime = stream.mime,
+            subtitles = stream.subtitles.map { GatewaySubtitle(it.lang, it.url, it.format) },
+            // The same two fields Caracol's Widevine travels in: the player negotiates the license
+            // from them, and `PluginDownloadEligibility` refuses to save anything that has one.
+            drmLicenseUrl = stream.drm?.licenseUrl.orEmpty(),
+            drmLicenseHeaders = stream.drm?.licenseHeaders.orEmpty(),
+            expiresInSeconds = stream.expiresInSeconds,
+        )
 
         /** Shared by search, Home rows and "Ver más", so a title reaches `SearchPlayback` the same way from all. */
         fun resultFrom(plugin: InstalledPlugin, item: PluginItem): GatewayResult {
