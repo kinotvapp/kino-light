@@ -92,12 +92,10 @@ import com.arkiv.player.data.plugin.PluginHomeRow
 import com.arkiv.player.data.gateway.LiveChannel
 import com.arkiv.player.data.gateway.liveCode
 import com.arkiv.player.thumbnails.ThumbnailChoice
-import com.arkiv.player.ui.home.EMPTY_HOME_ACTION
-import com.arkiv.player.ui.home.EMPTY_HOME_LINE
-import com.arkiv.player.ui.home.EMPTY_HOME_TITLE
 import com.arkiv.player.ui.home.HomeViewModel
 import com.arkiv.player.ui.home.TvHomeLanding
 import com.arkiv.player.ui.home.emptyStateNeedsRefocus
+import com.arkiv.player.ui.home.homeEmptyCopy
 import com.arkiv.player.ui.home.homeShowsEmptyState
 import com.arkiv.player.ui.home.pluginHeroPick
 import com.arkiv.player.ui.home.tvHomeDefaultLanding
@@ -439,6 +437,7 @@ fun TvHomeScreen(
     val liveOn by graph.liveModule.available.collectAsStateWithLifecycle()
     val installedPlugins by graph.pluginAdmin.plugins.collectAsStateWithLifecycle()
     val homeEmpty = homeShowsEmptyState(installedPlugins, pluginRows.size, liveOn)
+    val emptyCopy = homeEmptyCopy(installedPlugins)
     val homeEmptyNow by rememberUpdatedState(homeEmpty)
     val emptySourcesFocus = remember { FocusRequester() }
     val liveTabs by graph.liveModule.tabs.collectAsStateWithLifecycle()
@@ -1080,10 +1079,10 @@ fun TvHomeScreen(
                                 Modifier.fillMaxWidth().padding(horizontal = 48.dp, vertical = 12.dp),
                                 verticalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
-                                Text(EMPTY_HOME_TITLE, style = MaterialTheme.typography.titleLarge, color = Color.White)
-                                Text(EMPTY_HOME_LINE, style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary)
+                                Text(emptyCopy.title, style = MaterialTheme.typography.titleLarge, color = Color.White)
+                                Text(emptyCopy.line, style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary)
                                 TvCompactAction(
-                                    label = EMPTY_HOME_ACTION,
+                                    label = emptyCopy.action,
                                     icon = Icons.Default.Add,
                                     modifier = Modifier.focusRequester(emptySourcesFocus),
                                     onClick = onOpenSourcePicker,

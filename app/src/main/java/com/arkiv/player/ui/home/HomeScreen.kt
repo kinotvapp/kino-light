@@ -201,6 +201,7 @@ fun HomeScreen(
     val liveOn by graph.liveModule.available.collectAsStateWithLifecycle()
     val installedPlugins by graph.pluginAdmin.plugins.collectAsStateWithLifecycle()
     val homeEmpty = homeShowsEmptyState(installedPlugins, pluginRows.size, liveOn)
+    val emptyCopy = homeEmptyCopy(installedPlugins)
     val liveTabs by graph.liveModule.tabs.collectAsStateWithLifecycle()
     // null = no row (empty module, or no channel to list yet); never just "Ver más canales".
     val liveRow = remember(recentChannels, countryChannels, liveOn, liveTabs) {
@@ -469,15 +470,15 @@ fun HomeScreen(
                     Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Text(EMPTY_HOME_TITLE, style = MaterialTheme.typography.titleMedium, color = Color.White)
-                    Text(EMPTY_HOME_LINE, style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary)
+                    Text(emptyCopy.title, style = MaterialTheme.typography.titleMedium, color = Color.White)
+                    Text(emptyCopy.line, style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary)
                     Button(
                         onClick = onOpenSourcePicker,
                         colors = ButtonDefaults.buttonColors(containerColor = ArkivRed, contentColor = Color.White),
                     ) {
                         Icon(Icons.Default.Add, contentDescription = null)
                         Spacer(Modifier.width(4.dp))
-                        Text(EMPTY_HOME_ACTION)
+                        Text(emptyCopy.action)
                     }
                 }
             }

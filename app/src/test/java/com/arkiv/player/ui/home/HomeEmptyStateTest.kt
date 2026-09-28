@@ -29,6 +29,14 @@ class HomeEmptyStateTest {
         assertEquals("Agregar plugin", EMPTY_HOME_ACTION)
     }
 
+    @Test fun `with plugins installed but none usable the copy says they are not working`() {
+        assertEquals(HomeEmptyCopy(EMPTY_HOME_TITLE, EMPTY_HOME_LINE, EMPTY_HOME_ACTION), homeEmptyCopy(emptyList()))
+        val broken = homeEmptyCopy(listOf(plugin(enabled = false)))
+        assertEquals("Tus fuentes no están funcionando", broken.title)
+        assertEquals("Revisa tus plugins en Ajustes ▸ Plugins o agrega otro.", broken.line)
+        assertEquals("Agregar plugin", broken.action)
+    }
+
     @Test fun `on the TV the empty state's button is the default landing`() {
         assertEquals(TvHomeLanding.ADD_SOURCES, tvHomeDefaultLanding(homeEmpty = true))
         assertEquals(TvHomeLanding.TOP_BAR, tvHomeDefaultLanding(homeEmpty = false))
