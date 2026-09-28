@@ -1369,15 +1369,16 @@ A media server at home (Jellyfin, Emby, a NAS…): the person types its address,
 The address becomes an allowed host for that install, `http` and a LAN address included; streams,
 posters and stills may point at it. This is the published demo plugin **Tu servidor**
 ([kinotvapp/kino-plugin-own-server](https://github.com/kinotvapp/kino-plugin-own-server), with a
-reference server to run it against), which uses every apiVersion 2 feature a server of your own
-can: seasons, `download`, `audioTracks`, a `live` channel, a `kino.storage` TTL, `kino.rank` and
-`ids.tmdb`.
+reference server to run it against), which uses every apiVersion 3 feature a server of your own
+can: seasons, `download`, `audioTracks`, `live` items, a `kino.storage` TTL, `kino.rank`,
+`ids.tmdb`, and `channels` in all three shapes (channels with a `ref`, channels with an inline
+`stream`, and an M3U playlist with an XMLTV guide).
 
 ```json
 {
-  "id": "own-server", "name": "Tu servidor", "version": "1.1.1", "apiVersion": 2, "entry": "plugin.js",
+  "id": "own-server", "name": "Tu servidor", "version": "1.2.0", "apiVersion": 3, "entry": "plugin.js",
   "hosts": [],
-  "capabilities": ["search", "home", "browse", "episodes", "resolve", "download"],
+  "capabilities": ["search", "home", "browse", "episodes", "resolve", "download", "channels"],
   "settings": [
     { "key": "server", "label": "Servidor", "type": "url", "required": true, "hint": "http://192.168.1.10:8096" },
     { "key": "user", "label": "Usuario", "type": "text", "required": true },
@@ -1387,11 +1388,11 @@ can: seasons, `download`, `audioTracks`, a `live` channel, a `kino.storage` TTL,
 }
 ```
 
-`hosts` is empty: the plugin reaches only the server the person types (apiVersion 2 with a `url`
-setting, see [The person's own servers](#the-persons-own-servers)). Kino builds from before that
-rule refuse an empty list, so the published demo still declares the placeholder
-`"tu-servidor.invalid"` for them: a reserved name that never resolves and that Kino never lists.
-Then:
+`hosts` is empty: the plugin reaches only the server the person types (allowed from apiVersion 2
+with a `url` setting, see [The person's own servers](#the-persons-own-servers)). Up to 1.1.1 the
+demo declared the placeholder `"tu-servidor.invalid"` for Kino builds from before that rule; 1.2.0
+is apiVersion 3, which those builds refuse anyway, so it declares none. Every channel list, guide
+and stream is on that same server, so it needs no `"liveStreamHosts": "any"`. Then:
 
 ```js
 const base = () => String(kino.config.get("server")).replace(/\/+$/, "");
@@ -1528,11 +1529,46 @@ export async function resolve(ref) {
   }
   return stream;
 }
+
+// channels (apiVersion 3), all three shapes in one answer: Noticias with a `ref` (played through
+// resolve() above), Deportes with an inline `stream` (no plugin call on play), and a playlist Kino
+// downloads and parses itself, sent with the token and hiding one group.
+export async function liveCategories() {
+  const categories = await api("/channels/categories");
+  return [
+    ...categories,
+    { playlist: {
+      url: base() + "/lista.m3u", format: "m3u",
+      headers: { "X-Token": await token() },
+      epg: { url: base() + "/guia.xml.gz", format: "xmltv" },
+      refreshHours: 1,
+      hideGroups: ["Compras"],
+    } },
+  ];
+}
+
+export async function liveChannels({ categoryId }) {
+  const page = await api("/channels?category=" + encodeURIComponent(categoryId));
+  return {
+    items: page.items.map((c) => {
+      const channel = { id: c.id, title: c.title, number: c.number, categoryId: c.categoryId, logo: poster(c.id) };
+      if (categoryId === "deportes") channel.stream = { url: base() + "/live/" + c.id + ".m3u8", mime: "application/vnd.apple.mpegurl" };
+      else channel.ref = c.id;
+      return channel;
+    }),
+  };
+}
+
+export async function guide({ channelIds, from, to }) {
+  return api("/channels/guide?ids=" + encodeURIComponent(channelIds.join(",")) + "&from=" + from + "&to=" + to);
+}
 ```
 
 Try it under Node with `--config server=http://192.168.1.10:8096 --config user=ana --config
 password=…` (or `sdk/config.json`, kept out of git), from your computer's LAN address, not
-`127.0.0.1`: a loopback address is refused even as the person's own server.
+`127.0.0.1`: a loopback address is refused even as the person's own server. `node sdk/run.mjs .
+live categories` then shows the two categories and the playlist as Kino reads it ("3 canales en 1
+categorías; 0 entradas descartadas; 2 ocultas (adultos)").
 
 ### A Widevine-protected stream (apiVersion 2)
 
