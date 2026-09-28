@@ -1,5 +1,6 @@
 package com.arkiv.player.ui.tv
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.CubicBezierEasing
@@ -49,6 +50,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -220,6 +222,35 @@ internal fun homeCardsHold(cardKey: String, pluginCards: List<List<String>>): Bo
 private const val EMPTY_SOURCES_KEY = "empty_sources"
 
 internal fun homeRowScrollTarget(rowIndex: Int): Int = (rowIndex - 1).coerceAtLeast(0)
+
+/** What the remote's Back does on the TV Home. */
+internal enum class TvHomeBack {
+    /** Scroll the rows back to the top and put focus on the default landing, staying on Home. */
+    SCROLL_TO_TOP,
+
+    /** Today's behaviour, handled by the nav host: press Back twice to leave the app. */
+    EXIT_FLOW,
+}
+
+/**
+ * Back on the TV Home: someone deep in the rows goes back to the top first, and only from there does
+ * Back start the exit flow. "Deep" is a scrolled rows list, or focus on a row below the first one.
+ * Focus already on the default landing (`tvHomeDefaultLanding`'s target) counts as the top even if
+ * the list is scrolled (the empty state's button can sit below other rows), and the Back right after
+ * a scroll to the top never scrolls again, so a landing that fails can't trap the person on Home.
+ */
+internal fun tvHomeBackAction(
+    listAtTop: Boolean,
+    focusInRows: Boolean,
+    focusedRowIsFirst: Boolean,
+    focusOnLanding: Boolean,
+    justScrolledToTop: Boolean,
+): TvHomeBack = when {
+    justScrolledToTop || focusOnLanding -> TvHomeBack.EXIT_FLOW
+    !listAtTop -> TvHomeBack.SCROLL_TO_TOP
+    focusInRows && !focusedRowIsFirst -> TvHomeBack.SCROLL_TO_TOP
+    else -> TvHomeBack.EXIT_FLOW
+}
 
 /**
  * Scrolls a lazy list until the item with [key] is composed, so a requester inside it exists. Only the
@@ -680,36 +711,14 @@ fun TvHomeScreen(
         }
     }
     val firstFocusKey = continueWatching.firstOrNull()?.episodeId
-    // True once focus is back on the card `cardToRestore` names: from then on the default landing
-    // below must not take it away (a late "Continuar viendo" changes `firstFocusKey`).
-    var cardRestored by remember { mutableStateOf(false) }
-    LaunchedEffect(firstFocusKey) {
-        delay(200)
-        if (cardToRestore != null && !cardRestored) {
-            val pluginCards = {
-                pluginRows.map { r -> r.items.map { pluginCardKey(r.pluginId, r.id, it.extra["pluginItemId"]) } }
-            }
-            // A plugin's rows arrive as each plugin answers (Xuper's from its own cache), so wait
-            // for the card's OWN row, not for any plugin's.
-            withTimeoutOrNull(3_000) {
-                snapshotFlow { homeCardsHold(cardToRestore, pluginCards()) }.first { it }
-            }
-            // A card no row holds (it left the catalog, or its plugin never answered) cannot be
-            // restored: fall through to the default landing instead of searching for it.
-            if (homeCardsHold(cardToRestore, pluginCards())) {
-                repeat(40) {
-                    if (cardRestored) return@repeat
-                    // Aim at the card's row: a card that is not composed cannot take focus, and one whose
-                    // row is only prefetched takes it without being seen. The row's index counts back from
-                    // the end of the list; while the list lags behind the rows it is null or stale, and
-                    // the next try (after the delay) gets it.
-                    homeRowIndexOf(cardToRestore, pluginCards(), rowsListState.layoutInfo.totalItemsCount)
-                        ?.let { runCatching { rowsListState.scrollToItem(homeRowScrollTarget(it)) } }
-                    if (runCatching { returnFocus.requestFocus() }.isSuccess) cardRestored = true else delay(60)
-                }
-            }
-        }
-        if (cardRestored) return@LaunchedEffect
+    // Real focus on the first "Continuar viendo" card (the FIRST_CARD landing), for Back's rule below.
+    var firstCardFocused by remember { mutableStateOf(false) }
+
+    /**
+     * Puts focus on the default landing (`tvHomeDefaultLanding`): the first "Continuar viendo" card, the
+     * empty state's button, or the top bar. Used on opening and by Back's scroll to the top.
+     */
+    suspend fun landOnDefault() {
         var landed = false
         repeat(20) {
             if (landed) return@repeat
@@ -741,6 +750,39 @@ fun TvHomeScreen(
         }
     }
 
+    // True once focus is back on the card `cardToRestore` names: from then on the default landing
+    // below must not take it away (a late "Continuar viendo" changes `firstFocusKey`).
+    var cardRestored by remember { mutableStateOf(false) }
+    LaunchedEffect(firstFocusKey) {
+        delay(200)
+        if (cardToRestore != null && !cardRestored) {
+            val pluginCards = {
+                pluginRows.map { r -> r.items.map { pluginCardKey(r.pluginId, r.id, it.extra["pluginItemId"]) } }
+            }
+            // A plugin's rows arrive as each plugin answers (Xuper's from its own cache), so wait
+            // for the card's OWN row, not for any plugin's.
+            withTimeoutOrNull(3_000) {
+                snapshotFlow { homeCardsHold(cardToRestore, pluginCards()) }.first { it }
+            }
+            // A card no row holds (it left the catalog, or its plugin never answered) cannot be
+            // restored: fall through to the default landing instead of searching for it.
+            if (homeCardsHold(cardToRestore, pluginCards())) {
+                repeat(40) {
+                    if (cardRestored) return@repeat
+                    // Aim at the card's row: a card that is not composed cannot take focus, and one whose
+                    // row is only prefetched takes it without being seen. The row's index counts back from
+                    // the end of the list; while the list lags behind the rows it is null or stale, and
+                    // the next try (after the delay) gets it.
+                    homeRowIndexOf(cardToRestore, pluginCards(), rowsListState.layoutInfo.totalItemsCount)
+                        ?.let { runCatching { rowsListState.scrollToItem(homeRowScrollTarget(it)) } }
+                    if (runCatching { returnFocus.requestFocus() }.isSuccess) cardRestored = true else delay(60)
+                }
+            }
+        }
+        if (cardRestored) return@LaunchedEffect
+        landOnDefault()
+    }
+
     // Fixed-size cards and rows: the rows zone measures EXACTLY 2 rows (label + landscape card),
     // and the hero above —immovable— takes up the rest with weight(1f). The live row's circles (circle +
     // name) are sized to this same cardHeight (see tvChannelCircle), so every row is one rowUnit.
@@ -756,6 +798,54 @@ fun TvHomeScreen(
     // a slow device gets judged, because it's the screen with the most going on.
     val reducedEffects = rememberReducedEffects()
     EffectsAutoTune(reducedEffects)
+
+    // Back deep in the rows goes back to the top first ([tvHomeBackAction]); from the top, the nav
+    // host's double-Back-to-exit runs as before. This handler is registered after the nav host's, so
+    // it wins while enabled; dialogs (the OTA update) have their own window and keep Back first.
+    var rowsHaveFocus by remember { mutableStateOf(false) }
+    // The rows list item (by key) holding focus, null while focus is outside the rows.
+    var focusedRowKey by remember { mutableStateOf<Any?>(null) }
+    var justScrolledToTop by remember { mutableStateOf(false) }
+    fun Modifier.tracksRowFocus(key: Any): Modifier = onFocusChanged {
+        if (it.hasFocus && focusedRowKey != key) {
+            focusedRowKey = key
+            justScrolledToTop = false
+        }
+    }
+    val hasContinueNow by rememberUpdatedState(firstFocusKey != null)
+    val backAction by remember {
+        derivedStateOf {
+            val landingFocused = when (tvHomeDefaultLanding(homeEmptyNow, hasContinueNow)) {
+                TvHomeLanding.FIRST_CARD -> firstCardFocused
+                TvHomeLanding.ADD_SOURCES -> emptySourcesFocused
+                TvHomeLanding.TOP_BAR -> libraryFocused
+            }
+            tvHomeBackAction(
+                listAtTop = rowsListState.firstVisibleItemIndex == 0 && rowsListState.firstVisibleItemScrollOffset == 0,
+                focusInRows = rowsHaveFocus,
+                focusedRowIsFirst = focusedRowKey != null &&
+                    focusedRowKey == rowsListState.layoutInfo.visibleItemsInfo.firstOrNull()?.key,
+                focusOnLanding = landingFocused,
+                justScrolledToTop = justScrolledToTop,
+            )
+        }
+    }
+    BackHandler(enabled = backAction == TvHomeBack.SCROLL_TO_TOP) {
+        justScrolledToTop = true
+        scope.launch {
+            if (reducedEffects) runCatching { rowsListState.scrollToItem(0) }
+            else runCatching { rowsListState.animateScrollToItem(0) }
+            // The hero goes back to what Home opens on; landing on a card updates it again anyway.
+            featured = continueWatching.firstOrNull()?.let { continueFeatured(it) }
+                ?: library.firstOrNull()?.let { libraryFeatured(it) }
+                ?: pluginHeroPick(pluginRows)?.let { pick -> pluginCardFeatured(pick.row, pick.item) }
+                ?: featured
+            landOnDefault()
+            // Landing moves focus between rows, which clears the flag: set it again, so the next Back
+            // (until the person moves to another row) reaches the exit flow even if the landing failed.
+            justScrolledToTop = true
+        }
+    }
 
     // Hero background drift: 0 = all the way to the left of the slack, 1 = all the way to the
     // right. Goes back and forth so there's no jump on restarting, and slow enough that it reads
@@ -925,7 +1015,11 @@ fun TvHomeScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(rowsRegionHeight)
-                        .padding(top = rowsTopPad),
+                        .padding(top = rowsTopPad)
+                        .onFocusChanged {
+                            rowsHaveFocus = it.hasFocus
+                            if (!it.hasFocus) focusedRowKey = null
+                        },
                 ) {
                     if (seedsExhausted) {
                         item(key = "seeds_exhausted") {
@@ -947,6 +1041,7 @@ fun TvHomeScreen(
                             // pivot (see MinimalScrollBringIntoView).
                             CompositionLocalProvider(LocalBringIntoViewSpec provides TvPivot) {
                                 LazyRow(
+                                    modifier = Modifier.tracksRowFocus("continue_watching"),
                                     contentPadding = PaddingValues(horizontal = 48.dp),
                                     horizontalArrangement = Arrangement.spacedBy(16.dp),
                                 ) {
@@ -973,7 +1068,7 @@ fun TvHomeScreen(
                                             imageUrl = ThumbnailChoice.choose(row.framePath, row.stillUrl, cardArt(row.itemId, thumb)),
                                             progress = progress,
                                             cardHeight = cardHeight,
-                                            modifier = if (isFirst) Modifier.focusRequester(firstCardFocus) else Modifier,
+                                            modifier = if (isFirst) Modifier.focusRequester(firstCardFocus).onFocusChanged { firstCardFocused = it.isFocused } else Modifier,
                                             onFocus = { navSound(); featured = continueFeatured(row) },
                                             onClick = { onPlayEpisode(row.episodeId) },
                                         )
@@ -998,6 +1093,7 @@ fun TvHomeScreen(
                             TvRowLabel("Para ti", labelHeight)
                             CompositionLocalProvider(LocalBringIntoViewSpec provides TvPivot) {
                                 LazyRow(
+                                    modifier = Modifier.tracksRowFocus("para_ti"),
                                     contentPadding = PaddingValues(horizontal = 48.dp),
                                     horizontalArrangement = Arrangement.spacedBy(16.dp),
                                 ) {
@@ -1059,7 +1155,7 @@ fun TvHomeScreen(
                             CompositionLocalProvider(LocalBringIntoViewSpec provides TvPivot) {
                                 LazyRow(
                                     state = channelsRowState,
-                                    modifier = Modifier.onFocusChanged { channelsRowFocused = it.hasFocus },
+                                    modifier = Modifier.onFocusChanged { channelsRowFocused = it.hasFocus }.tracksRowFocus("live_recientes"),
                                     // The first CIRCLE, not its wider item, lines up with the label.
                                     contentPadding = PaddingValues(
                                         horizontal = 48.dp - tvChannelCircle(cardHeight).let { (it.itemWidthDp - it.diameterDp) / 2f }.dp,
@@ -1101,7 +1197,7 @@ fun TvHomeScreen(
                     if (homeEmpty) {
                         item(key = EMPTY_SOURCES_KEY) {
                             Column(
-                                Modifier.fillMaxWidth().padding(horizontal = 48.dp, vertical = 12.dp),
+                                Modifier.fillMaxWidth().padding(horizontal = 48.dp, vertical = 12.dp).tracksRowFocus(EMPTY_SOURCES_KEY),
                                 verticalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
                                 Text(emptyCopy.title, style = MaterialTheme.typography.titleLarge, color = Color.White)
@@ -1120,7 +1216,7 @@ fun TvHomeScreen(
 
                     // Plugin rows (Xuper's among them). The plugin's name rides on each card as its badge.
                     items(pluginRows, key = { "plugin-${it.pluginId}-${it.id}" }) { row ->
-                        Column {
+                        Column(Modifier.tracksRowFocus("plugin-${row.pluginId}-${row.id}")) {
                             TvRowLabel(row.title, labelHeight)
                             CompositionLocalProvider(LocalBringIntoViewSpec provides TvPivot) {
                                 LazyRow(
