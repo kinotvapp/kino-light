@@ -29,12 +29,19 @@ internal class AndroidPlayResolver(
                 is LiveSendTarget.Refuse -> return CompanionPlayReceiver.PlayOutcome.Fail(target.reason)
                 is LiveSendTarget.Play -> target.episodeId
             }
-            CompanionPlayItem.KIND_MAGIS -> graph.repository.addMagisSource(
-                ref = item.ref, contentId = item.contentId, title = item.title,
-                episode = item.episode, posterUrl = item.poster, backdropUrl = item.backdrop,
-                episodeTitle = item.episodeTitle, seriesRef = item.seriesRef,
-                season = item.season.takeIf { it > 0 },
-            )
+            CompanionPlayItem.KIND_MAGIS -> {
+                // Only this device's official Xuper plugin can play a Magis ref (see xuperPlayRefusal).
+                val xuper = graph.pluginRegistry.plugins.value
+                    .firstOrNull { com.arkiv.player.data.plugin.XuperPrivilege.grants(it.record) }
+                xuperPlayRefusal(xuperInstalled = xuper != null, xuperUsable = xuper?.isUsable == true)
+                    ?.let { return CompanionPlayReceiver.PlayOutcome.Fail(it) }
+                graph.repository.addMagisSource(
+                    ref = item.ref, contentId = item.contentId, title = item.title,
+                    episode = item.episode, posterUrl = item.poster, backdropUrl = item.backdrop,
+                    episodeTitle = item.episodeTitle, seriesRef = item.seriesRef,
+                    season = item.season.takeIf { it > 0 },
+                )
+            }
             CompanionPlayItem.KIND_DITU -> graph.repository.addDituSource(
                 ref = item.ref, title = item.title, episode = item.episode,
                 posterUrl = item.poster, backdropUrl = item.backdrop,

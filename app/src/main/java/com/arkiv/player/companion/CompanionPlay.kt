@@ -57,6 +57,32 @@ data class CompanionPlayItem(
     }
 }
 
+/** Ack reason: the TV has no official Xuper plugin installed, so a Xuper title can't play there. */
+const val REASON_NO_XUPER = "no_xuper"
+
+/** Ack reason: the TV's official Xuper plugin is installed but disabled, damaged or unresponsive. */
+const val REASON_XUPER_UNUSABLE = "xuper_unusable"
+
+/**
+ * Whether the TV must refuse a [CompanionPlayItem.KIND_MAGIS] play, and with which reason. A Magis
+ * ref plays only through this device's official Xuper plugin (`LegacyXuperRefSource`; the native
+ * Magis source is gone), so without a usable one the title would open the player just to fail
+ * there with a generic message. Refusing in the ack lets the phone say what to fix.
+ */
+internal fun xuperPlayRefusal(xuperInstalled: Boolean, xuperUsable: Boolean): String? = when {
+    !xuperInstalled -> REASON_NO_XUPER
+    !xuperUsable -> REASON_XUPER_UNUSABLE
+    else -> null
+}
+
+/** What the phone tells the person when the TV answered a play with `!ok` and [reason]. */
+internal fun companionPlayFailureText(reason: String): String = when (reason) {
+    "no_link" -> "El TV necesita vincular su cuenta"
+    REASON_NO_XUPER -> "Instala el plugin Xuper en el TV para verlo allí"
+    REASON_XUPER_UNUSABLE -> "Activa el plugin Xuper en el TV para verlo allí"
+    else -> "No se pudo reproducir en el TV"
+}
+
 /** Host -> controller result of a [TYPE_PLAY]. [reason] is a short machine string when `!ok`
  *  (e.g. `"no_link"`, `"resolve_failed"`, `"unknown_kind"`); [title] echoes what started. */
 data class CompanionPlayAck(val ok: Boolean, val reason: String = "", val title: String = "") {

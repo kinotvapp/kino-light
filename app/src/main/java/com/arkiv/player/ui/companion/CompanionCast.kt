@@ -17,6 +17,7 @@ import com.arkiv.player.companion.CompanionPlayAck
 import com.arkiv.player.companion.LinkState
 import com.arkiv.player.companion.TYPE_PLAY
 import com.arkiv.player.companion.TYPE_PLAY_ACK
+import com.arkiv.player.companion.companionPlayFailureText
 import com.arkiv.player.companion.newEnvelope
 import com.arkiv.player.ui.rememberGraph
 import kotlinx.coroutines.Dispatchers
@@ -77,7 +78,7 @@ class CompanionCastState(
         // App scope, not the composition scope: the 8s round-trip must survive an ArkivRoot config
         // change / disposal so a fast play still reaches the TV and the toast still fires.
         graph.applicationScope.launch {
-            val item = graph.repository.companionPlayItem(p.episodeId)
+            val item = graph.repository.companionPlayItem(p.episodeId, graph::isXuperPlugin)
             if (item == null) {
                 // Nothing the TV could re-resolve (unknown/legacy source): fall back to local
                 // playback instead of a dead end. Navigate on Main (app scope is IO).
@@ -95,16 +96,11 @@ class CompanionCastState(
             val msg = when {
                 ack == null -> "El TV no respondió"
                 CompanionPlayAck.fromPayload(ack.payload).ok -> "Reproduciendo en ${p.tvName}"
-                else -> reasonText(CompanionPlayAck.fromPayload(ack.payload).reason)
+                else -> companionPlayFailureText(CompanionPlayAck.fromPayload(ack.payload).reason)
             }
             toasts.emit(msg)
         }
     }
-}
-
-private fun reasonText(reason: String): String = when (reason) {
-    "no_link" -> "El TV necesita vincular su cuenta"
-    else -> "No se pudo reproducir en el TV"
 }
 
 @Composable

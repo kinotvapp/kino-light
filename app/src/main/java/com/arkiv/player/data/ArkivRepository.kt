@@ -1034,9 +1034,14 @@ class ArkivRepository(
      * Rebuild the cross-device play descriptor for an [episodeId] this device can already play, so
      * the phone can hand the title to the TV (companion "play on the TV"). Null for ids with no
      * source the TV could re-resolve. The pure mapping lives in [buildCompanionPlayItem]; this only
-     * fetches the library row (live needs none).
+     * fetches the library row (live needs none). [isXuperPlugin] (`AppGraph.isXuperPlugin`, i.e.
+     * `XuperPrivilege.grants` on the installed record) decides whether a plugin title is the
+     * official Xuper plugin's, the only plugin whose titles the TV can re-resolve.
      */
-    suspend fun companionPlayItem(episodeId: String): com.arkiv.player.companion.CompanionPlayItem? {
+    suspend fun companionPlayItem(
+        episodeId: String,
+        isXuperPlugin: (pluginId: String) -> Boolean = { false },
+    ): com.arkiv.player.companion.CompanionPlayItem? {
         if (episodeId.startsWith(com.arkiv.player.playback.PlayerSource.LIVE_PREFIX)) {
             return buildCompanionPlayItem(episodeId, null, "", "", null, null, "")
         }
@@ -1050,6 +1055,8 @@ class ArkivRepository(
             season = ep.season,
             episode = ep.episode,
             poster = item.thumbnailUrl,
+            officialXuper = com.arkiv.player.data.plugin.PluginIds.pluginIdOfEpisode(episodeId)
+                ?.let(isXuperPlugin) == true,
         )
     }
 
