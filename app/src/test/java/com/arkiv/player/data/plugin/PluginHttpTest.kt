@@ -1,5 +1,7 @@
 package com.arkiv.player.data.plugin
 
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
@@ -421,5 +423,39 @@ class PluginHttpTest {
         val r2 = async { runCatching { h.fetch(PluginHttp.Request(url)) } }
         r1.await(); r2.await()
         assertEquals(1, asks)
+    }
+
+    // Regression test for a reviewer finding: the winner's OWN cancellation must never leak into a
+    // loser waiting on the shared prompt as a bare CancellationException -- `fetch()`'s catch chain has
+    // no mapping from that to any `kino.fetch` error code, so the loser would die with an unclassified
+    // failure instead of a real answer. Same offline-DNS technique as the tests above: once the loser
+    // re-asks (its own, fresh prompt) and gets "yes", the retried request fails deterministically as
+    // "network", proving it got a real answer rather than inheriting the winner's cancellation.
+    @Test fun `a waiting loser gets a real answer, not the winner's cancellation, when the winner is cancelled`() = runTest {
+        var asks = 0
+        val winnerIsAsking = CompletableDeferred<Unit>()
+        val offline = object : Dns { override fun lookup(hostname: String): List<InetAddress> = throw java.net.UnknownHostException(hostname) }
+        val h = PluginHttp(
+            OkHttpClient(), "test", EffectiveHosts(listOf("archive.org")), "1.0", allowInsecureLocalhost = true, delegateDns = offline,
+            reactiveApproval = PluginHttp.ReactiveApproval(
+                "P",
+                HostApprovalRequester { _, _, _ ->
+                    asks++
+                    if (asks == 1) { winnerIsAsking.complete(Unit); kotlinx.coroutines.delay(Long.MAX_VALUE) }
+                    true
+                },
+                {}, {}, emptySet(),
+            ),
+        )
+        val url = "https://new-cdn.example/x"
+        val winner = async { runCatching { h.fetch(PluginHttp.Request(url)) } }
+        winnerIsAsking.await() // the winner has claimed the prompt and is now stuck "asking" forever
+        val loser = async { runCatching { h.fetch(PluginHttp.Request(url)) } }
+        winner.cancel()
+        winner.join() // the winner's cleanup (completing the shared deferred, clearing the map) is done
+        val result = loser.await()
+        assertEquals(2, asks) // the winner's original ask, plus the loser's own retry-as-new-winner ask
+        assertFalse(result.exceptionOrNull() is CancellationException)
+        assertEquals("network", (result.exceptionOrNull() as PluginFetchException).code)
     }
 }

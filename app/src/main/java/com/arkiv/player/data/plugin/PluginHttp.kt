@@ -1,8 +1,11 @@
 package com.arkiv.player.data.plugin
 
 import com.arkiv.player.data.net.DohDns
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.CookieJar
@@ -251,6 +254,9 @@ class PluginHttp(
      * host share a single prompt; see [askOnce].
      */
     private val pendingApprovals = ConcurrentHashMap<String, CompletableDeferred<Boolean?>>()
+    /** Guards [askOnce]'s winner-only mutation of [hosts] and its calls to [ReactiveApproval]'s
+     *  callbacks: a plain JVM monitor, never held across a suspension point. */
+    private val hostsLock = Any()
     private val client: OkHttpClient = base.newBuilder()
         .followRedirects(false)
         .followSslRedirects(false)
@@ -312,7 +318,9 @@ class PluginHttp(
 
     /**
      * [PluginHostGate.check]/[checkRedirect], with one recovery path: a promptable miss the person
-     * approves in the moment is added to [hosts] and persisted, then the same check is retried once.
+     * approves in the moment is retried once, after [askOnce] has added the host to [hosts] and
+     * persisted the decision -- exactly once, even when several concurrent misses on the same host
+     * shared one prompt (see [askOnce]).
      */
     private suspend fun ensureHostAllowed(from: HttpUrl?, url: HttpUrl) {
         try {
@@ -325,16 +333,8 @@ class PluginHttp(
                 throw e
             }
             when (askOnce(ra, url.host)) {
-                true -> {
-                    hosts = hosts.copy(declared = hosts.declared + url.host)
-                    ra.onApproved(url.host)
-                    checkOnce(from, url)
-                }
-                false -> {
-                    ra.rejectedHosts = ra.rejectedHosts + url.host
-                    ra.onRejected(url.host)
-                    throw e
-                }
+                true -> checkOnce(from, url)
+                false -> throw e
                 null -> throw PluginFetchException("timeout", "no hubo respuesta a tiempo para conectarse a ${url.host}")
             }
         }
@@ -345,28 +345,66 @@ class PluginHttp(
     }
 
     /**
-     * One prompt per host per [PluginHttp] instance: a second concurrent miss on the same host awaits
-     * the first's answer instead of asking twice. Deliberately not
-     * `CoroutineScope(currentCoroutineContext()).async { … }`: that would parent the shared deferred to
-     * whichever caller happens to win the race, so an unrelated cancellation further up THAT caller's
-     * own call stack (its own timeout, say) would cancel the answer for every other caller still
-     * waiting on the same host. A bare [CompletableDeferred] has no parent job: exactly one caller
-     * calls [HostApprovalRequester.request], every other caller only awaits a plain value, and no
-     * coroutine is left running once this function returns.
+     * One prompt per host per [PluginHttp] instance, its side effects applied exactly once no matter
+     * how many concurrent misses on that host shared it:
+     * - Exactly one caller -- the one whose [pendingApprovals] entry [ConcurrentHashMap.computeIfAbsent]
+     *   actually creates -- calls [HostApprovalRequester.request] and, under [hostsLock], mutates
+     *   [hosts] / [ReactiveApproval.rejectedHosts] and fires [ReactiveApproval.onApproved]/[onRejected].
+     *   Every other concurrent caller only awaits that winner's [CompletableDeferred]; with N concurrent
+     *   misses on the same host, [EffectiveHosts.declared] gains the host once, not N times, and the
+     *   registry callback fires once, not N times.
+     * - [hostsLock] also makes the 20-host cap check-and-add atomic against a DIFFERENT host being
+     *   approved by another winner at the same moment: two winners racing at 19 declared hosts can no
+     *   longer both add their host and land at 21.
+     * - Deliberately not `CoroutineScope(currentCoroutineContext()).async { … }` (as first sketched):
+     *   that would parent the shared deferred to whichever caller wins the race, so an unrelated
+     *   cancellation further up THAT winner's own call stack (its own timeout, say) would complete the
+     *   deferred exceptionally for every OTHER caller waiting on the same host too -- callers who were
+     *   never themselves cancelled. A bare [CompletableDeferred] avoids the parent-job coupling, but a
+     *   winner's cancellation can still reach a waiting loser through the deferred's own exceptional
+     *   completion: a loser that catches a [CancellationException] out of `shared.await()` first checks
+     *   [kotlinx.coroutines.ensureActive] on ITS OWN context -- if that doesn't throw, the cancellation
+     *   was never really the loser's, so it retries (asking again itself) instead of propagating a
+     *   cancellation that isn't its own. `fetch()`'s catch chain has no mapping from a bare
+     *   `CancellationException` to any `kino.fetch` error code, so letting it through as-is would kill
+     *   the loser's call with an unclassified failure instead of a real answer.
      */
     private suspend fun askOnce(ra: ReactiveApproval, host: String): Boolean? {
-        val mine = CompletableDeferred<Boolean?>()
-        val shared = pendingApprovals.putIfAbsent(host, mine) ?: mine
-        if (shared !== mine) return shared.await()
-        return try {
-            val answer = withTimeoutOrNull(REACTIVE_APPROVAL_TIMEOUT_MS) { ra.requester.request(pluginId, ra.pluginName, host) }
-            mine.complete(answer)
-            answer
-        } catch (e: Throwable) {
-            mine.completeExceptionally(e)
-            throw e
-        } finally {
-            pendingApprovals.remove(host, mine)
+        while (true) {
+            var mine: CompletableDeferred<Boolean?>? = null
+            val shared = pendingApprovals.computeIfAbsent(host) { CompletableDeferred<Boolean?>().also { mine = it } }
+            val winning = mine
+            if (winning == null) {
+                try {
+                    return shared.await()
+                } catch (e: CancellationException) {
+                    currentCoroutineContext().ensureActive() // rethrows only if THIS caller was cancelled
+                    continue // the winner's own cancellation, not ours: the entry is gone, ask afresh
+                }
+            }
+            try {
+                val answer = withTimeoutOrNull(REACTIVE_APPROVAL_TIMEOUT_MS) { ra.requester.request(pluginId, ra.pluginName, host) }
+                synchronized(hostsLock) {
+                    when (answer) {
+                        true -> if (hosts.declared.size < ManifestParser.MAX_HOSTS) {
+                            hosts = hosts.copy(declared = hosts.declared + host)
+                            ra.onApproved(host)
+                        }
+                        false -> {
+                            ra.rejectedHosts = ra.rejectedHosts + host
+                            ra.onRejected(host)
+                        }
+                        null -> Unit
+                    }
+                }
+                winning.complete(answer)
+                return answer
+            } catch (e: Throwable) {
+                winning.completeExceptionally(e)
+                throw e
+            } finally {
+                pendingApprovals.remove(host, winning)
+            }
         }
     }
 
