@@ -38,8 +38,13 @@ class HomeEmptyStateTest {
     }
 
     @Test fun `on the TV the empty state's button is the default landing`() {
-        assertEquals(TvHomeLanding.ADD_SOURCES, tvHomeDefaultLanding(homeEmpty = true))
-        assertEquals(TvHomeLanding.TOP_BAR, tvHomeDefaultLanding(homeEmpty = false))
+        assertEquals(TvHomeLanding.ADD_SOURCES, tvHomeDefaultLanding(homeEmpty = true, hasContinueCard = false))
+        assertEquals(TvHomeLanding.TOP_BAR, tvHomeDefaultLanding(homeEmpty = false, hasContinueCard = false))
+        assertEquals(TvHomeLanding.FIRST_CARD, tvHomeDefaultLanding(homeEmpty = false, hasContinueCard = true))
+    }
+
+    @Test fun `an empty Home lands on its button even with orphan continue-watching cards`() {
+        assertEquals(TvHomeLanding.ADD_SOURCES, tvHomeDefaultLanding(homeEmpty = true, hasContinueCard = true))
     }
 
     @Test fun `focus goes back to the top bar only when the button vanished with it`() {

@@ -27,10 +27,19 @@ fun homeEmptyCopy(plugins: List<InstalledPlugin>): HomeEmptyCopy =
 fun homeShowsEmptyState(plugins: List<InstalledPlugin>, pluginRowCount: Int, liveAvailable: Boolean): Boolean =
     plugins.none { it.isUsable } && pluginRowCount == 0 && !liveAvailable
 
-/** Where the TV Home puts focus when nothing is in progress ("Continuar viendo" empty). */
-enum class TvHomeLanding { ADD_SOURCES, TOP_BAR }
+/** Where the TV Home puts focus when it opens and there is no card to restore. */
+enum class TvHomeLanding { ADD_SOURCES, FIRST_CARD, TOP_BAR }
 
-fun tvHomeDefaultLanding(homeEmpty: Boolean): TvHomeLanding = if (homeEmpty) TvHomeLanding.ADD_SOURCES else TvHomeLanding.TOP_BAR
+/**
+ * An empty Home lands on its "Agregar plugin" button even when "Continuar viendo" still holds cards
+ * (orphans of plugins that are gone or broken): the button is the only way forward. Otherwise the
+ * first continue card, and with none the top bar.
+ */
+fun tvHomeDefaultLanding(homeEmpty: Boolean, hasContinueCard: Boolean): TvHomeLanding = when {
+    homeEmpty -> TvHomeLanding.ADD_SOURCES
+    hasContinueCard -> TvHomeLanding.FIRST_CARD
+    else -> TvHomeLanding.TOP_BAR
+}
 
 /** The empty state's button left (a source became usable) and took focus with it: the top bar takes it. */
 fun emptyStateNeedsRefocus(wasEmpty: Boolean, isEmpty: Boolean, screenHasFocus: Boolean): Boolean =

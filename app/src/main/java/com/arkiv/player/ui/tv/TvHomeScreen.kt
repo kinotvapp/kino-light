@@ -695,29 +695,28 @@ fun TvHomeScreen(
         var landed = false
         repeat(20) {
             if (landed) return@repeat
-            if (firstFocusKey != null) {
-                // Go back to the top BEFORE requesting focus: if the list is shifted, the first
-                // row isn't even composed and the requester doesn't exist, so retrying alone isn't
-                // enough.
-                runCatching { rowsListState.scrollToItem(0) }
-                landed = runCatching { firstCardFocus.requestFocus() }.isSuccess
-            } else {
-                val target = when (tvHomeDefaultLanding(homeEmptyNow)) {
-                    TvHomeLanding.ADD_SOURCES -> {
-                        // Same reason as the first card: "Para ti" or the live recents can sit above the
-                        // empty state and keep it out of the composed window, so bring it in first.
-                        revealListKey(
-                            EMPTY_SOURCES_KEY,
-                            rowsListState.layoutInfo.totalItemsCount,
-                            visibleKeys = { rowsListState.layoutInfo.visibleItemsInfo.map { it.key } },
-                            scrollTo = { runCatching { rowsListState.scrollToItem(it) } },
-                        )
-                        emptySourcesFocus
-                    }
-                    TvHomeLanding.TOP_BAR -> barFocus
+            val target = when (tvHomeDefaultLanding(homeEmptyNow, hasContinueCard = firstFocusKey != null)) {
+                TvHomeLanding.FIRST_CARD -> {
+                    // Go back to the top BEFORE requesting focus: if the list is shifted, the first
+                    // row isn't even composed and the requester doesn't exist, so retrying alone isn't
+                    // enough.
+                    runCatching { rowsListState.scrollToItem(0) }
+                    firstCardFocus
                 }
-                landed = runCatching { target.requestFocus() }.isSuccess
+                TvHomeLanding.ADD_SOURCES -> {
+                    // Same reason as the first card: "Continuar viendo", "Para ti" or the live recents can
+                    // sit above the empty state and keep it out of the composed window, so bring it in first.
+                    revealListKey(
+                        EMPTY_SOURCES_KEY,
+                        rowsListState.layoutInfo.totalItemsCount,
+                        visibleKeys = { rowsListState.layoutInfo.visibleItemsInfo.map { it.key } },
+                        scrollTo = { runCatching { rowsListState.scrollToItem(it) } },
+                    )
+                    emptySourcesFocus
+                }
+                TvHomeLanding.TOP_BAR -> barFocus
             }
+            landed = runCatching { target.requestFocus() }.isSuccess
             if (!landed) delay(50)
         }
     }
