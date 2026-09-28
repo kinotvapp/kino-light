@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tv generator-info-name="kino-test">
+  <channel id="canal1.co"><display-name>Canal Uno</display-name><display-name lang="en">Channel One</display-name></channel>
+  <channel id="dep"><display-name>Deportes 24/7</display-name></channel>
+  <channel id="otro"><display-name>Otro Canal</display-name></channel>
+  <programme start="20260927120000 -0500" stop="20260927130000 -0500" channel="canal1.co"><title lang="es">Noticias del mediodía</title><title lang="en">Noon News</title><desc lang="es">Lo más importante.</desc></programme>
+  <programme start="20260927130000 -0500" stop="20260927140000 -0500" channel="canal1.co"><title>Magazín</title></programme>
+  <programme start="20260927130000 -0500" stop="20260927133000 -0500" channel="canal1.co"><title>Duplicado</title></programme>
+  <programme start="20260927120000 +0000" stop="20260927110000 +0000" channel="canal1.co"><title>Al revés</title></programme>
+  <programme start="20260927140000" stop="20260927150000" channel="dep"><title>Fútbol</title></programme>
+  <programme start="basura" stop="20260927150000" channel="dep"><title>Hora mala</title></programme>
+  <programme start="20260926000000 +0000" stop="20260926010000 +0000" channel="dep"><title>Ayer</title></programme>
+  <programme start="20260927150000 -0500" stop="20260927160000 -0500" channel="otro"><title>No pedido</title></programme>
+</tv>

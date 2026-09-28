@@ -1,0 +1,3 @@
+<?xml version="1.0"?>
+<!DOCTYPE tv [<!ENTITY secret SYSTEM "file:///etc/passwd">]>
+<tv><programme start="20260927120000 +0000" stop="20260927130000 +0000" channel="x"><title>&secret;</title></programme></tv>

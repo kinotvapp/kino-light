@@ -1,0 +1,8 @@
+{"truncated":false,
+ "displayNames":{"canal1.co":["Canal Uno","Channel One"],"dep":["Deportes 24/7"]},
+ "programmes":{
+  "canal1.co":[
+   {"title":"Noticias del mediodía","start":"2026-09-27T17:00:00Z","end":"2026-09-27T18:00:00Z","description":"Lo más importante."},
+   {"title":"Magazín","start":"2026-09-27T18:00:00Z","end":"2026-09-27T19:00:00Z","description":""}],
+  "dep":[
+   {"title":"Fútbol","start":"2026-09-27T14:00:00Z","end":"2026-09-27T15:00:00Z","description":""}]}}
