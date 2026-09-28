@@ -9,6 +9,7 @@ import com.arkiv.player.data.plugin.PluginFetcher
 import com.arkiv.player.data.plugin.PluginFileTooBigException
 import com.arkiv.player.data.plugin.PluginStore
 import com.arkiv.player.data.plugin.ReservedPluginIds
+import com.arkiv.player.data.plugin.XuperPrivilege
 import com.arkiv.player.data.plugin.writeFileAtomically
 import com.arkiv.player.data.plugin.catalog.CatalogEntry
 import kotlinx.coroutines.CancellationException
@@ -65,7 +66,7 @@ fun ownerRepoKey(address: String): String? = PluginAddress.parse(address)?.let {
 
 /**
  * The community list without what the person must not see twice or must not be fooled by (ruling R5):
- * a repo the [catalog] already recommends (case-insensitive); an impostor, meaning a plugin whose
+ * a repo the [catalog] already recommends (case-insensitive; Xuper's new and legacy repo count as one); an impostor, meaning a plugin whose
  * manifest id belongs to a [catalog] entry or to [ReservedPluginIds] but whose repo is not that one
  * (dropped whatever its stars, so it can never hide the real plugin); a plugin whose manifest id is
  * taken by an installed plugin from ANOTHER repo (its install would be refused); and repeats by address
@@ -77,11 +78,16 @@ fun dedupeDiscovered(
     catalog: List<CatalogEntry>,
     installed: List<InstalledPlugin>,
 ): List<DiscoveredPlugin> {
+    // Xuper's new and legacy repos are one plugin: a catalog listing either one covers both.
+    val xuperKeys = XuperPrivilege.OFFICIAL_REPOS.mapNotNull(::ownerRepoKey).toSet()
     val catalogKeys = catalog.mapNotNull { ownerRepoKey(it.repo) }.toSet()
+        .let { keys -> if (keys.any { it in xuperKeys }) keys + xuperKeys else keys }
     // Every repo that may use an id; a catalog entry and a reserved id naming different repos both count.
     val idOwners = HashMap<String, MutableSet<String>>()
     catalog.forEach { e -> ownerRepoKey(e.repo)?.let { idOwners.getOrPut(e.id) { HashSet() }.add(it) } }
-    ReservedPluginIds.OWNERS.forEach { (id, repo) -> ownerRepoKey(repo)?.let { idOwners.getOrPut(id) { HashSet() }.add(it) } }
+    ReservedPluginIds.OWNERS.forEach { (id, repos) ->
+        repos.forEach { repo -> ownerRepoKey(repo)?.let { idOwners.getOrPut(id) { HashSet() }.add(it) } }
+    }
     val seenKeys = HashSet<String>()
     val seenIds = HashSet<String>()
     return discovered.filter { d ->

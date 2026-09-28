@@ -16,6 +16,11 @@ class PluginConfigurarRoutingTest {
         assertFalse(shouldOfferPluginConfigurar(address = XuperPrivilege.SOURCE_REPO))
     }
 
+    @Test fun `Configurar is suppressed for a Xuper installed from its legacy address too`() {
+        assertFalse(shouldOfferPluginConfigurar(address = "kinotvapp/kino-plugin-xuper"))
+        assertTrue(shouldOfferPluginConfigurar(address = "kinotvapp/kino-plugin-xuper@dev"))
+    }
+
     @Test fun `Configurar is offered for any other plugin`() {
         assertTrue(shouldOfferPluginConfigurar(address = "kinotvapp/kino-plugin-archive"))
     }

@@ -303,7 +303,7 @@ internal fun reloadInSoftware(
 
 /**
  * Whether a plugin's "Falta configurar" prompt should offer a "Configurar" button. False only for
- * the recognized Xuper install ([XuperPrivilege.SOURCE_REPO]): there is no Xuper-specific settings
+ * the recognized Xuper install ([XuperPrivilege.isOfficial], new or legacy address): there is no Xuper-specific settings
  * screen, and re-establishing a dead session is something `MagisSession` already retries on its own,
  * not something a person can fix from a settings form. [address] is the installed record's address
  * (e.g. `pluginRegistry.find(id)?.record?.address`), never the manifest's self-declared id -- see
@@ -311,7 +311,7 @@ internal fun reloadInSoftware(
  * the button, same as before this check existed, since only a positively recognized Xuper install
  * should ever lose it.
  */
-internal fun shouldOfferPluginConfigurar(address: String?): Boolean = address != XuperPrivilege.SOURCE_REPO
+internal fun shouldOfferPluginConfigurar(address: String?): Boolean = !XuperPrivilege.isOfficial(address)
 
 @Composable
 private fun rememberMediaController(): MediaController? {

@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.arkiv.player.data.plugin.InstallPreview
 import com.arkiv.player.data.plugin.InstalledPlugin
 import com.arkiv.player.data.plugin.PluginAddress
+import com.arkiv.player.data.plugin.XuperPrivilege
 import com.arkiv.player.data.plugin.PluginAdmin
 import com.arkiv.player.data.plugin.PluginSettingsForm
 import com.arkiv.player.data.plugin.UpdateOutcome
@@ -173,12 +174,16 @@ internal object NoCatalogArt : CatalogArtProvider {
  * Whether two plugin addresses name the same plugin. `installed.json` stores [PluginAddress.canonical], so
  * `a/b.git`, `a/b@HEAD` and `https://github.com/a/b` are all `a/b`; comparing the raw strings would show
  * a plugin installed from one spelling as not installed under another. An address that does not parse has
- * no canonical form, so it only equals the very same string.
+ * no canonical form, so it only equals the very same string. The official Xuper addresses, new and legacy
+ * ([XuperPrivilege.isOfficial]), name the same plugin.
  */
 internal fun sameAddress(a: String, b: String): Boolean {
     val canonicalA = PluginAddress.parse(a)?.canonical
     val canonicalB = PluginAddress.parse(b)?.canonical
-    return if (canonicalA != null && canonicalB != null) canonicalA == canonicalB else a == b
+    if (canonicalA == null || canonicalB == null) return a == b
+    // Xuper's new and legacy repos are one plugin: a Xuper installed from the old one is "Instalado"
+    // on a catalog row that already names the new one (and keeps its art).
+    return canonicalA == canonicalB || (XuperPrivilege.isOfficial(canonicalA) && XuperPrivilege.isOfficial(canonicalB))
 }
 
 /** The rows for one snapshot of the catalog, the query and the installed plugins (each row marked by its address). */

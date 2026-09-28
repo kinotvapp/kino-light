@@ -1540,6 +1540,11 @@ class AppGraph(context: Context) {
  * fetch, so there's no id to look up a tombstone for any earlier. This still costs only the one
  * network call [preview] already made -- [install] is simply skipped when the tombstone is there.
  *
+ * Xuper moved repos on 2026-09-28: a new install uses [XuperPrivilege.SOURCE_REPO]
+ * (`xuper-plugin/kino-plugin-xuper`), while an install from the legacy `kinotvapp` address still counts as
+ * "already there" ([XuperPrivilege.grants] accepts both), so nobody gets a second Xuper. The tombstone
+ * is keyed by manifest id, which both repos share, so an uninstall stands whichever address it came from.
+ *
  * [runsMigration] is `Onboarding.runsXuperMigration(kind)`: only a device that was already activated
  * before this build (an updating one) gets the migration; a new one chooses in "Elige tus fuentes",
  * where Xuper is found through its `kino-plugin` topic.

@@ -2,7 +2,9 @@ package com.arkiv.player.ui.plugin
 
 import com.arkiv.player.data.plugin.catalog.CatalogArt
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -62,6 +64,14 @@ class InstalledPluginArtTest {
         val art = mapOf("lordmacu/kino-plugin-xuper" to xuperArt, "o/other" to otherArt)
         assertEquals(xuperArt, artForInstalled(art, "lordmacu/kino-plugin-xuper"))
         assertEquals(otherArt, artForInstalled(art, "o/other"))
+    }
+
+    @Test fun `a Xuper installed from its legacy address matches the catalog's new Xuper address, and only that`() {
+        assertTrue(sameAddress("kinotvapp/kino-plugin-xuper", "xuper-plugin/kino-plugin-xuper"))
+        assertTrue(sameAddress("https://github.com/xuper-plugin/kino-plugin-xuper", "kinotvapp/kino-plugin-xuper"))
+        assertFalse(sameAddress("kinotvapp/kino-plugin-xuper@dev", "xuper-plugin/kino-plugin-xuper"))
+        assertFalse(sameAddress("someone/kino-plugin-xuper", "xuper-plugin/kino-plugin-xuper"))
+        assertEquals(xuperArt, artForInstalled(mapOf("xuper-plugin/kino-plugin-xuper" to xuperArt), "kinotvapp/kino-plugin-xuper"))
     }
 
     @Test fun `the art is found whatever the spelling of the catalog's repo`() {

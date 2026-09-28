@@ -51,4 +51,13 @@ class PluginConsentTextTest {
             assertNull(typed, pluginConsentProtectedLine(PluginAddress.parse(typed)!!.canonical))
         }
     }
+
+    @Test fun `both the new and the legacy Xuper address get the protected line`() {
+        for (address in listOf("xuper-plugin/kino-plugin-xuper", "kinotvapp/kino-plugin-xuper")) {
+            assertEquals(address, "Este plugin usa la conexión protegida de Xuper dentro de la app; no se conecta a internet por su cuenta.", pluginConsentProtectedLine(address))
+        }
+        for (address in listOf("xuper-plugin/kino-plugin-xuper@dev", "xuper-plugin/kino-plugin-xuper/sub", "xuper-plugin/other")) {
+            assertNull(address, pluginConsentProtectedLine(address))
+        }
+    }
 }

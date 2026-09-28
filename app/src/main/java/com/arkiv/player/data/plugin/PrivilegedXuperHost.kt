@@ -3,8 +3,8 @@ package com.arkiv.player.data.plugin
 /**
  * The 5 native functions the Xuper plugin's `plugin.js` calls instead of `kino.fetch` -- each does
  * the real, protected Magis work and returns an already-resolved, already-error-collapsed JSON
- * envelope. Only ever constructed for the one runtime whose installed source is
- * [XuperPrivilege.SOURCE_REPO] (see `AppGraph.openPluginRuntime`) -- no other plugin can implement or
+ * envelope. Only ever constructed for the one runtime whose installed source is an official Xuper repo
+ * ([XuperPrivilege.grants]; see `AppGraph.openPluginRuntime`) -- no other plugin can implement or
  * reach this interface's methods.
  *
  * Envelope shape, as a string because it crosses the same JNI/QuickJS boundary every other kino.*

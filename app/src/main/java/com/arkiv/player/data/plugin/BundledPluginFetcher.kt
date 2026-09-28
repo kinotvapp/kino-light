@@ -3,10 +3,12 @@ package com.arkiv.player.data.plugin
 
 /**
  * A [PluginFetcher] that answers Xuper's own files from the APK's assets instead of GitHub, so
- * installing it through the normal flow (`preview("kinotvapp/kino-plugin-xuper")`, consent, install)
+ * installing it through the normal flow (`preview(XuperPrivilege.SOURCE_REPO)`, i.e.
+ * `xuper-plugin/kino-plugin-xuper`, consent, install)
  * works offline and through the SAME validation path as any other plugin.
  *
- * Only a URL that is EXACTLY what [PluginAddress.rawUrl] builds for the Xuper repo at `HEAD`, and
+ * Only a URL that is EXACTLY what [PluginAddress.rawUrl] builds for the official Xuper repo
+ * ([XuperPrivilege.SOURCE_REPO], never the legacy one: new installs use the new address) at `HEAD`, and
  * whose remainder is a plain file name (see [bundledFileOf]), is looked up in [assets]. Anything
  * else goes to [delegate] without [assets] ever being asked: another ref, owner or repo, a
  * sub-folder, a query, a fragment, an encoded or backslashed name. Whoever installs from those has
@@ -45,6 +47,6 @@ class BundledPluginFetcher(
     }
 
     private companion object {
-        val XUPER_RAW_PREFIX: String = PluginAddress("kinotvapp", "kino-plugin-xuper").rawUrl("")
+        val XUPER_RAW_PREFIX: String = PluginAddress.parse(XuperPrivilege.SOURCE_REPO)!!.rawUrl("")
     }
 }

@@ -465,7 +465,7 @@
     log: freeze((...a) => log('info', a)),
   };
   // --- kino.xuper: present only for the one installed plugin the native side recognizes as the
-  // real Xuper source (see XuperPrivilege.SOURCE_REPO / AppGraph.openPluginRuntime). n.xuperSearch
+  // real Xuper source (see XuperPrivilege.grants / AppGraph.openPluginRuntime). n.xuperSearch
   // exists on __kinoNative ONLY for that one runtime's bind() call, so this is a true feature
   // detect -- nothing plugin.js can set itself -- not a flag. Same shape as kino.fetch: async,
   // checks (there are none to make here) go after the first await; see the alpha13 note above.

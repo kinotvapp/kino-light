@@ -189,4 +189,34 @@ class AutoInstallXuperPluginTest {
         assertTrue(admin.previewedInputs.isEmpty())
         assertTrue(admin.installedAddresses.isEmpty())
     }
+
+    // 2026-09-28: Xuper moved to xuper-plugin/kino-plugin-xuper; installs from the old kinotvapp repo stay valid.
+
+    @Test fun `a new auto-install uses the new official address`() = runTest {
+        val admin = RecordingPluginAdmin()
+
+        autoInstallXuperPluginIfNeeded(runsMigration = true, FakeRemoteCredentialsStore(sampleCredentials()), registry, admin)
+
+        assertEquals(listOf("xuper-plugin/kino-plugin-xuper"), admin.installedAddresses)
+    }
+
+    @Test fun `someone who already has Xuper from the legacy address never gets a second one`() = runTest {
+        install("xuper", address = "kinotvapp/kino-plugin-xuper")
+        val admin = RecordingPluginAdmin()
+
+        autoInstallXuperPluginIfNeeded(runsMigration = true, FakeRemoteCredentialsStore(sampleCredentials()), registry, admin)
+
+        assertTrue(admin.previewedInputs.isEmpty())
+        assertTrue(admin.installedAddresses.isEmpty())
+    }
+
+    @Test fun `an uninstall of the legacy-address Xuper still stands against the new address`() = runTest {
+        install("xuper", address = "kinotvapp/kino-plugin-xuper")
+        registry.uninstall("xuper")
+        val admin = RecordingPluginAdmin()
+
+        autoInstallXuperPluginIfNeeded(runsMigration = true, FakeRemoteCredentialsStore(sampleCredentials()), registry, admin)
+
+        assertTrue(admin.installedAddresses.isEmpty())
+    }
 }

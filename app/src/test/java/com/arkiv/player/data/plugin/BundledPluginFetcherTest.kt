@@ -21,7 +21,7 @@ class BundledPluginFetcherTest {
     }
     private val fetcher = BundledPluginFetcher({ file -> assets[file] }, delegate)
 
-    private fun xuper(file: String) = PluginAddress("kinotvapp", "kino-plugin-xuper").rawUrl(file)
+    private fun xuper(file: String) = PluginAddress("xuper-plugin", "kino-plugin-xuper").rawUrl(file)
 
     @Test
     fun `the manifest of the Xuper repo is answered from the assets and never reaches the delegate`() = runBlocking {
@@ -40,14 +40,14 @@ class BundledPluginFetcherTest {
     @Test
     fun `the URL served from the assets is the one PluginAddress builds for the Xuper repo`() {
         assertEquals(
-            "https://raw.githubusercontent.com/kinotvapp/kino-plugin-xuper/HEAD/kino-plugin.json",
+            "https://raw.githubusercontent.com/xuper-plugin/kino-plugin-xuper/HEAD/kino-plugin.json",
             xuper("kino-plugin.json"),
         )
     }
 
     @Test
     fun `the same file under another ref is not served from the assets`() = runBlocking {
-        val url = PluginAddress("kinotvapp", "kino-plugin-xuper", ref = "some-branch").rawUrl("kino-plugin.json")
+        val url = PluginAddress("xuper-plugin", "kino-plugin-xuper", ref = "some-branch").rawUrl("kino-plugin.json")
 
         assertArrayEquals(fromDelegate, fetcher.fetch(url, 1_000))
         assertEquals(listOf(url), delegateUrls)
@@ -63,7 +63,7 @@ class BundledPluginFetcherTest {
 
     @Test
     fun `the same file in another repo of the same owner is not served from the assets`() = runBlocking {
-        val url = PluginAddress("kinotvapp", "kino-plugin-archive").rawUrl("kino-plugin.json")
+        val url = PluginAddress("xuper-plugin", "kino-plugin-archive").rawUrl("kino-plugin.json")
 
         assertArrayEquals(fromDelegate, fetcher.fetch(url, 1_000))
         assertEquals(listOf(url), delegateUrls)
@@ -116,24 +116,25 @@ class BundledPluginFetcherTest {
     // with the exact URL, and the assets lambda must not even be asked.
 
     private val lookAlikePrefixes = listOf(
-        "repo with a longer name" to "https://raw.githubusercontent.com/kinotvapp/kino-plugin-xuper-evil/HEAD/kino-plugin.json",
-        "repo with a digit appended" to "https://raw.githubusercontent.com/kinotvapp/kino-plugin-xuper2/HEAD/kino-plugin.json",
-        "ref HEAD2" to "https://raw.githubusercontent.com/kinotvapp/kino-plugin-xuper/HEAD2/kino-plugin.json",
-        "ref HEADER" to "https://raw.githubusercontent.com/kinotvapp/kino-plugin-xuper/HEADER/kino-plugin.json",
-        "ref in lower case" to "https://raw.githubusercontent.com/kinotvapp/kino-plugin-xuper/head/kino-plugin.json",
-        "no ref at all" to "https://raw.githubusercontent.com/kinotvapp/kino-plugin-xuper/kino-plugin.json",
+        "repo with a longer name" to "https://raw.githubusercontent.com/xuper-plugin/kino-plugin-xuper-evil/HEAD/kino-plugin.json",
+        "repo with a digit appended" to "https://raw.githubusercontent.com/xuper-plugin/kino-plugin-xuper2/HEAD/kino-plugin.json",
+        "ref HEAD2" to "https://raw.githubusercontent.com/xuper-plugin/kino-plugin-xuper/HEAD2/kino-plugin.json",
+        "ref HEADER" to "https://raw.githubusercontent.com/xuper-plugin/kino-plugin-xuper/HEADER/kino-plugin.json",
+        "ref in lower case" to "https://raw.githubusercontent.com/xuper-plugin/kino-plugin-xuper/head/kino-plugin.json",
+        "no ref at all" to "https://raw.githubusercontent.com/xuper-plugin/kino-plugin-xuper/kino-plugin.json",
         "another owner" to "https://raw.githubusercontent.com/someone-else/kino-plugin-xuper/HEAD/kino-plugin.json",
-        "owner in another case" to "https://raw.githubusercontent.com/KinoTVApp/kino-plugin-xuper/HEAD/kino-plugin.json",
-        "repo in another case" to "https://raw.githubusercontent.com/kinotvapp/Kino-Plugin-Xuper/HEAD/kino-plugin.json",
-        "plain http" to "http://raw.githubusercontent.com/kinotvapp/kino-plugin-xuper/HEAD/kino-plugin.json",
-        "scheme in upper case" to "HTTPS://raw.githubusercontent.com/kinotvapp/kino-plugin-xuper/HEAD/kino-plugin.json",
-        "host in upper case" to "https://RAW.githubusercontent.com/kinotvapp/kino-plugin-xuper/HEAD/kino-plugin.json",
-        "another host" to "https://example.com/kinotvapp/kino-plugin-xuper/HEAD/kino-plugin.json",
-        "host with a suffix" to "https://raw.githubusercontent.com.evil.example/kinotvapp/kino-plugin-xuper/HEAD/kino-plugin.json",
-        "no slash after HEAD" to "https://raw.githubusercontent.com/kinotvapp/kino-plugin-xuper/HEADkino-plugin.json",
-        "no slash after HEAD, nothing else" to "https://raw.githubusercontent.com/kinotvapp/kino-plugin-xuper/HEAD",
-        "an extra slash before HEAD" to "https://raw.githubusercontent.com/kinotvapp/kino-plugin-xuper//HEAD/kino-plugin.json",
-        "an extra slash after the repo root" to "https://raw.githubusercontent.com/kinotvapp/kino-plugin-xuper/HEAD//kino-plugin.json",
+        "the legacy owner" to "https://raw.githubusercontent.com/kinotvapp/kino-plugin-xuper/HEAD/kino-plugin.json",
+        "owner in another case" to "https://raw.githubusercontent.com/Xuper-Plugin/kino-plugin-xuper/HEAD/kino-plugin.json",
+        "repo in another case" to "https://raw.githubusercontent.com/xuper-plugin/Kino-Plugin-Xuper/HEAD/kino-plugin.json",
+        "plain http" to "http://raw.githubusercontent.com/xuper-plugin/kino-plugin-xuper/HEAD/kino-plugin.json",
+        "scheme in upper case" to "HTTPS://raw.githubusercontent.com/xuper-plugin/kino-plugin-xuper/HEAD/kino-plugin.json",
+        "host in upper case" to "https://RAW.githubusercontent.com/xuper-plugin/kino-plugin-xuper/HEAD/kino-plugin.json",
+        "another host" to "https://example.com/xuper-plugin/kino-plugin-xuper/HEAD/kino-plugin.json",
+        "host with a suffix" to "https://raw.githubusercontent.com.evil.example/xuper-plugin/kino-plugin-xuper/HEAD/kino-plugin.json",
+        "no slash after HEAD" to "https://raw.githubusercontent.com/xuper-plugin/kino-plugin-xuper/HEADkino-plugin.json",
+        "no slash after HEAD, nothing else" to "https://raw.githubusercontent.com/xuper-plugin/kino-plugin-xuper/HEAD",
+        "an extra slash before HEAD" to "https://raw.githubusercontent.com/xuper-plugin/kino-plugin-xuper//HEAD/kino-plugin.json",
+        "an extra slash after the repo root" to "https://raw.githubusercontent.com/xuper-plugin/kino-plugin-xuper/HEAD//kino-plugin.json",
         "a leading space" to " " + xuper("kino-plugin.json"),
     )
 

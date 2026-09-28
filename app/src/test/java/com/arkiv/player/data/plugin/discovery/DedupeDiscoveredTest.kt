@@ -74,4 +74,22 @@ class DedupeDiscoveredTest {
         )
         assertEquals(found, dedupeDiscovered(found, catalog, emptyList()))
     }
+
+    @Test fun `the Xuper repo from its legacy owner is not an impostor of the reserved id`() {
+        val legacy = DiscoveredPlugin("kinotvapp", "kino-plugin-xuper", XuperPrivilege.MANIFEST_ID, "Xuper", "", 3)
+        assertEquals(listOf(legacy), dedupeDiscovered(listOf(legacy), emptyList(), emptyList()))
+    }
+
+    @Test fun `a catalog listing either Xuper address hides both from the community list`() {
+        val legacy = DiscoveredPlugin("kinotvapp", "kino-plugin-xuper", XuperPrivilege.MANIFEST_ID, "Xuper", "", 3)
+        val oldCatalog = listOf(entry(XuperPrivilege.MANIFEST_ID, "kinotvapp/kino-plugin-xuper"))
+        assertEquals(emptyList<DiscoveredPlugin>(), dedupeDiscovered(listOf(realXuper), oldCatalog, emptyList()))
+        val newCatalog = listOf(entry(XuperPrivilege.MANIFEST_ID, XuperPrivilege.SOURCE_REPO))
+        assertEquals(emptyList<DiscoveredPlugin>(), dedupeDiscovered(listOf(legacy), newCatalog, emptyList()))
+    }
+
+    @Test fun `someone with Xuper from the legacy address is not offered the new one as a second Xuper`() {
+        val kept = dedupeDiscovered(listOf(realXuper), emptyList(), listOf(installed(XuperPrivilege.MANIFEST_ID, "kinotvapp/kino-plugin-xuper")))
+        assertEquals(emptyList<DiscoveredPlugin>(), kept)
+    }
 }
