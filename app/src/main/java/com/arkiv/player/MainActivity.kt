@@ -135,9 +135,12 @@ class MainActivity : AppCompatActivity() {
                     // TV: a Compose Dialog here doesn't reliably pick up initial D-pad focus on its
                     // own (same reason PluginConsentDialog/PluginUninstallDialog/UpdateDialog all do
                     // this) -- without it, the remote could only reach "back" (a reject), leaving
-                    // "Permitir" practically unreachable.
-                    val approveFocus = remember { FocusRequester() }
-                    FocusWhenReady(approveFocus)
+                    // neither button reachable. Focus starts on "Rechazar" (the safe option), same as
+                    // PluginConsentDialog/PluginUninstallDialog: granting a plugin network access to a
+                    // new host is the same category of consent decision, so a reflexive D-pad
+                    // "select" should not accidentally approve it.
+                    val rejectFocus = remember { FocusRequester() }
+                    FocusWhenReady(rejectFocus)
                     Dialog(onDismissRequest = { req.respond(false) }) {
                         Surface(
                             shape = RoundedCornerShape(16.dp),
@@ -155,11 +158,11 @@ class MainActivity : AppCompatActivity() {
                                     Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),
                                 ) {
-                                    TextButton(onClick = { req.respond(false) }, modifier = Modifier.focusRing()) { Text("Rechazar") }
-                                    Button(
-                                        onClick = { req.respond(true) },
-                                        modifier = Modifier.focusRequester(approveFocus).focusRing(),
-                                    ) { Text("Permitir") }
+                                    TextButton(
+                                        onClick = { req.respond(false) },
+                                        modifier = Modifier.focusRequester(rejectFocus).focusRing(),
+                                    ) { Text("Rechazar") }
+                                    Button(onClick = { req.respond(true) }, modifier = Modifier.focusRing()) { Text("Permitir") }
                                 }
                             }
                         }
