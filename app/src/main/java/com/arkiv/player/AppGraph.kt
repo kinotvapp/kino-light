@@ -627,6 +627,11 @@ class AppGraph(context: Context) {
             forgetHomeCache = ::forgetPluginHomeCache,
             forgetSession = ::forgetPluginSession,
             afterSessionClosed = ::bumpPluginSessionRevision,
+            forgetLiveChannels = { id ->
+                applicationScope.launch {
+                    runCatching { database.liveChannelCacheDao().clearProvider(com.arkiv.player.data.gateway.LiveChannelKeys.pluginProvider(id)) }
+                }
+            },
         )
     }
 
@@ -858,6 +863,7 @@ class AppGraph(context: Context) {
                     ),
                     // Its live/ dir: uninstalling deletes it with the rest of the plugin's data (PluginStore.remove).
                     cacheDir = pluginStore.dataDir(p.id),
+                    syncCache = { rows -> database.liveChannelCacheDao().replacePlaylistRows(provider, rows) },
                 )
             },
         )

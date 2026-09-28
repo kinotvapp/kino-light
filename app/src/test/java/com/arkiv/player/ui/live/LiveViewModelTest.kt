@@ -170,6 +170,8 @@ private class FakeCacheDao : LiveChannelCacheDao {
     override suspend fun byCodes(provider: String, codes: List<String>): List<LiveChannelCacheEntity> =
         store.filterKeys { it.first == provider }.values.flatten().filter { it.code in codes }
     override suspend fun clear(provider: String, category: String) { store.remove(provider to category) }
+    override suspend fun clearProvider(provider: String) { store.keys.removeAll { it.first == provider } }
+    override suspend fun clearPlaylistRows(provider: String) { store.keys.removeAll { it.first == provider && it.second.startsWith("pl:") } }
     override suspend fun save(rows: List<LiveChannelCacheEntity>) {
         rows.groupBy { it.provider to it.categoria }.forEach { (key, rows) -> store[key] = rows }
     }

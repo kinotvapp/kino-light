@@ -38,6 +38,7 @@ class PluginAdminTest {
     private lateinit var admin: DefaultPluginAdmin
     private val secrets = mutableMapOf<String, String>()
     private val forgotten = mutableListOf<String>()
+    private val liveForgotten = mutableListOf<String>()
     private lateinit var config: PluginConfigStore
     private lateinit var installer: PluginInstaller
 
@@ -61,7 +62,10 @@ class PluginAdminTest {
         registry = PluginRegistry(store) { p -> config.setupState(p.manifest.id, p.manifest.settings) }
         pool = PluginRuntimePool(open = { FakeRuntime() }, onUnresponsive = {}, scope = CoroutineScope(Dispatchers.Unconfined))
         installer = PluginInstaller(store, fetcher, probe = { setOf("search", "resolve") }, clock = { 1_000L })
-        admin = DefaultPluginAdmin(registry, installer, pool, config, forgetSession = { forgotten += it }, io = Dispatchers.Unconfined)
+        admin = DefaultPluginAdmin(
+            registry, installer, pool, config, forgetSession = { forgotten += it },
+            forgetLiveChannels = { liveForgotten += it }, io = Dispatchers.Unconfined,
+        )
     }
 
     private val passwordSetting = JSONArray("""[{"key":"password","label":"Contraseña","type":"password","required":true}]""")
@@ -101,6 +105,14 @@ class PluginAdminTest {
         installAndOpen("1.0.0")
         admin.uninstall("demo")
         assertEquals(listOf("gone"), registryAtClose)
+    }
+
+    @Test fun `uninstall forgets the plugin's cached live channels, a settings save does not`() = runBlocking {
+        installAndOpen("1.0.0")
+        admin.saveSettings("demo", emptyMap())
+        assertEquals(emptyList<String>(), liveForgotten)
+        admin.uninstall("demo")
+        assertEquals(listOf("demo"), liveForgotten)
     }
 
     /**

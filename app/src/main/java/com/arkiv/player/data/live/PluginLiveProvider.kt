@@ -87,6 +87,12 @@ class PluginLiveProvider(
     private val cacheDir: java.io.File? = null,
     private val clock: () -> Long = System::currentTimeMillis,
     private val log: (String) -> Unit = { android.util.Log.w("KinoPlugin", it) },
+    /**
+     * After the playlists were regrouped: every playlist channel now kept, as channel cache rows
+     * (`LiveChannelCacheDao.replacePlaylistRows`), so the cross-provider search never finds one
+     * that is gone. A failure here is logged, never a failed listing.
+     */
+    private val syncCache: suspend (rows: List<LiveChannelCacheEntity>) -> Unit = {},
 ) : LiveChannelProvider {
     private val pluginId = plugin.id
     private val liveHosts = plugin.liveHosts
@@ -238,7 +244,24 @@ class PluginLiveProvider(
                     groupedPlaylists = declared
                     groupedResults = byKey
                 }
+                syncPlaylistRows(built.values)
             }
+        }
+    }
+
+    private suspend fun syncPlaylistRows(built: Collection<PlaylistGroups>) {
+        val now = clock()
+        val rows = built.flatMap { g ->
+            g.byCategory.flatMap { (category, channels) ->
+                channels.map { LiveChannelCacheEntity(it.code, category, it.name, it.number, it.logo, now, provider = id, ref = it.ref) }
+            }
+        }
+        try {
+            syncCache(rows)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log("[$pluginId] channel cache not updated: ${e.message}")
         }
     }
 

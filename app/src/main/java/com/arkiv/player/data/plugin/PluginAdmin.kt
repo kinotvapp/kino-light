@@ -41,6 +41,8 @@ class DefaultPluginAdmin(
     private val forgetHomeCache: (pluginId: String) -> Unit = {},
     private val forgetSession: (pluginId: String) -> Unit = {},
     private val afterSessionClosed: (pluginId: String) -> Unit = {},
+    /** Uninstall only: the plugin's rows in the En vivo channel cache go, so search never lists them. */
+    private val forgetLiveChannels: (pluginId: String) -> Unit = {},
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : PluginAdmin {
     override val plugins: StateFlow<List<InstalledPlugin>> get() = registry.plugins
@@ -87,6 +89,7 @@ class DefaultPluginAdmin(
         config.clear(id, settings)
         runtimes.close(id)
         afterSessionClosed(id)
+        forgetLiveChannels(id)
     }
 
     override suspend fun settingsOf(id: String): PluginSettingsForm? = withContext(io) {

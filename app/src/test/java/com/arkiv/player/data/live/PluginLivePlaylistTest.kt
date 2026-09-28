@@ -216,6 +216,27 @@ class PluginLivePlaylistTest {
         assertEquals(0, File(cache, "live").list()!!.size)
     }
 
+    @Test fun `the channel cache follows the playlist grouping, so search never finds a channel that is gone`() = runBlocking {
+        var answer = """[{"id":"news","title":"Noticias propias"},{"playlist":{"url":"https://lists.example.com/basic.m3u","format":"m3u"}}]"""
+        val synced = mutableListOf<List<com.arkiv.player.data.db.LiveChannelCacheEntity>>()
+        val p = PluginLiveProvider(plugin, PluginCaller { _, _, _, _ -> answer }, fetcher = fetcher, cacheDir = tmp.newFolder(),
+            clock = { now }, log = {}, syncCache = { synced += it })
+        val cats = p.categories(false)
+        val listed = cats.drop(1).flatMap { c -> p.channels(c.id).map { it.code to c.id } }
+        assertEquals(1, synced.size)
+        assertEquals(listed.toSet(), synced.single().map { it.code to it.categoria }.toSet())
+        assertTrue(synced.single().all { it.provider == "plugin:demo" })
+        // The same grouping again writes nothing.
+        p.categories(false)
+        assertEquals(1, synced.size)
+        // The list is no longer declared: its rows go.
+        answer = """[{"id":"news","title":"Noticias propias"}]"""
+        now += PluginLiveProvider.LIST_TTL_MS + 1
+        p.categories(false)
+        assertEquals(2, synced.size)
+        assertEquals(emptyList<Any>(), synced.last())
+    }
+
     @Test fun `a saved list vanishing mid-parse leaves the categories as they were`() = runBlocking {
         val p = provider()
         assertEquals(3, p.categories(false).size)

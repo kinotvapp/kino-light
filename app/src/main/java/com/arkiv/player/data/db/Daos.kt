@@ -583,6 +583,15 @@ interface LiveRecentDao {
     suspend fun deleteAll()
 }
 
+/** See [LiveChannelCacheDao.clearProvider]; a constant so [LiveChannelCacheQueryTest] runs the same SQL. */
+internal const val QUERY_CLEAR_LIVE_PROVIDER = "DELETE FROM live_channels_cache WHERE provider = :provider"
+
+/**
+ * See [LiveChannelCacheDao.clearPlaylistRows]. `pl:` is `PluginLiveProvider`'s playlist category
+ * prefix: a plugin's own category ids can't hold `:`, so nothing else starts with it.
+ */
+internal const val QUERY_CLEAR_LIVE_PLAYLIST_ROWS = "DELETE FROM live_channels_cache WHERE provider = :provider AND categoria LIKE 'pl:%'"
+
 @Dao
 interface LiveChannelCacheDao {
     @Query("SELECT * FROM live_channels_cache WHERE provider = :provider AND categoria = :category ORDER BY numero")
@@ -607,12 +616,27 @@ interface LiveChannelCacheDao {
     @Query("DELETE FROM live_channels_cache WHERE provider = :provider AND categoria = :category")
     suspend fun clear(provider: String, category: String)
 
+    /** Every row of ONE provider: a plugin uninstalled leaves nothing for the search to find. */
+    @Query(QUERY_CLEAR_LIVE_PROVIDER)
+    suspend fun clearProvider(provider: String)
+
+    /** ONE provider's playlist rows (categories `pl:…`), its own categories' rows untouched. */
+    @Query(QUERY_CLEAR_LIVE_PLAYLIST_ROWS)
+    suspend fun clearPlaylistRows(provider: String)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun save(rows: List<LiveChannelCacheEntity>)
 
     @Transaction
     suspend fun replace(provider: String, category: String, rows: List<LiveChannelCacheEntity>) {
         clear(provider, category)
+        save(rows)
+    }
+
+    /** A plugin's playlists were regrouped: its playlist rows become exactly [rows]. */
+    @Transaction
+    suspend fun replacePlaylistRows(provider: String, rows: List<LiveChannelCacheEntity>) {
+        clearPlaylistRows(provider)
         save(rows)
     }
 }
