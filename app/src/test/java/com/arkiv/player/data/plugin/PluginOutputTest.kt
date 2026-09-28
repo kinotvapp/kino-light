@@ -499,4 +499,119 @@ class PluginOutputTest {
         assertEquals("http://192.168.1.10:8096/Items/1/Images/Primary", page.items.single().poster)
         assertEquals("", page.items.single().backdrop)
     }
+
+    @Test fun `live categories keep valid, unique, non-adult entries up to the cap`() {
+        val json = """[
+            {"id":"news","title":"Noticias","country":"co"},
+            {"id":"news","title":"Otra vez"},
+            {"id":"bad id","title":"X"},
+            {"id":"x18","title":"Adultos","adult":true},
+            {"id":"sports","title":"  "},
+            {"id":"kids","title":"Infantil","country":"Colombia"}
+        ]"""
+        assertEquals(
+            listOf(PluginLiveCategory("news", "Noticias", "CO"), PluginLiveCategory("kids", "Infantil", "")),
+            PluginOutput.liveCategories(json).categories,
+        )
+        val many = (1..250).joinToString(",", "[", "]") { """{"id":"c$it","title":"C$it"}""" }
+        assertEquals(PluginLiveContract.MAX_CATEGORIES, PluginOutput.liveCategories(many).categories.size)
+        assertEquals(PluginLiveCatalog(emptyList(), emptyList()), PluginOutput.liveCategories("""{"items":[]}"""))
+    }
+
+    @Test fun `playlists are declared next to categories, strictly host-gated`() {
+        val hosts = EffectiveHosts(listOf("lists.example.com"))
+        val json = """[
+            {"id":"news","title":"Noticias"},
+            {"playlist":{"url":"https://lists.example.com/a.m3u","format":"m3u","headers":{"X-Token":"t"},
+              "epg":{"url":"https://lists.example.com/g.xml.gz","format":"xmltv"},"refreshHours":6,"hideGroups":["XXX"],"resolve":true}},
+            {"playlist":{"url":"https://elsewhere.example.org/b.m3u","format":"m3u"}},
+            {"playlist":{"url":"https://lists.example.com/c.pls","format":"pls"}},
+            {"playlist":{"url":"https://lists.example.com/d.m3u","format":"m3u","refreshHours":0,"epg":{"url":"https://elsewhere.example.org/g.xml","format":"xmltv"}}}
+        ]"""
+        val catalog = PluginOutput.liveCategories(json, hosts)
+        assertEquals(listOf("news"), catalog.categories.map { it.id })
+        assertEquals(
+            listOf(
+                PluginPlaylist("https://lists.example.com/a.m3u", mapOf("X-Token" to "t"), "https://lists.example.com/g.xml.gz", 6, setOf("xxx"), resolve = true),
+                PluginPlaylist("https://lists.example.com/d.m3u", emptyMap(), "", PluginLiveContract.DEFAULT_REFRESH_HOURS, emptySet(), resolve = false),
+            ),
+            catalog.playlists,
+        )
+        val single = PluginOutput.liveCategories("""{"playlist":{"url":"https://lists.example.com/a.m3u","format":"m3u"}}""", hosts)
+        assertEquals(listOf("https://lists.example.com/a.m3u"), single.playlists.map { it.url })
+        val tooMany = (1..15).joinToString(",", "[", "]") { """{"playlist":{"url":"https://lists.example.com/$it.m3u","format":"m3u"}}""" }
+        assertEquals(PluginLiveContract.MAX_PLAYLISTS, PluginOutput.liveCategories(tooMany, hosts).playlists.size)
+    }
+
+    @Test fun `a live channels page keeps valid channels, gates the logo and keeps the cursor`() {
+        val hosts = EffectiveHosts(listOf("cdn.example.com"))
+        val page = PluginOutput.liveChannels(
+            """{"items":[
+                {"id":"c1","title":"Canal Uno","ref":"r1","categoryId":"news","number":7,"logo":"https://cdn.example.com/1.png"},
+                {"id":"c1","title":"Repetido","ref":"r1b"},
+                {"id":"c2","title":"Canal Dos","ref":"","number":3},
+                {"id":"c3","title":"Canal Tres","ref":"r3","number":10000,"logo":"http://192.168.1.2/3.png","categoryId":"no good"},
+                {"id":"c4","title":"Adultos","ref":"r4","adult":true}
+            ],"next":"p2"}""",
+            hosts,
+        )
+        assertEquals(
+            listOf(
+                PluginLiveChannelItem("c1", "Canal Uno", "r1", "https://cdn.example.com/1.png", 7, "news"),
+                PluginLiveChannelItem("c3", "Canal Tres", "r3", "", 0, ""),
+            ),
+            page.items,
+        )
+        assertEquals("p2", page.next)
+        val plain = PluginOutput.liveChannels("""[{"id":"a","title":"A","ref":"ra"}]""")
+        assertEquals(listOf("a"), plain.items.map { it.id })
+        assertNull(plain.next)
+        val big = (1..600).joinToString(",", "{\"items\":[", "]}") { """{"id":"c$it","title":"C$it","ref":"r$it"}""" }
+        assertEquals(PluginLiveContract.MAX_CHANNELS_PER_PAGE, PluginOutput.liveChannels(big).items.size)
+    }
+
+    @Test fun `a channel may carry an inline stream instead of a ref, checked like resolve's`() {
+        val hosts = EffectiveHosts(listOf("cdn.example.com"))
+        val page = PluginOutput.liveChannels(
+            """{"items":[
+                {"id":"a","title":"Directo","stream":{"url":"https://cdn.example.com/a.m3u8","mime":"application/vnd.apple.mpegurl","headers":{"Referer":"https://cdn.example.com/"}}},
+                {"id":"b","title":"Ajeno","stream":{"url":"https://evil.example.org/b.m3u8"}},
+                {"id":"c","title":"Nada"},
+                {"id":"~d","title":"Reservado","ref":"r"},
+                {"id":"e","title":"Ambos","ref":"re","stream":{"url":"https://cdn.example.com/e.m3u8"}}
+            ]}""",
+            hosts,
+        )
+        assertEquals(listOf("a", "e"), page.items.map { it.id })
+        assertEquals("https://cdn.example.com/a.m3u8", page.items[0].stream!!.url)
+        assertEquals("", page.items[0].ref)
+        assertEquals(mapOf("Referer" to "https://cdn.example.com/"), page.items[0].stream!!.headers)
+        // Both given: the inline stream plays, the ref is kept only as the fallback resolve() target.
+        assertEquals("re", page.items[1].ref)
+        assertEquals("https://cdn.example.com/e.m3u8", page.items[1].stream!!.url)
+    }
+
+    @Test fun `the guide keeps asked-for channels inside the window, sorted and capped`() {
+        val from = 1_000_000L
+        val to = from + 3_600_000L
+        val json = """[
+            {"channelId":"c1","title":"Tarde","start":${from + 1_800_000},"end":${from + 3_600_000}},
+            {"channelId":"c1","title":"Mañana","start":$from,"end":${from + 1_800_000},"description":"Noticias"},
+            {"channelId":"c1","title":"Duplicado","start":$from,"end":${from + 60_000}},
+            {"channelId":"zz","title":"No pedido","start":$from,"end":${from + 60_000}},
+            {"channelId":"c1","title":"Antes","start":${from - 7_200_000},"end":${from - 3_600_000}},
+            {"channelId":"c1","title":"Al revés","start":${from + 10},"end":${from + 5}},
+            {"channelId":"c1","title":" ","start":$from,"end":${from + 60_000}}
+        ]"""
+        assertEquals(
+            listOf(
+                PluginGuideEntry("c1", "Mañana", from, from + 1_800_000, "Noticias"),
+                PluginGuideEntry("c1", "Tarde", from + 1_800_000, from + 3_600_000),
+            ),
+            PluginOutput.guide(json, setOf("c1"), from, to),
+        )
+        val many = (0 until 150).joinToString(",", "[", "]") { """{"channelId":"c1","title":"P$it","start":${from + it},"end":${from + it + 1}}""" }
+        assertEquals(PluginLiveContract.MAX_GUIDE_ENTRIES_PER_CHANNEL, PluginOutput.guide(many, setOf("c1"), from, to).size)
+        assertEquals(emptyList<PluginGuideEntry>(), PluginOutput.guide("{}", setOf("c1"), from, to))
+    }
 }

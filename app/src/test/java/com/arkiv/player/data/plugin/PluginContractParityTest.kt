@@ -185,13 +185,43 @@ class PluginContractParityTest {
         assertEquals(PluginContentSource.BROWSE_TIMEOUT_MS, t.getLong("browse"))
         assertEquals(PluginContentSource.EPISODES_TIMEOUT_MS, t.getLong("episodes"))
         assertEquals(PluginContentSource.RESOLVE_TIMEOUT_MS, t.getLong("resolve"))
+        assertEquals(PluginLiveContract.CATEGORIES_TIMEOUT_MS, t.getLong("liveCategories"))
+        assertEquals(PluginLiveContract.CHANNELS_TIMEOUT_MS, t.getLong("liveChannels"))
+        assertEquals(PluginLiveContract.GUIDE_TIMEOUT_MS, t.getLong("guide"))
     }
 
     @Test fun `every section of the contract is checked here`() {
         assertEquals(
-            setOf("\$comment", "apiVersion", "maxApiVersion", "capabilities", "manifest", "hostRules", "permissions", "settings", "output", "search", "timeoutsMs", "runtime", "fetch", "cookies", "storage", "crypto", "sleep", "errors"),
+            setOf("\$comment", "apiVersion", "maxApiVersion", "capabilities", "manifest", "hostRules", "permissions", "settings", "output", "live", "search", "timeoutsMs", "runtime", "fetch", "cookies", "storage", "crypto", "sleep", "errors"),
             c.keys().asSequence().toSet(),
         )
+    }
+
+    @Test fun `live channels`() {
+        val l = obj("live")
+        assertEquals(PluginLiveContract.API_VERSION, l.getInt("apiVersion"))
+        assertEquals(PluginLiveContract.MAX_CATEGORIES, l.getInt("maxCategories"))
+        assertEquals(PluginLiveContract.MAX_CHANNELS_PER_PAGE, l.getInt("maxChannelsPerPage"))
+        assertEquals(PluginLiveContract.MAX_PAGES_PER_CATEGORY, l.getInt("maxPagesPerCategory"))
+        assertEquals(PluginLiveContract.MAX_GUIDE_CHANNELS, l.getInt("maxGuideChannels"))
+        assertEquals(PluginLiveContract.MAX_GUIDE_WINDOW_MS, l.getLong("maxGuideWindowMs"))
+        assertEquals(PluginLiveContract.MAX_GUIDE_ENTRIES_PER_CHANNEL, l.getInt("maxGuideEntriesPerChannel"))
+        assertEquals(PluginLiveContract.MAX_CHANNEL_NUMBER, l.getInt("maxChannelNumber"))
+        assertEquals(PluginLiveContract.MAX_PLAYLISTS, l.getInt("maxPlaylists"))
+        assertEquals(PluginLiveContract.DEFAULT_REFRESH_HOURS, l.getInt("defaultRefreshHours"))
+        assertEquals(PluginLiveContract.MIN_REFRESH_HOURS, l.getInt("minRefreshHours"))
+        assertEquals(PluginLiveContract.MAX_REFRESH_HOURS, l.getInt("maxRefreshHours"))
+        assertEquals(PluginLiveContract.MAX_HIDE_GROUPS, l.getInt("maxHideGroups"))
+        assertEquals(PluginLiveContract.MAX_PLAYLIST_BYTES, l.getLong("maxPlaylistBytes"))
+        assertEquals(PluginLiveContract.MAX_EPG_BYTES, l.getLong("maxEpgBytes"))
+        assertEquals(PluginLiveContract.MAX_CHANNELS_PER_PROVIDER, l.getInt("maxChannelsPerProvider"))
+        assertEquals(PluginLiveContract.MAX_CATEGORIES_PER_PROVIDER, l.getInt("maxCategoriesPerProvider"))
+        assertEquals(PluginLiveContract.PLAYLIST_PARSE_BUDGET_MS, l.getLong("playlistParseBudgetMs"))
+        assertEquals(PluginLiveContract.EPG_PARSE_BUDGET_MS, l.getLong("epgParseBudgetMs"))
+        assertEquals(PluginLiveContract.RESERVED_ID_PREFIX, l.getString("reservedIdPrefix"))
+        assertEquals(PluginLiveContract.PLAYLIST_FORMATS, l.strings("playlistFormats"))
+        assertEquals(PluginLiveContract.EPG_FORMATS, l.strings("epgFormats"))
+        assertEquals(ManifestParser.CAPABILITY_API_VERSIONS.getValue(ManifestParser.CHANNELS), PluginLiveContract.API_VERSION)
     }
 
     // Each later task adds the contract section it enforces above this line.

@@ -84,6 +84,46 @@ data class PluginStream(
     val drm: PluginDrm? = null,
 )
 
+/** A section of the En vivo tab (apiVersion 3, `channels`). [country] is ISO 3166 alpha-2 uppercase, or "". */
+data class PluginLiveCategory(val id: String, val title: String, val country: String = "")
+
+/**
+ * One channel of a `liveChannels` page (apiVersion 3). It plays either through `resolve([ref])`
+ * or, when [stream] is non-null, straight from that inline stream (checked like `resolve()`'s);
+ * with both, the stream plays and [ref] is only the fallback. [ref] is "" when the plugin gave
+ * none. [logo] follows the poster rules; [number] is 1..[PluginLiveContract.MAX_CHANNEL_NUMBER],
+ * or 0 when unknown; [categoryId] is "" when missing or invalid.
+ */
+data class PluginLiveChannelItem(
+    val id: String, val title: String, val ref: String,
+    val logo: String = "", val number: Int = 0, val categoryId: String = "",
+    val stream: PluginStream? = null,
+)
+
+/** A page of channels; [next] is the opaque cursor the app passes back, or null at the end. */
+data class PluginLiveChannelPage(val items: List<PluginLiveChannelItem>, val next: String?)
+
+/** One programme of a plugin's `guide` (apiVersion 3), times in epoch milliseconds, `end > start`. */
+data class PluginGuideEntry(val channelId: String, val title: String, val startMs: Long, val endMs: Long, val description: String = "")
+
+/**
+ * An M3U playlist a plugin declares in its `liveCategories()` answer (apiVersion 3): the APP
+ * downloads it (and its XMLTV guide at [epgUrl], "" for none) from a declared host only, every
+ * [refreshHours]. [hideGroups] is lowercased and trimmed. With [resolve], an entry plays through the
+ * plugin's `resolve(<entry url>)` (tokens) instead of directly.
+ */
+data class PluginPlaylist(
+    val url: String,
+    val headers: Map<String, String> = emptyMap(),
+    val epgUrl: String = "",
+    val refreshHours: Int = PluginLiveContract.DEFAULT_REFRESH_HOURS,
+    val hideGroups: Set<String> = emptySet(),
+    val resolve: Boolean = false,
+)
+
+/** What a `liveCategories()` answer holds: the plugin's own sections and the playlists it declares. */
+data class PluginLiveCatalog(val categories: List<PluginLiveCategory>, val playlists: List<PluginPlaylist>)
+
 /** A plugin answered something the contract doesn't allow; [message] is Spanish, shown to the person. */
 class PluginContractException(message: String) : Exception(message)
 
@@ -299,6 +339,148 @@ object PluginOutput {
         return out
     }
 
+    private val COUNTRY = Regex("^[A-Z]{2}$")
+
+    /**
+     * `liveCategories()` (apiVersion 3): `[{ id, title, country? }]`, ≤ [PluginLiveContract.MAX_CATEGORIES],
+     * mixed with `{ playlist: {...} }` declarations (≤ [PluginLiveContract.MAX_PLAYLISTS], not counted
+     * as categories; see [playlistOf]), or a single `{ playlist: {...} }` object. Forgiving like every
+     * list: a bad entry is dropped with a [log] line.
+     */
+    fun liveCategories(json: String, hosts: EffectiveHosts = EffectiveHosts(emptyList()), log: (String) -> Unit = {}): PluginLiveCatalog {
+        val value = runCatching { org.json.JSONTokener(json).nextValue() }.getOrNull()
+        val array = when {
+            value is JSONArray -> value
+            value is JSONObject && value.has("playlist") -> JSONArray().put(value)
+            else -> return PluginLiveCatalog(emptyList(), emptyList()).also { log("liveCategories: the answer is not a JSON array") }
+        }
+        val seen = HashSet<String>()
+        val categories = ArrayList<PluginLiveCategory>()
+        val playlists = ArrayList<PluginPlaylist>()
+        for (i in 0 until array.length()) {
+            val o = array.optJSONObject(i) ?: continue
+            if (o.has("playlist")) {
+                val p = o.optJSONObject("playlist") ?: run { log("liveCategories: #$i playlist is not an object"); null } ?: continue
+                if (playlists.size >= PluginLiveContract.MAX_PLAYLISTS) { log("liveCategories: playlists beyond ${PluginLiveContract.MAX_PLAYLISTS} dropped"); continue }
+                playlistOf(p, hosts, log)?.let { playlists += it }
+                continue
+            }
+            if (categories.size >= PluginLiveContract.MAX_CATEGORIES) { log("liveCategories: beyond ${PluginLiveContract.MAX_CATEGORIES} dropped"); continue }
+            val id = o.optString("id")
+            if (!ID.matches(id)) { log("liveCategories: #$i has an invalid id"); continue }
+            val title = text(o, "title", MAX_TITLE_CHARS)
+            if (title.isBlank()) { log("liveCategories: $id has no title"); continue }
+            // No plugin section exists behind the 18+ lock, same as items.
+            if (o.opt("adult") == true) { log("liveCategories: $id adult, dropped"); continue }
+            if (!seen.add(id)) { log("liveCategories: duplicate $id dropped"); continue }
+            val country = (o.opt("country") as? String)?.trim()?.uppercase()?.takeIf { COUNTRY.matches(it) }.orEmpty()
+            categories += PluginLiveCategory(id, title, country)
+        }
+        return PluginLiveCatalog(categories, playlists)
+    }
+
+    /** A `{ playlist: {...} }` declaration (see [PluginPlaylist]), or null (logged) when it can't be used. */
+    private fun playlistOf(p: JSONObject, hosts: EffectiveHosts, log: (String) -> Unit): PluginPlaylist? {
+        val url = p.optString("url")
+        if (p.optString("format") !in PluginLiveContract.PLAYLIST_FORMATS) { log("playlist: unknown format"); return null }
+        // Strict on purpose: the list and its guide are downloaded by the app, never under liveStreamHosts "any".
+        if (!allowsUrl(url, hosts)) { log("playlist: ${url.take(100)} is not a declared host"); return null }
+        val epg = p.optJSONObject("epg")?.takeIf { it.optString("format") in PluginLiveContract.EPG_FORMATS }?.optString("url")
+            ?.takeIf { allowsUrl(it, hosts).also { ok -> if (!ok) log("playlist: epg host not declared, guide dropped") } }.orEmpty()
+        val hours = (p.opt("refreshHours") as? Number)?.toInt()
+            ?.takeIf { it in PluginLiveContract.MIN_REFRESH_HOURS..PluginLiveContract.MAX_REFRESH_HOURS } ?: PluginLiveContract.DEFAULT_REFRESH_HOURS
+        val hide = p.optJSONArray("hideGroups")?.let { a ->
+            (0 until minOf(a.length(), PluginLiveContract.MAX_HIDE_GROUPS))
+                .mapNotNull { (a.opt(it) as? String)?.trim()?.lowercase()?.take(100)?.takeIf(String::isNotEmpty) }.toSet()
+        } ?: emptySet()
+        return PluginPlaylist(url, headersOf(p.optJSONObject("headers")), epg, hours, hide, p.optBoolean("resolve"))
+    }
+
+    /** Whether [url] passes the stream URL check ([checkUrl]): a declared host or a typed server, with the scheme rule. */
+    internal fun allowsUrl(url: String, hosts: EffectiveHosts): Boolean = runCatching { checkUrl(url, hosts, "") }.isSuccess
+
+    /**
+     * `liveChannels({ categoryId, cursor })` (apiVersion 3): a `{ items, next? }` page or a plain
+     * list, ≤ [PluginLiveContract.MAX_CHANNELS_PER_PAGE] channels. Each needs a valid `ref` or an
+     * inline `stream` (read by [streamOf], [allowDrm] as for `resolve`); a refused stream drops the
+     * channel. Ids starting with [PluginLiveContract.RESERVED_ID_PREFIX] are the app's own and are
+     * dropped. `logo` follows the poster rules ([image]); `number` outside
+     * 1..[PluginLiveContract.MAX_CHANNEL_NUMBER] becomes 0 (unknown).
+     */
+    fun liveChannels(
+        json: String,
+        hosts: EffectiveHosts = EffectiveHosts(emptyList()),
+        allowDrm: Boolean = false,
+        log: (String) -> Unit = {},
+    ): PluginLiveChannelPage {
+        val value = runCatching { org.json.JSONTokener(json).nextValue() }.getOrNull()
+        val array: JSONArray
+        var next: String? = null
+        when (value) {
+            is JSONArray -> array = value
+            is JSONObject -> {
+                array = value.optJSONArray("items") ?: return PluginLiveChannelPage(emptyList(), null).also { log("liveChannels: no items") }
+                next = cursor(value.opt("next"), allowNext = true, log)
+            }
+            else -> return PluginLiveChannelPage(emptyList(), null).also { log("liveChannels: the answer is not a list or a page") }
+        }
+        val seen = HashSet<String>()
+        val out = ArrayList<PluginLiveChannelItem>()
+        for (i in 0 until array.length()) {
+            if (out.size >= PluginLiveContract.MAX_CHANNELS_PER_PAGE) { log("liveChannels: beyond ${PluginLiveContract.MAX_CHANNELS_PER_PAGE} dropped"); break }
+            val o = array.optJSONObject(i) ?: continue
+            val id = o.optString("id")
+            if (!ID.matches(id)) { log("liveChannels: #$i has an invalid id"); continue }
+            if (id.startsWith(PluginLiveContract.RESERVED_ID_PREFIX)) { log("liveChannels: $id uses a reserved id"); continue }
+            val title = text(o, "title", MAX_TITLE_CHARS)
+            if (title.isBlank()) { log("liveChannels: $id has no title"); continue }
+            if (o.opt("adult") == true) { log("liveChannels: $id adult, dropped"); continue }
+            val ref = o.optString("ref")
+            if (ref.length > MAX_REF_CHARS) { log("liveChannels: $id has an invalid ref"); continue }
+            val streamJson = o.optJSONObject("stream")
+            val stream = streamJson?.let {
+                runCatching { streamOf(it, hosts, null, allowDrm) }
+                    .onFailure { e -> log("liveChannels: $id stream refused: ${e.message}") }.getOrNull()
+            }
+            if (streamJson != null && stream == null) continue
+            if (ref.isEmpty() && stream == null) { log("liveChannels: $id has neither a ref nor a stream"); continue }
+            if (!seen.add(id)) { log("liveChannels: duplicate $id dropped"); continue }
+            val number = (o.opt("number") as? Number)?.toDouble()
+                ?.takeIf { it.isFinite() && it % 1.0 == 0.0 && it >= 1.0 && it <= PluginLiveContract.MAX_CHANNEL_NUMBER }?.toInt() ?: 0
+            val categoryId = o.optString("categoryId").takeIf { ID.matches(it) }.orEmpty()
+            out += PluginLiveChannelItem(id, title, ref, image(o, "logo", hosts), number, categoryId, stream)
+        }
+        return PluginLiveChannelPage(out, next)
+    }
+
+    /**
+     * `guide({ channelIds, from, to })` (apiVersion 3, optional): `[{ channelId, title, start, end,
+     * description? }]` with times in epoch MILLISECONDS. Only entries for [channelIds], with
+     * `end > start`, that overlap [fromMs]..[toMs]; ≤ [PluginLiveContract.MAX_GUIDE_ENTRIES_PER_CHANNEL]
+     * per channel, one per start time, each channel's sorted by start.
+     */
+    fun guide(json: String, channelIds: Set<String>, fromMs: Long, toMs: Long, log: (String) -> Unit = {}): List<PluginGuideEntry> {
+        val array = runCatching { JSONArray(json) }.getOrNull()
+            ?: return emptyList<PluginGuideEntry>().also { log("guide: the answer is not a JSON array") }
+        val perChannel = LinkedHashMap<String, MutableList<PluginGuideEntry>>()
+        for (i in 0 until array.length()) {
+            val o = array.optJSONObject(i) ?: continue
+            val channelId = o.optString("channelId")
+            if (channelId !in channelIds) { log("guide: #$i is for a channel that was not asked for"); continue }
+            val title = text(o, "title", MAX_TITLE_CHARS)
+            if (title.isBlank()) { log("guide: #$i has no title"); continue }
+            val start = (o.opt("start") as? Number)?.toDouble()?.takeIf { it.isFinite() }?.toLong()
+            val end = (o.opt("end") as? Number)?.toDouble()?.takeIf { it.isFinite() }?.toLong()
+            if (start == null || end == null || end <= start) { log("guide: #$i has an invalid start/end"); continue }
+            if (end <= fromMs || start >= toMs) continue
+            val list = perChannel.getOrPut(channelId) { ArrayList() }
+            if (list.size >= PluginLiveContract.MAX_GUIDE_ENTRIES_PER_CHANNEL) { log("guide: $channelId beyond ${PluginLiveContract.MAX_GUIDE_ENTRIES_PER_CHANNEL} dropped"); continue }
+            if (list.any { it.startMs == start }) continue
+            list += PluginGuideEntry(channelId, title, start, end, text(o, "description", MAX_TEXT_CHARS))
+        }
+        return perChannel.values.flatMap { l -> l.sortedBy { it.startMs } }
+    }
+
     /**
      * [xuper] is non-null ONLY for the one plugin [XuperPrivilege.grants] (`PluginContentSource`
      * enforces it). For that plugin, a URL the native bridge itself resolved, byte for byte, skips
@@ -313,6 +495,11 @@ object PluginOutput {
     fun stream(json: String, hosts: EffectiveHosts, xuper: XuperStreams? = null, allowDrm: Boolean = false): PluginStream {
         val o = runCatching { JSONObject(json) }.getOrNull()
             ?: throw PluginContractException("El plugin no devolvió un video")
+        return streamOf(o, hosts, xuper, allowDrm)
+    }
+
+    /** [stream]'s rules on an already-parsed object: also a `liveChannels` item's inline `stream`. */
+    internal fun streamOf(o: JSONObject, hosts: EffectiveHosts, xuper: XuperStreams? = null, allowDrm: Boolean = false): PluginStream {
         val drm = drmOf(o, hosts, allowDrm)
         val url = o.optString("url")
         val native = xuper?.headersFor(url)
@@ -373,7 +560,7 @@ object PluginOutput {
      * [FORBIDDEN_HEADERS], a non-string value, or one over [MAX_HEADER_VALUE_CHARS] or with a line
      * break is skipped, never fatal. Shared by a Stream's `headers` and a DRM block's `licenseHeaders`.
      */
-    private fun headersOf(h: JSONObject?): LinkedHashMap<String, String> {
+    internal fun headersOf(h: JSONObject?): LinkedHashMap<String, String> {
         val out = LinkedHashMap<String, String>()
         if (h == null) return out
         for (k in h.keys()) {
@@ -476,8 +663,11 @@ object PluginOutput {
      * not be a LAN probe. The exception is a URL on a server the person typed (scheme, host and
      * port exactly): their own Jellyfin's posters are that server's.
      */
-    private fun image(o: JSONObject, key: String, hosts: EffectiveHosts): String {
-        val v = (o.opt(key) as? String).orEmpty().trim()
+    private fun image(o: JSONObject, key: String, hosts: EffectiveHosts): String = imageUrl((o.opt(key) as? String).orEmpty(), hosts)
+
+    /** [image]'s rule for a bare string: the URL, trimmed, or "" when it may not be shown. */
+    internal fun imageUrl(raw: String, hosts: EffectiveHosts): String {
+        val v = raw.trim()
         if (v.length > MAX_IMAGE_URL_CHARS) return ""
         val url = v.toHttpUrlOrNull() ?: return ""
         if (hosts.userHostFor(url) != null) return v

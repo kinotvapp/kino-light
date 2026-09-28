@@ -334,8 +334,9 @@ What Kino does with a `live` item:
 
 Limits: a `live` item from a plugin on `"apiVersion": 1` is dropped silently, like any invalid
 item (and a row left with no items disappears), so declare `2` before you return one. A channel
-still counts against the same row and page sizes as any item. Kino's own "Canales en vivo" row is
-native and separate: your channels appear in your rows, with your plugin's name.
+still counts against the same row and page sizes as any item. These channels appear in your rows,
+with your plugin's name; to put channels in Kino's En vivo tab and its "Canales en vivo" row, use
+the apiVersion 3 `channels` capability ([below](#channels-in-the-en-vivo-tab-apiversion-3)).
 
 ### Channels in the En vivo tab (apiVersion 3)
 
@@ -358,6 +359,9 @@ export async function home() { /* -> Row[] */ }
 export async function browse(ref, cursor) { /* -> Page */ }
 export async function episodes(ref) { /* -> { series?: SeriesInfo, episodes: Episode[], seasons?: Season[] } */ }
 export async function resolve(ref) { /* -> Stream */ }
+export async function liveCategories() { /* -> Array<LiveCategory | Playlist> or Playlist */ }
+export async function liveChannels({ categoryId, cursor }) { /* -> { items: LiveChannel[], next? } */ }
+export async function guide({ channelIds, from, to }) { /* -> GuideEntry[] */ }
 ```
 
 (`kino.d.ts` has the same shapes as TypeScript declarations.)
@@ -529,6 +533,64 @@ It does **not** add a poster, a backdrop or seasons from TMDB -- those stay exac
   `licenseHeaders` are filtered like `headers` (at most 20) and sent with the license request only.
   The other five keys are refused even next to a valid `drm` block. See
   [A Widevine-protected stream](#a-widevine-protected-stream-apiversion-2).
+
+#### Live channels (apiVersion 3)
+
+With the `channels` capability ([§3](#channels-in-the-en-vivo-tab-apiversion-3)) Kino calls three
+more functions. Their arguments:
+
+- `liveCategories()` gets `null`.
+- `liveChannels({ categoryId, cursor })` gets the `id` of one of your categories, and `cursor` `null`
+  for the first page or the `next` of the page before.
+- `guide({ channelIds, from, to })` gets at most 50 of your channel ids and a window of at most
+  24 hours: `from` and `to` are epoch milliseconds.
+
+They return:
+
+```ts
+LiveCategory = { id: string, title: string, country?: string, adult?: boolean }
+Playlist     = { playlist: { url: string, format: "m3u", headers?: Record<string, string>,
+                             epg?: { url: string, format: "xmltv" }, refreshHours?: number,
+                             hideGroups?: string[], resolve?: boolean } }
+LiveChannel  = { id: string, title: string, categoryId: string, ref?: string, stream?: Stream,
+                 logo?: string, number?: number, adult?: boolean }
+GuideEntry   = { channelId: string, title: string, start: number, end: number, description?: string }
+```
+
+A plugin can give its channels in three ways, and mix them:
+
+1. **A channel with a `ref`.** The `ref` goes to `resolve(ref)` when the person plays it, exactly
+   like a `live` item's, and its Stream plays as live.
+2. **A channel with an inline `stream`.** A `Stream` checked by the same rules as `resolve()`'s
+   answer; it plays with no call to your plugin. A channel whose `stream` is refused is dropped. With
+   both `ref` and `stream`, the stream plays and the `ref` is only the fallback. A channel with
+   neither is dropped.
+3. **A playlist.** Put `{ playlist: { ... } }` entries next to your categories in the
+   `liveCategories()` answer (or return one alone). Kino downloads the M3U list itself, and its XMLTV
+   guide from `epg.url`, and groups the entries into categories. Both URLs must be `https` on one of
+   your `hosts` (or `http` on one declared `insecureHttp`, or a server the person typed), always:
+   a playlist on another host is dropped, and an `epg` on another host only loses the guide.
+   `headers` go with those downloads. `refreshHours` is 1 to 168 (default 12); `hideGroups` lists
+   group titles not to show (case doesn't matter, at most 50). With `resolve: true`, each entry plays
+   through your `resolve(<entry url>)`, for lists whose links need a fresh token. At most 10 per
+   answer.
+
+The rules:
+
+- Times are epoch milliseconds.
+- At most 200 categories (playlists don't count), and at most 500 channels per `liveChannels` page.
+  `id` follows the item `id` pattern; an `id` starting with `~` is reserved for Kino's own playlist
+  entries and dropped. A repeated `id` in one answer is dropped. `title` is required.
+- `country` is an ISO 3166 two-letter code (`"CO"`), informational; anything else is ignored.
+  `number` is 1 to 9999 (anything else counts as no number); `logo` follows the poster rules;
+  a `categoryId` that is not a valid id becomes empty.
+- Kino pages `liveChannels` until `next` is missing, repeats, or brings nothing new, at most 10
+  pages per category.
+- Kino caches your categories and channels for 1 hour and your guide for 30 minutes.
+- `guide` is optional. Kino keeps entries for the channels it asked for, with `end` after `start`,
+  inside the window, at most 100 per channel and one per start time. A `guide` that fails or is not
+  exported is simply not asked again for 30 minutes: your channels still list.
+- An `adult: true` category or channel is dropped.
 
 ### Errors people understand
 
@@ -802,7 +864,7 @@ does anything with season numbers or ordering: how a backend spells "season 2" i
 | --- | --- |
 | Manifest / entry file / icon | 16 KB / 1 MB / 128 KB |
 | Memory / stack, per plugin | 64 MB / 1 MB |
-| Time per call | `search` 15 s; `home`, `browse`, `episodes`, `resolve` 20 s each, counting all your fetches and sleeps together |
+| Time per call | `search` 15 s; `home`, `browse`, `episodes`, `resolve` 20 s each; `liveCategories`, `liveChannels`, `guide` 20 s each; counting all your fetches and sleeps together |
 | Loading the module (its top level) | 10 s |
 | Idle sandbox | closed after 5 minutes without calls |
 | Consecutive timeouts | 3 in a row and Kino disables the plugin ("No responde") |
@@ -814,6 +876,7 @@ does anything with season numbers or ordering: how a backend spells "season 2" i
 | `kino.log` / `console.*` | 2,000 characters per message |
 | What a function returns | at most 2,000,000 characters once turned into JSON |
 | Results | `search` 100 items; `home` 20 rows of 60; `browse` 100 per page; `episodes` 5,000 (and 50 `seasons`); `ref` 4,096 characters; `next` 2,048 characters; `id` matches `^[A-Za-z0-9._~-]{1,128}$` |
+| Live channels (apiVersion 3) | `liveCategories` 200; `liveChannels` 500 per page and 10 pages per category; `guide` 50 channels and 24 h per call, 100 entries per channel; `number` 1..9999 |
 | Settings | at most 12; `text` 500, `url` 2,048, `password` 500 characters |
 | Error messages | your `kino.error` message is shown as a detail, cut at 200 characters |
 | `hosts` | 1 to 20 entries; from apiVersion 2, none (`[]`) when a `url` setting exists |

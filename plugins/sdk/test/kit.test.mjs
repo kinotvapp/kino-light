@@ -760,3 +760,59 @@ test("apiVersion 3: channels validates only on v3, and needs liveCategories + li
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("checkOutput reads liveCategories, liveChannels and guide as the app does", () => {
+  const m = { ...JSON.parse(manifest({ apiVersion: 3 })), capabilities: ["home", "resolve", "channels"] };
+  const cats = checkOutput("liveCategories", [{ id: "news", title: "Noticias", country: "co" }, { id: "news", title: "x" }, { id: "a", title: "A", adult: true }], m);
+  assert.deepEqual(cats.value.categories, [{ id: "news", title: "Noticias", country: "CO" }]);
+  const page = checkOutput("liveChannels", { items: [
+    { id: "c1", title: "Uno", ref: "r1", number: 7, categoryId: "news" },
+    { id: "c2", title: "Dos", ref: "" },
+    { id: "c3", title: "Tres", ref: "r3", number: 10000 },
+  ], next: "p2" }, m);
+  assert.deepEqual(page.value.items.map((c) => [c.id, c.number]), [["c1", 7], ["c3", 0]]);
+  assert.equal(page.value.next, "p2");
+  const g = checkOutput("guide", [
+    { channelId: "c1", title: "B", start: 2000, end: 3000 },
+    { channelId: "c1", title: "A", start: 1000, end: 2000, description: "d" },
+    { channelId: "c1", title: "Mal", start: 5, end: 4 },
+  ], m);
+  assert.deepEqual(g.value.map((e) => e.title), ["A", "B"]);
+  assert.equal(contract.live.maxChannelsPerPage, 500);
+});
+
+test("checkOutput reads inline streams and playlist declarations as the app does", () => {
+  const m = { ...JSON.parse(manifest({ apiVersion: 3, hosts: ["cdn.example.com"] })), capabilities: ["home", "resolve", "channels"] };
+  const page = checkOutput("liveChannels", { items: [
+    { id: "a", title: "A", stream: { url: "https://cdn.example.com/a.m3u8" } },
+    { id: "b", title: "B", stream: { url: "https://evil.example.org/b.m3u8" } },
+    { id: "~c", title: "C", ref: "r" },
+  ] }, m);
+  assert.deepEqual(page.value.items.map((c) => c.id), ["a"]);
+  assert.equal(page.value.items[0].ref, "");
+  assert.equal(page.value.items[0].stream.url, "https://cdn.example.com/a.m3u8");
+  const cats = checkOutput("liveCategories", [
+    { id: "news", title: "Noticias" },
+    { playlist: { url: "https://cdn.example.com/l.m3u", format: "m3u", epg: { url: "https://cdn.example.com/g.xml", format: "xmltv" } } },
+    { playlist: { url: "https://evil.example.org/l.m3u", format: "m3u" } },
+  ], m);
+  assert.deepEqual(cats.value.categories.map((c) => c.id), ["news"]);
+  assert.deepEqual(cats.value.playlists.map((p) => [p.url, p.epgUrl, p.refreshHours]), [["https://cdn.example.com/l.m3u", "https://cdn.example.com/g.xml", 12]]);
+});
+
+test("run.mjs builds the live arguments the app sends", async () => {
+  const seen = [];
+  const plugin = {
+    liveCategories: async (a) => { seen.push(["liveCategories", a]); return []; },
+    liveChannels: async (a) => { seen.push(["liveChannels", a]); return { items: [] }; },
+    guide: async (a) => { seen.push(["guide", a.channelIds, a.to - a.from]); return []; },
+  };
+  await call(plugin, "liveCategories", []);
+  await call(plugin, "liveChannels", ["news", "p2"]);
+  await call(plugin, "guide", ["c1,c2"]);
+  assert.deepEqual(seen, [
+    ["liveCategories", null],
+    ["liveChannels", { categoryId: "news", cursor: "p2" }],
+    ["guide", ["c1", "c2"], 24 * 3600 * 1000],
+  ]);
+});

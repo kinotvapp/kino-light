@@ -114,7 +114,7 @@ export function validateManifest(text, { knownPermissions = contract.permissions
   const caps = [...new Set(o.capabilities.map((c) => (typeof c === "string" ? c : "")))];
   const unknownCap = caps.find((c) => !contract.capabilities.names.includes(c));
   if (unknownCap !== undefined) return bad("capabilities", `Capacidad desconocida: "${unknownCap}"`);
-  const tooNewCap = caps.find((c) => (contract.capabilities.apiVersions[c] || 1) > o.apiVersion);
+  const tooNewCap = caps.find((c) => (contract.capabilities.apiVersions[c] ?? 1) > o.apiVersion);
   if (tooNewCap !== undefined) return bad("capabilities", `Esta capacidad necesita apiVersion ${contract.capabilities.apiVersions[tooNewCap]}`);
   const missingRequiredCap = contract.capabilities.required.find((c) => !caps.includes(c));
   if (missingRequiredCap !== undefined) return bad("capabilities", `El plugin debe declarar "${missingRequiredCap}"`);
@@ -382,13 +382,7 @@ function drmOf(value, check, allowDrm) {
 
 function stream(value, { manifest, servers, allowDrm }) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("El plugin no devolvió un video");
-  const check = (url, what) => {
-    let u;
-    try { u = new URL(String(url)); } catch { throw new Error(`${what} tiene una dirección inválida`); }
-    if (servers.some((s) => sameServer(s, u))) return;
-    if (!schemeAllowed(u, manifest)) throw new Error(`${what} debe usar https`);
-    if (!hostMatches(u.hostname, manifest.hosts)) throw new Error(`${what} apunta a ${u.hostname}, que el plugin no declaró`);
-  };
+  const check = urlChecker(manifest, servers);
   const drm = drmOf(value, check, allowDrm);
   check(value.url, "El video");
   const expires = Number.isInteger(value.expiresInSeconds) && value.expiresInSeconds >= o().minExpiresInSeconds && value.expiresInSeconds <= o().maxExpiresInSeconds ? value.expiresInSeconds : 0;
@@ -404,6 +398,132 @@ function stream(value, { manifest, servers, allowDrm }) {
     return true;
   });
   return { ...value, headers: headersOf(value.headers), subtitles, audioTracks, expiresInSeconds: expires, drm };
+}
+
+/** The stream URL rule (the app's PluginOutput.checkUrl): a typed server, or the scheme rule and a declared host. */
+function urlChecker(manifest, servers) {
+  return (url, what) => {
+    let u;
+    try { u = new URL(String(url)); } catch { throw new Error(`${what} tiene una dirección inválida`); }
+    if (servers.some((s) => sameServer(s, u))) return;
+    if (!schemeAllowed(u, manifest)) throw new Error(`${what} debe usar https`);
+    if (!hostMatches(u.hostname, manifest.hosts)) throw new Error(`${what} apunta a ${u.hostname}, que el plugin no declaró`);
+  };
+}
+
+const live = () => contract.live;
+
+/** A `{ playlist: {...} }` declaration, read as PluginOutput.playlistOf: null (dropped) when it can't be used. */
+function playlistOf(p, { manifest, servers }, drop) {
+  const allows = (url) => { try { urlChecker(manifest, servers)(url, ""); return true; } catch { return false; } };
+  const url = typeof p.url === "string" ? p.url : "";
+  if (!live().playlistFormats.includes(p.format)) { drop("playlist: unknown format"); return null; }
+  // Strict on purpose: the list and its guide are downloaded by the app, never under liveStreamHosts "any".
+  if (!allows(url)) { drop(`playlist: ${url.slice(0, 100)} is not a declared host`); return null; }
+  let epgUrl = "";
+  if (p.epg !== null && typeof p.epg === "object" && live().epgFormats.includes(p.epg.format)) {
+    const e = typeof p.epg.url === "string" ? p.epg.url : "";
+    if (allows(e)) epgUrl = e; else drop("playlist: epg host not declared, guide dropped");
+  }
+  const h = typeof p.refreshHours === "number" ? Math.trunc(p.refreshHours) : NaN;
+  const refreshHours = h >= live().minRefreshHours && h <= live().maxRefreshHours ? h : live().defaultRefreshHours;
+  const hideGroups = [...new Set((Array.isArray(p.hideGroups) ? p.hideGroups : []).slice(0, live().maxHideGroups)
+    .map((g) => (typeof g === "string" ? g.trim().toLowerCase().slice(0, 100) : "")).filter(Boolean))];
+  return { url, headers: headersOf(p.headers), epgUrl, refreshHours, hideGroups, resolve: p.resolve === true };
+}
+
+/** liveCategories(), read as PluginOutput.liveCategories: `{ categories, playlists }`. */
+function liveCategories(value, ctx, drop) {
+  let list = value;
+  if (!Array.isArray(value)) {
+    if (value !== null && typeof value === "object" && "playlist" in value) list = [value];
+    else { drop("liveCategories: the answer is not a JSON array"); return { categories: [], playlists: [] }; }
+  }
+  const categories = [];
+  const playlists = [];
+  const seen = new Set();
+  list.forEach((c, i) => {
+    if (c === null || typeof c !== "object" || Array.isArray(c)) return;
+    if ("playlist" in c) {
+      if (c.playlist === null || typeof c.playlist !== "object" || Array.isArray(c.playlist)) return drop(`liveCategories: #${i} playlist is not an object`);
+      if (playlists.length >= live().maxPlaylists) return drop(`liveCategories: playlists beyond ${live().maxPlaylists} dropped`);
+      const p = playlistOf(c.playlist, ctx, drop);
+      if (p) playlists.push(p);
+      return;
+    }
+    if (categories.length >= live().maxCategories) return drop(`liveCategories: beyond ${live().maxCategories} dropped`);
+    // optString in the app: a numeric id is its text.
+    const id = typeof c.id === "number" ? String(c.id) : typeof c.id === "string" ? c.id : "";
+    if (!re(o().itemIdPattern).test(id)) return drop(`liveCategories: #${i} has an invalid id`);
+    const title = text(c.title, o().maxTitleChars);
+    if (!title) return drop(`liveCategories: ${id} has no title`);
+    if (c.adult === true) return drop(`liveCategories: ${id} adult, dropped`);
+    if (seen.has(id)) return drop(`liveCategories: duplicate ${id} dropped`);
+    seen.add(id);
+    const cc = typeof c.country === "string" ? c.country.trim().toUpperCase() : "";
+    categories.push({ id, title, country: /^[A-Z]{2}$/.test(cc) ? cc : "" });
+  });
+  return { categories, playlists };
+}
+
+/** liveChannels(), read as PluginOutput.liveChannels. Every channel carries `ref` ("" when absent) and `stream` (null when absent). */
+function liveChannels(value, ctx, drop) {
+  let list = value;
+  let next = null;
+  if (!Array.isArray(value)) {
+    if (value === null || typeof value !== "object" || !Array.isArray(value.items)) { drop("liveChannels: the answer is not a list or a page"); return { items: [], next: null }; }
+    list = value.items;
+    next = typeof value.next === "string" && value.next ? value.next : null;
+    if (next && next.length > o().maxCursorChars) { drop(`page: next longer than ${o().maxCursorChars} dropped`); next = null; }
+  }
+  const out = [];
+  const seen = new Set();
+  list.forEach((c, i) => {
+    if (out.length >= live().maxChannelsPerPage) { drop(`liveChannels: beyond ${live().maxChannelsPerPage} dropped`); return; }
+    if (c === null || typeof c !== "object") return;
+    // optString in the app: a numeric id is its text.
+    const id = typeof c.id === "number" ? String(c.id) : typeof c.id === "string" ? c.id : "";
+    if (!re(o().itemIdPattern).test(id)) return drop(`liveChannels: #${i} has an invalid id`);
+    if (id.startsWith(live().reservedIdPrefix)) return drop(`liveChannels: ${id} uses a reserved id`);
+    const title = text(c.title, o().maxTitleChars);
+    if (!title) return drop(`liveChannels: ${id} has no title`);
+    if (c.adult === true) return drop(`liveChannels: ${id} adult, dropped`);
+    const ref = typeof c.ref === "string" ? c.ref : "";
+    if (ref.length > o().maxRefChars) return drop(`liveChannels: ${id} has an invalid ref`);
+    let checked = null;
+    if (c.stream !== null && typeof c.stream === "object" && !Array.isArray(c.stream)) {
+      try { checked = stream(c.stream, ctx); } catch (e) { return drop(`liveChannels: ${id} stream refused: ${e.message}`); }
+    }
+    if (!ref && !checked) return drop(`liveChannels: ${id} has neither a ref nor a stream`);
+    if (seen.has(id)) return drop(`liveChannels: duplicate ${id} dropped`);
+    seen.add(id);
+    const number = Number.isInteger(c.number) && c.number >= 1 && c.number <= live().maxChannelNumber ? c.number : 0;
+    const categoryId = typeof c.categoryId === "string" && re(o().itemIdPattern).test(c.categoryId) ? c.categoryId : "";
+    out.push({ id, title, ref, logo: image(c.logo, ctx.servers), number, categoryId, stream: checked });
+  });
+  return { items: out, next };
+}
+
+/**
+ * guide(), read as PluginOutput.guide -- except the requested-ids and time-window filters, which
+ * need the call's arguments: the kit checks shape and limits only.
+ */
+function guide(value, drop) {
+  if (!Array.isArray(value)) { drop("guide: the answer is not a JSON array"); return []; }
+  const per = new Map();
+  value.forEach((g, i) => {
+    if (g === null || typeof g !== "object") return;
+    const channelId = typeof g.channelId === "string" ? g.channelId : "";
+    const title = text(g.title, o().maxTitleChars);
+    if (!channelId || !title) return drop(`guide: #${i} has no channel or title`);
+    if (!Number.isFinite(g.start) || !Number.isFinite(g.end) || g.end <= g.start) return drop(`guide: #${i} has an invalid start/end`);
+    const list = per.get(channelId) || [];
+    if (list.length >= live().maxGuideEntriesPerChannel) return drop(`guide: ${channelId} beyond ${live().maxGuideEntriesPerChannel} dropped`);
+    if (list.some((e) => e.start === Math.trunc(g.start))) return;
+    list.push({ channelId, title, start: Math.trunc(g.start), end: Math.trunc(g.end), description: text(g.description, o().maxTextChars) });
+    per.set(channelId, list);
+  });
+  return [...per.values()].flatMap((l) => l.sort((a, b) => a.start - b.start));
 }
 
 /**
@@ -431,6 +551,9 @@ export function checkOutput(fn, value, manifest, servers = []) {
     case "episodes": return { value: episodes(parsed, drop, servers), drops };
     // Widevine is the `drm` capability (apiVersion 2 by the manifest rules): without it every DRM-shaped key refuses the stream.
     case "resolve": return { value: stream(parsed, { manifest, servers, allowDrm: manifest.capabilities.includes("drm") }), drops };
+    case "liveCategories": return { value: liveCategories(parsed, { manifest, servers }, drop), drops };
+    case "liveChannels": return { value: liveChannels(parsed, { manifest, servers, allowDrm: manifest.capabilities.includes("drm") }, drop), drops };
+    case "guide": return { value: guide(parsed, drop), drops };
     default: throw new Error(`unknown function ${fn}`);
   }
 }

@@ -16,7 +16,7 @@ export const TABLES = {
   limits: () => table(["What", "Limit"], [
     ["Manifest / entry file / icon", `${kb(c.manifest.maxBytes)} / ${kb(c.manifest.entryMaxBytes)} / ${kb(c.manifest.iconMaxBytes)}`],
     ["Memory / stack, per plugin", `${kb(c.runtime.memoryBytes)} / ${kb(c.runtime.stackBytes)}`],
-    ["Time per call", `\`search\` ${c.timeoutsMs.search / 1000} s; \`home\`, \`browse\`, \`episodes\`, \`resolve\` ${c.timeoutsMs.home / 1000} s each, counting all your fetches and sleeps together`],
+    ["Time per call", `\`search\` ${c.timeoutsMs.search / 1000} s; \`home\`, \`browse\`, \`episodes\`, \`resolve\` ${c.timeoutsMs.home / 1000} s each; \`liveCategories\`, \`liveChannels\`, \`guide\` ${c.timeoutsMs.liveChannels / 1000} s each; counting all your fetches and sleeps together`],
     ["Loading the module (its top level)", `${c.timeoutsMs.load / 1000} s`],
     ["Idle sandbox", `closed after ${c.runtime.idleCloseMs / 60000} minutes without calls`],
     ["Consecutive timeouts", `${c.runtime.timeoutsBeforeUnresponsive} in a row and Kino disables the plugin ("No responde")`],
@@ -28,6 +28,7 @@ export const TABLES = {
     ["`kino.log` / `console.*`", `${n(c.runtime.maxLogChars)} characters per message`],
     ["What a function returns", `at most ${n(c.output.maxResultChars)} characters once turned into JSON`],
     ["Results", `\`search\` ${c.output.maxSearchItems} items; \`home\` ${c.output.maxHomeRows} rows of ${c.output.maxRowItems}; \`browse\` ${c.output.maxBrowseItems} per page; \`episodes\` ${n(c.output.maxEpisodes)} (and ${c.output.maxSeasons} \`seasons\`); \`ref\` ${n(c.output.maxRefChars)} characters; \`next\` ${n(c.output.maxCursorChars)} characters; \`id\` matches \`${c.output.itemIdPattern}\``],
+    ["Live channels (apiVersion 3)", `\`liveCategories\` ${c.live.maxCategories}; \`liveChannels\` ${c.live.maxChannelsPerPage} per page and ${c.live.maxPagesPerCategory} pages per category; \`guide\` ${c.live.maxGuideChannels} channels and ${c.live.maxGuideWindowMs / 3600000} h per call, ${c.live.maxGuideEntriesPerChannel} entries per channel; \`number\` 1..${c.live.maxChannelNumber}`],
     ["Settings", `at most ${c.settings.max}; \`text\` ${c.settings.types.text.maxChars}, \`url\` ${n(c.settings.types.url.maxChars)}, \`password\` ${c.settings.types.password.maxChars} characters`],
     ["Error messages", `your \`kino.error\` message is shown as a detail, cut at ${c.errors.maxMessageChars} characters`],
     ["`hosts`", `${c.manifest.minHosts} to ${c.manifest.maxHosts} entries; from apiVersion ${c.manifest.noHostsApiVersion}, none (\`[]\`) when a \`url\` setting exists`],

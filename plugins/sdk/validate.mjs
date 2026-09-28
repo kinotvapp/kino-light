@@ -46,7 +46,9 @@ export async function validate(dirArg, { run = null, args = [], config = {}, rep
     const missing = requiredExports(m.capabilities).filter((f) => typeof plugin[f] !== "function");
     if (missing.length) problems.push(`the plugin doesn't export ${missing.join(", ")}: Kino refuses the install ("le falta ${missing.sort().join(", ")}")`);
     if (run && !problems.length) {
-      if (!m.capabilities.includes(run)) problems.push(`"${run}" isn't in the manifest's capabilities`);
+      // A capability's exports are runnable too: channels runs liveCategories, liveChannels and guide.
+      const runnable = new Set([...m.capabilities, ...m.capabilities.flatMap((c) => [...(contract.capabilities.exports[c] || []), ...(contract.capabilities.optionalExports[c] || [])])]);
+      if (!runnable.has(run)) problems.push(`"${run}" isn't in the manifest's capabilities`);
       else {
         const checkedOut = checkOutput(run, await call(plugin, run, args), m, servers);
         output = checkedOut.value;

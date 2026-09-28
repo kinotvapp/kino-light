@@ -89,6 +89,30 @@
     "itemKinds": ["movie", "series", "live"],
     "liveKindApiVersion": 2
   },
+  "live": {
+    "apiVersion": 3,
+    "maxCategories": 200,
+    "maxChannelsPerPage": 500,
+    "maxPagesPerCategory": 10,
+    "maxGuideChannels": 50,
+    "maxGuideWindowMs": 86400000,
+    "maxGuideEntriesPerChannel": 100,
+    "maxChannelNumber": 9999,
+    "maxPlaylists": 10,
+    "defaultRefreshHours": 12,
+    "minRefreshHours": 1,
+    "maxRefreshHours": 168,
+    "maxHideGroups": 50,
+    "maxPlaylistBytes": 20971520,
+    "maxEpgBytes": 52428800,
+    "maxChannelsPerProvider": 5000,
+    "maxCategoriesPerProvider": 500,
+    "playlistParseBudgetMs": 20000,
+    "epgParseBudgetMs": 30000,
+    "reservedIdPrefix": "~",
+    "playlistFormats": ["m3u"],
+    "epgFormats": ["xmltv"]
+  },
   "search": {
     "types": ["movie", "series", "any"],
     "maxAltTitles": 5,
@@ -100,7 +124,10 @@
     "home": 20000,
     "browse": 20000,
     "episodes": 20000,
-    "resolve": 20000
+    "resolve": 20000,
+    "liveCategories": 20000,
+    "liveChannels": 20000,
+    "guide": 20000
   },
   "runtime": {
     "memoryBytes": 67108864,

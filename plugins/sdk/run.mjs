@@ -19,7 +19,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { checkOutput, validateManifest } from "./contract.mjs";
+import { checkOutput, contract, validateManifest } from "./contract.mjs";
 import { createKino } from "./kino-shim.mjs";
 
 const FUNCTIONS = ["search", "home", "browse", "episodes", "resolve"];
@@ -125,6 +125,13 @@ export async function call(plugin, fn, rest) {
   const arg = rest[0] === undefined ? "" : rest[0];
   if (fn === "home") return plugin.home(null);
   if (fn === "browse") return plugin.browse(arg, rest[1] === undefined ? null : rest[1]);
+  // apiVersion 3's channels: the same arguments the app's PluginLiveProvider sends.
+  if (fn === "liveCategories") return plugin.liveCategories(null);
+  if (fn === "liveChannels") return plugin.liveChannels({ categoryId: arg, cursor: rest[1] === undefined ? null : rest[1] });
+  if (fn === "guide") {
+    const from = Date.now() - 2 * 3600 * 1000;
+    return plugin.guide({ channelIds: arg ? arg.split(",") : [], from, to: from + contract.live.maxGuideWindowMs });
+  }
   if (fn !== "search") return plugin[fn](arg);
   const query = { q: "", type: process.env.KINO_TYPE || "any", season: 0, episode: 0, tmdbId: 0, year: 0, originalTitle: "", altTitles: [], cursor: null };
   if (arg.trimStart().startsWith("{")) {
