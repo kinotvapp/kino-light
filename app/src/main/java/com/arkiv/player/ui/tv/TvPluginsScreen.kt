@@ -606,7 +606,7 @@ internal fun installedFocusReturnTarget(returnId: String, remainingIds: List<Str
 /**
  * Puts focus on [requester] as soon as it can take it. The node may not exist yet (a tab that has just been
  * selected, a window that has just gone away) and `requestFocus()` throws until it does, hence the retry, as
- * in [FocusWhenReady].
+ * in [com.arkiv.player.ui.plugin.FocusWhenReady].
  */
 internal suspend fun requestFocusWhenReady(requester: FocusRequester) {
     repeat(20) {

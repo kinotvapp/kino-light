@@ -125,7 +125,7 @@ fun SettingsScreen(contentPadding: PaddingValues, onOpenDownloads: () -> Unit = 
                 // The Plugins screen itself, not a section of it: its tabs are lazy lists that scroll on their own, so
                 // it takes the height the chips leave (a lazy list inside the scroll below would be measured with an
                 // infinite height and crash). It keeps its own 16 dp gutter, 4 dp inside the 20 dp of the rest of Ajustes.
-                // The keyboard lifts it by what it covers beyond the system bar, as the full-screen host does.
+                // The keyboard lifts it by what it covers beyond the system bar.
                 val bottomInset = contentPadding.calculateBottomPadding()
                 PluginsContent(
                     bottomInset = bottomInset,
