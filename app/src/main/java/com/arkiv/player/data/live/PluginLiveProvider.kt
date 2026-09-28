@@ -25,9 +25,12 @@ import com.arkiv.player.playback.PluginLiveChannel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
@@ -106,6 +109,29 @@ class PluginLiveProvider(
     /** Channel codes a guide pass is asking for right now, and that pass's completion. */
     private val guideInFlight = HashMap<String, CompletableDeferred<Unit>>()
 
+    /** Cancelled by [close]: every public call runs linked to it through [owned]. */
+    private val work = Job()
+
+    /**
+     * The module dropped this instance (its plugin changed, was switched off or uninstalled):
+     * listings, downloads and guide passes still running end with a [CancellationException]
+     * (their asker itself is not cancelled; the module already carries the replacement), and
+     * every later call is refused the same way, without asking the plugin.
+     */
+    override fun close() {
+        work.cancel(CancellationException("$id closed"))
+    }
+
+    /** Runs [block] in the caller's coroutine, cancelled early when this provider is [close]d. */
+    private suspend fun <T> owned(block: suspend () -> T): T {
+        if (work.isCancelled) throw CancellationException("$id closed")
+        return coroutineScope {
+            val call = coroutineContext.job
+            val handle = work.invokeOnCompletion { call.cancel(CancellationException("$id closed")) }
+            try { block() } finally { handle.dispose() }
+        }
+    }
+
     /** Declared playlists by cache key (`PlaylistSource.cacheKey`: URL without its query), in declaration order (under [lock]). */
     private val sources = LinkedHashMap<String, PlaylistSource>()
     /** Each playlist's grouping by key, rebuilt when a list or the plugin's categories change (under [lock]). */
@@ -135,7 +161,9 @@ class PluginLiveProvider(
      * [includeAdults] is unused: a plugin's own adult categories and channels never reach here
      * (`PluginOutput` drops every `adult` entry), so there is nothing behind the 18+ lock to show.
      */
-    override suspend fun categories(includeAdults: Boolean): List<ProviderCategory> {
+    override suspend fun categories(includeAdults: Boolean): List<ProviderCategory> = owned { categoriesNow() }
+
+    private suspend fun categoriesNow(): List<ProviderCategory> {
         val catalog = catalog()
         lock.withLock {
             pluginCategories = catalog.categories.map { ProviderCategory(it.id, it.title) }
@@ -245,7 +273,9 @@ class PluginLiveProvider(
 
     private fun freshCatalog(): PluginLiveCatalog? = catalogCache?.takeIf { clock() < it.first }?.second
 
-    override suspend fun channels(categoryId: String, force: Boolean): List<LiveChannel> {
+    override suspend fun channels(categoryId: String, force: Boolean): List<LiveChannel> = owned { channelsNow(categoryId, force) }
+
+    private suspend fun channelsNow(categoryId: String, force: Boolean): List<LiveChannel> {
         if (categoryId.startsWith(PLAYLIST_CATEGORY_PREFIX)) return playlistChannels(categoryId, force)
         if (!force) lock.withLock { freshList(categoryId)?.let { return it.channels } }
         return shared(CHANNELS_KEY + categoryId) {
@@ -334,7 +364,9 @@ class PluginLiveProvider(
         }
     }
 
-    override suspend fun guide(channels: List<LiveChannel>): Pair<Map<String, List<LiveProgram>>, List<String>> {
+    override suspend fun guide(channels: List<LiveChannel>): Pair<Map<String, List<LiveProgram>>, List<String>> = owned { guideNow(channels) }
+
+    private suspend fun guideNow(channels: List<LiveChannel>): Pair<Map<String, List<LiveProgram>>, List<String>> {
         val mine = channels.filter { it.provider == id }
         val (fromPlaylists, fromPlugin) = mine.partition { it.code.startsWith(PluginLiveContract.RESERVED_ID_PREFIX) }
         val (out, later) = if (fromPlugin.isEmpty()) HashMap<String, List<LiveProgram>>() to emptyList() else pluginGuide(fromPlugin)
@@ -453,7 +485,9 @@ class PluginLiveProvider(
         }
     }
 
-    override suspend fun open(channel: LiveChannel): LiveOpening {
+    override suspend fun open(channel: LiveChannel): LiveOpening = owned { openNow(channel) }
+
+    private suspend fun openNow(channel: LiveChannel): LiveOpening {
         require(channel.provider == id) { "channel ${channel.liveCode} is not $id's" }
         if (channel.code.startsWith(PluginLiveContract.RESERVED_ID_PREFIX)) return openPlaylistEntry(channel)
         directOf(channel.code)?.let { return opening(channel, inMemory(channel.code), it) }

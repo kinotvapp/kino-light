@@ -62,7 +62,10 @@ class PluginRegistryTest {
     @Test fun `uninstall removes files and data but remembers the name`() {
         install("pa", "Archivo")
         File(store.dataDir("pa"), "storage.json").apply { parentFile!!.mkdirs(); writeText("{}") }
+        // The live provider's saved playlists and guides (AppGraph passes this data dir as its cacheDir).
+        val playlist = File(store.dataDir("pa"), "live/0123abcd.m3u").apply { parentFile!!.mkdirs(); writeText("#EXTM3U") }
         registry.uninstall("pa")
+        assertFalse(playlist.exists())
         assertNull(registry.find("pa"))
         assertFalse(File(tmp.root, "plugins/pa").exists())
         assertFalse(store.dataDir("pa").exists())

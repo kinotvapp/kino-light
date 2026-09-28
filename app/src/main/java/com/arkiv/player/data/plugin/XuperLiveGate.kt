@@ -1,25 +1,10 @@
 package com.arkiv.player.data.plugin
 
 /**
- * A source of the NATIVE live channels (the "En vivo" tab, the Home "Canales en vivo" row, the TV
- * guide and the player's channel drawer). Today there is exactly one: [XUPER], the portal's
- * channels played through `LiveHlsProxy`. Caracol's live channels are not here -- they live in
- * their own section and never depended on a plugin.
- *
- * Named as a set of providers, not a single on/off switch, so a later "any plugin can add
- * channels" module can add entries here instead of reworking every surface that asks.
+ * Whether the native Xuper live channels are on: see [XuperLiveGate]. The module's full provider
+ * list is `data/live/liveProviderIds`.
  */
-enum class LiveProvider { XUPER }
-
-/**
- * The live providers the installed plugins switch on right now. Pure: every surface derives from
- * this (through `AppGraph.xuperLive`), and the player's hard stop reads [XuperLiveGate.blockedMessage].
- */
-fun liveProviders(plugins: List<InstalledPlugin>): Set<LiveProvider> =
-    if (plugins.any { XuperLiveGate.opens(it) }) setOf(LiveProvider.XUPER) else emptySet()
-
-/** Whether the native Xuper live channels are on: see [XuperLiveGate]. */
-fun xuperLiveAllowed(plugins: List<InstalledPlugin>): Boolean = LiveProvider.XUPER in liveProviders(plugins)
+fun xuperLiveAllowed(plugins: List<InstalledPlugin>): Boolean = plugins.any { XuperLiveGate.opens(it) }
 
 /**
  * The native Xuper live channels appear only while the recognized Xuper plugin install

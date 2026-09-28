@@ -1,0 +1,104 @@
+package com.arkiv.player.data.live
+
+import com.arkiv.player.data.gateway.LiveChannelKeys
+import com.arkiv.player.data.plugin.InstalledPlugin
+import com.arkiv.player.data.plugin.ManifestParser
+import com.arkiv.player.data.plugin.PluginLiveContract
+import com.arkiv.player.data.plugin.XuperLiveGate
+import com.arkiv.player.data.plugin.XuperPrivilege
+import com.arkiv.player.data.plugin.xuperLiveAllowed
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+
+/**
+ * A plugin feeds the En vivo module while it can actually answer: usable (enabled, intact,
+ * responsive), configured, on apiVersion 3+, declaring `channels`, and not the Xuper install,
+ * whose channels stay native behind the step-1 gate. A plugin that needs setup is left out
+ * rather than shown as an empty section. It comes back the moment it is configured.
+ */
+fun addsChannels(plugin: InstalledPlugin): Boolean =
+    plugin.isUsable && !plugin.needsSetup &&
+        plugin.manifest.apiVersion >= PluginLiveContract.API_VERSION &&
+        ManifestParser.CHANNELS in plugin.manifest.capabilities &&
+        !XuperPrivilege.grants(plugin.record)
+
+/** The module's providers, in order: Xuper first while its gate is open, then plugins in registry order. Pure. */
+fun liveProviderIds(plugins: List<InstalledPlugin>): List<String> = buildList {
+    if (xuperLiveAllowed(plugins)) add(LiveChannelKeys.XUPER)
+    plugins.filter(::addsChannels).forEach { add(LiveChannelKeys.pluginProvider(it.id)) }
+}
+
+/** What the player shows for a channel whose provider is not in [liveProviderIds]. Pure. */
+fun liveBlockedMessage(providerId: String, plugins: List<InstalledPlugin>): String {
+    if (providerId == LiveChannelKeys.XUPER) return XuperLiveGate.blockedMessage(plugins) ?: UNAVAILABLE
+    val p = LiveChannelKeys.pluginIdOf(providerId)?.let { id -> plugins.firstOrNull { it.id == id } }
+        ?: return "Este canal venía de un plugin que ya no está instalado"
+    val name = p.manifest.name
+    return when {
+        p.record.damaged -> "El plugin $name tiene archivos dañados, reinstálalo"
+        !p.record.enabled -> "Activa el plugin $name para ver este canal"
+        p.record.unresponsive -> "El plugin $name no responde ahora; revísalo en Ajustes ▸ Plugins"
+        p.needsSetup -> "Configura $name en Ajustes ▸ Plugins"
+        !addsChannels(p) -> "El plugin $name ya no ofrece canales en vivo"
+        else -> UNAVAILABLE
+    }
+}
+
+private const val UNAVAILABLE = "Este canal no está disponible ahora"
+
+/**
+ * The En vivo module (spec §1): its providers derived from the installed plugins, live. Every
+ * surface reads [providers]/[tabs]/[available], so installing, switching or configuring a
+ * plugin shows or hides its channels without a restart. An empty module hides the phone tab,
+ * the TV nav button and the Home row (§4).
+ *
+ * A provider instance lives as long as its plugin's `changeKey()` (version, setup state,
+ * typed servers, config revision). Its caches survive screens, but never a settings change:
+ * the instance replaced (or dropped, when its plugin stops adding channels) is
+ * [LiveChannelProvider.close]d, which cancels whatever it was still doing. A channel whose
+ * provider vanished mid-playback stops with [blockedMessage] (the player watches [providers]).
+ * [xuperProvider] is only called while the Xuper gate is open.
+ */
+class LiveCatalog(
+    private val plugins: StateFlow<List<InstalledPlugin>>,
+    scope: CoroutineScope,
+    private val xuperProvider: () -> LiveChannelProvider,
+    private val pluginProvider: (InstalledPlugin) -> LiveChannelProvider,
+) : LiveModule {
+    /** The live instances by provider id, with the key they were built for. */
+    private val built = HashMap<String, Pair<String, LiveChannelProvider>>()
+
+    private fun build(list: List<InstalledPlugin>): List<LiveChannelProvider> = synchronized(built) {
+        val ids = liveProviderIds(list)
+        val gone = built.filterKeys { it !in ids }
+        gone.keys.forEach(built::remove)
+        gone.values.forEach { it.second.close() }
+        ids.map { id ->
+            val plugin = LiveChannelKeys.pluginIdOf(id)?.let { pid -> list.first { it.id == pid } }
+            val key = plugin?.changeKey() ?: id
+            val current = built[id]
+            if (current != null && current.first == key) return@map current.second
+            current?.second?.close()
+            (if (plugin == null) xuperProvider() else pluginProvider(plugin)).also { built[id] = key to it }
+        }
+    }
+
+    override val providers: StateFlow<List<LiveChannelProvider>> =
+        plugins.map(::build).stateIn(scope, SharingStarted.Eagerly, build(plugins.value))
+
+    val tabs: StateFlow<List<LiveProviderTab>> = providers
+        .map(::tabsOf)
+        .stateIn(scope, SharingStarted.Eagerly, tabsOf(providers.value))
+
+    /** Whether the module has anything at all: the tab, the TV nav button and the Home row follow it. */
+    val available: StateFlow<Boolean> = providers
+        .map { it.isNotEmpty() }
+        .stateIn(scope, SharingStarted.Eagerly, providers.value.isNotEmpty())
+
+    override fun blockedMessage(providerId: String): String = liveBlockedMessage(providerId, plugins.value)
+
+    private fun tabsOf(list: List<LiveChannelProvider>) = list.map { LiveProviderTab(it.id, it.name, it.color) }
+}

@@ -17,11 +17,14 @@ import com.arkiv.player.data.plugin.PluginSetupRequiredException
 import com.arkiv.player.data.plugin.PluginRuntimePool
 import com.arkiv.player.data.plugin.PluginTimeoutException
 import com.arkiv.player.data.plugin.ScriptRuntime
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -335,5 +338,29 @@ class PluginLiveProviderTest {
         val opened = fresh.open(LiveChannel("s", "s", 0, null, provider = provider)) as LiveOpening.Plugin
         assertEquals("https://cdn.example.com/s.m3u8", opened.channel.direct!!.url)
         assertEquals("S", opened.channel.title)
+    }
+
+    @Test fun `closing cancels the work in flight and refuses new work, without the plugin being asked`() = runBlocking {
+        val gate = CompletableDeferred<Unit>()
+        val caller = Caller(gate) { function, _ ->
+            if (function == "liveCategories") """[{"id":"news","title":"Noticias"}]""" else """{"items":[{"id":"c1","title":"Uno","ref":"r1"}]}"""
+        }
+        val p = live(caller)
+        val list = async { runCatching { p.channels("news") } }
+        val cats = async { runCatching { p.categories(false) } }
+        repeat(3) { yield() }
+        assertEquals(2, caller.calls.size)
+        p.close()
+        // Bounded: without close() the held calls would wait for the gate forever.
+        withTimeout(5_000) {
+            assertTrue(list.await().exceptionOrNull() is CancellationException)
+            assertTrue(cats.await().exceptionOrNull() is CancellationException)
+        }
+        // The asker itself was not cancelled: only the closed provider's work.
+        assertTrue(isActive)
+        assertTrue(runCatching { p.channels("news") }.exceptionOrNull() is CancellationException)
+        assertTrue(runCatching { p.open(LiveChannel("c1", "Uno", 1, null, provider = provider)) }.exceptionOrNull() is CancellationException)
+        assertTrue(runCatching { p.guide(listOf(LiveChannel("c1", "Uno", 1, null, provider = provider))) }.exceptionOrNull() is CancellationException)
+        assertEquals(2, caller.calls.size)
     }
 }

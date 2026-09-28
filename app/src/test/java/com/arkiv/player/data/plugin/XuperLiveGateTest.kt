@@ -29,7 +29,6 @@ class XuperLiveGateTest {
     @Test fun `the recognized install, enabled and intact, turns xuper live on`() {
         assertTrue(xuperLiveAllowed(listOf(plugin())))
         assertTrue(xuperLiveAllowed(listOf(plugin("demo", "someone/kino-plugin-demo"), plugin("mi-xuper"))))
-        assertEquals(setOf(LiveProvider.XUPER), liveProviders(listOf(plugin())))
         assertNull(XuperLiveGate.blockedMessage(listOf(plugin())))
     }
 
@@ -42,7 +41,6 @@ class XuperLiveGateTest {
         assertFalse(xuperLiveAllowed(listOf(plugin(damaged = true))))
         assertFalse(xuperLiveAllowed(emptyList()))
         assertFalse(xuperLiveAllowed(listOf(plugin("demo", "someone/kino-plugin-demo"))))
-        assertEquals(emptySet<LiveProvider>(), liveProviders(emptyList()))
     }
 
     @Test fun `a copy of the xuper plugin from another repo or ref never opens the gate`() {

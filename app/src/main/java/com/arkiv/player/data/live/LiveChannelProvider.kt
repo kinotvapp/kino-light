@@ -44,6 +44,12 @@ interface LiveChannelProvider {
     fun hasGuide(): Boolean
 
     suspend fun open(channel: LiveChannel): LiveOpening
+
+    /**
+     * Called once by the module when it drops this instance (its plugin changed, was switched off
+     * or uninstalled): work still running for it is cancelled and new work refused. Default: nothing.
+     */
+    fun close() {}
 }
 
 /** The En vivo module as screens and the player see it: its providers, in order, live. */

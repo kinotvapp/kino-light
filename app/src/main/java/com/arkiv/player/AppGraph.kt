@@ -278,6 +278,8 @@ class AppGraph(context: Context) {
             // Start the live gate's watcher now (it's eager but lazily built): from here on,
             // switching the Xuper plugin off drops the live sessions even before a screen reads it.
             xuperLive
+            // The En vivo module's provider list follows the registry from here on too.
+            liveModule
             contentSource
             magisAccount
             built = true
@@ -831,6 +833,34 @@ class AppGraph(context: Context) {
             .stateIn(applicationScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, xuperLiveAllowed(registry.plugins.value))
         applicationScope.launch { state.collect { on -> if (!on) closeXuperLive() } }
         state
+    }
+
+    /**
+     * The En vivo module (generic live TV, spec 2026-09-27): Xuper while [xuperLive] is on, plus
+     * every plugin that declares `channels`. Every live surface reads it: phone tab and Home row,
+     * TV nav button/guide/drawer, the player's zapping. Xuper's own lifecycle (`closeXuperLive`
+     * when its gate closes) stays step 1's. A plugin provider is rebuilt (the old one closed,
+     * its work cancelled) whenever the plugin's `changeKey()` changes.
+     */
+    val liveModule: com.arkiv.player.data.live.LiveCatalog by lazy {
+        com.arkiv.player.data.live.LiveCatalog(
+            plugins = pluginRegistry.plugins,
+            scope = applicationScope,
+            xuperProvider = { com.arkiv.player.data.live.XuperLiveProvider(liveCatalog, liveController) },
+            pluginProvider = { p ->
+                val provider = com.arkiv.player.data.gateway.LiveChannelKeys.pluginProvider(p.id)
+                com.arkiv.player.data.live.PluginLiveProvider(
+                    p, pluginCaller,
+                    cached = { code -> database.liveChannelCacheDao().byCodes(provider, listOf(code)).firstOrNull() },
+                    // Playlists/EPGs: the STRICT gate (declared hosts + typed servers), never liveStreamHosts "any".
+                    fetcher = com.arkiv.player.data.live.PluginPlaylistFetcher(
+                        com.arkiv.player.data.plugin.PluginStreamHttp.client(pluginBaseHttp, p.hosts),
+                    ),
+                    // Its live/ dir: uninstalling deletes it with the rest of the plugin's data (PluginStore.remove).
+                    cacheDir = pluginStore.dataDir(p.id),
+                )
+            },
+        )
     }
 
     /** The message the player shows for a Xuper channel while [xuperLive] is off, else null. */
