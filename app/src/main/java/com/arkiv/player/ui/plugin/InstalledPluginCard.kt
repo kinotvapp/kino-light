@@ -61,6 +61,10 @@ private val ACTION_CONTAINER = ArkivRed.copy(alpha = 0.30f)
  * for it in a card that has none, so every card of the same grid line ends at the same height (see
  * [installedGridLinesWithMessage]). [busy] disables the sheet's actions, as it did the row's buttons; the
  * switch stays togglable regardless (it always did, see [InstalledCardModel.switchEnabled]).
+ *
+ * [liveNotice] is a live plugin's "Lista recortada: …" line (`LiveCatalog.noticeFor`), under the status;
+ * [reserveNoticeLines] leaves its room in a card without one on the same grid line
+ * ([installedGridLinesReserving]).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -72,6 +76,8 @@ internal fun InstalledPluginCard(
     reserveMessageLines: Boolean,
     vm: PluginsViewModel,
     modifier: Modifier = Modifier,
+    liveNotice: String? = null,
+    reserveNoticeLines: Boolean = false,
 ) {
     val model = installedCardModel(plugin, art)
     var sheetOpen by remember { mutableStateOf(false) }
@@ -100,6 +106,18 @@ internal fun InstalledPluginCard(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (liveNotice != null || reserveNoticeLines) {
+                Text(
+                    liveNotice ?: " ",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = ArkivTextSecondary,
+                    minLines = installedMessageLines(),
+                    maxLines = installedMessageLines(),
+                    overflow = TextOverflow.Ellipsis,
+                    // The blank placeholder is room only: a screen reader must not stop on it.
+                    modifier = if (liveNotice == null) Modifier.clearAndSetSemantics { } else Modifier,
+                )
+            }
             Text(
                 pluginConsentHostLine(address = plugin.record.address, hostsLabel = plugin.hosts.labels.joinToString(", ")),
                 style = MaterialTheme.typography.bodySmall,

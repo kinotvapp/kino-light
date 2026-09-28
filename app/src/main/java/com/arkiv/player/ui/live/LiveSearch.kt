@@ -71,3 +71,32 @@ fun searchAcrossProviders(
 
 /** The line under the merged search results when [providerName] has categories it never loaded. */
 fun notLoadedYetNote(providerName: String): String = "Algunos canales de $providerName aún no se han cargado"
+
+/** What the phone En vivo screen draws for its search field (Amendment A1); see [liveSearchView]. */
+sealed interface LiveSearchView {
+    /** Blank query: the normal per-provider view (chips, categories, favourites, recents). */
+    data object Off : LiveSearchView
+    /** A query with no answer yet. */
+    data object Searching : LiveSearchView
+    /** Matches from every provider, each drawn with its provider badge; [note] = providers not fully searched. */
+    data class Results(val channels: List<LiveChannel>, val note: String?) : LiveSearchView
+    data class NoResults(val note: String?) : LiveSearchView
+}
+
+/**
+ * The search view for [query] given the model's latest [cross] answer. While the answer for the
+ * current query is still being computed (debounced), the previous non-empty one stays on screen
+ * instead of flashing a spinner on every keystroke. Pure.
+ */
+fun liveSearchView(query: String, cross: CrossSearch?): LiveSearchView {
+    val q = query.trim()
+    if (q.isEmpty()) return LiveSearchView.Off
+    if (cross == null) return LiveSearchView.Searching
+    val note = cross.notLoaded.joinToString("\n") { notLoadedYetNote(it) }.ifEmpty { null }
+    if (cross.query != q) return if (cross.results.isEmpty()) LiveSearchView.Searching else LiveSearchView.Results(cross.results, note)
+    return if (cross.results.isEmpty()) LiveSearchView.NoResults(note) else LiveSearchView.Results(cross.results, note)
+}
+
+/** The provider chip to light: the active provider while one of its own categories is on screen; none on Favoritos or Recientes. Pure. */
+fun selectedProviderChip(state: LiveUiState, recentView: Boolean): String? =
+    if (recentView || state.activeCategory == CATEGORY_FAVORITES) null else state.activeProvider

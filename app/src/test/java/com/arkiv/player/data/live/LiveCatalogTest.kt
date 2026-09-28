@@ -8,6 +8,9 @@ import com.arkiv.player.data.plugin.PluginManifest
 import com.arkiv.player.data.plugin.XuperPrivilege
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -33,7 +36,10 @@ class LiveCatalogTest {
     private fun xuper(enabled: Boolean = true, caps: Set<String> = setOf("home", "resolve")) =
         plugin("xuper", api = 1, caps = caps, address = XuperPrivilege.SOURCE_REPO, enabled = enabled, name = "Xuper")
 
-    private class Fake(override val id: String) : LiveChannelProvider {
+    private class Fake(
+        override val id: String,
+        override val notice: StateFlow<String?> = MutableStateFlow(null),
+    ) : LiveChannelProvider {
         var closed = 0
         override val name = id
         override val color = 0L
@@ -122,5 +128,26 @@ class LiveCatalogTest {
         assertEquals(1, xuperOne.closed)
         assertEquals(1, tv1.closed)
         assertEquals(emptyList<LiveChannelProvider>(), catalog.providers.value)
+    }
+
+    @Test fun `only plugin providers have a notice`() = runTest {
+        val catalog = LiveCatalog(MutableStateFlow(listOf(xuper())), backgroundScope, xuperProvider = { Fake("xuper", MutableStateFlow("x")) }, pluginProvider = { Fake("plugin:${it.id}") })
+        assertEquals(null, catalog.noticeFor("tv1").first())
+        assertEquals(null, catalog.noticeFor("xuper").first())
+    }
+
+    @Test fun `a plugin's notice follows its current provider, a replacement and its removal`() = runTest {
+        val registry = MutableStateFlow(listOf(plugin("tv1")))
+        val notices = ArrayDeque(listOf("Lista recortada: 5000 de 9000 canales", "Lista recortada: 5000 de 7000 canales"))
+        val catalog = LiveCatalog(registry, backgroundScope, xuperProvider = { Fake("xuper") }, pluginProvider = { p -> Fake("plugin:${p.id}", MutableStateFlow(notices.removeFirst())) })
+        val seen = mutableListOf<String?>()
+        backgroundScope.launch(kotlinx.coroutines.test.UnconfinedTestDispatcher(testScheduler)) { catalog.noticeFor("tv1").collect { seen += it } }
+        assertEquals(listOf<String?>("Lista recortada: 5000 de 9000 canales"), seen)
+        registry.value = listOf(plugin("tv1", version = "1.1.0"))
+        runCurrent()
+        assertEquals("Lista recortada: 5000 de 7000 canales", seen.last())
+        registry.value = emptyList()
+        runCurrent()
+        assertEquals(null, seen.last())
     }
 }

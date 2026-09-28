@@ -86,6 +86,16 @@ internal fun installedGridLinesWithMessage(count: Int, messageIndex: Int?, colum
 }
 
 /**
+ * Which cards reserve a line kind that only some cards have (a live plugin's "Lista recortada: …"
+ * notice): every card of a grid line where at least one card [has] it, so the line ends at one
+ * height -- the same rule as [installedGridLinesWithMessage], for any number of cards. Pure.
+ */
+internal fun installedGridLinesReserving(has: List<Boolean>, columns: Int): List<Boolean> {
+    val lines = has.indices.filter { has[it] }.mapTo(HashSet()) { it / columns }
+    return has.indices.map { it / columns in lines }
+}
+
+/**
  * How many lines a card's message reserves, as BOTH `minLines` and `maxLines` -- on the card that has one
  * and on the blank placeholder its line's neighbours show instead ([installedGridLinesWithMessage]). Fixed,
  * not however many lines the message's own text happens to need: a `maxLines`-only cap still lets a

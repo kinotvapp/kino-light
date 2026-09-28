@@ -109,6 +109,19 @@ fun homeChannelsRow(
     return (recent.filter(::keep) + fromCountry.filter(::keep)).take(limit)
 }
 
+/**
+ * The Home "Canales en vivo" row for the whole live module: null = no row (the module has no
+ * provider, [liveOn] false); otherwise [homeChannelsRow] over [available], which may be empty --
+ * a module with only plugin providers and nothing watched still gets the row, with just its
+ * "Ver más canales" way in (the country part is Xuper's and only exists while Xuper is on).
+ */
+fun homeLiveRow(
+    liveOn: Boolean,
+    recent: List<LiveChannel>,
+    fromCountry: List<LiveChannel>,
+    available: Set<String>,
+): List<LiveChannel>? = if (liveOn) homeChannelsRow(recent, fromCountry, available) else null
+
 /** Cap on the home row's cards, not counting "Ver más canales". */
 const val HOME_ROW_LIMIT = 24
 

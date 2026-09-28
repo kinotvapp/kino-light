@@ -133,4 +133,25 @@ class CountryChannelsTest {
         )
         assertEquals(listOf("plugin:tv:c1", "c1", "c2"), row.map { it.liveCode })
     }
+
+    // --- the Home row follows the whole live module ---
+
+    @Test
+    fun `with no live provider there is no row at all, not even recents`() {
+        assertNull(homeLiveRow(liveOn = false, recent = listOf(channel("c1")), fromCountry = emptyList(), available = emptySet()))
+    }
+
+    @Test
+    fun `a plugin-only module shows its recents, without Xuper`() {
+        val plugin = LiveChannel("c1", "Uno", 1, null, provider = "plugin:tv")
+        assertEquals(
+            listOf(plugin),
+            homeLiveRow(liveOn = true, recent = listOf(plugin, channel("x1")), fromCountry = emptyList(), available = setOf("plugin:tv")),
+        )
+    }
+
+    @Test
+    fun `a module with providers but nothing watched still has the row, with only the way in`() {
+        assertEquals(emptyList<LiveChannel>(), homeLiveRow(liveOn = true, recent = emptyList(), fromCountry = emptyList(), available = setOf("plugin:tv")))
+    }
 }

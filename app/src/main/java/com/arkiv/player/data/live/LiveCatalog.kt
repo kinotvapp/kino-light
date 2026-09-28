@@ -8,8 +8,13 @@ import com.arkiv.player.data.plugin.XuperLiveGate
 import com.arkiv.player.data.plugin.XuperPrivilege
 import com.arkiv.player.data.plugin.xuperLiveAllowed
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 
@@ -97,6 +102,20 @@ class LiveCatalog(
     val available: StateFlow<Boolean> = providers
         .map { it.isNotEmpty() }
         .stateIn(scope, SharingStarted.Eagerly, providers.value.isNotEmpty())
+
+    /**
+     * A plugin's "Lista recortada: …" line for Ajustes ▸ Plugins (see `PluginLiveProvider.notice`),
+     * null while it has none or adds no channels. Follows the plugin's CURRENT provider: a
+     * replaced instance (settings change) or a dropped one never leaves a stale line behind.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun noticeFor(pluginId: String): Flow<String?> {
+        val id = LiveChannelKeys.pluginProvider(pluginId)
+        return providers
+            .map { list -> list.firstOrNull { it.id == id } }
+            .distinctUntilChanged { a, b -> a === b }
+            .flatMapLatest { it?.notice ?: flowOf(null) }
+    }
 
     override fun blockedMessage(providerId: String): String = liveBlockedMessage(providerId, plugins.value)
 

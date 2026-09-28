@@ -67,6 +67,10 @@ import com.arkiv.player.data.SettingsStore
 import com.arkiv.player.ui.live.LiveZappingSource
 import com.arkiv.player.ui.live.countryChannelsForHome
 import com.arkiv.player.ui.live.recentChannelsForHome
+import com.arkiv.player.ui.live.homeLiveRow
+import com.arkiv.player.ui.live.providerBadge
+import com.arkiv.player.ui.live.ProviderBadge
+import com.arkiv.player.data.live.LiveProviderTab
 import com.arkiv.player.ui.live.homeChannelsRow
 import com.arkiv.player.ui.live.liveCacheForRecents
 import com.arkiv.player.ui.isLandscapeTablet
@@ -161,14 +165,14 @@ fun HomeScreen(
     val liveRecentDao = remember { graph.database.liveRecentDao() }
     val liveCacheDao = remember { graph.database.liveChannelCacheDao() }
     val rawRecent by liveRecentDao.flowRecent(10).collectAsStateWithLifecycle(initialValue = emptyList())
-    var cacheByCode by remember { mutableStateOf<Map<String, LiveChannelCacheEntity>>(emptyMap()) }
+    var cacheByLiveCode by remember { mutableStateOf<Map<String, LiveChannelCacheEntity>>(emptyMap()) }
     LaunchedEffect(rawRecent) {
         if (rawRecent.isNotEmpty()) {
-            cacheByCode = liveCacheForRecents(rawRecent, liveCacheDao)
+            cacheByLiveCode = liveCacheForRecents(rawRecent, liveCacheDao)
         }
     }
-    val recentChannels = remember(rawRecent, cacheByCode) {
-        recentChannelsForHome(rawRecent, cacheByCode)
+    val recentChannels = remember(rawRecent, cacheByLiveCode) {
+        recentChannelsForHome(rawRecent, cacheByLiveCode)
     }
 
     // Channels from the device's country, so the row is useful from the very first opening (with
@@ -176,8 +180,9 @@ fun HomeScreen(
     // Room cache if it's fresh, and doesn't break anything if there's no network or no detectable
     // country.
     //
-    // The whole row follows the Xuper plugin (AppGraph.xuperLive): off, it's empty and the country's
-    // channels aren't even asked for; back on, they're fetched again. Recents stay in Room.
+    // The country part follows the Xuper plugin (AppGraph.xuperLive): off, the country's channels
+    // aren't even asked for; back on, they're fetched again. The row itself follows the whole live
+    // module (homeLiveRow): any provider, Xuper or a plugin with channels. Recents stay in Room.
     val context = LocalContext.current
     val xuperLive by graph.xuperLive.collectAsStateWithLifecycle()
     var countryChannels by remember { mutableStateOf<List<LiveChannel>>(emptyList()) }
@@ -190,10 +195,13 @@ fun HomeScreen(
         )
     }
     // The module's providers right now: a switched-off plugin's recents leave the row (they are kept, not deleted).
+    val liveOn by graph.liveModule.available.collectAsStateWithLifecycle()
     val liveTabs by graph.liveModule.tabs.collectAsStateWithLifecycle()
-    val channelsRow = remember(recentChannels, countryChannels, xuperLive, liveTabs) {
-        if (xuperLive) homeChannelsRow(recentChannels, countryChannels, available = liveTabs.map { it.id }.toSet()) else emptyList()
+    // null = no row at all (empty module); empty = the row with only "Ver más canales".
+    val liveRow = remember(recentChannels, countryChannels, liveOn, liveTabs) {
+        homeLiveRow(liveOn, recentChannels, countryChannels, available = liveTabs.map { it.id }.toSet())
     }
+    val channelsRow = liveRow.orEmpty()
 
     fun playChannel(channel: LiveChannel) {
         // Pins the list it was "entered" with, same mechanism as LiveScreen.open -- so
@@ -251,7 +259,8 @@ fun HomeScreen(
     val topSectionsSignature = TopSectionsSignature(
         heroVisible = continueWatching.firstOrNull() != null || heroPick != null,
         continueWatchingCount = (continueWatching.size - 1).coerceAtLeast(0),
-        channelsCount = channelsRow.size,
+        // +1: the "Ver más canales" card, so a row with only that card still counts as shown.
+        channelsCount = liveRow?.let { it.size + 1 } ?: 0,
         libraryCount = orderedLibrary.size,
     )
     var lastTopSectionsSignature by remember { mutableStateOf<TopSectionsSignature?>(null) }
@@ -381,19 +390,25 @@ fun HomeScreen(
 
         // 3. Live channels -- direct access without going through "En vivo": what was last watched
         // on the left, then the country's channels without repeating the ones already seen, and
-        // at the end the way out to the full grid (see `homeChannelsRow`). With nothing to
-        // show, the row isn't drawn: no empty gap. Always-present, keyed item -- see the hero
+        // at the end the way out to the full grid (see `homeLiveRow`). With no live provider
+        // at all, the row isn't drawn: no empty gap; with providers but nothing to list yet
+        // (only plugins, nothing watched), just the way in. Always-present, keyed item -- see the hero
         // comment above.
         item(key = "canales") {
-            if (channelsRow.isNotEmpty()) {
+            if (liveRow != null) {
                 Column(Modifier.padding(top = 16.dp)) {
                     SectionHeader("Canales en vivo", modifier = Modifier.padding(start = 16.dp))
                     LazyRow(
                         contentPadding = PaddingValues(horizontal = 16.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        items(channelsRow, key = { it.code }) { channel ->
-                            LiveChannelCard(channel = channel, width = sizes.channelWidth, onClick = { playChannel(channel) })
+                        items(channelsRow, key = { it.liveCode }) { channel ->
+                            LiveChannelCard(
+                                channel = channel,
+                                badge = providerBadge(channel, liveTabs),
+                                width = sizes.channelWidth,
+                                onClick = { playChannel(channel) },
+                            )
                         }
                         // At the end of the row, the way out to the full grid: recents are a
                         // shortcut, not the catalog.
@@ -546,7 +561,7 @@ private fun SeeMoreChannelsCard(width: Dp = 140.dp, onClick: () -> Unit) {
  * still: the name's initials, to not show a "0" that means nothing.
  */
 @Composable
-private fun LiveChannelCard(channel: LiveChannel, width: Dp = 140.dp, onClick: () -> Unit) {
+private fun LiveChannelCard(channel: LiveChannel, badge: LiveProviderTab?, width: Dp = 140.dp, onClick: () -> Unit) {
     Column(modifier = Modifier.width(width).clickable(onClick = onClick)) {
         Box(
             modifier = Modifier
@@ -576,6 +591,8 @@ private fun LiveChannelCard(channel: LiveChannel, width: Dp = 140.dp, onClick: (
                     )
                 }
             }
+            // Only with more than one provider (ruling R6): the row mixes their recents.
+            badge?.let { ProviderBadge(it, Modifier.align(Alignment.TopStart).padding(4.dp)) }
         }
         Text(
             text = channel.name,

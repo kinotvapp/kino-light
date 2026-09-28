@@ -144,4 +144,11 @@ class InstalledCardStyleTest {
     @Test fun `the hosts line always reserves two lines`() {
         assertEquals(2, installedHostsLines())
     }
+
+    // A live plugin's "Lista recortada: ..." line (Ajustes > Plugins): every card of a line with one reserves it.
+    @Test fun `a live notice is reserved by every card of its grid line`() {
+        assertEquals(listOf(false, false, true, true, false), installedGridLinesReserving(listOf(false, false, false, true, false), columns = 2))
+        assertEquals(listOf(false, false, false), installedGridLinesReserving(listOf(false, false, false), columns = 2))
+        assertEquals(listOf(true, true, false), installedGridLinesReserving(listOf(true, true, false), columns = 2))
+    }
 }

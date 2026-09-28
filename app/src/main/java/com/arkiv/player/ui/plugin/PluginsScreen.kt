@@ -430,6 +430,15 @@ private fun InstalledTab(
     }
     val messageIndex = rowMessageId?.let { id -> plugins.indexOfFirst { it.id == id } }?.takeIf { it >= 0 }
     val messageLines = remember(plugins, messageIndex) { installedGridLinesWithMessage(plugins.size, messageIndex, CATALOG_COLUMNS) }
+    // A live plugin's "Lista recortada: …" line, per card (null = none), following its current provider.
+    val liveModule = rememberGraph().liveModule
+    val notices = plugins.map { p ->
+        androidx.compose.runtime.key(p.id) {
+            val flow = remember(p.id) { liveModule.noticeFor(p.id) }
+            flow.collectAsStateWithLifecycle(initialValue = null).value
+        }
+    }
+    val noticeLines = installedGridLinesReserving(notices.map { it != null }, CATALOG_COLUMNS)
     LazyVerticalGrid(
         columns = GridCells.Fixed(CATALOG_COLUMNS),
         modifier = modifier,
@@ -446,6 +455,8 @@ private fun InstalledTab(
                 message = message.takeIf { rowMessageId == p.id },
                 reserveMessageLines = messageLines.getOrElse(index) { false },
                 vm = vm,
+                liveNotice = notices.getOrNull(index),
+                reserveNoticeLines = noticeLines.getOrElse(index) { false },
             )
         }
     }

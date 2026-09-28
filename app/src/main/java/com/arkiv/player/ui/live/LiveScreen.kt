@@ -66,6 +66,7 @@ import com.arkiv.player.data.gateway.LiveChannel
 import com.arkiv.player.data.gateway.LiveChannelKeys
 import com.arkiv.player.data.gateway.liveCode
 import com.arkiv.player.data.gateway.LiveProgram
+import com.arkiv.player.data.live.LiveProviderTab
 import com.arkiv.player.ui.components.EmptyState
 import com.arkiv.player.ui.rememberGraph
 import com.arkiv.player.ui.theme.ArkivRed
@@ -88,6 +89,13 @@ private enum class LocalView { NONE, RECENT }
  * on its own, from the authenticated session (the client no longer needs to send the accountId
  * as a header -- that allowed requesting with someone else's Magis account), with this screen not
  * needing to know anything about it.
+ *
+ * Several providers (Xuper and plugins with channels, see `AppGraph.liveModule`): a chip row
+ * picks the provider whose categories show, and every card carries its provider's badge, so a
+ * favourites/recents list mixing providers says where each channel comes from (ruling R6: both
+ * only when there is more than one provider). The search field searches every provider at once
+ * (Amendment A1, [LiveViewModel.crossSearch]). The guide toggle exists only while the active
+ * provider has programme data ([LiveUiState.hasGuide]).
  *
  * [onOpenChannel] receives the tapped channel's live code; the caller (`ArkivRoot`) decides what to do
  * with it -- today, navigate to the player in live mode (`live:<liveCode>`). Before invoking it,
@@ -119,11 +127,15 @@ fun LiveScreen(
         },
     )
     val state by vm.state.collectAsStateWithLifecycle()
+    val cross by vm.crossSearch.collectAsStateWithLifecycle()
+    val searchView = remember(state.search, cross) { liveSearchView(state.search, cross) }
     var view by remember { mutableStateOf(LocalView.NONE) }
     // rememberSaveable: the brief asks for the mode to survive rotation (a configuration change
     // recomposes the whole screen from scratch, and with `remember` it would always go back to
     // the grid).
     var guideMode by rememberSaveable { mutableStateOf(false) }
+    // A provider without a guide (plugin with no EPG) has no toggle: back to the grid.
+    LaunchedEffect(state.hasGuide) { if (!state.hasGuide) guideMode = false }
 
     // Recent: doesn't go through LiveViewModel.chooseCategory (it isn't a provider category),
     // read directly from Room, only for providers still in the module (see recentsForScreen).
@@ -149,12 +161,13 @@ fun LiveScreen(
     // player's zapping goes through, not the full catalog. Set in LiveZappingSource BEFORE
     // opening: a list of LiveChannel doesn't cross the navigation route (a String) well, see
     // LiveZappingSource's KDoc (LiveZapping.kt).
-    // filterChannels normalizes every channel name; over the 1000+ live grid that's thousands of
-    // allocations, so memoize it instead of recomputing on each recomposition / EPG tick (the TV
-    // screens already do this). Reused below for the empty check and the grid/guide.
-    val visible = remember(state.channels, state.search) { filterChannels(state.channels, state.search) }
-    val visibleRecents = remember(recents, state.search) { filterChannels(recents, state.search) }
-    val activeList = if (view == LocalView.RECENT) visibleRecents else visible
+    // A non-blank query never filters these: it shows the merged search across providers instead
+    // (Amendment A1, see SearchResults below).
+    val visible = state.channels
+    val visibleRecents = recents
+    val searchResults = (searchView as? LiveSearchView.Results)?.channels
+    // A search result zaps within its OWN provider: the player narrows this list (zappingListFor).
+    val activeList = searchResults ?: if (view == LocalView.RECENT) visibleRecents else visible
     fun open(channel: LiveChannel) {
         LiveZappingSource.list = activeList
         onOpenChannel(channel.liveCode)
@@ -184,12 +197,53 @@ fun LiveScreen(
             IconButton(onClick = { vm.reload() }) {
                 Icon(Icons.Default.Refresh, contentDescription = "Recargar canales", tint = ArkivTextSecondary)
             }
-            IconButton(onClick = { guideMode = !guideMode }) {
-                Icon(
-                    imageVector = if (guideMode) Icons.Default.GridView else Icons.Default.ViewAgenda,
-                    contentDescription = if (guideMode) "Ver como grilla" else "Ver guía de programación",
-                    tint = if (guideMode) ArkivRed else ArkivTextSecondary,
-                )
+            if (state.hasGuide) {
+                IconButton(onClick = { guideMode = !guideMode }) {
+                    Icon(
+                        imageVector = if (guideMode) Icons.Default.GridView else Icons.Default.ViewAgenda,
+                        contentDescription = if (guideMode) "Ver como grilla" else "Ver guía de programación",
+                        tint = if (guideMode) ArkivRed else ArkivTextSecondary,
+                    )
+                }
+            }
+        }
+
+        if (state.moduleEmpty) {
+            // Defensive: ArkivRoot already leaves the tab when the module empties.
+            EmptyState(
+                "Sin canales en vivo",
+                "Instala un plugin con canales o activa Xuper en Ajustes ▸ Plugins.",
+                modifier = Modifier.fillMaxSize(),
+            )
+            return@Column
+        }
+
+        val gridPadding = PaddingValues(
+            start = 16.dp, end = 16.dp, top = 8.dp,
+            bottom = contentPadding.calculateBottomPadding() + 24.dp,
+        )
+
+        // Amendment A1: a non-blank query is one merged list over every provider, with its badges.
+        if (searchView != LiveSearchView.Off) {
+            SearchResults(searchView, state, gridPadding, ::open, ::favorite)
+            return@Column
+        }
+
+        if (state.showProviders) {
+            val lit = selectedProviderChip(state, recentView = view == LocalView.RECENT)
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(bottom = 4.dp),
+            ) {
+                items(state.providers, key = { it.id }) { tab ->
+                    CategoryChip(
+                        label = tab.name,
+                        icon = null,
+                        selected = lit == tab.id,
+                        onClick = { view = LocalView.NONE; vm.chooseProvider(tab.id) },
+                    )
+                }
             }
         }
 
@@ -230,14 +284,19 @@ fun LiveScreen(
             LinearProgressIndicator(color = ArkivRed, modifier = Modifier.fillMaxWidth())
         }
 
-        val gridPadding = PaddingValues(
-            start = 16.dp, end = 16.dp, top = 8.dp,
-            bottom = contentPadding.calculateBottomPadding() + 24.dp,
-        )
+        // The active provider's own note (a plugin list cut to the caps): "Lista recortada: …".
+        state.notice?.let { notice ->
+            Text(
+                notice,
+                style = MaterialTheme.typography.bodySmall,
+                color = ArkivTextSecondary,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            )
+        }
 
         when {
             view == LocalView.RECENT -> {
-                val visible = filterChannels(recents, state.search)
+                val visible = visibleRecents
                 if (visible.isEmpty()) {
                     EmptyState(
                         "Sin canales recientes",
@@ -247,7 +306,7 @@ fun LiveScreen(
                 } else if (guideMode) {
                     LiveGuideList(visible, state.programming, ::open, vm::requestEpg, gridPadding)
                 } else {
-                    ChannelGrid(visible, state.current, state.favorites, gridPadding, ::open, ::favorite)
+                    ChannelGrid(visible, state.current, state.favorites, gridPadding, ::open, ::favorite, state::tabOf)
                 }
             }
             state.error != null && state.channels.isEmpty() -> {
@@ -258,7 +317,6 @@ fun LiveScreen(
             }
             visible.isEmpty() -> {
                 val (title, subtitle) = when {
-                    state.search.isNotBlank() -> "Sin resultados" to "Prueba con otro nombre o número de canal."
                     state.activeCategory == CATEGORY_FAVORITES -> "Sin favoritos todavía" to
                         "Mantén pulsado un canal para agregarlo."
                     else -> "Sin canales" to "No encontramos canales en esta categoría."
@@ -266,7 +324,44 @@ fun LiveScreen(
                 EmptyState(title, subtitle, modifier = Modifier.fillMaxSize())
             }
             guideMode -> LiveGuideList(visible, state.programming, ::open, vm::requestEpg, gridPadding)
-            else -> ChannelGrid(visible, state.current, state.favorites, gridPadding, ::open, ::favorite)
+            else -> ChannelGrid(visible, state.current, state.favorites, gridPadding, ::open, ::favorite, state::tabOf)
+        }
+    }
+}
+
+/**
+ * The merged search across every provider (Amendment A1): the results grid (each card with its
+ * provider's badge when there is more than one provider), "Sin resultados", or a thin bar while
+ * the first answer is computed; under it, which providers were not fully searched.
+ */
+@Composable
+private fun SearchResults(
+    view: LiveSearchView,
+    state: LiveUiState,
+    gridPadding: PaddingValues,
+    onOpen: (LiveChannel) -> Unit,
+    onFavorite: (LiveChannel) -> Unit,
+) {
+    val note = when (view) {
+        is LiveSearchView.Results -> view.note
+        is LiveSearchView.NoResults -> view.note
+        else -> null
+    }
+    Column(Modifier.fillMaxSize()) {
+        note?.let {
+            Text(
+                it,
+                style = MaterialTheme.typography.bodySmall,
+                color = ArkivTextSecondary,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            )
+        }
+        when (view) {
+            is LiveSearchView.Results ->
+                ChannelGrid(view.channels, state.current, state.favorites, gridPadding, onOpen, onFavorite, state::tabOf)
+            is LiveSearchView.NoResults ->
+                EmptyState("Sin resultados", "Prueba con otro nombre o número de canal.", modifier = Modifier.fillMaxSize())
+            else -> LinearProgressIndicator(color = ArkivRed, modifier = Modifier.fillMaxWidth())
         }
     }
 }
@@ -315,6 +410,7 @@ private fun ChannelGrid(
     contentPadding: PaddingValues,
     onOpen: (LiveChannel) -> Unit,
     onFavorite: (LiveChannel) -> Unit,
+    badgeFor: (LiveChannel) -> LiveProviderTab?,
 ) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(gridColumns(2, isLandscapeTablet())),
@@ -328,6 +424,7 @@ private fun ChannelGrid(
                 channel = channel,
                 currentProgram = current[channel.liveCode],
                 isFavorite = channel.liveCode in favorites,
+                badge = badgeFor(channel),
                 onClick = { onOpen(channel) },
                 onLongClick = { onFavorite(channel) },
             )
@@ -363,6 +460,7 @@ private fun ChannelCard(
     channel: LiveChannel,
     currentProgram: LiveProgram?,
     isFavorite: Boolean,
+    badge: LiveProviderTab?,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
 ) {
@@ -399,6 +497,7 @@ private fun ChannelCard(
                     )
                 }
             }
+            badge?.let { ProviderBadge(it, Modifier.align(Alignment.TopStart).padding(6.dp)) }
             if (isFavorite) {
                 Icon(
                     Icons.Default.Star,

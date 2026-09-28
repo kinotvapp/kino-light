@@ -107,13 +107,14 @@ private val TABS = listOf(
 
 /**
  * The tabs this device shows: Caracol only in Colombia ([isColombia]), "En vivo" only while the
- * native Xuper live channels are on ([xuperLive], see `AppGraph.xuperLive`). Pure for the test.
+ * live module has at least one provider ([liveModule], see `AppGraph.liveModule.available`):
+ * Xuper while its plugin is on, plus any installed plugin with `channels`. Pure for the test.
  */
-internal fun visibleTabRoutes(isColombia: Boolean, xuperLive: Boolean): List<String> =
+internal fun visibleTabRoutes(isColombia: Boolean, liveModule: Boolean): List<String> =
     TABS.map { it.route }.filter { route ->
         when (route) {
             "caracol" -> isColombia
-            "live" -> xuperLive
+            "live" -> liveModule
             else -> true
         }
     }
@@ -136,10 +137,10 @@ fun ArkivRoot(
     // row -- SIM, then time zone, then locale.
     val context = androidx.compose.ui.platform.LocalContext.current
     val isColombia = remember { com.arkiv.player.ui.live.deviceCountry(context) == "CO" }
-    // "En vivo" follows the Xuper plugin live, without a restart (see AppGraph.xuperLive).
-    val xuperLive by graph.xuperLive.collectAsStateWithLifecycle()
-    val tabs = remember(isColombia, xuperLive) {
-        val routes = visibleTabRoutes(isColombia, xuperLive)
+    // "En vivo" follows the live module (Xuper or any plugin with channels), without a restart.
+    val liveOn by graph.liveModule.available.collectAsStateWithLifecycle()
+    val tabs = remember(isColombia, liveOn) {
+        val routes = visibleTabRoutes(isColombia, liveOn)
         TABS.filter { it.route in routes }
     }
 
@@ -175,8 +176,8 @@ fun ArkivRoot(
     // longer block on a linked account up front -- we TRY. Only if the portal refuses THIS channel
     // (a premium one) does the player show the "link your Xuper account" message
     // (PlayerViewModel.liveErrorMessage + MagisLive maps aaa100028 -> live_no_account).
-    fun goToLiveChannel(code: String) {
-        goToPlayer("${com.arkiv.player.playback.PlayerSource.LIVE_PREFIX}$code")
+    fun goToLiveChannel(liveCode: String) {
+        goToPlayer("${com.arkiv.player.playback.PlayerSource.LIVE_PREFIX}$liveCode")
     }
 
     // Deep link from the notification: open the player on that chapter.
@@ -321,7 +322,7 @@ fun ArkivRoot(
                     onOpenItem = { navController.navigate("detail/${Uri.encode(it)}") },
                     onPlayEpisode = { playEpisode(it) },
                     onOpenTitleRoute = { route -> navController.navigate(route) { launchSingleTop = true } },
-                    onPlayLive = { code -> goToLiveChannel(code) },
+                    onPlayLive = { liveCode -> goToLiveChannel(liveCode) },
                     // "Ver más canales": the same options as tapping the "En vivo" tab below, so it
                     // shows marked as selected and the back stack doesn't grow from entering here.
                     onOpenLive = {
@@ -337,10 +338,10 @@ fun ArkivRoot(
                 )
             }
             composable("live") {
-                // Guard: with the Xuper plugin off the tab is gone, and a route reached anyway (it
-                // was on screen when the plugin went off, or restored state) goes back to Inicio
-                // without composing LiveScreen -- no LiveViewModel, no portal call.
-                if (!xuperLive) {
+                // Guard: with no live provider left (Xuper off and no plugin with channels) the tab
+                // is gone, and a route reached anyway (it was on screen when the last provider
+                // went, or restored state) goes back to Inicio without composing LiveScreen.
+                if (!liveOn) {
                     LaunchedEffect(Unit) { TABS.firstOrNull { it.route == "home" }?.let(::goToTab) }
                 } else com.arkiv.player.ui.live.LiveScreen(
                     // Task 14: the player's live mode already exists (`enVivo` flag in
@@ -348,7 +349,7 @@ fun ArkivRoot(
                     // LiveZappingSource the list it was entered with -- this just needs to navigate
                     // with the prefix PlayerSource.kindFor() recognizes as live. Without a linked
                     // account, goToLiveChannel sends the tap to Ajustes instead (see its KDoc).
-                    onOpenChannel = { code -> goToLiveChannel(code) },
+                    onOpenChannel = { liveCode -> goToLiveChannel(liveCode) },
                     contentPadding = padding,
                 )
             }
