@@ -105,7 +105,7 @@ internal fun pickerFocusBlocks(installedIds: List<String>, recommendedIds: List<
  *   back to the first card (or "Listo") ([pickerNeedsRefocus]).
  * - Up/Down are routed explicitly ([TvGridFocus], [pickerFocusBlocks]): "Tus plugins", Recomendados,
  *   "Actualizar", the community cards, then "Listo"; Up from "Listo" returns to the card Down left. The
- *   cards are compact ([tvPickerColumns]: 4 on a 1280 dp TV) so a new person sees "De la comunidad" on
+ *   cards are compact ([tvPickerColumns]: 4 on a ~960 dp box, 5 on a 1280 dp TV) so a new person sees "De la comunidad" on
  *   the first screen.
  * - The picker is mandatory: "Listo" ([pickerCanFinish]) calls [onFinish]; there is no skip. Back calls
  *   [onBack] ([com.arkiv.player.ui.plugin.onSourcePickerBack]: leaves the app when opened at start).

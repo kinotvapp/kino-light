@@ -76,13 +76,15 @@ class TvGridFocusTest {
         assertNull(gridStopHeader(blocks, 4, "unknown"))
     }
 
-    @Test fun `the picker fits four cards on a 1280 dp screen`() {
+    @Test fun `the picker fits four cards on a 960 dp TV and five on a 1280 dp one`() {
+        // A 1280x720 px box at 213 dpi is ~961 dp wide; its grid gets ~833 dp after the side paddings.
+        assertEquals(4, tvPickerColumns(833f))
         // 1280 dp minus the screen's 64 dp side paddings.
-        assertEquals(4, tvPickerColumns(1152f))
+        assertEquals(5, tvPickerColumns(1152f))
     }
 
     @Test fun `the picker column count follows the width, within bounds`() {
-        assertEquals(3, tvPickerColumns(900f))
+        assertEquals(4, tvPickerColumns(900f))
         assertEquals(2, tvPickerColumns(300f))
         assertEquals(6, tvPickerColumns(4000f))
     }
