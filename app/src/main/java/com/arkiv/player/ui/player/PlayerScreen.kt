@@ -411,6 +411,15 @@ private fun PlayerContent(
     )
     val playlist by vm.playlist.collectAsStateWithLifecycle()
     val magisItem by vm.magisItem.collectAsStateWithLifecycle()
+    // What of `magisItem` goes to a TV: a native Magis title as it is, an official-Xuper plugin
+    // title re-spelled as that same native item (proxy url + CDN container), and null for any other
+    // plugin title, which has no cast. EVERY cast path (Chromecast, remux, DLNA) reads this, never
+    // `magisItem`, so the plugin carve-out is decided in one place: `castableStreamItem`.
+    val castMagis: PlayerData? = remember(magisItem) {
+        magisItem?.let { item ->
+            castableStreamItem(item) { url, headers -> graph.archiveCacheProxy.proxyUrl(url, headers, direct = true) }
+        }
+    }
     var magisPlayer by remember { mutableStateOf<Player?>(null) }
     var magisTextureView by remember { mutableStateOf<android.view.TextureView?>(null) }
     // Task 1 (light-magis pruning): live channel, same pattern as magisItem/magisPlayer.
@@ -614,8 +623,8 @@ private fun PlayerContent(
      */
     fun remuxOffset(): Long {
         if (!casting) return 0L
-        val ep = magisItem?.episodeId ?: return 0L
-        val cdn = magisItem?.castUrl?.takeIf { it.isNotBlank() } ?: return 0L
+        val ep = castMagis?.episodeId ?: return 0L
+        val cdn = castMagis?.castUrl?.takeIf { it.isNotBlank() } ?: return 0L
         // From the stored, keyframe-aligned point -- NOT from the local player's live position,
         // which keeps moving and would make the bar jump every time it was read.
         val key = com.arkiv.player.playback.RemuxPolicy.keyFrom(cdn, remuxStartPoint[ep] ?: 0L)
@@ -1205,8 +1214,9 @@ private fun PlayerContent(
      */
     LaunchedEffect(casting, d?.episodeId, d?.kind, magisItem?.episodeId) {
         if (!casting || castSession == null) return@LaunchedEffect
-        // Magis travels in `magisItem`, everything else in the playlist.
-        val item = magisItem?.takeIf { it.kind == SourceKind.MAGIS } ?: d ?: return@LaunchedEffect
+        // Magis travels in `magisItem`, everything else in the playlist. `castMagis` is that item in
+        // its cast shape (an official-Xuper plugin title included), null for any other plugin.
+        val item = castMagis?.takeIf { it.kind == SourceKind.MAGIS } ?: d ?: return@LaunchedEffect
 
         // What to feed the remuxer, and what to key it by. They differ for Magis: the input is the
         // loopback proxy (which puts the CDN's auth headers on), while the key is the CDN url,
@@ -1378,7 +1388,7 @@ private fun PlayerContent(
      */
     val remuxProgress by graph.tsRemuxer.progress.collectAsStateWithLifecycle()
     val preparingForTv = casting &&
-        magisItem?.let { magisIsTs(it) && graph.tsRemuxer.alreadyDone(it.castUrl.orEmpty()) == null } == true
+        castMagis?.let { magisIsTs(it) && graph.tsRemuxer.alreadyDone(it.castUrl.orEmpty()) == null } == true
     if (preparingForTv) {
         Box(
             Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.75f)),
@@ -2156,10 +2166,11 @@ private fun PlayerContent(
     // sources that job belongs to LaunchedEffect(playlist), which Magis never reaches.
     LaunchedEffect(casting, magisItem?.episodeId) {
         if (casting) {
-            // Plugin titles can't be cast in v1 (spec non-goal). A session that was already open
-            // when one started is ended, so the title keeps playing here instead of the TV going
-            // idle with no explanation.
-            if (magisItem?.kind == SourceKind.PLUGIN) {
+            // Plugin titles can't be cast (spec non-goal), except the official Xuper plugin's VOD
+            // titles, which `castMagis` re-spells as the native Magis item they cast as before.
+            // A session that was already open when any other one started is ended, so the title
+            // keeps playing here instead of the TV going idle with no explanation.
+            if (magisItem != null && castMagis == null) {
                 android.util.Log.w("ArkivCast", "plugin title: cast not available, ending the session")
                 android.widget.Toast.makeText(context, "No disponible para contenido de plugins", android.widget.Toast.LENGTH_SHORT).show()
                 runCatching { castContext?.sessionManager?.endCurrentSession(true) }
@@ -2217,7 +2228,7 @@ private fun PlayerContent(
             // the same reason: `castRequestFor` reads nothing from PlaylistData but `items` and
             // the index, so reusing it beats a second copy of the lanUrl/mime/audio logic that
             // could drift from it.
-            val mg = magisItem
+            val mg = castMagis
             // A streaming MPEG-TS is PREPARED before it is cast, not while. Casting the segments
             // and remuxing at the same time means downloading the same title twice at once through
             // one proxy, and measured on 2026-09-12 they starved each other: three live
@@ -2274,7 +2285,7 @@ private fun PlayerContent(
             // Stop converting what nobody is going to watch. The remux covers the whole title, so
             // a cast that ends after ten minutes would otherwise keep pulling the other hour and
             // fifty down the person's connection.
-            magisItem?.castUrl?.takeIf { it.isNotBlank() }?.let { graph.tsRemuxer.stop(it) }
+            castMagis?.castUrl?.takeIf { it.isNotBlank() }?.let { graph.tsRemuxer.stop(it) }
             // If the session ended because the user pressed "stop" (the bar's button), it must NOT
             // resume here: they asked for silence, and the local one was already left paused since
             // casting started (branch above) — resuming it would be exactly the opposite of what
@@ -3386,10 +3397,13 @@ private fun PlayerContent(
                     }
                     // (The phone's CC/audio button moved down to the right, next to the transport
                     // row; on TV it was always in the bottom icon row.)
-                    // DLNA + Chromecast (phone only, and PORTRAIT only -- hidden in landscape
-                    // fullscreen at the user's request). Buttons shared with live mode, see
-                    // `DlnaCastButtons`. Hidden too while a plugin title plays: no cast in v1.
-                    if (!isTv && !isLandscape && magisItem?.kind != SourceKind.PLUGIN) {
+                    // DLNA + Chromecast (phone only), portrait AND landscape: this top bar is part
+                    // of the controls overlay, so they appear with a tap and hide with the rest of
+                    // the controls. At the right end of the bar, past the title's weight(1f); the
+                    // rotate button is in the bottom icon row, so nothing competes for this spot.
+                    // Buttons shared with live mode, see `DlnaCastButtons`. Hidden for a plugin
+                    // title unless it's the official Xuper plugin's (`playerOffersCast`).
+                    if (playerOffersCast(isTv, magisItem)) {
                         // Note specific to this Row: since `dlnaState.active != null` hides the
                         // whole controls overlay (visible = ... && dlnaState.active == null
                         // above), casting would have no way to be managed from the app if DLNA is
@@ -3912,19 +3926,27 @@ private fun PlayerContent(
             // Phone only: on TV this band had nothing left to show once the "EN VIVO" badge was
             // dropped (its back button and cast buttons were already phone-only, see LiveBanner's
             // KDoc), so it's skipped here instead of composing it empty.
-            // Phone PORTRAIT only: the live band carries the back + cast buttons, both hidden in
-            // landscape fullscreen at the user's request (same as VOD above).
-            if (!isTv && !isLandscape) {
-                LiveBanner(onBack = onBack) {
-                    // Task 18: the SAME buttons as VOD (`dlnaState` is a single instance for the
-                    // whole screen), just hung off THIS strip because the VOD block is hidden here
-                    // (visible=!isLive). It's offered FROM THE PLAYER, not in LiveScreen's earlier
-                    // dialog: only once the channel is actually playing is there real audio to feed
-                    // CastAudioSupport (see castRequestFor's KDoc) -- before playback starts there's
-                    // nowhere to pull that reading from, neither for live nor for VOD (VOD doesn't
-                    // offer cast in its own destination dialog either, for the same reason).
+            // Task 18: the SAME buttons as VOD (`dlnaState` is a single instance for the whole
+            // screen), just hung off live's own strip because the VOD block is hidden here
+            // (visible=!isLive). It's offered FROM THE PLAYER, not in LiveScreen's earlier dialog:
+            // only once the channel is actually playing is there real audio to feed
+            // CastAudioSupport (see castRequestFor's KDoc) -- before playback starts there's nowhere
+            // to pull that reading from, neither for live nor for VOD (VOD doesn't offer cast in
+            // its own destination dialog either, for the same reason).
+            // A module channel (Xuper's included) never fills `magisItem`, so it always offers
+            // cast; a plugin's live channel does, and `playerOffersCast` keeps it without.
+            val liveCastButtons: @Composable () -> Unit = {
+                if (playerOffersCast(isTv, magisItem)) {
                     DlnaCastButtons(casting = casting, castContext = castContext, onDiscoverDlna = dlnaState::discover)
                 }
+            }
+            if (!isTv && !isLandscape) {
+                // Portrait: the persistent band, back + cast.
+                LiveBanner(onBack = onBack, castButtons = liveCastButtons)
+            } else if (!isTv) {
+                // Landscape: no back (the fullscreen video stays clean, as the user asked), and
+                // the cast buttons only while the interface is up, hiding with it.
+                LiveCastBand(state = liveState, autoHide = !isModuleLive, castButtons = liveCastButtons)
             }
             // This card is for the En vivo module's channels (any provider): the channel and its
             // provider's guide. Caracol and a plugin's `live` card don't have it.
@@ -4153,7 +4175,9 @@ private fun PlayerContent(
         // exactly as the Chromecast path above knows. This line used to look only at the playlist and live,
         // so for a Magis title `ep` was null and DLNA never even started ("nothing is playing"), found from
         // the DLNA log on a real TV.
-        val ep = magisItem?.takeIf { it.kind == SourceKind.MAGIS }
+        // `castMagis`, not `magisItem`: an official-Xuper plugin title goes in its native Magis shape
+        // (DLNA then pulls from the proxy, which adds the CDN headers); any other plugin is null.
+        val ep = castMagis?.takeIf { it.kind == SourceKind.MAGIS }
             ?: playlistRef.value?.items?.getOrNull(currentIndex)
             ?: liveItem
         controller.pause()

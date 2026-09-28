@@ -1596,13 +1596,19 @@ class PlayerViewModel internal constructor(
         // A live stream has no "where you were": it starts at the player's default position (the
         // live edge), and with 0 `StreamExoPlayer` doesn't seek.
         val startPos = if (live) 0L else safeStartPosition(episodeId, SourceKind.PLUGIN)
+        // The official Xuper plugin's VOD titles cast like the native Magis ones did: through
+        // `ArchiveCacheProxy`, which puts the CDN headers on for the receiver (see
+        // `castableStreamItem`). The phone itself doesn't play through it, so it's only started
+        // here, before publishing, so the cast shape PlayerScreen builds from this item has a port.
+        if (xuper && !live) withContext(Dispatchers.IO) { runCatching { archiveCacheProxy.start() } }
         _magisItem.value = PlayerData(
             episodeId = episodeId,
             itemId = episodeId.substringBefore("::"),
             title = channel?.title ?: header?.itemTitle ?: name,
             subtitle = header?.episodeLabel.orEmpty(),
             mediaUrl = play.url,
-            // No cast for plugin titles in v1: without a cast URL no cast path has anything to send.
+            // Null for every plugin: what gets cast is built at cast time by `castableStreamItem`,
+            // which only the official Xuper plugin's VOD titles pass; any other plugin has no cast.
             castUrl = null,
             artworkUrl = channel?.logo.orEmpty(),
             openingStartMs = null, openingEndMs = null, endingStartMs = null,

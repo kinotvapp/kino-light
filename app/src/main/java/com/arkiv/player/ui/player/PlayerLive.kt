@@ -187,6 +187,38 @@ internal fun BoxScope.LiveBanner(
 }
 
 /**
+ * Live mode's cast buttons on a phone held in LANDSCAPE. Unlike portrait's [LiveBanner] (persistent,
+ * it carries the only back button), landscape keeps the video clean: the buttons show only while the
+ * player's interface is up -- the same [LiveState.infoVisible] a tap toggles and the channel card
+ * rides on -- and fade out with it. Top-right, so it never meets the card at the bottom.
+ *
+ * [autoHide]: a channel with no [ChannelCard] (Caracol, a plugin's live) has nobody else running
+ * the 3 s countdown, so this runs it; with the card composed the card already does and a second one
+ * would only repeat the same `hideInfo`.
+ */
+@Composable
+internal fun BoxScope.LiveCastBand(
+    state: LiveState,
+    autoHide: Boolean,
+    castButtons: @Composable () -> Unit,
+) {
+    if (autoHide) {
+        LaunchedEffect(state.infoTick) {
+            delay(CARD_VISIBLE_MS)
+            state.hideInfo()
+        }
+    }
+    AnimatedVisibility(
+        visible = state.infoVisible,
+        enter = fadeIn(),
+        exit = fadeOut(),
+        modifier = Modifier.align(Alignment.TopEnd).systemBarsPadding().padding(6.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) { castButtons() }
+    }
+}
+
+/**
  * Channel card (number or logo, name, Now/Up next). TRANSIENT: shows for 3 s after opening,
  * zapping, or a tap, and goes away on its own.
  *
