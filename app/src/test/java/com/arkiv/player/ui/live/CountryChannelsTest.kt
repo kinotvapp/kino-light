@@ -151,7 +151,14 @@ class CountryChannelsTest {
     }
 
     @Test
-    fun `a module with providers but nothing watched still has the row, with only the way in`() {
-        assertEquals(emptyList<LiveChannel>(), homeLiveRow(liveOn = true, recent = emptyList(), fromCountry = emptyList(), available = setOf("plugin:tv")))
+    fun `a module with providers but no channel to list has no row`() {
+        assertNull(homeLiveRow(liveOn = true, recent = emptyList(), fromCountry = emptyList(), available = setOf("plugin:tv")))
+        // Recents of a provider no longer in the module don't count either.
+        assertNull(homeLiveRow(liveOn = true, recent = listOf(channel("x1")), fromCountry = emptyList(), available = setOf("plugin:tv")))
+    }
+
+    @Test
+    fun `xuper country channels alone make the row`() {
+        assertEquals(listOf(channel("c9")), homeLiveRow(liveOn = true, recent = emptyList(), fromCountry = listOf(channel("c9")), available = setOf("xuper")))
     }
 }

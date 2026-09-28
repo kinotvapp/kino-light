@@ -110,17 +110,18 @@ fun homeChannelsRow(
 }
 
 /**
- * The Home "Canales en vivo" row for the whole live module: null = no row (the module has no
- * provider, [liveOn] false); otherwise [homeChannelsRow] over [available], which may be empty --
- * a module with only plugin providers and nothing watched still gets the row, with just its
- * "Ver más canales" way in (the country part is Xuper's and only exists while Xuper is on).
+ * The Home "Canales en vivo" row for the whole live module: [homeChannelsRow] over [available]
+ * (any provider's recents, plus Xuper's country channels), or null = no row. The row is drawn
+ * only with at least one channel: an empty module ([liveOn] false) or nothing to list yet has
+ * no row. A row made of "Ver más canales" alone, filled in later, would stay anchored on that
+ * last card and open scrolled to its end (measured on the phone).
  */
 fun homeLiveRow(
     liveOn: Boolean,
     recent: List<LiveChannel>,
     fromCountry: List<LiveChannel>,
     available: Set<String>,
-): List<LiveChannel>? = if (liveOn) homeChannelsRow(recent, fromCountry, available) else null
+): List<LiveChannel>? = if (liveOn) homeChannelsRow(recent, fromCountry, available).ifEmpty { null } else null
 
 /** Cap on the home row's cards, not counting "Ver más canales". */
 const val HOME_ROW_LIMIT = 24

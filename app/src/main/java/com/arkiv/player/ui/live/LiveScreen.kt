@@ -285,14 +285,7 @@ fun LiveScreen(
         }
 
         // The active provider's own note (a plugin list cut to the caps): "Lista recortada: …".
-        state.notice?.let { notice ->
-            Text(
-                notice,
-                style = MaterialTheme.typography.bodySmall,
-                color = ArkivTextSecondary,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-            )
-        }
+        state.notice?.let { NoteLine(it) }
 
         when {
             view == LocalView.RECENT -> {
@@ -348,14 +341,7 @@ private fun SearchResults(
         else -> null
     }
     Column(Modifier.fillMaxSize()) {
-        note?.let {
-            Text(
-                it,
-                style = MaterialTheme.typography.bodySmall,
-                color = ArkivTextSecondary,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-            )
-        }
+        note?.let { NoteLine(it) }
         when (view) {
             is LiveSearchView.Results ->
                 ChannelGrid(view.channels, state.current, state.favorites, gridPadding, onOpen, onFavorite, state::tabOf)
@@ -364,6 +350,17 @@ private fun SearchResults(
             else -> LinearProgressIndicator(color = ArkivRed, modifier = Modifier.fillMaxWidth())
         }
     }
+}
+
+/** A small secondary line above the grid: a provider's notice or the search's not-loaded note. */
+@Composable
+private fun NoteLine(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.bodySmall,
+        color = ArkivTextSecondary,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+    )
 }
 
 @Composable
@@ -460,7 +457,7 @@ private fun ChannelCard(
     channel: LiveChannel,
     currentProgram: LiveProgram?,
     isFavorite: Boolean,
-    badge: LiveProviderTab?,
+    badge: LiveProviderTab? = null,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
 ) {

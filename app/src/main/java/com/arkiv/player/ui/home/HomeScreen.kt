@@ -197,11 +197,18 @@ fun HomeScreen(
     // The module's providers right now: a switched-off plugin's recents leave the row (they are kept, not deleted).
     val liveOn by graph.liveModule.available.collectAsStateWithLifecycle()
     val liveTabs by graph.liveModule.tabs.collectAsStateWithLifecycle()
-    // null = no row at all (empty module); empty = the row with only "Ver más canales".
+    // null = no row (empty module, or no channel to list yet); never just "Ver más canales".
     val liveRow = remember(recentChannels, countryChannels, liveOn, liveTabs) {
         homeLiveRow(liveOn, recentChannels, countryChannels, available = liveTabs.map { it.id }.toSet())
     }
     val channelsRow = liveRow.orEmpty()
+    // Belt-and-braces: when the row's first channel changes (it appears, or a new recent lands
+    // first), start from it. LazyRow otherwise keeps its key-anchored first visible item and can
+    // open scrolled to the end, the first card cut at the left edge (measured on the phone).
+    val channelsRowState = rememberLazyListState()
+    LaunchedEffect(channelsRow.firstOrNull()?.liveCode) {
+        if (channelsRow.isNotEmpty()) channelsRowState.scrollToItem(0)
+    }
 
     fun playChannel(channel: LiveChannel) {
         // Pins the list it was "entered" with, same mechanism as LiveScreen.open -- so
@@ -259,8 +266,7 @@ fun HomeScreen(
     val topSectionsSignature = TopSectionsSignature(
         heroVisible = continueWatching.firstOrNull() != null || heroPick != null,
         continueWatchingCount = (continueWatching.size - 1).coerceAtLeast(0),
-        // +1: the "Ver más canales" card, so a row with only that card still counts as shown.
-        channelsCount = liveRow?.let { it.size + 1 } ?: 0,
+        channelsCount = channelsRow.size,
         libraryCount = orderedLibrary.size,
     )
     var lastTopSectionsSignature by remember { mutableStateOf<TopSectionsSignature?>(null) }
@@ -390,15 +396,16 @@ fun HomeScreen(
 
         // 3. Live channels -- direct access without going through "En vivo": what was last watched
         // on the left, then the country's channels without repeating the ones already seen, and
-        // at the end the way out to the full grid (see `homeLiveRow`). With no live provider
-        // at all, the row isn't drawn: no empty gap; with providers but nothing to list yet
-        // (only plugins, nothing watched), just the way in. Always-present, keyed item -- see the hero
+        // at the end the way out to the full grid (see `homeLiveRow`). With no channel to show
+        // (no live provider, or nothing watched and no country channels), the row isn't drawn:
+        // no empty gap. Always-present, keyed item -- see the hero
         // comment above.
         item(key = "canales") {
-            if (liveRow != null) {
+            if (channelsRow.isNotEmpty()) {
                 Column(Modifier.padding(top = 16.dp)) {
                     SectionHeader("Canales en vivo", modifier = Modifier.padding(start = 16.dp))
                     LazyRow(
+                        state = channelsRowState,
                         contentPadding = PaddingValues(horizontal = 16.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
@@ -561,7 +568,7 @@ private fun SeeMoreChannelsCard(width: Dp = 140.dp, onClick: () -> Unit) {
  * still: the name's initials, to not show a "0" that means nothing.
  */
 @Composable
-private fun LiveChannelCard(channel: LiveChannel, badge: LiveProviderTab?, width: Dp = 140.dp, onClick: () -> Unit) {
+private fun LiveChannelCard(channel: LiveChannel, badge: LiveProviderTab? = null, width: Dp = 140.dp, onClick: () -> Unit) {
     Column(modifier = Modifier.width(width).clickable(onClick = onClick)) {
         Box(
             modifier = Modifier
