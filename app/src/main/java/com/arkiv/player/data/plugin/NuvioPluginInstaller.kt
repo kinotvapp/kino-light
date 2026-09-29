@@ -86,7 +86,7 @@ class NuvioPluginInstaller(
         } ?: NuvioRemoteHosts.NONE
 
         val conversion = NuvioPluginConverter.convert(scraper, scraperSource, repoSlug = address.canonical, tmdbApiKey = tmdbApiKey, remoteHosts = remoteHosts)
-        if (conversion.hosts.isEmpty()) {
+        if (conversion.scraperHosts.isEmpty()) {
             throw InstallException("No encontré ningún dominio en el código de \"${scraper.name}\": no se puede convertir a un plugin de Kino")
         }
         val manifestResult = ManifestParser.parse(conversion.manifestJson)

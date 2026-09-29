@@ -4,8 +4,18 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.security.MessageDigest
 
-/** [NuvioPluginConverter.convert]'s result: a ready-to-ship `plugin.js` + `kino-plugin.json` pair. */
-data class NuvioConversionResult(val script: String, val manifestJson: String, val hosts: List<String>, val warnings: List<String>)
+/**
+ * [NuvioPluginConverter.convert]'s result: a ready-to-ship `plugin.js` + `kino-plugin.json` pair.
+ * [hosts] is what the manifest declares (TMDB always first); [scraperHosts] only what was detected in
+ * the scraper and its remote domain list, before the cap -- empty means the scraper names no site.
+ */
+data class NuvioConversionResult(
+    val script: String,
+    val manifestJson: String,
+    val hosts: List<String>,
+    val warnings: List<String>,
+    val scraperHosts: List<String>,
+)
 
 /**
  * A real library of Nuvio's own runtime (its providers README, "Available Modules", plus the `Buffer`
@@ -78,10 +88,13 @@ object NuvioPluginConverter {
         val candidates = (remoteHosts.preferred + NuvioHostExtractor.extractHosts(scraperSource) + remoteHosts.others)
             .filter(NuvioHostExtractor::isPlausibleHost)
             .distinct()
-        val hosts = candidates.take(ManifestParser.MAX_HOSTS)
+        // TMDB is the ADAPTER's own dependency (every search's artwork, every series' episode list),
+        // so it holds the first slot whatever the scraper names: the cap can never push it out.
+        val all = listOf(TMDB_HOST) + (candidates - TMDB_HOST)
+        val hosts = all.take(ManifestParser.MAX_HOSTS)
 
         val warnings = buildList {
-            if (candidates.size > ManifestParser.MAX_HOSTS) {
+            if (all.size > ManifestParser.MAX_HOSTS) {
                 add("Aviso: se detectaron más de ${ManifestParser.MAX_HOSTS} dominios; algunos quedaron fuera.")
             }
         }
@@ -105,11 +118,14 @@ object NuvioPluginConverter {
             .put("entry", "plugin.js")
             .put("description", description(scraper.name, repoSlug, warnings))
             .put("hosts", JSONArray(hosts))
-            .put("capabilities", JSONArray(listOf("search", "resolve")))
+            .put("capabilities", JSONArray(listOf("search", "episodes", "resolve")))
             .toString()
 
-        return NuvioConversionResult(script, manifestJson, hosts, warnings)
+        return NuvioConversionResult(script, manifestJson, hosts, warnings, scraperHosts = candidates)
     }
+
+    /** The one host the adapter itself calls (`search` artwork, `episodes`); see [convert]. */
+    const val TMDB_HOST = "api.themoviedb.org"
 
     /**
      * The consent sheet shows `description` as is, so the [warnings] ride in it: the spec wants them
@@ -131,26 +147,43 @@ object NuvioPluginConverter {
         MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
     /**
-     * `getStreams(tmdbId, type, season, episode)` -> `search`/`resolve`. Nuvio has no query-based
-     * search of its own (only tmdbId + type + season/episode), so `search` never really searches: it
-     * hands back exactly one item that just encodes those four fields for `resolve` to decode later.
-     * `resolve` calls the wrapped `getStreams` and picks the first result that isn't torrent-only
-     * (Kino's sandbox has no BitTorrent client, spec §6.2) -- `kino.error("unavailable", …)` otherwise.
+     * Nuvio's `getStreams(tmdbId, mediaType, season, episode)` -> Kino's `search`/`episodes`/`resolve`.
+     * Nuvio has no catalogue or text search of its own, only that call, so the titles come from TMDB
+     * (with the TMDB key the shim already carries):
      *
-     * `ref` normally arrives as the JSON string `search` built (Kino quotes an item's `ref` before
-     * calling `resolve` with it -- see `PluginContentSource.resolve`), but a plain object is accepted
-     * too: nothing about this adapter's own contract requires the string encoding, only Kino's
-     * particular caller does.
+     * - `search` answers ONE item for the TMDB id Kino asks about, with TMDB's poster, backdrop, year
+     *   and synopsis when TMDB answers (one call; without it the item still comes back, bare). A series
+     *   with no episode chosen is a `series` item, so Kino opens its season/episode list like any
+     *   other source's. A query that already names the episode (Kino's refine flow) or a movie is a
+     *   `movie` item that plays straight away; only a real movie carries `ids.tmdb`, because Kino
+     *   enriches a movie-kind item from TMDB's `/movie/<id>` and an episode's id is a show's.
+     * - `episodes` lists every season but 0 (specials, which Nuvio scrapers don't carry) from TMDB's
+     *   `/tv/<id>` and `/tv/<id>/season/<n>`, fetched together, dropping episodes that haven't aired.
+     * - `resolve` calls the wrapped `getStreams` exactly as Nuvio does: the id as a string, `"tv"`
+     *   with the season and episode, or `"movie"` with `null, null` (never `0, 0`). It picks the first
+     *   result that isn't torrent-only (Kino's sandbox has no BitTorrent client, spec §6.2) --
+     *   `kino.error("unavailable", …)` otherwise.
+     *
+     * TMDB is asked in `es-MX` when Kino's language is Spanish (`kino.lang` is `es-CO`, for which TMDB
+     * has almost no translations; the app's own TMDB client uses `es-MX` too), else in `kino.lang`.
+     *
+     * `ref` normally arrives as the JSON string this adapter built (Kino quotes an item's `ref` before
+     * calling `resolve`/`episodes` with it -- see `PluginContentSource`), but a plain object is accepted
+     * too. Refs saved before `episodes` existed (`{tmdbId, type, season: 0, episode: 0}`) still work.
      *
      * The media type is TRANSLATED, never passed through: Kino's `query.type` is
      * `"movie"`/`"series"`/`"any"` (`PluginContentSource.queryJson`), Nuvio's `getStreams` expects
-     * `"movie"`/`"tv"` (its manifests' own `supportedTypes`). `"any"` does reach `resolve` -- `search`
-     * encodes whatever type it was given into the ref -- so it's decided there from the episode
+     * `"movie"`/`"tv"` (its manifests' own `supportedTypes`). `"any"` is decided from the episode
      * fields: a season AND an episode mean a TV episode, anything else a movie.
+     *
+     * Every export starts with `await null`: a throw before an async function's first await aborts
+     * the whole call in this engine (docs/plugins/README.md, "a rejection nobody is listening to yet").
      */
     private val ADAPTER = """
 
         var __nuvioGetStreams = __nuvioModuleExports.getStreams;
+        var __NUVIO_TMDB_API = "https://api.themoviedb.org/3";
+        var __NUVIO_TMDB_IMAGES = "https://image.tmdb.org/t/p/";
 
         function __nuvioMediaType(type, season, episode) {
           if (type === "series" || type === "tv") return "tv";
@@ -158,19 +191,99 @@ object NuvioPluginConverter {
           return (season > 0 && episode > 0) ? "tv" : "movie";
         }
 
+        function __nuvioRef(ref) { return (typeof ref === "string") ? JSON.parse(ref) : ref; }
+
+        function __nuvioTmdbLanguage() {
+          var lang = String(kino.lang || "");
+          return lang.toLowerCase().indexOf("es") === 0 ? "es-MX" : (lang || "en-US");
+        }
+
+        async function __nuvioTmdb(path) {
+          var r = await kino.fetch(__NUVIO_TMDB_API + path + "?api_key=" + encodeURIComponent(__NUVIO_TMDB_KEY) +
+            "&language=" + encodeURIComponent(__nuvioTmdbLanguage()), { headers: { Accept: "application/json" } });
+          if (!r.ok) throw kino.error(r.status === 404 ? "not_found" : "unavailable", "TMDB respondió " + r.status);
+          return r.json();
+        }
+
+        function __nuvioImage(size, path) { return path ? __NUVIO_TMDB_IMAGES + size + path : undefined; }
+
+        function __nuvioYear(date) { return (typeof date === "string" && date.length >= 4) ? date.slice(0, 4) : undefined; }
+
         export async function search(query) {
+          await null;
           if (!query.tmdbId) return [];
-          return [{
-            id: query.tmdbId + "-" + query.type + "-" + query.season + "-" + query.episode,
-            ref: JSON.stringify({ tmdbId: query.tmdbId, type: query.type, season: query.season, episode: query.episode }),
-            title: query.q || query.originalTitle || "",
-            kind: "movie",
-          }];
+          var season = query.season || 0, episode = query.episode || 0;
+          var mediaType = __nuvioMediaType(query.type, season, episode);
+          var meta = null;
+          try { meta = await __nuvioTmdb("/" + mediaType + "/" + query.tmdbId); } catch (e) { meta = null; }
+          var m = meta || {};
+          var title = query.q || query.originalTitle || m.title || m.name || "";
+          var art = {
+            year: __nuvioYear(m.release_date || m.first_air_date),
+            poster: __nuvioImage("w500", m.poster_path),
+            backdrop: __nuvioImage("w1280", m.backdrop_path),
+            overview: m.overview || undefined,
+          };
+          if (mediaType === "tv" && !(season > 0 && episode > 0)) {
+            return [Object.assign({
+              id: query.tmdbId + "-series",
+              ref: JSON.stringify({ tmdbId: query.tmdbId, type: "tv" }),
+              title: title, kind: "series", ids: { tmdb: query.tmdbId },
+            }, art)];
+          }
+          var item = Object.assign({
+            id: query.tmdbId + "-" + query.type + "-" + season + "-" + episode,
+            ref: JSON.stringify({ tmdbId: query.tmdbId, type: query.type, season: season, episode: episode }),
+            title: title, kind: "movie",
+          }, art);
+          if (mediaType === "movie") item.ids = { tmdb: query.tmdbId };
+          return [item];
+        }
+
+        export async function episodes(ref) {
+          await null;
+          var r = __nuvioRef(ref);
+          var show = await __nuvioTmdb("/tv/" + r.tmdbId);
+          var numbers = (show.seasons || []).map(function (s) { return s.season_number; })
+            .filter(function (n) { return typeof n === "number" && n > 0; });
+          var seasons = await Promise.all(numbers.map(function (n) {
+            return __nuvioTmdb("/tv/" + r.tmdbId + "/season/" + n).catch(function () { return null; });
+          }));
+          var today = new Date().toISOString().slice(0, 10);
+          var list = [];
+          seasons.forEach(function (s, i) {
+            if (!s) return;
+            (s.episodes || []).forEach(function (e) {
+              if (typeof e.episode_number !== "number" || e.episode_number < 1) return;
+              if (e.air_date && e.air_date > today) return;
+              list.push({
+                season: numbers[i], number: e.episode_number,
+                ref: JSON.stringify({ tmdbId: r.tmdbId, type: "tv", season: numbers[i], episode: e.episode_number }),
+                title: e.name || undefined, still: __nuvioImage("w300", e.still_path), overview: e.overview || undefined,
+                airDate: e.air_date || undefined, runtimeMinutes: e.runtime || undefined,
+              });
+            });
+          });
+          if (numbers.length && !seasons.some(function (s) { return s; })) throw kino.error("unavailable", "TMDB no dio ninguna temporada");
+          return {
+            series: {
+              title: show.name || undefined, poster: __nuvioImage("w500", show.poster_path),
+              backdrop: __nuvioImage("w1280", show.backdrop_path), overview: show.overview || undefined,
+              ids: { tmdb: r.tmdbId }, year: __nuvioYear(show.first_air_date),
+              genres: (show.genres || []).map(function (g) { return g.name; }).filter(Boolean),
+            },
+            episodes: list,
+          };
         }
 
         export async function resolve(ref) {
-          var r = (typeof ref === "string") ? JSON.parse(ref) : ref;
-          var streams = (await __nuvioGetStreams(r.tmdbId, __nuvioMediaType(r.type, r.season, r.episode), r.season, r.episode)) || [];
+          await null;
+          var r = __nuvioRef(ref);
+          var mediaType = __nuvioMediaType(r.type, r.season, r.episode);
+          if (mediaType === "tv" && !(r.season > 0 && r.episode > 0)) throw kino.error("not_found", "falta elegir temporada y capítulo");
+          var season = mediaType === "tv" ? r.season : null;
+          var episode = mediaType === "tv" ? r.episode : null;
+          var streams = (await __nuvioGetStreams(String(r.tmdbId), mediaType, season, episode)) || [];
           var playable = streams.filter(function (s) { return s && s.url && !s.infoHash; });
           if (!playable.length) throw kino.error("unavailable", "solo torrents o sin resultados");
           var best = playable[0];

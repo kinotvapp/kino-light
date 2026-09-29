@@ -35,8 +35,8 @@ class NuvioPluginConverterTest {
         val parsed = ManifestParser.parse(result.manifestJson)
         assertTrue(parsed is ManifestResult.Valid)
         val manifest = (parsed as ManifestResult.Valid).manifest
-        assertEquals(setOf("search", "resolve"), manifest.capabilities)
-        assertEquals(listOf("fakesrc.example"), manifest.hosts)
+        assertEquals(setOf("search", "episodes", "resolve"), manifest.capabilities)
+        assertEquals(listOf("api.themoviedb.org", "fakesrc.example"), manifest.hosts)
         assertTrue(manifest.id.startsWith("nuvio-fakesrc-"))
     }
 
@@ -81,7 +81,7 @@ class NuvioPluginConverterTest {
         )
     }
 
-    @Test fun `remote domains go first, garbage never takes a cap slot, and unnamed remote ones go last`() {
+    @Test fun `TMDB goes first, then remote domains, garbage never takes a cap slot, and unnamed remote ones go last`() {
         val remote = NuvioRemoteHosts(
             preferred = listOf("new4.moviesdrive.christmas"),
             others = (1..30).map { "mirror$it.example" },
@@ -91,8 +91,9 @@ class NuvioPluginConverterTest {
         assertEquals(ManifestParser.MAX_HOSTS, manifest.hosts.size)
         assertEquals(
             listOf(
+                "api.themoviedb.org",
                 "new4.moviesdrive.christmas",
-                "api.themoviedb.org", "new3.moviesdrive.christmas", "raw.githubusercontent.com",
+                "new3.moviesdrive.christmas", "raw.githubusercontent.com",
                 "drivebot.cfd", "drivebot.sbs", "new6.gdflix.dad",
             ) + (1..13).map { "mirror$it.example" },
             manifest.hosts,
@@ -135,12 +136,12 @@ class NuvioPluginConverterTest {
 
     @Test fun `a series ref reaches the scraper as Nuvio's tv, never Kino's series`() {
         assertEquals("https://cdn.example/tv/2/5", resolvedUrl("""{"tmdbId":1399,"type":"series","season":2,"episode":5}"""))
-        assertEquals("https://cdn.example/movie/0/0", resolvedUrl("""{"tmdbId":603,"type":"movie","season":0,"episode":0}"""))
+        assertEquals("https://cdn.example/movie/null/null", resolvedUrl("""{"tmdbId":603,"type":"movie","season":0,"episode":0}"""))
     }
 
     @Test fun `an any-typed ref is decided from its episode fields`() {
         assertEquals("https://cdn.example/tv/1/3", resolvedUrl("""{"tmdbId":1399,"type":"any","season":1,"episode":3}"""))
-        assertEquals("https://cdn.example/movie/0/0", resolvedUrl("""{"tmdbId":603,"type":"any","season":0,"episode":0}"""))
+        assertEquals("https://cdn.example/movie/null/null", resolvedUrl("""{"tmdbId":603,"type":"any","season":0,"episode":0}"""))
     }
 
     @Test fun `search then resolve for a TV episode calls getStreams with tv end to end`() = runBlocking {
@@ -160,7 +161,7 @@ class NuvioPluginConverterTest {
         val result = NuvioPluginConverter.convert(scraper, source, repoSlug = "owner/repo", tmdbApiKey = "test-key")
         val runtime = PluginRuntime.open("probe", result.script, ProbePluginHost, PluginEnv(appVersion = "1.0"))
         try {
-            assertEquals(setOf("search", "resolve"), runtime.exports)
+            assertEquals(setOf("search", "episodes", "resolve"), runtime.exports)
             // Not just "exports exist": actually call search() through the real sandbox and check the
             // adapter + wrapped scraper agree on the shape resolve() will later need back.
             val items = JSONArray(

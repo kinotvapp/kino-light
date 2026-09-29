@@ -116,7 +116,7 @@ class NuvioPluginInstallerTest {
 
     @Test fun `previewScraper converts, validates, and installs, and playback resolves`() = runBlocking {
         val preview = nuvio.previewScraper("owner/nuvio-repo", "fakesrc")
-        assertEquals(setOf("search", "resolve"), preview.manifest.capabilities)
+        assertEquals(setOf("search", "episodes", "resolve"), preview.manifest.capabilities)
         assertTrue("fakesrc.example" in preview.newHosts)
         val record = nuvio.install(preview)
         assertEquals("owner/nuvio-repo", record.nuvioRepo)
@@ -175,8 +175,9 @@ class NuvioPluginInstallerTest {
         )), tmdbApiKey = "k")
         val preview = withDomains.previewScraper("owner/md", "fakesrc")
         assertEquals(
-            // 4khdhub.one is another scraper's entry in the shared list: never declared for this one.
-            listOf("new4.moviesdrive.christmas", "new3.moviesdrive.christmas", "raw.githubusercontent.com"),
+            // TMDB is the adapter's own and always first; then the scraper's rotated domain. 4khdhub.one is
+            // another scraper's entry in the shared list: never declared for this one.
+            listOf("api.themoviedb.org", "new4.moviesdrive.christmas", "new3.moviesdrive.christmas", "raw.githubusercontent.com"),
             preview.manifest.hosts,
         )
     }
@@ -234,5 +235,46 @@ class NuvioPluginInstallerTest {
         val cleared = store.get(id)!!.record
         assertNull(cleared.pendingVersion)
         assertTrue(cleared.pendingHosts.isEmpty())
+    }
+
+    // ---- updating a plugin the converter made before `episodes` and the reserved TMDB host existed ----
+
+    /** Installs [hosts] + `search`/`resolve` under this scraper's id, exactly as the previous converter left it on disk. */
+    private fun installAsTheOldConverterDid(hosts: List<String>): String = runBlocking {
+        val entry = NuvioScraperEntry("fakesrc", "FakeSrc", "providers/fakesrc.js", true, emptyList(), listOf("movie"), null, emptyList())
+        val current = NuvioPluginConverter.convert(entry, scraperJs, repoSlug = "owner/nuvio-repo", tmdbApiKey = "test-key")
+        val oldJson = org.json.JSONObject(current.manifestJson)
+            .put("capabilities", org.json.JSONArray(listOf("search", "resolve"))).put("hosts", org.json.JSONArray(hosts)).toString()
+        val oldManifest = (ManifestParser.parse(oldJson) as ManifestResult.Valid).manifest
+        val oldScript = "export async function search(q) { return []; }\nexport async function resolve(r) { return { url: 'https://fakesrc.example/v.mp4' }; }"
+        val origin = NuvioOrigin(repo = "owner/nuvio-repo", scraperId = "fakesrc", script = oldScript.toByteArray())
+        installer.commit(installer.diffAgainstInstalled(PluginAddress.parse("owner/nuvio-repo")!!, oldManifest, oldJson, origin), oldScript.toByteArray(), icon = null)
+        assertEquals(listOf("search", "resolve"), store.get(oldManifest.id)!!.record.capabilities)
+        oldManifest.id
+    }
+
+    @Test fun `an old install that already declared TMDB updates straight to episodes, with nothing to approve`() = runBlocking {
+        val id = installAsTheOldConverterDid(listOf("api.themoviedb.org", "fakesrc.example"))
+        assertEquals(UpdateOutcome.Applied("1.0.0"), liveNuvio().checkUpdate(id))
+        val record = store.get(id)!!.record
+        assertEquals(listOf("search", "episodes", "resolve"), record.capabilities)
+        assertTrue(record.exports.containsAll(listOf("search", "episodes", "resolve")))
+    }
+
+    @Test fun `an old install without TMDB waits for approval of that one host, then gets episodes`() = runBlocking {
+        val id = installAsTheOldConverterDid(listOf("fakesrc.example"))
+        val n = liveNuvio()
+        val outcome = n.checkUpdate(id)
+        assertTrue(outcome.toString(), outcome is UpdateOutcome.NeedsApproval)
+        val preview = (outcome as UpdateOutcome.NeedsApproval).preview
+        // `episodes` is not a capability that needs consent (only download/drm/channels do): the new host is the only ask.
+        assertEquals(listOf("api.themoviedb.org"), preview.newHosts)
+        assertTrue(preview.newCapabilities.isEmpty())
+        assertEquals(listOf("api.themoviedb.org"), store.get(id)!!.record.pendingHosts)
+        n.install(preview) // what approving the sheet does
+        val record = store.get(id)!!.record
+        assertEquals(listOf("search", "episodes", "resolve"), record.capabilities)
+        assertEquals(listOf("api.themoviedb.org", "fakesrc.example"), record.hosts)
+        assertNull(record.pendingVersion)
     }
 }
