@@ -198,10 +198,11 @@ class CatalogCardStyleTest {
         assertEquals(sizes.sorted(), sizes)
     }
 
-    @Test fun `the tile pill is what you already used, else community, else none`() {
+    @Test fun `the tile pill is what you already used, else none -- community cards carry no pill`() {
         val entry = CatalogEntry("x", "o/x", "X", "")
         assertEquals("Lo que ya usabas", cardPill(CatalogRow(entry.copy(legacyDefault = true), null)))
-        assertEquals("De la comunidad", cardPill(CatalogRow(entry, null, community = true)))
+        // The section header already says "De la comunidad"; the consent sheet still says "Plugin no verificado".
+        assertEquals(null, cardPill(CatalogRow(entry, null, community = true)))
         assertEquals(null, cardPill(CatalogRow(entry, null)))
     }
 }

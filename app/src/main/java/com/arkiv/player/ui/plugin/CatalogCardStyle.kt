@@ -160,9 +160,8 @@ internal fun installedIconFile(ownIcon: File?, art: CatalogArt?): File? =
 internal fun artForInstalled(art: Map<String, CatalogArt>, address: String): CatalogArt? =
     art.entries.firstOrNull { sameAddress(it.key, address) }?.value
 
-/** The pill on a card's tile: what the person already used, else a plugin found on GitHub, else none. */
-internal fun cardPill(row: CatalogRow): String? = when {
-    row.entry.legacyDefault -> "Lo que ya usabas"
-    row.community -> COMMUNITY_TITLE
-    else -> null
-}
+/**
+ * The pill on a card's tile: what the person already used, else none. Community cards carry no pill: they
+ * sit under the "De la comunidad" header already, and installing one still shows "Plugin no verificado".
+ */
+internal fun cardPill(row: CatalogRow): String? = if (row.entry.legacyDefault) "Lo que ya usabas" else null
