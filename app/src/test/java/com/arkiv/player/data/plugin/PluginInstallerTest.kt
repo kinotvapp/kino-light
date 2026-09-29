@@ -161,6 +161,24 @@ class PluginInstallerTest {
         assertEquals(listOf("example.com", "new-cdn.example"), store.get("demo")!!.record.hosts)
     }
 
+    // The broad video permission is the person's, like a reactive "yes": an update or a reinstall
+    // over the installed plugin keeps it; only uninstall drops it (with the record).
+    @Test fun `an update and a reinstall keep the broad video permission`() = runBlocking {
+        publish("1.0.0"); installFresh()
+        store.updateRecord("demo") { it.copy(anyVideoHost = true) }
+        publish("1.1.0")
+        assertEquals(UpdateOutcome.Applied("1.1.0"), installer.checkUpdate("demo"))
+        assertTrue(store.get("demo")!!.record.anyVideoHost)
+        publish("2.0.0", hosts = listOf("example.com", "cdn.example.net"))
+        installer.install((installer.checkUpdate("demo") as UpdateOutcome.NeedsApproval).preview)
+        assertTrue(store.get("demo")!!.record.anyVideoHost)
+        installer.install(installer.preview("o/r"))
+        assertTrue(store.get("demo")!!.record.anyVideoHost)
+        store.remove("demo", "Demo")
+        installer.install(installer.preview("o/r"))
+        assertFalse(store.get("demo")!!.record.anyVideoHost)
+    }
+
     @Test fun `a reactively approved host the update's own hosts push past the cap is logged, not dropped silently`() = runBlocking {
         val logs = mutableListOf<String>()
         val logging = PluginInstaller(store, fetcher, probe = { exports(it) }, clock = { now }, log = { logs += it })

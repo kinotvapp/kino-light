@@ -19,6 +19,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flow
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -66,6 +67,12 @@ class PluginContentSource(
      * it) refuses such a Stream exactly as before.
      */
     private val streamHostApproval: StreamHostDecider? = null,
+    /**
+     * Whether the person granted this plugin the broad video permission, read NOW from the
+     * INSTALLED record (`AppGraph` reads the registry): a grant made in the dialog right after this
+     * very `resolve` must count for its answer. Defaults to the record this source was built with.
+     */
+    private val anyVideoHostGranted: () -> Boolean = { plugin.record.anyVideoHost },
 ) : ContentSource {
     private val id = plugin.manifest.id
     private val name = plugin.manifest.name
@@ -164,11 +171,13 @@ class PluginContentSource(
         // Outside the call on purpose: its 20 s limit and the pool's per-plugin lock are both over
         // by now, so a person taking their time to answer holds up neither.
         askAboutUndeclaredHosts(out, own)
+        val hosts = streamHostsFor(own)
         val stream = try {
-            PluginOutput.stream(out, streamHostsFor(own), xuper, allowDrm)
+            PluginOutput.stream(out, hosts, xuper, allowDrm)
         } catch (e: PluginContractException) {
             throw GatewayException("$name: ${e.message}", e)
         }
+        if (hosts.anyPublicVideoHost) logAnyVideoHost(stream, hosts.strict)
         if (own.kind == PluginRef.LIVE) return livePlayable(stream)
         return playable(stream).copy(
             durationMs = stream.durationMs,
@@ -179,12 +188,28 @@ class PluginContentSource(
     /**
      * The hosts a resolved Stream of [own] is checked against, read NOW (see [currentHosts]): a host
      * approved during the call, or by [askAboutUndeclaredHosts] right after it, counts. A channel's
-     * stream may be on any public host only if the INSTALLED record approved liveStreamHosts "any";
-     * typed servers are kept either way.
+     * stream may be on any public host only if the INSTALLED record approved liveStreamHosts "any".
+     * A movie or episode's only when the person granted the broad video permission AND this is the
+     * player's own call ([InteractivePluginCall], never under [BackgroundPluginCall]): the permission
+     * is for the player, so a download keeps today's rule (its client is gated to the strict hosts,
+     * and a stream it could not fetch is better refused here, with the usual sentence). Typed
+     * servers are kept either way.
      */
-    private fun streamHostsFor(own: PluginRef): EffectiveHosts {
+    private suspend fun streamHostsFor(own: PluginRef): EffectiveHosts {
         val hosts = currentHosts()
-        return if (own.kind == PluginRef.LIVE) hosts.copy(anyPublicLiveHost = plugin.record.liveStreamHostsAny) else hosts
+        if (own.kind == PluginRef.LIVE) return hosts.copy(anyPublicLiveHost = plugin.record.liveStreamHostsAny)
+        val context = currentCoroutineContext()
+        val player = context[InteractivePluginCall] != null && context[BackgroundPluginCall] == null
+        return if (player && anyVideoHostGranted()) hosts.copy(anyPublicVideoHost = true) else hosts
+    }
+
+    /** Logs each host of [stream] that only the broad video permission let through: the host alone, never a path or query. */
+    private fun logAnyVideoHost(stream: PluginStream, strict: EffectiveHosts) {
+        val urls = listOf(stream.url) + stream.subtitles.map { it.url } + stream.audioTracks.map { it.url }
+        urls.mapNotNull { it.toHttpUrlOrNull() }
+            .filter { u -> strict.userHostFor(u) == null && !(HostRules.matches(u.host, strict.declared) && strict.allowsScheme(u)) }
+            .map { it.host }.distinct()
+            .forEach { log("[$id] resolve: $it allowed by the broad video permission") }
     }
 
     /**

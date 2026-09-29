@@ -524,7 +524,11 @@ class AppGraph(context: Context) {
         /** The player's stream client only: that plugin's askable misses become `UndeclaredPlaybackHostException`. */
         askAboutFor: String? = null,
     ): okhttp3.OkHttpClient =
-        PluginStreamHttp.client(pluginBaseHttp, hosts, xuper = xuperStreams.takeIf { xuper }, strictOrigins = strictOrigins, askAboutFor = askAboutFor)
+        PluginStreamHttp.client(
+            pluginBaseHttp, hosts, xuper = xuperStreams.takeIf { xuper }, strictOrigins = strictOrigins, askAboutFor = askAboutFor,
+            // Every server the player reaches only through the broad video permission: host only, once per stream.
+            onAnyVideoHost = askAboutFor?.let { id -> { host -> android.util.Log.i("KinoPlugin", "[$id] player: $host allowed by the broad video permission") } },
+        )
 
     /** The live PluginHttp of each open runtime, so the pool can reset its per-call request budget. */
     private val pluginHttps = java.util.concurrent.ConcurrentHashMap<String, PluginHttp>()
@@ -581,6 +585,7 @@ class AppGraph(context: Context) {
             plugin, pluginCaller, plugin.hosts, xuperStreams,
             currentHosts = { currentPluginHosts(plugin) },
             streamHostApproval = streamHostApproval,
+            anyVideoHostGranted = { pluginRegistry.find(plugin.id)?.record?.anyVideoHost == true },
         )
 
     /**

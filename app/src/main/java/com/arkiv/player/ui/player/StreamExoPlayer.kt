@@ -260,13 +260,15 @@ internal fun StreamExoPlayer(
         val shownUrl = Uri.parse(mediaUrl).let { "${it.scheme}://${it.host}${it.path.orEmpty().take(60)}" }
         Log.i(TAG, "Creating ExoPlayer · url=$shownUrl startMs=$startPositionMs subs=${subtitleConfigs.size} audioTracks=${audioTracks.size} drm=${drm != null}")
         val pluginFactories: PluginHttpFactories? = (http as? StreamHttp.PluginGated)?.let {
-            // Under liveStreamHosts "any", side-loaded subtitles and audio tracks stay strict on every hop.
-            val sideUrls = if (it.hosts.anyPublicLiveHost) subtitleConfigs.map { c -> c.uri.toString() } + audioTracks.map { a -> a.url } else emptyList()
+            // Under liveStreamHosts "any", side-loaded subtitles and audio tracks stay strict on every hop
+            // (under the broad video permission they don't: it covers them).
+            val sideUrls = strictSideUrls(it.hosts, subtitleConfigs.map { c -> c.uri.toString() }, audioTracks.map { a -> a.url })
             val streamClient = graph.pluginStreamClient(it.hosts, it.xuper, sideUrls, askAboutFor = it.pluginId)
             // Never askable: a license redirect to a new host would carry the plugin's licenseHeaders
-            // (its auth) there, and a DRM session's failure takes its own route (DRM_FINAL).
+            // (its auth) there, and a DRM session's failure takes its own route (DRM_FINAL). Never
+            // relaxed either: live "any" and broad video both stop short of the license.
             val licenseClient = when {
-                it.hosts.anyPublicLiveHost -> graph.pluginStreamClient(it.hosts.strict, it.xuper)
+                it.hosts.anyPublicStreamHost -> graph.pluginStreamClient(licenseHostsFor(it.hosts), it.xuper)
                 it.pluginId != null -> graph.pluginStreamClient(it.hosts, it.xuper)
                 else -> streamClient
             }
@@ -855,8 +857,17 @@ private const val MAX_CAUSE_DEPTH = 16
  * [positionMs] as where to start, or the live edge (0) for a channel. A new host set is a new
  * [StreamHttp] and so a new player (`StreamExoPlayer` is keyed on it), started where the person was.
  */
-internal fun PlayerData.afterHostApproved(declared: List<String>, positionMs: Long, live: Boolean): PlayerData =
-    copy(pluginHosts = pluginHosts.copy(declared = declared), startPositionMs = if (live) 0L else positionMs.coerceAtLeast(0L))
+internal fun PlayerData.afterHostApproved(
+    declared: List<String>,
+    positionMs: Long,
+    live: Boolean,
+    /** The person just granted (or had granted) the broad video permission; a live channel never takes it. */
+    anyVideoHost: Boolean = pluginHosts.anyPublicVideoHost,
+): PlayerData =
+    copy(
+        pluginHosts = pluginHosts.copy(declared = declared, anyPublicVideoHost = !live && anyVideoHost),
+        startPositionMs = if (live) 0L else positionMs.coerceAtLeast(0L),
+    )
 
 /**
  * The data-source factories of a gated plugin stream, both over a host-gated client (so a license
@@ -895,6 +906,18 @@ internal fun pluginHttpFactories(
 /** The User-Agent a header set asks for, else the one a plugin stream has always sent. */
 private fun userAgentOf(headers: Map<String, String>): String =
     headers.entries.firstOrNull { it.key.equals("User-Agent", true) }?.value ?: "okhttp/4.12.0"
+
+/**
+ * The side-loaded subtitle and audio URLs whose whole redirect chain must be gated strictly
+ * (`PluginStreamHttp.client`'s `strictOrigins`): all of them under live "any", which never covers a
+ * side file; none under the broad video permission, which does (`EffectiveHosts.sideTracks`), nor on
+ * an unrelaxed stream, where strict is the only gate there is.
+ */
+internal fun strictSideUrls(hosts: com.arkiv.player.data.plugin.EffectiveHosts, subtitles: List<String>, audio: List<String>): List<String> =
+    if (hosts.sideTracks == hosts) emptyList() else subtitles + audio
+
+/** The hosts a plugin stream's DRM license client is gated to: never relaxed, by live "any" or by broad video. */
+internal fun licenseHostsFor(hosts: com.arkiv.player.data.plugin.EffectiveHosts): com.arkiv.player.data.plugin.EffectiveHosts = hosts.strict
 
 /** Only a PLUGIN stream is gated; an empty host list is still gated (it reaches nothing). */
 internal fun streamHttpFor(kind: SourceKind, pluginHosts: com.arkiv.player.data.plugin.EffectiveHosts, xuper: Boolean = false, pluginId: String? = null): StreamHttp =

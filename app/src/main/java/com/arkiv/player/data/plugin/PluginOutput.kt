@@ -516,8 +516,10 @@ object PluginOutput {
     /** [stream]'s rules on an already-parsed object: also a `liveChannels` item's inline `stream`. */
     internal fun streamOf(o: JSONObject, hosts: EffectiveHosts, xuper: XuperStreams? = null, allowDrm: Boolean = false): PluginStream {
         // liveStreamHosts "any" relaxes the stream's own URL only: its subtitles, audio tracks and
-        // DRM license stay on the declared hosts and typed servers.
+        // DRM license stay on the declared hosts and typed servers. The broad video permission
+        // relaxes the subtitles and audio tracks too (hosts.sideTracks), never the license.
         val strict = hosts.strict
+        val side = hosts.sideTracks
         val drm = drmOf(o, strict, allowDrm)
         val url = o.optString("url")
         val native = xuper?.headersFor(url)
@@ -530,7 +532,7 @@ object PluginOutput {
             for (i in 0 until minOf(arr.length(), MAX_SUBTITLES)) {
                 val s = arr.optJSONObject(i) ?: continue
                 val su = s.optString("url")
-                if (xuper?.headersFor(su) == null && runCatching { checkUrl(su, strict, "El subtítulo") }.isFailure) continue
+                if (xuper?.headersFor(su) == null && runCatching { checkUrl(su, side, "El subtítulo") }.isFailure) continue
                 val format = s.optString("format").takeIf { it == "vtt" || it == "srt" }.orEmpty()
                 subtitles += PluginSubtitle(text(s, "lang", 20).ifBlank { "und" }, su, format)
             }
@@ -540,7 +542,7 @@ object PluginOutput {
             for (i in 0 until minOf(arr.length(), MAX_AUDIO_TRACKS)) {
                 val a = arr.optJSONObject(i) ?: continue
                 val au = a.optString("url")
-                if (xuper?.headersFor(au) == null && runCatching { checkUrl(au, strict, "El audio") }.isFailure) continue
+                if (xuper?.headersFor(au) == null && runCatching { checkUrl(au, side, "El audio") }.isFailure) continue
                 // One URL is one merged child: twice would be two menu rows and, on a failure,
                 // `fallbackAudioTracks` would blame both. The first entry wins, as for item ids.
                 if (audioTracks.any { it.url == au }) continue
@@ -563,13 +565,14 @@ object PluginOutput {
      *
      * In the order they'd be asked about, each host once (the first URL that named it says what it is
      * for): the video, then its license, then subtitles and audio tracks, looked at exactly as
-     * [streamOf] looks at them (the same caps, the same [xuper] carve-out, subtitles/audio/license
-     * against [EffectiveHosts.strict]). Says nothing about the rest of the answer: a caller that asks
-     * checks first that the Stream is otherwise valid.
+     * [streamOf] looks at them (the same caps, the same [xuper] carve-out, the license against
+     * [EffectiveHosts.strict], subtitles/audio against [EffectiveHosts.sideTracks]). Says nothing
+     * about the rest of the answer: a caller that asks checks first that the Stream is otherwise valid.
      */
     internal fun undeclaredHosts(json: String, hosts: EffectiveHosts, xuper: XuperStreams? = null, allowDrm: Boolean = false): List<UndeclaredStreamHost> {
         val o = runCatching { JSONObject(json) }.getOrNull() ?: return emptyList()
         val strict = hosts.strict
+        val side = hosts.sideTracks
         val found = LinkedHashMap<String, HostApprovalReason>()
         fun consider(url: String, against: EffectiveHosts, reason: HostApprovalReason, carveOut: Boolean = true) {
             if (carveOut && xuper?.headersFor(url) != null) return
@@ -580,10 +583,10 @@ object PluginOutput {
         // drmOf has no Xuper carve-out: the bridge never resolves a license.
         if (allowDrm) o.optJSONObject(DRM_FIELD)?.let { consider(it.optString("licenseUrl"), strict, HostApprovalReason.LICENSE, carveOut = false) }
         o.optJSONArray("subtitles")?.let { arr ->
-            for (i in 0 until minOf(arr.length(), MAX_SUBTITLES)) arr.optJSONObject(i)?.let { consider(it.optString("url"), strict, HostApprovalReason.SUBTITLE) }
+            for (i in 0 until minOf(arr.length(), MAX_SUBTITLES)) arr.optJSONObject(i)?.let { consider(it.optString("url"), side, HostApprovalReason.SUBTITLE) }
         }
         o.optJSONArray("audioTracks")?.let { arr ->
-            for (i in 0 until minOf(arr.length(), MAX_AUDIO_TRACKS)) arr.optJSONObject(i)?.let { consider(it.optString("url"), strict, HostApprovalReason.AUDIO) }
+            for (i in 0 until minOf(arr.length(), MAX_AUDIO_TRACKS)) arr.optJSONObject(i)?.let { consider(it.optString("url"), side, HostApprovalReason.AUDIO) }
         }
         return found.map { (host, reason) -> UndeclaredStreamHost(host, reason) }
     }
@@ -630,16 +633,22 @@ object PluginOutput {
      * typed passes at once (its own scheme, http included); otherwise the scheme must pass
      * [EffectiveHosts.allowsScheme] (https, or plain http only on a host the person approved as
      * insecure -- the same rule the host gate applies when the player then requests it), and only
-     * then must the host be a declared one. With [EffectiveHosts.anyPublicLiveHost] (only ever the
-     * stream's own URL, see [streamOf]) any public host passes, over http or https, never a local one.
+     * then must the host be a declared one. With [EffectiveHosts.anyPublicStreamHost] (live "any":
+     * only the stream's own URL; the broad video permission: also subtitles and audio, see [streamOf])
+     * any public host passes, over http or https, never a local one.
      */
     private fun checkUrl(url: String, hosts: EffectiveHosts, what: String) {
         val u = url.toHttpUrlOrNull() ?: throw PluginContractException("$what tiene una dirección inválida")
         if (hosts.userHostFor(u) != null) return
         // A typed server's name on another port or scheme falls through to the strict rules (see PluginHostGate.check).
-        if (hosts.anyPublicLiveHost && !hosts.isUserHostName(u.host)) {
+        if (hosts.anyPublicStreamHost && !hosts.isUserHostName(u.host)) {
             if (HostRules.isPublicIpv4Literal(u.host) || !HostRules.isLocalAddress(u.host)) return
-            if (':' in u.host) throw PluginContractException("Los canales solo pueden usar direcciones IPv4 públicas o nombres de dominio")
+            if (':' in u.host) {
+                throw PluginContractException(
+                    if (hosts.anyPublicLiveHost) "Los canales solo pueden usar direcciones IPv4 públicas o nombres de dominio"
+                    else "$what solo puede estar en una dirección IPv4 pública o en un nombre de dominio",
+                )
+            }
             throw PluginContractException("$what apunta a ${u.host.take(100)}, una dirección local")
         }
         if (!hosts.allowsScheme(u)) throw PluginContractException("$what debe usar https")

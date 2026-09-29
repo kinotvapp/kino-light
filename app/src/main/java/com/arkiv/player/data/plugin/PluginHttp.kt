@@ -85,7 +85,8 @@ object PluginHostGate {
             }
             return
         }
-        if (hosts.anyPublicLiveHost && !hosts.isUserHostName(url.host)) {
+        if (hosts.anyPublicStreamHost && !hosts.isUserHostName(url.host)) {
+            // Live "any" or the broad video permission: one rule for both.
             // Any scheme HttpUrl knows (http or https) on a public IPv4 literal or a public NAME;
             // PluginDns still refuses a name that resolves into the LAN, at connect time. A typed
             // server's NAME on another port or scheme is not "any": PluginDns lets a typed name
@@ -126,7 +127,7 @@ object PluginHostGate {
     fun isPromptableMiss(url: HttpUrl, hosts: EffectiveHosts): Boolean {
         if (url.scheme != "https") return false
         if (hosts.userHostFor(url) != null) return false
-        if (hosts.anyPublicLiveHost) return false
+        if (hosts.anyPublicStreamHost) return false
         if (HostRules.isLocalAddress(url.host)) return false
         // Only a host a manifest could itself have declared: approving one is adding it to
         // `hosts` verbatim, so a shape HostRules refuses there (a trailing dot, an underscore, a
@@ -247,8 +248,12 @@ class PluginHttp(
         log: (String) -> Unit = { android.util.Log.w("KinoPlugin", it) },
     ) : this(base, pluginId, LiveHosts(hosts), appVersion, cookies, allowInsecureLocalhost, delegateDns, reactiveApproval, calls, log)
 
-    /** What this plugin may reach right now: declared + typed servers + anything approved reactively since the runtime opened. */
-    val hosts: EffectiveHosts get() = liveHosts.value
+    /**
+     * What this plugin may reach right now: declared + typed servers + anything approved reactively
+     * since the runtime opened. Always [EffectiveHosts.strict]: neither live "any" nor the broad video
+     * permission ever reaches `kino.fetch`, whatever a caller hands in.
+     */
+    val hosts: EffectiveHosts get() = liveHosts.value.strict
 
     /** A request body as the prelude sends it; see [PluginHttp.Request.body]. */
     sealed interface Body {

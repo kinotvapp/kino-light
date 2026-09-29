@@ -183,6 +183,8 @@ class PluginInstaller(
             exports = exports.sorted(), liveStreamHostsAny = m.liveStreamHostsAny,
             // A "no" is remembered until the person forgets it (Ajustes ▸ Plugins), not until the next version.
             rejectedHosts = previous?.record?.rejectedHosts.orEmpty(),
+            // The person's broad video permission, like a reactive "yes": until they revoke it or uninstall.
+            anyVideoHost = previous?.record?.anyVideoHost == true,
             nuvioRepo = preview.nuvioOrigin?.repo, nuvioScraperId = preview.nuvioOrigin?.scraperId,
         )
         val staging = store.newStaging(m.id)

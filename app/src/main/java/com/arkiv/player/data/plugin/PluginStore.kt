@@ -48,6 +48,13 @@ data class InstalledRecord(
     /** Set together, both null for a normal (hand-written-repo) plugin: which Nuvio repo and scraper this was converted from. */
     val nuvioRepo: String? = null,
     val nuvioScraperId: String? = null,
+    /**
+     * The person granted the BROAD VIDEO PERMISSION in a video-host dialog ("Permitir video de
+     * cualquier servidor"): the player may fetch this plugin's VOD video from any public server
+     * (see [EffectiveHosts.anyPublicVideoHost]). Never set from a manifest or plugin output; kept
+     * across updates and reinstalls, dropped with the record on uninstall, revoked from Plugins.
+     */
+    val anyVideoHost: Boolean = false,
 ) {
     fun toJson(): String = JSONObject()
         .put("address", address).put("version", version).put("sha256", sha256)
@@ -68,6 +75,7 @@ data class InstalledRecord(
         .put("rejectedHosts", JSONArray(rejectedHosts))
         .put("nuvioRepo", nuvioRepo ?: JSONObject.NULL)
         .put("nuvioScraperId", nuvioScraperId ?: JSONObject.NULL)
+        .put("anyVideoHost", anyVideoHost)
         .toString()
 
     companion object {
@@ -94,6 +102,8 @@ data class InstalledRecord(
                 rejectedHosts = list("rejectedHosts"),
                 nuvioRepo = if (o.isNull("nuvioRepo")) null else o.optString("nuvioRepo").ifEmpty { null },
                 nuvioScraperId = if (o.isNull("nuvioScraperId")) null else o.optString("nuvioScraperId").ifEmpty { null },
+                // Absent in every record written before it existed: not granted.
+                anyVideoHost = o.optBoolean("anyVideoHost"),
             )
         }.getOrNull()
     }

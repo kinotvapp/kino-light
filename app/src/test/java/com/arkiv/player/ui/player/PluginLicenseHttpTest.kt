@@ -12,6 +12,7 @@ import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Before
@@ -144,6 +145,28 @@ class PluginLicenseHttpTest {
         assertEquals(1, server.requestCount)
 
         assertThrows(IOException::class.java) { postLicense(factories.license, "http://cdn.iptv-somewhere.test:${server.port}/wv", emptyMap()) }
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test fun `under the broad video permission the stream and its side files relax, the license client stays strict`() {
+        val video = EffectiveHosts(listOf("declared.example.com"), anyPublicVideoHost = true)
+        val live = EffectiveHosts(listOf("declared.example.com"), anyPublicLiveHost = true)
+        val subs = listOf("https://subs.elsewhere.org/a.vtt")
+        val audio = listOf("https://audio.elsewhere.org/a.m4a")
+        // Broad video covers side subtitles and audio; live "any" keeps them strict on every hop.
+        assertEquals(emptyList<String>(), strictSideUrls(video, subs, audio))
+        assertEquals(subs + audio, strictSideUrls(live, subs, audio))
+        assertEquals(emptyList<String>(), strictSideUrls(EffectiveHosts(listOf("declared.example.com")), subs, audio))
+        // Neither relaxation ever reaches the license.
+        assertFalse(licenseHostsFor(video).anyPublicStreamHost)
+        assertFalse(licenseHostsFor(live).anyPublicStreamHost)
+
+        fun client(hosts: EffectiveHosts) = PluginStreamHttp.client(OkHttpClient(), hosts, allowInsecureLocalhost = true, delegateDns = loopback)
+        val factories = pluginHttpFactories(client(video), streamHeaders, emptyMap(), licenseClient = client(licenseHostsFor(video)))
+        server.enqueue(ok("#EXTM3U"))
+        getStream(factories.stream, "http://cdn.voe-like.test:${server.port}/1.m3u8")
+        assertEquals(1, server.requestCount)
+        assertThrows(IOException::class.java) { postLicense(factories.license, "http://cdn.voe-like.test:${server.port}/wv", emptyMap()) }
         assertEquals(1, server.requestCount)
     }
 }

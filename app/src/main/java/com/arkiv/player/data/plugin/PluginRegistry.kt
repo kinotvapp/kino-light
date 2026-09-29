@@ -44,6 +44,13 @@ data class InstalledPlugin(
      */
     val liveHosts: EffectiveHosts get() = hosts.copy(anyPublicLiveHost = record.liveStreamHostsAny)
 
+    /**
+     * [hosts] for this plugin's VOD stream in the PLAYER: relaxed to any public host
+     * ([EffectiveHosts.anyPublicVideoHost]) only when the INSTALLED record says the person granted
+     * the broad video permission -- never from plugin output or the manifest.
+     */
+    val videoHosts: EffectiveHosts get() = hosts.copy(anyPublicVideoHost = record.anyVideoHost)
+
     /** A required setting has no value: its calls fail with `auth_required` without running. */
     val needsSetup: Boolean get() = missingSettings.isNotEmpty()
 
@@ -83,15 +90,18 @@ sealed interface PluginAccess {
         val xuper: Boolean = false,
         /** [hosts] for a live channel's stream (see [InstalledPlugin.liveHosts]); equal to [hosts] unless approved. */
         val liveHosts: EffectiveHosts = hosts,
+        /** [hosts] for a VOD stream in the player (see [InstalledPlugin.videoHosts]); equal to [hosts] unless granted. */
+        val videoHosts: EffectiveHosts = hosts,
     ) : PluginAccess {
         /**
-         * The player's gate for the stream [ref] resolved to: [liveHosts] only when [ref] is a LIVE
-         * ref of [pluginId] itself (the kind `PluginContentSource.resolve` relaxed it for), [hosts]
-         * for anything else -- never inferred from the episode id the player was opened with.
+         * The player's gate for the stream [ref] resolved to, decided from [ref] (never from the
+         * episode id the player was opened with): [liveHosts] for a LIVE ref of [pluginId] itself,
+         * [videoHosts] for any other ref of [pluginId] itself (the kinds `PluginContentSource.resolve`
+         * relaxed them for), [hosts] for anything else.
          */
         fun streamHostsFor(pluginId: String, ref: String): EffectiveHosts {
-            val decoded = PluginRef.decode(ref)
-            return if (decoded != null && decoded.pluginId == pluginId && decoded.kind == PluginRef.LIVE) liveHosts else hosts
+            val decoded = PluginRef.decode(ref)?.takeIf { it.pluginId == pluginId } ?: return hosts
+            return if (decoded.kind == PluginRef.LIVE) liveHosts else videoHosts
         }
     }
     data class Disabled(override val name: String) : PluginAccess
@@ -123,6 +133,7 @@ data class PluginSetupState(val userHosts: List<UserHost> = emptyList(), val mis
 
 class PluginRegistry(
     private val store: PluginStore,
+    private val log: (String) -> Unit = { runCatching { android.util.Log.i("KinoPlugin", it) } },
     /** Reads `config.json` only (a small file, like `installed.json`): never the Keystore. */
     private val setup: (StoredPlugin) -> PluginSetupState = { PluginSetupState() },
 ) : PluginPlayback {
@@ -195,6 +206,17 @@ class PluginRegistry(
     fun rejectHost(id: String, host: String) = update(id) { if (host in it.rejectedHosts) it else it.copy(rejectedHosts = it.rejectedHosts + host) }
 
     /** Clears every remembered "no" for [id], from Ajustes ▸ Plugins. */
+    /**
+     * Grants or revokes [id]'s broad video permission ([InstalledRecord.anyVideoHost]). Only ever
+     * the person's own choice: the video-host dialog's third button, or "Quitar permiso de video
+     * amplio" in Plugins. Logged (plugin id only, no URL).
+     */
+    fun setAnyVideoHost(id: String, granted: Boolean) {
+        var changed = false
+        update(id) { if (it.anyVideoHost == granted) it else { changed = true; it.copy(anyVideoHost = granted) } }
+        if (changed) log("[$id] broad video permission " + if (granted) "granted by the person" else "revoked by the person")
+    }
+
     fun forgetRejections(id: String) = update(id) { it.copy(rejectedHosts = emptyList()) }
 
     fun uninstall(id: String) {
@@ -209,7 +231,7 @@ class PluginRegistry(
             p == null -> PluginAccess.Uninstalled(pluginId?.let(store::removedName) ?: pluginId ?: "desconocido")
             p.record.damaged -> PluginAccess.Damaged(p.manifest.name)
             !p.isUsable -> PluginAccess.Disabled(p.manifest.name)
-            else -> PluginAccess.Ready(p.manifest.name, p.hosts, xuper = XuperPrivilege.grants(p.record), liveHosts = p.liveHosts)
+            else -> PluginAccess.Ready(p.manifest.name, p.hosts, xuper = XuperPrivilege.grants(p.record), liveHosts = p.liveHosts, videoHosts = p.videoHosts)
         }
     }
 

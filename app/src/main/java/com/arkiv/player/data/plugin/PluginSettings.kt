@@ -200,9 +200,28 @@ data class EffectiveHosts(
      * resolves into the LAN is refused at connect time by [PluginDns].
      */
     val anyPublicLiveHost: Boolean = false,
+    /**
+     * The broad video permission ([InstalledRecord.anyVideoHost]), granted by the person: a VOD
+     * stream's URL, everything its manifest names (variants, segments, keys) and every redirect hop,
+     * AND its side-loaded subtitles and audio tracks, may be on any public host -- the same test as
+     * [anyPublicLiveHost] (http or https, a public name or public IPv4 literal, never the home
+     * network). Set only by [InstalledPlugin.videoHosts], for the player's own calls; never on
+     * `kino.fetch` ([PluginHttp] gates with [strict]), a DRM license, a download or a live channel.
+     */
+    val anyPublicVideoHost: Boolean = false,
 ) {
-    /** These hosts with [anyPublicLiveHost] off: what every non-stream URL of a live channel is checked against. */
-    val strict: EffectiveHosts get() = if (anyPublicLiveHost) copy(anyPublicLiveHost = false) else this
+    /** The stream's own URL (and its manifest's requests) may be on any public host: live "any" or broad video. */
+    val anyPublicStreamHost: Boolean get() = anyPublicLiveHost || anyPublicVideoHost
+
+    /** These hosts with every relaxation off: a DRM license, `kino.fetch`, the app's own downloads. */
+    val strict: EffectiveHosts get() = if (anyPublicStreamHost) copy(anyPublicLiveHost = false, anyPublicVideoHost = false) else this
+
+    /**
+     * What a Stream's side-loaded subtitles and audio tracks are checked against: relaxed under the
+     * broad video permission (it covers "the plugin's video", side files included), strict under
+     * live "any" (a channel list names its streams, not its subtitles).
+     */
+    val sideTracks: EffectiveHosts get() = if (anyPublicVideoHost) copy(anyPublicLiveHost = false) else strict
 
     fun userHostFor(url: okhttp3.HttpUrl): UserHost? = user.firstOrNull { it.matches(url) }
 

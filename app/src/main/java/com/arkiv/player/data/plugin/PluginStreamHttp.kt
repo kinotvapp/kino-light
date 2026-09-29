@@ -30,8 +30,9 @@ object PluginStreamHttp {
      * exist for MockWebServer tests only. [xuper] is non-null only for a stream of the one plugin
      * [XuperPrivilege.grants] (see [PluginHostGate.check]); null leaves the gate exactly as it was.
      * [strictOrigins]: the side-loaded subtitle and audio URLs of a stream whose [hosts] are relaxed
-     * (`anyPublicLiveHost`): a request that starts at one of them is gated on EVERY hop with
-     * [EffectiveHosts.strict], since "any" never covers a subtitle or an audio track.
+     * for a live channel (`anyPublicLiveHost`): a request that starts at one of them is gated on EVERY
+     * hop with [EffectiveHosts.strict], since live "any" never covers a subtitle or an audio track.
+     * (The broad video permission does cover them: its caller passes none.)
      */
     fun client(
         base: OkHttpClient,
@@ -47,11 +48,17 @@ object PluginStreamHttp {
          * download, a license client, every other caller) refuses exactly as before.
          */
         askAboutFor: String? = null,
+        /**
+         * Told each host (only the host: never a path or query) this client reaches only because of
+         * the broad video permission ([EffectiveHosts.anyPublicVideoHost]) -- once per host, for the
+         * log. Nothing else changes with it.
+         */
+        onAnyVideoHost: ((String) -> Unit)? = null,
     ): OkHttpClient = base.newBuilder()
         .followRedirects(false)
         .followSslRedirects(false)
         .dns(PluginDns(allowLoopback = allowInsecureLocalhost, delegate = delegateDns, userHostNames = hosts.userHostNames))
-        .addInterceptor(PluginStreamGate(hosts, allowInsecureLocalhost, xuper, strictOrigins.mapNotNull { it.toHttpUrlOrNull()?.toString() }.toSet(), askAboutFor))
+        .addInterceptor(PluginStreamGate(hosts, allowInsecureLocalhost, xuper, strictOrigins.mapNotNull { it.toHttpUrlOrNull()?.toString() }.toSet(), askAboutFor, onAnyVideoHost))
         .build()
 }
 
@@ -62,13 +69,18 @@ class PluginStreamGate(
     private val xuper: XuperStreams? = null,
     /** Canonical URLs (`HttpUrl.toString()`) whose whole redirect chain is gated with [EffectiveHosts.strict]. */
     private val strictOrigins: Set<String> = emptySet(),
-    /** See [PluginStreamHttp.client]. Never used under `liveStreamHosts: "any"`: that path asks nothing. */
+    /** See [PluginStreamHttp.client]. Never used under live "any" or broad video: those paths ask nothing. */
     private val askAboutFor: String? = null,
+    /** See [PluginStreamHttp.client]. */
+    private val onAnyVideoHost: ((String) -> Unit)? = null,
 ) : Interceptor {
+    /** Hosts already reported to [onAnyVideoHost]: once each for this client's life. */
+    private val reported = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
     override fun intercept(chain: Interceptor.Chain): Response {
         var request = chain.request()
-        val gate = if (hosts.anyPublicLiveHost && request.url.toString() in strictOrigins) hosts.strict else hosts
-        val askable = askAboutFor.takeUnless { hosts.anyPublicLiveHost }
+        val gate = if (hosts.anyPublicStreamHost && request.url.toString() in strictOrigins) hosts.strict else hosts
+        val askable = askAboutFor.takeUnless { hosts.anyPublicStreamHost }
         var previous: okhttp3.HttpUrl? = null
         repeat(MAX_REDIRECTS + 1) {
             val from = previous
@@ -78,6 +90,7 @@ class PluginStreamGate(
             } catch (e: HostNotAllowedException) {
                 throw PluginHostGate.playbackRefusal(e, request.url, gate, askable)
             }
+            reportAnyVideoHost(request.url, gate)
             val response = chain.proceed(request)
             val location = response.header("Location")
             if (response.code !in REDIRECTS || location == null) return response
@@ -91,6 +104,14 @@ class PluginStreamGate(
             }.build()
         }
         throw IOException("demasiadas redirecciones")
+    }
+
+    /** [url] passed [gate] only through the broad video permission: tell [onAnyVideoHost], once per host. */
+    private fun reportAnyVideoHost(url: okhttp3.HttpUrl, gate: EffectiveHosts) {
+        val report = onAnyVideoHost ?: return
+        if (!gate.anyPublicVideoHost || gate.userHostFor(url) != null) return
+        if (HostRules.matches(url.host, gate.declared) && gate.allowsScheme(url)) return
+        if (reported.add(url.host)) report(url.host)
     }
 
     private companion object {
