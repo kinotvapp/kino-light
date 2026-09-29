@@ -59,7 +59,10 @@ fun UpdateDialog(info: UpdateInfo, graph: AppGraph, onDismiss: () -> Unit) {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        context.startActivity(intent)
+        // A TV box can lack the installer screen too: say so, instead of an ActivityNotFoundException that closes the app.
+        if (!launchFirstAvailable(listOf(intent)) { context.startActivity(it) }) {
+            error = "Este dispositivo no puede instalar la actualización desde la app"
+        }
     }
 
     fun startDownload() {
@@ -69,11 +72,14 @@ fun UpdateDialog(info: UpdateInfo, graph: AppGraph, onDismiss: () -> Unit) {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O &&
             !context.packageManager.canRequestPackageInstalls()
         ) {
-            context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+            // Many TVs (SMART_TV, in the crash reports) have no "install unknown apps" screen at all: try it, then the general
+            // security settings, and when the device has neither go on with the download; the installer says if it refuses.
+            val unknownSources = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
                 data = Uri.parse("package:${context.packageName}")
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            })
-            return
+            }
+            val security = Intent(Settings.ACTION_SECURITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (launchFirstAvailable(listOf(unknownSources, security)) { context.startActivity(it) }) return
         }
         downloading = true
         error = null
@@ -158,4 +164,20 @@ fun UpdateDialog(info: UpdateInfo, graph: AppGraph, onDismiss: () -> Unit) {
             }
         }
     }
+}
+
+/**
+ * Opens the first of [candidates] the device has a screen for. A device without one throws [ActivityNotFoundException];
+ * that is swallowed here (the next candidate is tried) and any other failure is not. False when none could be opened.
+ */
+internal fun <T> launchFirstAvailable(candidates: List<T>, start: (T) -> Unit): Boolean {
+    for (candidate in candidates) {
+        try {
+            start(candidate)
+            return true
+        } catch (_: android.content.ActivityNotFoundException) {
+            // try the next one
+        }
+    }
+    return false
 }
