@@ -57,12 +57,6 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import coil.compose.AsyncImage
-import com.arkiv.player.data.catalog.AniListApi
-import com.arkiv.player.data.catalog.AnimeShow
-import com.arkiv.player.data.catalog.TmdbApi
-import com.arkiv.player.data.catalog.TmdbDetail
-import com.arkiv.player.data.catalog.TmdbEpisode
-import com.arkiv.player.data.catalog.TmdbSeason
 import com.arkiv.player.data.db.SearchHistoryEntity
 import com.arkiv.player.ui.catalog.ChaptersBySeason
 import com.arkiv.player.ui.catalog.PlaySource
@@ -76,9 +70,6 @@ import com.arkiv.player.ui.search.SearchPlayback
 import com.arkiv.player.ui.search.SearchViewModel
 import com.arkiv.player.ui.search.SourceTab
 import com.arkiv.player.ui.search.TitleCard
-import com.arkiv.player.ui.search.refineEpisodeLabel
-import com.arkiv.player.ui.search.refineSeasonLabel
-import com.arkiv.player.ui.search.rememberRefineData
 import com.arkiv.player.ui.search.countsByTab
 import com.arkiv.player.ui.search.tabsFor
 import com.arkiv.player.ui.search.visibleRows
@@ -112,8 +103,7 @@ private const val SEARCH_HISTORY_KIND = "tv"
  * it) instead of starting a search. "Buscar" sends the text —autocompleted or typed by hand—
  * straight to the sources, without tying it to the catalog's exact title.
  *
- * REFINE adds the visual season/chapter selector; RESULTS shows the sources (packs first) with
- * immediate playback, and the chapter list when a pack is chosen.
+ * RESULTS shows the sources (packs first) with immediate playback, and the chapter list when a pack is chosen.
  */
 @Composable
 fun TvSearchScreen(
@@ -299,7 +289,7 @@ fun TvSearchScreen(
         vm.startFromShortcut(k, shortcutTmdbId, shortcutAnilistId)
     }
 
-    // Initial focus on the keyboard's first key. Keyed on `phase` (not `Unit`): REFINE/RESULTS/
+    // Initial focus on the keyboard's first key. Keyed on `phase` (not `Unit`): RESULTS/
     // PACK refocus themselves on entry, but going back to QUERY with vm.back() destroys the node
     // that held focus, and if this only ran once on entering the screen, nothing would bring it
     // back — the D-pad would end up "dead". Repeating the effect every time QUERY is returned to
@@ -312,7 +302,7 @@ fun TvSearchScreen(
         }
     }
 
-    // In REFINE/RESULTS, back steps one phase back within the wizard; in the titles phase, back
+    // In RESULTS, back goes back to the search within the wizard; in the titles phase, back
     // exits the screen. With a Caracol series' chapters open inside RESULTS, back goes to the source
     // list first (doesn't exit the phase).
     BackHandler {
@@ -478,18 +468,6 @@ fun TvSearchScreen(
                 }
             }
 
-            // Task 5: visual season/chapter selector. Task 6 replaces RESULTS' placeholder.
-            SearchPhase.REFINE -> selected?.let { card ->
-                TvRefineContent(
-                    card = card,
-                    vmDetail = vmDetail,
-                    vmAnimeShow = vmAnimeShow,
-                    tmdbApi = graph.tmdbApi,
-                    aniListApi = graph.aniListApi,
-                    onAllSeries = { vm.runSourceSearch(null, null) },
-                    onPickEpisode = { season, episode -> vm.runSourceSearch(season, episode) },
-                )
-            }
             // Source list with immediate playback on picking one; a Caracol series opens its
             // chapter list (TvMagisSeasonContent) instead of playing, and a plugin title its
             // info page.
@@ -534,16 +512,10 @@ fun TvSearchScreen(
                 askModeFor = null
                 useName(card.title)
             },
-            onFullSeries = {
+            onOpenSources = {
                 askModeFor = null
-                // pickTitle leaves the card as `selected` (and saves it in history); only then can
-                // runSourceSearch look up its sources. With no S/E, packs get surfaced.
-                vm.pickTitle(card)
-                vm.runSourceSearch(null, null)
-            },
-            // A movie has no seasons to choose: pickTitle sends it straight to RESULTS.
-            onBySeason = {
-                askModeFor = null
+                // pickTitle leaves the card as `selected`, saves it in history and searches its sources: a series or an
+                // anime whole, which is where the packs show up.
                 vm.pickTitle(card)
             },
             onDismiss = { askModeFor = null },
@@ -561,8 +533,9 @@ fun TvSearchScreen(
  * name: TMDB completes the title and from there the search continues by text, without tying
  * itself to the `tmdb_id` (which is exactly what sometimes finds nothing on the mirror).
  *
- * For series the usual two entries are kept: the whole series (where the packs show up) and the
- * season/chapter selector. A movie has nothing to choose, so its only catalog path is "Ver fuentes".
+ * The catalog entry has ONE path: "Ver serie completa" for a series or an anime (the whole series, where the packs
+ * show up), "Ver fuentes" for a movie. There is no season and chapter selector: the sources almost never can be searched
+ * that way.
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -570,8 +543,7 @@ private fun TvWhatToDoWithCardDialog(
     title: String,
     isSeries: Boolean,
     onUseName: () -> Unit,
-    onFullSeries: () -> Unit,
-    onBySeason: () -> Unit,
+    onOpenSources: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val first = remember { FocusRequester() }
@@ -603,211 +575,18 @@ private fun TvWhatToDoWithCardDialog(
                 style = MaterialTheme.typography.labelLarge,
                 color = ArkivTextSecondary,
             )
-            if (isSeries) {
-                Button(
-                    onClick = onFullSeries,
-                    colors = arkivTvButtonColors(),
-                    border = arkivTvButtonBorder(),
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text("Ver serie completa") }
-                Text(
-                    "Busca la serie entera: es donde salen los packs de temporada.",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = ArkivTextSecondary,
-                )
-                Button(
-                    onClick = onBySeason,
-                    colors = arkivTvButtonColors(),
-                    border = arkivTvButtonBorder(),
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text("Buscar por temporada") }
-                Text(
-                    "Abre el selector de temporadas y capítulos.",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = ArkivTextSecondary,
-                )
-            } else {
-                Button(
-                    onClick = onBySeason,
-                    colors = arkivTvButtonColors(),
-                    border = arkivTvButtonBorder(),
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text("Ver fuentes") }
-                Text(
-                    "Busca por la ficha del catálogo, con su título exacto.",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = ArkivTextSecondary,
-                )
-            }
-        }
-    }
-}
-
-/**
- * TV's REFINE phase: remote-navigable visual selector — seasons in a horizontal row (TMDB
- * series) or an episode list (anime), with "Toda la serie" always on top to jump straight to the
- * packs. No numeric keyboard: on the remote, typing a number is tedious, so everything gets
- * picked with focus/click.
- *
- * Reuses `vm.detail`/`vm.animeShow` when the ViewModel already loaded them (e.g. on coming back
- * from RESULTS with `back()`); if they're still empty —first time entering REFINE, because
- * [SearchViewModel.runSourceSearch] only fills them once the source search fires— they're
- * requested right here with `tmdbApi.detail`/`aniListApi.details` so as not to block the selector.
- */
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-private fun TvRefineContent(
-    card: TitleCard,
-    vmDetail: TmdbDetail?,
-    vmAnimeShow: AnimeShow?,
-    tmdbApi: TmdbApi,
-    aniListApi: AniListApi,
-    onAllSeries: () -> Unit,
-    onPickEpisode: (season: Int?, episode: Int) -> Unit,
-) {
-    // The season follows FOCUS here (see TvSeasonChip), so the fetch waits 250 ms: scrubbing the chips with the D-pad
-    // must not fetch once per chip.
-    val refine = rememberRefineData(card, vmDetail, vmAnimeShow, tmdbApi, aniListApi, seasonDebounceMs = 250)
-    val selectedSeason = refine.selectedSeason
-
-    // Initial focus on "Toda la serie" (Step 2 of the brief).
-    val allSeriesFocus = remember(card) { FocusRequester() }
-    LaunchedEffect(card) {
-        delay(200)
-        runCatching { allSeriesFocus.requestFocus() }
-    }
-
-    val seasons = refine.seasons
-    val currentEpisodes = refine.currentEpisodes
-    val loadingEpisodes = refine.loadingEpisodes
-    val animeTotal = refine.animeTotal
-
-    LazyColumn(
-        // The margin goes INSIDE the list (contentPadding), not as external padding: on focus,
-        // rows zoom (1.1x) and with the margin outside, the list clipped them against its own
-        // edge. This way the zoom draws over that margin instead of getting cut off.
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 48.dp, vertical = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        item {
-            Row {
-                Box(
-                    modifier = Modifier.height(160.dp).width(160.dp * 2f / 3f)
-                        .clip(RoundedCornerShape(8.dp)).background(ArkivSurfaceHigh),
-                ) {
-                    if (card.posterUrl.isNotBlank()) {
-                        AsyncImage(
-                            model = card.posterUrl,
-                            contentDescription = card.title,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                    }
-                }
-                Column(modifier = Modifier.padding(start = 20.dp).align(Alignment.CenterVertically)) {
-                    Text(card.title, style = MaterialTheme.typography.headlineMedium, color = ArkivTextPrimary)
-                    if (card.year.isNotBlank()) {
-                        Text(
-                            card.year,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = ArkivTextSecondary,
-                            modifier = Modifier.padding(top = 4.dp),
-                        )
-                    }
-                }
-            }
-        }
-
-        item {
             Button(
-                onClick = onAllSeries,
+                onClick = onOpenSources,
                 colors = arkivTvButtonColors(),
                 border = arkivTvButtonBorder(),
-                modifier = Modifier.padding(top = 24.dp, bottom = 8.dp).focusRequester(allSeriesFocus),
-            ) { Text("Toda la serie") }
-        }
-
-        when (card.kind) {
-            "series" -> {
-                if (seasons.isNotEmpty()) {
-                    item {
-                        Text(
-                            "Temporadas",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = ArkivTextPrimary,
-                            modifier = Modifier.padding(top = 16.dp, bottom = 8.dp),
-                        )
-                    }
-                    item {
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            items(seasons, key = { it.seasonNumber }) { season ->
-                                TvSeasonChip(
-                                    season = season,
-                                    selected = season.seasonNumber == selectedSeason,
-                                    onFocus = { refine.selectSeason(season.seasonNumber) },
-                                    onClick = { refine.selectSeason(season.seasonNumber) },
-                                )
-                            }
-                        }
-                    }
-                    item {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(top = 20.dp, bottom = 8.dp),
-                        ) {
-                            Text("Capítulos", style = MaterialTheme.typography.titleMedium, color = ArkivTextPrimary)
-                            if (loadingEpisodes) {
-                                Spacer(Modifier.width(8.dp))
-                                Text("Cargando…", style = MaterialTheme.typography.labelSmall, color = ArkivTextSecondary)
-                            }
-                        }
-                    }
-                    items(currentEpisodes, key = { it.episode }) { ep ->
-                        TvRefineRow(
-                            label = refineEpisodeLabel(ep),
-                            onClick = { onPickEpisode(selectedSeason, ep.episode) },
-                        )
-                    }
-                } else {
-                    item {
-                        Text(
-                            if (!refine.detailLoaded) "Cargando temporadas…" else "Sin temporadas disponibles.",
-                            color = ArkivTextSecondary,
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.padding(top = 16.dp),
-                        )
-                    }
-                }
-            }
-            "anime" -> {
-                if (animeTotal > 0) {
-                    item {
-                        Text(
-                            "Episodios",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = ArkivTextPrimary,
-                            modifier = Modifier.padding(top = 16.dp, bottom = 8.dp),
-                        )
-                    }
-                    items((1..animeTotal).toList(), key = { it }) { n ->
-                        TvRefineRow(
-                            label = "Episodio $n",
-                            onClick = { onPickEpisode(null, n) },
-                        )
-                    }
-                } else {
-                    item {
-                        Text(
-                            if (!refine.animeLoaded) "Cargando episodios…" else "Cantidad de episodios desconocida — usa \"Toda la serie\".",
-                            color = ArkivTextSecondary,
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.padding(top = 16.dp),
-                        )
-                    }
-                }
-            }
-            else -> Unit // "movie" doesn't reach REFINE: pickTitle() sends it straight to RESULTS.
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(if (isSeries) "Ver serie completa" else "Ver fuentes") }
+            Text(
+                if (isSeries) "Busca la serie entera: es donde salen los packs de temporada."
+                else "Busca por la ficha del catálogo, con su título exacto.",
+                style = MaterialTheme.typography.labelLarge,
+                color = ArkivTextSecondary,
+            )
         }
     }
 }
@@ -883,63 +662,6 @@ private fun TvSourceTabRow(
                 }
             }
         }
-    }
-}
-
-/** Season chip in the horizontal row ("T1", "T2"… or "Especiales" for season 0). */
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-private fun TvSeasonChip(
-    season: TmdbSeason,
-    selected: Boolean,
-    onFocus: () -> Unit,
-    onClick: () -> Unit,
-) {
-    Surface(
-        onClick = onClick,
-        modifier = Modifier.onFocusChanged { if (it.isFocused) onFocus() },
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = if (selected) ArkivRed else ArkivSurfaceHigh,
-            focusedContainerColor = ArkivRed,
-        ),
-        border = ClickableSurfaceDefaults.border(
-            focusedBorder = Border(androidx.compose.foundation.BorderStroke(2.dp, androidx.compose.ui.graphics.Color.White)),
-        ),
-    ) {
-        Text(
-            text = refineSeasonLabel(season.seasonNumber),
-            style = MaterialTheme.typography.titleSmall,
-            color = androidx.compose.ui.graphics.Color.White,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-        )
-    }
-}
-
-/** Navigable row for a selectable chapter/episode ("E3 · Nombre" or "Episodio 12"). */
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-private fun TvRefineRow(label: String, onClick: () -> Unit) {
-    Surface(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = ArkivSurfaceHigh,
-            focusedContainerColor = ArkivRed,
-        ),
-        border = ClickableSurfaceDefaults.border(
-            focusedBorder = Border(androidx.compose.foundation.BorderStroke(2.dp, androidx.compose.ui.graphics.Color.White)),
-        ),
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = androidx.compose.ui.graphics.Color.White,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-        )
     }
 }
 

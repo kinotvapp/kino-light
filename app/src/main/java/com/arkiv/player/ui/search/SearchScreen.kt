@@ -97,10 +97,9 @@ import com.arkiv.player.ui.titleinfo.titleTap
 import kotlinx.coroutines.launch
 
 /**
- * Unified search wizard: QUERY phase (search box + TMDB/anime cards), REFINE step (optional
- * season/chapter) and RESULTS phase (multi-source search in Caracol and the installed plugins for the chosen
- * card, with S/E injected if given, or by name alone otherwise — the latter surfaces
- * whole-season/series packs).
+ * Unified search wizard: QUERY phase (search box + TMDB/anime cards) and RESULTS phase (multi-source search in Caracol
+ * and the installed plugins for the chosen card, by name alone: for a series that surfaces the whole-season/series
+ * packs).
  */
 @Composable
 fun SearchScreen(
@@ -214,7 +213,7 @@ fun SearchScreen(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
             ) {
                 IconButton(onClick = {
-                    if (phase == SearchPhase.REFINE || phase == SearchPhase.RESULTS) vm.back() else onBack()
+                    if (phase == SearchPhase.RESULTS) vm.back() else onBack()
                 }) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver", tint = Color.White)
                 }
@@ -237,10 +236,6 @@ fun SearchScreen(
             }
 
             when (phase) {
-                SearchPhase.REFINE -> selected?.let { card ->
-                    val refine = rememberRefineData(card, detail, animeShow, graph.tmdbApi, graph.aniListApi, seasonDebounceMs = 0)
-                    RefineContent(card = card, data = refine, onContinue = { season, episode -> vm.runSourceSearch(season, episode) })
-                }
                 SearchPhase.RESULTS -> ResultsContent(
                     title = resultTitle,
                     posterUrl = resultPoster,
@@ -580,8 +575,7 @@ private fun kindColor(kind: String): Color = when (kind) {
 }
 
 /**
- * RESULTS phase: multi-source search (Caracol and plugins) for the chosen card, with S/E injected if it
- * came from REFINE or by name alone otherwise. Reuses SourceSectionHeader (same collapsible
+ * RESULTS phase: multi-source search (Caracol and plugins) for the chosen card, by name alone. Reuses SourceSectionHeader (same collapsible
  * pattern as CineDetailScreen's bottom sheet).
  */
 @Composable
