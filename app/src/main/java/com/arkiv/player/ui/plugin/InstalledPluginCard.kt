@@ -85,7 +85,7 @@ internal fun InstalledPluginCard(
     Card(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(CARD_CORNER),
-        colors = CardDefaults.cardColors(containerColor = Color.Black),
+        colors = CardDefaults.cardColors(containerColor = ArkivSurface),
     ) {
         PluginCardSurface(name = model.name, iconFile = model.iconFile, tileColorArgb = model.tileColorArgb, pill = null) {
         Column(

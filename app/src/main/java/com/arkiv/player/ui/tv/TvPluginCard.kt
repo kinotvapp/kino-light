@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -117,7 +118,7 @@ fun TvPluginCard(
         // drawn inside is cleared from the accessibility tree so it is not read a second time.
         modifier = modifier.fillMaxWidth().semantics { contentDescription = label },
         scale = cardFocusScale(LocalReducedEffects.current),
-        colors = CardDefaults.colors(containerColor = Color.Black),
+        colors = CardDefaults.colors(containerColor = ArkivSurfaceHigh),
         border = CardDefaults.border(
             focusedBorder = Border(BorderStroke(3.dp, Color.White)),
         ),
@@ -158,60 +159,56 @@ internal fun PluginCardSurface(
 ) {
     var iconFailed by remember(iconFile) { mutableStateOf(false) }
     val cover = iconFile != null && !iconFailed
-    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(CARD_CORNER)).background(Color(tileColorArgb))) {
-        if (cover) {
-            AsyncImage(
-                model = iconFile,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                onError = { iconFailed = true },
-                modifier = Modifier.matchParentSize(),
-            )
-        }
-        // Dark where the texts are (the bottom), fading away towards the top so the art shows through.
-        Box(
-            Modifier.matchParentSize().background(
-                Brush.verticalGradient(0f to Color.Transparent, 0.15f to Color.Transparent, 0.35f to Color(0x99000000), 0.5f to Color(0xD0000000), 1f to Color(0xF5000000)),
-            ),
-        )
-        Column {
-            if (compact) CompactCardTile(name, cover, tileColorArgb, pill) else CardTile(name, cover, tileColorArgb, pill)
-            body()
-        }
-    }
-}
-
-/** The 16:9 top of a card, over the art: the pill at the start and, when the icon can't be drawn, the plugin's initial centred. */
-@Composable
-private fun CardTile(name: String, cover: Boolean, tileColorArgb: Long, pill: String?) {
-    Box(Modifier.fillMaxWidth().aspectRatio(TILE_RATIO)) {
-        if (!cover) {
-            BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                TileArt(name = name, tileColorArgb = tileColorArgb, letterSize = tileArtSize(maxHeight.value, INITIAL_SIZE.value))
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(CARD_CORNER)).background(ArkivSurfaceHigh)) {
+        if (compact) {
+            CompactCardTile(name, iconFile.takeIf { cover }, { iconFailed = true }, tileColorArgb, pill)
+        } else {
+            // The art on the plugin's colour with a soft glow; its bottom edge fades into the panel the texts sit on.
+            Box(Modifier.fillMaxWidth().aspectRatio(TILE_RATIO).background(Color(tileColorArgb))) {
+                Box(Modifier.matchParentSize().background(Brush.radialGradient(listOf(Color.White.copy(alpha = 0.22f), Color.Transparent))))
+                if (cover) {
+                    // Fit, never Crop: a logo must show whole.
+                    AsyncImage(
+                        model = iconFile,
+                        contentDescription = null,
+                        contentScale = ContentScale.Fit,
+                        onError = { iconFailed = true },
+                        modifier = Modifier.matchParentSize().padding(start = 24.dp, end = 24.dp, top = 24.dp, bottom = 36.dp),
+                    )
+                } else {
+                    BoxWithConstraints(Modifier.matchParentSize(), contentAlignment = Alignment.Center) {
+                        TileArt(name = name, tileColorArgb = tileColorArgb, letterSize = tileArtSize(maxHeight.value, INITIAL_SIZE.value))
+                    }
+                }
+                Box(
+                    Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(0.3f)
+                        .background(Brush.verticalGradient(listOf(Color.Transparent, ArkivSurfaceHigh))),
+                )
+                if (pill != null) {
+                    Text(
+                        text = pill,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .padding(start = 8.dp, top = 8.dp, end = 8.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(ArkivRed)
+                            .padding(horizontal = 10.dp, vertical = 2.dp),
+                    )
+                }
             }
         }
-        if (pill != null) {
-            Text(
-                text = pill,
-                style = MaterialTheme.typography.labelLarge,
-                color = Color.White,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .padding(start = 8.dp, top = 8.dp, end = 8.dp)
-                    .clip(RoundedCornerShape(50))
-                    .background(ArkivRed)
-                    .padding(horizontal = 10.dp, vertical = 2.dp),
-            )
-        }
+        body()
     }
 }
 
-/** The low strip of a [compact][TvPluginCard] card: the pill, and beside it the initial when there is no icon to cover the card with. */
+/** The low strip of a [compact][TvPluginCard] card: the icon (or the initial) at its start with the pill beside it. */
 @Composable
-private fun CompactCardTile(name: String, cover: Boolean, tileColorArgb: Long, pill: String?) {
+private fun CompactCardTile(name: String, icon: File?, onIconError: () -> Unit, tileColorArgb: Long, pill: String?) {
     BoxWithConstraints(
-        modifier = Modifier.fillMaxWidth().aspectRatio(COMPACT_TILE_RATIO),
+        modifier = Modifier.fillMaxWidth().aspectRatio(COMPACT_TILE_RATIO).background(Color(tileColorArgb)),
         contentAlignment = if (pill == null) Alignment.Center else Alignment.CenterStart,
     ) {
         val artSize = tileArtSize(maxHeight.value, COMPACT_ART_SIZE.value)
@@ -220,7 +217,13 @@ private fun CompactCardTile(name: String, cover: Boolean, tileColorArgb: Long, p
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             modifier = Modifier.padding(horizontal = 6.dp),
         ) {
-            if (!cover) TileArt(name = name, tileColorArgb = tileColorArgb, letterSize = artSize)
+            if (icon != null) {
+                if (artSize > 0f) {
+                    AsyncImage(model = icon, contentDescription = null, contentScale = ContentScale.Fit, onError = { onIconError() }, modifier = Modifier.size(artSize.dp))
+                }
+            } else {
+                TileArt(name = name, tileColorArgb = tileColorArgb, letterSize = artSize)
+            }
             if (pill != null) {
                 Text(
                     text = pill,

@@ -68,7 +68,7 @@ internal fun TvInstalledPluginCard(
         // cleared from the accessibility tree so it is not read a second time.
         modifier = modifier.fillMaxWidth().semantics { contentDescription = label },
         scale = cardFocusScale(LocalReducedEffects.current),
-        colors = CardDefaults.colors(containerColor = Color.Black),
+        colors = CardDefaults.colors(containerColor = ArkivSurfaceHigh),
         border = CardDefaults.border(
             focusedBorder = Border(BorderStroke(3.dp, Color.White)),
         ),
