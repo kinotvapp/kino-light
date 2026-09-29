@@ -109,6 +109,31 @@ class NuvioHostExtractorTest {
         assertEquals(emptyList<String>(), parsed.others)
     }
 
+    @Test fun `a key the scraper reads by destructuring counts as named, and the others stay out`() {
+        val shorthand = """
+            const res = await fetch(DOMAINS_URL);
+            const { moviesdrive } = await res.json();
+            MAIN_URL = moviesdrive;
+        """.trimIndent()
+        val parsed = NuvioHostExtractor.parseDomainsJson(realDomainsJson, shorthand)
+        assertEquals(listOf("new4.moviesdrive.christmas"), parsed.preferred)
+        assertEquals(emptyList<String>(), parsed.others)
+
+        // Renamed, with a default, among other names, and minified: still this scraper's key.
+        val renamed = """let {  other , MultiMovies: base = "x" } = data; var{moviesmod:m}=d;"""
+        val both = NuvioHostExtractor.parseDomainsJson(realDomainsJson, renamed)
+        assertEquals(setOf("multimovies.casa", "moviesmod.ai.in"), both.preferred.toSet())
+        assertEquals(2, both.preferred.size)
+        assertEquals(emptyList<String>(), both.others)
+    }
+
+    @Test fun `a destructured local NAME that only aliases another key is not a reference to that name`() {
+        // `moviesdrive` here is the local variable the `other` key lands in, not a key read from the file.
+        val parsed = NuvioHostExtractor.parseDomainsJson(realDomainsJson, "const { other: moviesdrive } = data;")
+        assertEquals(emptyList<String>(), parsed.preferred)
+        assertEquals(5, parsed.others.size)
+    }
+
     @Test fun `an object domains json whose keys the scraper never names keeps them all as others`() {
         val parsed = NuvioHostExtractor.parseDomainsJson(realDomainsJson, "var x = 1;")
         assertEquals(emptyList<String>(), parsed.preferred)

@@ -104,7 +104,7 @@ object NuvioHostExtractor {
      *  - an OBJECT of `name -> URL` shared by a whole repo's scrapers (`phisher98/TVVVV`'s real file:
      *    `{"moviesdrive": "https://new4.moviesdrive.christmas", "4khdhub": "https://4khdhub.one", …}`,
      *    ~50 entries). Only the entries whose key [scraperSource] actually names (`data.moviesdrive`,
-     *    `domains["4khdhub"]`) are kept, as preferred; the rest -- other scrapers' domains -- are
+     *    `domains["4khdhub"]`, `const { moviesdrive } = data`) are kept, as preferred; the rest -- other scrapers' domains -- are
      *    dropped. Only when NO key is named at all (no telling which one it reads) do they all stay,
      *    as [NuvioRemoteHosts.others].
      * A value that's a URL contributes only its host; anything that fails [isPlausibleHost] is dropped.
@@ -142,11 +142,25 @@ object NuvioHostExtractor {
         return normalize(host)
     }
 
+    /**
+     * Whether [source] reads [key] off the domains object: `data.key`, `data["key"]` (any quoted
+     * `"key"` at all), or a flat object destructuring declaration that names it as a property --
+     * `const { key } = data`, `let { key: url = "…" } = await res.json()`, minified `var{key:e}=t`.
+     * In `{ other: key }` the name is only the local variable `other` lands in, so it doesn't count.
+     */
     private fun keyIsReferenced(key: String, source: String): Boolean {
         if (key.isEmpty()) return false
         val k = Regex.escape(key)
-        return Regex("""(?:\.\s*$k(?![A-Za-z0-9_$])|['"`]$k['"`])""").containsMatchIn(source)
+        if (Regex("""(?:\.\s*$k(?![A-Za-z0-9_$])|['"`]$k['"`])""").containsMatchIn(source)) return true
+        return DESTRUCTURING.findAll(source).any { m ->
+            m.groupValues[1].split(',').any { part ->
+                part.substringBefore(':').substringBefore('=').trim() == key
+            }
+        }
     }
+
+    /** `const|let|var { a, b: c, d = 1 } =` -- one flat pattern (a nested `{` isn't matched); group 1 is its inside. */
+    private val DESTRUCTURING = Regex("""(?<![A-Za-z0-9_$])(?:const|let|var)\s*\{([^{}]*)\}\s*=(?![=>])""")
 }
 
 /**
