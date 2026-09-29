@@ -94,7 +94,6 @@ class XuperResolveParityTest {
             PluginStorage(File(tmp.newFolder(), "storage.json")),
             PluginConfig.EMPTY,
             null,
-            EffectiveHosts(emptyList()),
             lazyOf(
                 MagisPluginBridge(
                     MagisCatalog(fake, session), resolver(fixture, fake, session), TmdbApi(),
@@ -300,7 +299,6 @@ class XuperResolveParityTest {
             PluginStorage(File(tmp.newFolder(), "storage.json")),
             PluginConfig.EMPTY,
             null,
-            EffectiveHosts(emptyList()),
             lazyOf(
                 MagisPluginBridge(
                     MagisCatalog(fake, session), MagisResolve(fake, session), TmdbApi(),

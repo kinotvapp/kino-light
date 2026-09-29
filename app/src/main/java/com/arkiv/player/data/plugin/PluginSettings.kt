@@ -230,6 +230,21 @@ data class EffectiveHosts(
     val labels: List<String> get() = declared.filterNot(PluginHosts::isReservedInvalid) + user.map { it.label }
 }
 
+/**
+ * One open plugin runtime's CURRENT [EffectiveHosts], shared by every component of that runtime
+ * that gates by host: [PluginHttp] (`kino.fetch`), [PluginCookies] (which hosts may store and send
+ * cookies) and [DefaultPluginHost] (`kino.cookies.get`, via [PluginHttp.hosts]). `AppGraph`
+ * creates exactly one per runtime open and hands the same instance to all of them.
+ *
+ * It only ever changes one way: reactive host approval ([PluginHttp]'s `askOnce`) adds a host the
+ * person just allowed, and every holder of this instance sees it from that moment on -- the rest of
+ * the SAME call included, not just the next `kino.fetch`. Everything else (typed servers, a
+ * settings change) still closes the runtime and opens a fresh one with a fresh instance.
+ */
+class LiveHosts(initial: EffectiveHosts) {
+    @Volatile var value: EffectiveHosts = initial
+}
+
 object PluginHosts {
     /**
      * A name under the reserved `.invalid` top-level domain (RFC 2606): it never resolves, so a

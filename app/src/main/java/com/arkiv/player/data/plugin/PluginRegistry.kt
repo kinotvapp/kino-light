@@ -177,6 +177,26 @@ class PluginRegistry(
 
     fun markDamaged(id: String) = update(id) { it.copy(damaged = true) }
 
+    /**
+     * Adds [host] to [id]'s approved hosts if it isn't there already and the 20-host cap
+     * ([ManifestParser.MAX_HOSTS]) isn't reached. Returns whether it actually changed anything, so a
+     * caller mid-`kino.fetch` knows whether to retry or give up.
+     */
+    fun addApprovedHost(id: String, host: String): Boolean {
+        var added = false
+        update(id) {
+            if (host in it.hosts || it.hosts.size >= ManifestParser.MAX_HOSTS) it
+            else { added = true; it.copy(hosts = it.hosts + host) }
+        }
+        return added
+    }
+
+    /** Remembers that the person said no to [host] for plugin [id]: never prompted again for it. */
+    fun rejectHost(id: String, host: String) = update(id) { if (host in it.rejectedHosts) it else it.copy(rejectedHosts = it.rejectedHosts + host) }
+
+    /** Clears every remembered "no" for [id], from Ajustes ▸ Plugins. */
+    fun forgetRejections(id: String) = update(id) { it.copy(rejectedHosts = emptyList()) }
+
     fun uninstall(id: String) {
         val p = store.get(id) ?: return
         store.remove(id, p.manifest.name)

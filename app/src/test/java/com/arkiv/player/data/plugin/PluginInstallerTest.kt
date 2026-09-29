@@ -130,6 +130,55 @@ class PluginInstallerTest {
         assertEquals(listOf("example.com", "cdn.example.net"), after.hosts)
     }
 
+    // Spec §9: a reactive "yes" lasts until uninstall and a "no" until the person forgets it --
+    // neither is undone by the plugin updating itself.
+    @Test fun `an update keeps reactively approved hosts and remembered rejections, and still asks about a new declared host`() = runBlocking {
+        publish("1.0.0"); installFresh()
+        // What PluginRegistry.addApprovedHost / rejectHost write, mid-kino.fetch.
+        store.updateRecord("demo") { it.copy(hosts = it.hosts + "new-cdn.example", rejectedHosts = listOf("ads.example.net")) }
+
+        publish("1.1.0")
+        assertEquals(UpdateOutcome.Applied("1.1.0"), installer.checkUpdate("demo"))
+        store.get("demo")!!.record.let {
+            assertEquals(listOf("example.com", "new-cdn.example"), it.hosts)
+            assertEquals(listOf("ads.example.net"), it.rejectedHosts)
+        }
+
+        // A host the manifest itself adds still waits for the consent sheet.
+        publish("2.0.0", hosts = listOf("example.com", "cdn.example.net"))
+        val outcome = installer.checkUpdate("demo") as UpdateOutcome.NeedsApproval
+        assertEquals(listOf("cdn.example.net"), outcome.preview.newHosts)
+        installer.install(outcome.preview)
+        store.get("demo")!!.record.let {
+            assertEquals(listOf("example.com", "cdn.example.net", "new-cdn.example"), it.hosts)
+            assertEquals(listOf("ads.example.net"), it.rejectedHosts)
+        }
+
+        // The manifest now declares the reactively approved host (nothing to ask: the person already
+        // said yes) and drops one of its own: that one goes, the approved one is kept once.
+        publish("3.0.0", hosts = listOf("example.com", "new-cdn.example"))
+        assertEquals(UpdateOutcome.Applied("3.0.0"), installer.checkUpdate("demo"))
+        assertEquals(listOf("example.com", "new-cdn.example"), store.get("demo")!!.record.hosts)
+    }
+
+    @Test fun `carried-over reactive hosts respect the host cap and a covering wildcard`() {
+        fun stored(manifestHosts: List<String>, recordHosts: List<String>) = StoredPlugin(
+            PluginManifest("demo", "Demo", "1.0.0", 1, "plugin.js", "", "", "", manifestHosts, setOf("search"), null, null),
+            "{}", InstalledRecord("o/r", "1.0.0", "x", recordHosts, 0L), tmp.root,
+        )
+        val nineteen = (1..19).map { "h$it.example.com" }
+        val carried = PluginInstaller.hostsCarriedOver(nineteen, stored(nineteen, nineteen + listOf("a.example.org", "b.example.org")))
+        assertEquals(nineteen + "a.example.org", carried)
+        assertEquals(ManifestParser.MAX_HOSTS, carried.size)
+        // Already covered by the new version's own `*.example.org`: not kept a second time.
+        assertEquals(
+            listOf("*.example.org", "c.example.net"),
+            PluginInstaller.hostsCarriedOver(listOf("*.example.org"), stored(listOf("x.example.com"), listOf("x.example.com", "a.example.org", "c.example.net"))),
+        )
+        // A first install carries nothing over.
+        assertEquals(listOf("example.com"), PluginInstaller.hostsCarriedOver(listOf("example.com"), null))
+    }
+
     @Test fun `same or older version is up to date`() = runBlocking {
         publish("1.0.0"); installFresh()
         assertEquals(UpdateOutcome.UpToDate, installer.checkUpdate("demo"))

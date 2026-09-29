@@ -6,16 +6,35 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import com.arkiv.player.playback.ACTION_OPEN_PLAYER
 import com.arkiv.player.playback.EXTRA_EPISODE_ID
 import com.arkiv.player.playback.NowPlaying
@@ -25,7 +44,10 @@ import com.arkiv.player.security.RootSignalCollector
 import com.arkiv.player.ui.ArkivRoot
 import com.arkiv.player.ui.ArkivSplash
 import com.arkiv.player.ui.LocalReducedEffects
+import com.arkiv.player.ui.plugin.FocusWhenReady
+import com.arkiv.player.ui.plugin.focusRing
 import com.arkiv.player.ui.rememberReducedEffects
+import com.arkiv.player.ui.theme.ArkivSurface
 import com.arkiv.player.ui.theme.ArkivTheme
 import com.arkiv.player.ui.tv.ArkivTvRoot
 import kotlinx.coroutines.delay
@@ -62,6 +84,9 @@ private const val CONTENT_SETTLE_MS = 400L
  *  as long as the warm-up (12-16 s) for no benefit. Search/Live DO force the 3DES on main, but the
  *  user reaches them after the background warm-up has had time to finish. */
 private const val WARMUP_MAX_WAIT_MS = 8000L
+
+/** How long a freshly shown host-approval dialog ignores every answer: longer than a reflexive double-tap. */
+private const val HOST_APPROVAL_ARM_DELAY_MS = 400L
 
 /**
  * Whether a rooted device gets blocked. **Off on purpose**: today we want a device with root to
@@ -104,6 +129,64 @@ class MainActivity : AppCompatActivity() {
         setContent {
             ArkivTheme {
                 val graph = (application as ArkivApp).graph
+
+                // Reactive host approval: a plugin's kino.fetch hit a host its manifest never
+                // declared, and the coroutine behind that call (see HostApprovalCenter) is
+                // suspended waiting for a verdict. Dismissing (back button, tap outside) counts as
+                // a reject -- respond(false) -- so the wait can never hang open forever unanswered.
+                val pendingHostApproval by graph.hostApprovalCenter.pending.collectAsState()
+                pendingHostApproval?.let { req ->
+                    // key(req): a queued request can replace the answered one in the SAME frame (the
+                    // StateFlow goes A -> B without ever showing null), and Compose would otherwise
+                    // just recompose this Dialog in place -- same window, same buttons under the
+                    // person's finger. Keyed, each request is a fresh Dialog with fresh state.
+                    key(req) {
+                        // TV: a Compose Dialog here doesn't reliably pick up initial D-pad focus on its
+                        // own (same reason PluginConsentDialog/PluginUninstallDialog/UpdateDialog all do
+                        // this) -- without it, the remote could only reach "back" (a reject), leaving
+                        // neither button reachable. Focus starts on "Rechazar" (the safe option), same as
+                        // PluginConsentDialog/PluginUninstallDialog: granting a plugin network access to a
+                        // new host is the same category of consent decision, so a reflexive D-pad
+                        // "select" should not accidentally approve it.
+                        val rejectFocus = remember { FocusRequester() }
+                        FocusWhenReady(rejectFocus)
+                        // Every answer -- either button, back, a tap outside -- is ignored for a moment
+                        // after a request appears: a double-tap that answered the previous prompt must
+                        // not also answer this one, a different plugin's or host's, unseen.
+                        var armed by remember { mutableStateOf(false) }
+                        LaunchedEffect(Unit) {
+                            delay(HOST_APPROVAL_ARM_DELAY_MS)
+                            armed = true
+                        }
+                        val answer: (Boolean) -> Unit = { approved -> if (armed) req.respond(approved) }
+                        Dialog(onDismissRequest = { answer(false) }) {
+                            Surface(
+                                shape = RoundedCornerShape(16.dp),
+                                color = ArkivSurface,
+                                modifier = Modifier.widthIn(max = 480.dp),
+                            ) {
+                                Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    Text(req.pluginName, style = MaterialTheme.typography.titleLarge, color = Color.White)
+                                    Text(
+                                        "Quiere conectarse por primera vez a ${req.host}. ¿Permitir?",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = Color.White,
+                                    )
+                                    Row(
+                                        Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),
+                                    ) {
+                                        TextButton(
+                                            onClick = { answer(false) },
+                                            modifier = Modifier.focusRequester(rejectFocus).focusRing(),
+                                        ) { Text("Rechazar") }
+                                        Button(onClick = { answer(true) }, modifier = Modifier.focusRing()) { Text("Permitir") }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
 
                 // The intro is drawn ON TOP of the app to cover the cold start.
                 //

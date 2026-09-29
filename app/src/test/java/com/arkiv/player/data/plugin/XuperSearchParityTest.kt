@@ -153,7 +153,6 @@ class XuperSearchParityTest {
         PluginStorage(File(tmp.newFolder(), "storage.json")),
         PluginConfig.EMPTY,
         null,
-        EffectiveHosts(emptyList()),
         testSession(fake).let { session ->
             lazyOf(
                 MagisPluginBridge(

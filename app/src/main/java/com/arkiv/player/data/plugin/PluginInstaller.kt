@@ -144,11 +144,14 @@ class PluginInstaller(
         if (missing.isNotEmpty()) throw InstallException("El plugin no carga: le falta ${missing.sorted().joinToString(", ")}")
         val sha = sha256Hex(script)
         val installedAt = clock()
-        fun buildRecord(enabled: Boolean) = InstalledRecord(
+        fun buildRecord(previous: StoredPlugin?) = InstalledRecord(
             address = preview.address.canonical, version = m.version, sha256 = sha,
-            hosts = m.hosts, installedAt = installedAt, enabled = enabled, lastUpdateCheckAt = installedAt,
+            hosts = hostsCarriedOver(m.hosts, previous), installedAt = installedAt,
+            enabled = previous?.record?.enabled ?: true, lastUpdateCheckAt = installedAt,
             permissions = m.permissions, capabilities = m.capabilities.toList(), insecureHosts = m.insecureHosts.toList(),
             exports = exports.sorted(), liveStreamHostsAny = m.liveStreamHostsAny,
+            // A "no" is remembered until the person forgets it (Ajustes ▸ Plugins), not until the next version.
+            rejectedHosts = previous?.record?.rejectedHosts.orEmpty(),
         )
         val staging = store.newStaging(m.id)
         try {
@@ -156,8 +159,8 @@ class PluginInstaller(
             // record built with a FRESH read of any previous state, taken right before the atomic
             // commit below, not from one taken before the fetch/probe above (see its KDoc) --
             // nothing outside this store observes the staged one before that commit.
-            store.writeFiles(staging, preview.manifestJson, m.entry, script, icon, buildRecord(true))
-            return store.finishInstall(staging, m.id, isUpdate = preview.isUpdate) { previous -> buildRecord(previous?.enabled ?: true) }
+            store.writeFiles(staging, preview.manifestJson, m.entry, script, icon, buildRecord(null))
+            return store.finishInstall(staging, m.id, isUpdate = preview.isUpdate) { previous -> buildRecord(previous) }
         } catch (e: IOException) {
             throw InstallException("No se pudo guardar el plugin: ${e.message}")
         } finally {
@@ -249,6 +252,24 @@ class PluginInstaller(
     }
 
     companion object {
+        /**
+         * The new version's declared [declared] hosts, plus every host the person approved
+         * REACTIVELY for [previous] (a host in its record that its own manifest never declared --
+         * `PluginRegistry.addApprovedHost` is the only other writer of `hosts`), up to the
+         * [ManifestParser.MAX_HOSTS] cap, declared ones first. A reactive approval lasts until
+         * uninstall (spec §9), not until the next update. A host the OLD manifest declared and the
+         * new one drops is dropped: that narrowing is the plugin's own, and the person never approved
+         * it separately. A reactive host the new manifest now covers (itself or a `*.` pattern)
+         * isn't kept twice. The consent sheet is unaffected: [previewFor]'s `newHosts` already
+         * compares the manifest against the whole installed record, so a reactively-approved host
+         * the new version declares asks nothing, and a genuinely new one still waits for approval.
+         */
+        internal fun hostsCarriedOver(declared: List<String>, previous: StoredPlugin?): List<String> {
+            val old = previous ?: return declared
+            val reactive = old.record.hosts.filter { h -> h !in old.manifest.hosts && !HostRules.matches(h, declared) }
+            return (declared + reactive).distinct().take(maxOf(declared.size, ManifestParser.MAX_HOSTS))
+        }
+
         const val MAX_SCRIPT_BYTES = 1024 * 1024
         const val MAX_ICON_BYTES = 128 * 1024
         const val DAY_MS = 24 * 60 * 60 * 1000L

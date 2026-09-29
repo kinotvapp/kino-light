@@ -20,11 +20,10 @@ class DefaultPrivilegedXuperHost internal constructor(
     storage: PluginStorage,
     config: PluginConfig,
     cookies: PluginCookies?,
-    hosts: EffectiveHosts,
     /** `AppGraph`'s one [MagisPluginBridge]: every Magis call goes through it. Lazy, so opening a
      *  runtime never forces the credential-gated Magis objects; only a `kino.xuper.*` call does. */
     private val magis: Lazy<MagisPluginBridge>,
-) : PluginHost by DefaultPluginHost(id, http, storage, config, cookies, hosts), PrivilegedXuperHost {
+) : PluginHost by DefaultPluginHost(id, http, storage, config, cookies), PrivilegedXuperHost {
 
     /**
      * Argument: a [GatewaySearchQuery]'s fields, `{"q", "type", "season", "episode", "tmdbId"}`, with
@@ -103,12 +102,11 @@ internal fun pluginHostFor(
     storage: PluginStorage,
     config: PluginConfig,
     cookies: PluginCookies?,
-    hosts: EffectiveHosts,
     magis: Lazy<MagisPluginBridge>,
 ): PluginHost = if (XuperPrivilege.grants(plugin.record)) {
-    DefaultPrivilegedXuperHost(plugin.id, http, storage, config, cookies, hosts, magis)
+    DefaultPrivilegedXuperHost(plugin.id, http, storage, config, cookies, magis)
 } else {
-    DefaultPluginHost(plugin.id, http, storage, config, cookies, hosts)
+    DefaultPluginHost(plugin.id, http, storage, config, cookies)
 }
 
 /** `as? String`, not `optString`: Android's org.json turns a JSON `null` into the text "null". */

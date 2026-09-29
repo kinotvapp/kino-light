@@ -1590,6 +1590,11 @@ class PlayerViewModel internal constructor(
         // just brought back: the age gate in `shouldResolveAgain` is what stops a retry loop, not an
         // extra "only the very first stream of this title" restriction -- a long movie whose URL
         // keeps expiring gets a retry every time, not just once ever (spec §3.5).
+        // The hosts the player's gate gets are read again NOW, after `resolve`: a host the person
+        // approved in the middle of that call (reactive host approval) is where its stream just came
+        // from, and `access` above was read before it existed. Only ever the same plugin's own
+        // record, freshly read; if it stopped being Ready meanwhile, the earlier answer stands.
+        val hostsReady = (plugins?.accessFor(pluginId) as? com.arkiv.player.data.plugin.PluginAccess.Ready) ?: ready
         pluginExpiry = com.arkiv.player.data.plugin.PluginStreamExpiry(System.currentTimeMillis(), play.expiresInSeconds)
         val header = if (live) null else repo.headerInfo(episodeId)
         _webExtras.value = WebExtras(episodeId, play.headers, pluginSubtitles(play.subtitles), pluginAudioTracks(play.audioTracks), drm = pluginDrm(play))
@@ -1620,9 +1625,9 @@ class PlayerViewModel internal constructor(
             // A direct stream came from this plugin's own live listing, which was already checked
             // against those same live hosts.
             pluginHosts = when {
-                ready == null || pluginId == null -> approvedHosts
-                plan is PluginLivePlay.Direct -> ready.liveHosts
-                else -> ready.streamHostsFor(pluginId, ref)
+                hostsReady == null || pluginId == null -> approvedHosts
+                plan is PluginLivePlay.Direct -> hostsReady.liveHosts
+                else -> hostsReady.streamHostsFor(pluginId, ref)
             },
             pluginXuper = xuper,
             mime = play.mime,

@@ -28,9 +28,16 @@ import java.io.File
  */
 class PluginCookies(
     private val file: File,
-    private val hosts: EffectiveHosts,
+    /**
+     * The runtime's shared, live host set (see [LiveHosts]): a host approved reactively in the
+     * middle of a call may store and send cookies from that moment on, like a declared one.
+     */
+    private val hosts: LiveHosts,
     private val clock: () -> Long = System::currentTimeMillis,
 ) : CookieJar {
+    /** A jar over a fixed host set: tests, and any caller with no reactive approval behind it. */
+    constructor(file: File, hosts: EffectiveHosts, clock: () -> Long = System::currentTimeMillis) : this(file, LiveHosts(hosts), clock)
+
     /** Insertion order is age order: eviction removes from the front. */
     private val cookies: MutableList<Cookie> by lazy { load() }
     private var changed = false
@@ -102,7 +109,7 @@ class PluginCookies(
     @Synchronized fun size(): Int = cookies.size
 
     /** WHICH host, not how: the request itself already passed [PluginHostGate] (scheme included). */
-    private fun allowed(url: HttpUrl): Boolean = hosts.let { h -> h.userHostFor(url) != null || HostRules.matches(url.host, h.declared) }
+    private fun allowed(url: HttpUrl): Boolean = hosts.value.let { h -> h.userHostFor(url) != null || HostRules.matches(url.host, h.declared) }
 
     private fun dropExpired() {
         val now = clock()

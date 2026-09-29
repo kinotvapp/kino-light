@@ -20,5 +20,9 @@
         <receiver
             android:name="com.arkiv.player.debug.PluginSideloadProbe"
             android:exported="true" />
+        <!-- Fires a fake HostApprovalCenter request to exercise the reactive dialog; see HostApprovalProbe. -->
+        <receiver
+            android:name="com.arkiv.player.debug.HostApprovalProbe"
+            android:exported="true" />
     </application>
 </manifest>

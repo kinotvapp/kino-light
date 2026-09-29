@@ -73,12 +73,14 @@ class PluginsViewModelTest {
         var updateChecks = 0
         val enabled = mutableMapOf<String, Boolean>()
         val uninstalled = mutableListOf<String>()
+        val forgottenRejections = mutableListOf<String>()
         val previewed = mutableListOf<String>()
         override suspend fun preview(input: String): InstallPreview { previewed += input; previewGate?.await(); return previewResult() }
         override suspend fun install(preview: InstallPreview) { installResult(); installed += preview }
         override suspend fun checkUpdate(id: String): UpdateOutcome { updateChecks++; return update() }
         override fun setEnabled(id: String, enabled: Boolean) { this.enabled[id] = enabled }
         override fun uninstall(id: String) { uninstalled += id }
+        override fun forgetHostRejections(id: String) { forgottenRejections += id }
         var form: PluginSettingsForm? = null
         var settingsFailure: Exception? = null
         /**

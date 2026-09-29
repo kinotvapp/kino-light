@@ -104,6 +104,26 @@ class PluginContentSourceTest {
 
     private fun source(caller: PluginCaller, p: InstalledPlugin = plugin()) = PluginContentSource(p, caller, log = {})
 
+    // Final review, finding 1: the person approves a new host in the middle of `resolve` (its
+    // kino.fetch retries there and succeeds); the stream the call then returns lives on that host.
+    // The source reads its hosts AFTER the call, so the stream passes -- a copy taken when the source
+    // was built (the registry's hosts before the approval) would refuse it as undeclared.
+    @Test fun `a host approved during the call counts for that call's own stream`() = runTest {
+        val p = plugin()
+        var registryHosts = p.hosts
+        val caller = PluginCaller { _, _, _, _ ->
+            registryHosts = registryHosts.copy(declared = registryHosts.declared + "new-cdn.example") // PluginRegistry.addApprovedHost
+            """{"url":"https://new-cdn.example/v.mp4"}"""
+        }
+        val ref = PluginRef("demo", "m1", PluginRef.MOVIE, "R1").encode()
+        val live = PluginContentSource(p, caller, p.hosts, log = {}, currentHosts = { registryHosts })
+        assertEquals("https://new-cdn.example/v.mp4", live.resolve(ref).url)
+        // The pre-fix shape (a snapshot only) refuses the very stream the person just allowed.
+        registryHosts = p.hosts
+        val e = runCatching { PluginContentSource(p, caller, p.hosts, log = {}).resolve(ref) }.exceptionOrNull()
+        assertTrue(e?.message.orEmpty(), e is GatewayException)
+    }
+
     @Test fun `search wraps items as plugin results`() = runTest {
         val caller = FakeCaller(mapOf("search" to """[{"id":"m1","ref":"R1","title":"Uno","kind":"movie","year":"1927","poster":"https://example.com/p.jpg"},{"id":"s1","ref":"S1","title":"Serie","kind":"series"}]"""))
         val events = source(caller).search(GatewaySearchQuery(q = "uno", type = "tv", year = 1927)).toList()

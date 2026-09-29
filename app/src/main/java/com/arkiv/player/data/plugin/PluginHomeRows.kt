@@ -60,6 +60,12 @@ class PluginHomeRows(
      */
     private val sessionRevision: (pluginId: String) -> Int = { 0 },
     private val log: (String) -> Unit = { android.util.Log.w("KinoPlugin", it) },
+    /**
+     * [plugin]'s hosts to check its rows against, read when they're parsed (after the call): a host
+     * approved reactively during `home()` must count for the posters it just returned. AppGraph
+     * reads the registry; by default, the snapshot this pass was handed.
+     */
+    private val currentHosts: (plugin: InstalledPlugin) -> EffectiveHosts = { it.hosts },
 ) {
     /**
      * [sessionRevision] (the constructor param) is the in-memory, per-process signal — stamped and
@@ -164,7 +170,7 @@ class PluginHomeRows(
             json,
             allowSeries = "episodes" in p.manifest.capabilities,
             allowBrowse = "browse" in p.manifest.capabilities,
-            hosts = p.hosts,
+            hosts = currentHosts(p),
             allowLive = PluginOutput.allowsLive(p.manifest.apiVersion),
         ) { log("[${p.id}] $it") }
 

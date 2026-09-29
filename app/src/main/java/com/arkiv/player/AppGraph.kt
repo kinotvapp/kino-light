@@ -430,7 +430,7 @@ class AppGraph(context: Context) {
     val contentSource: com.arkiv.player.data.gateway.ContentSource by lazy {
         val unusablePlugins = UnusablePluginSource(pluginRegistry)
         com.arkiv.player.data.gateway.CompositeSource {
-            val pluginSources = pluginRegistry.usable().map { PluginContentSource(it, pluginCaller, it.hosts, xuperStreams) } +
+            val pluginSources = pluginRegistry.usable().map { pluginContentSource(it) } +
                 unusablePlugins
             // Xuper refs saved before Xuper became a plugin (`magis1:`), forwarded to the installed
             // Xuper plugin through the SAME plugin sources below. In MagisSource's old slot: first.
@@ -485,6 +485,9 @@ class AppGraph(context: Context) {
     val pluginRegistry: PluginRegistry by lazy {
         PluginRegistry(pluginStore) { p -> pluginConfigStore.setupState(p.manifest.id, p.manifest.settings) }.also { it.reload() }
     }
+
+    /** Bridges a plugin's undeclared-host prompt to the dialog `MainActivity` collects from [HostApprovalCenter.pending]. */
+    val hostApprovalCenter: HostApprovalCenter by lazy { HostApprovalCenter() }
 
     /**
      * The ONLY place `reload()`'s Keystore correctness (finding 5) actually touches the Keystore
@@ -556,7 +559,19 @@ class AppGraph(context: Context) {
 
     /** "Ver más" talks to one plugin directly; null when it isn't usable any more. */
     fun pluginSource(id: String): PluginContentSource? =
-        pluginRegistry.find(id)?.takeIf { it.isUsable }?.let { PluginContentSource(it, pluginCaller, it.hosts, xuperStreams) }
+        pluginRegistry.find(id)?.takeIf { it.isUsable }?.let(::pluginContentSource)
+
+    /**
+     * [plugin]'s hosts as the registry holds them NOW, not when a source/row pass was built: a
+     * plugin's output is checked right after its call returns, and a host the person approved
+     * during that call (reactive approval -> `PluginRegistry.addApprovedHost`, written before the
+     * call's retried `kino.fetch` goes out) must already count, or the stream/poster the call just
+     * fetched from it would be dropped as undeclared.
+     */
+    private fun currentPluginHosts(plugin: InstalledPlugin): EffectiveHosts = pluginRegistry.find(plugin.id)?.hosts ?: plugin.hosts
+
+    private fun pluginContentSource(plugin: InstalledPlugin) =
+        PluginContentSource(plugin, pluginCaller, plugin.hosts, xuperStreams, currentHosts = { currentPluginHosts(plugin) })
 
     val pluginRuntimes: PluginRuntimePool by lazy {
         PluginRuntimePool(
@@ -569,6 +584,9 @@ class AppGraph(context: Context) {
             beforeCall = { id -> pluginHttps[id]?.beginCall() },
             // Same dir as PluginStore's data root: uninstall deletes the markers with the rest.
             sentinel = PluginCrashSentinel(java.io.File(appContext.filesDir, "plugin-data")),
+            // A call that timed out while its plugin had a host prompt up (or queued) isn't a
+            // "no responde" strike: the person was deciding, the plugin wasn't hanging.
+            hostPromptSince = { id, since -> hostApprovalCenter.wasAsking(id, since) },
         )
     }
 
@@ -581,8 +599,10 @@ class AppGraph(context: Context) {
             throw e
         }
         // The APPROVED hosts from installed.json (never the manifest's: they're what the person
-        // accepted) plus the servers typed in its settings, as the registry read them.
-        val hosts = plugin.hosts
+        // accepted) plus the servers typed in its settings, as the registry read them -- ONE live
+        // instance shared by the jar, kino.fetch and kino.cookies.get, so a host the person approves
+        // mid-call (reactive approval) reaches all three at once (see LiveHosts).
+        val hosts = LiveHosts(plugin.hosts)
         val dataDir = pluginStore.dataDir(id)
         // Config (passwords from the Keystore) is read on IO, never on Main.
         val config = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -592,12 +612,25 @@ class AppGraph(context: Context) {
         val cookies = PluginCookies(java.io.File(dataDir, PluginCookies.FILE_NAME), hosts)
         // Whatever jar this replaces is stopped from writing (see PluginJarRegistry's KDoc).
         pluginJars.put(id, cookies)
-        val http = PluginHttp(pluginBaseHttp, id, hosts, BuildConfig.VERSION_NAME, cookies = cookies)
+        val http = PluginHttp(
+            pluginBaseHttp, id, hosts, BuildConfig.VERSION_NAME, cookies = cookies,
+            reactiveApproval = PluginHttp.ReactiveApproval(
+                pluginName = plugin.manifest.name,
+                requester = hostApprovalCenter,
+                onApproved = { host ->
+                    if (!pluginRegistry.addApprovedHost(id, host)) {
+                        android.util.Log.w("KinoPlugin", "[$id] approved host $host not saved: already there or at the ${ManifestParser.MAX_HOSTS}-host limit")
+                    }
+                },
+                onRejected = { host -> pluginRegistry.rejectHost(id, host) },
+                rejectedHosts = plugin.record.rejectedHosts.toSet(),
+            ),
+        )
         pluginHttps[id] = http
         val storage = PluginStorage(java.io.File(dataDir, "storage.json"))
         // Only the one recognized Xuper source gets the extra kino.xuper.* host functions -- see
         // pluginHostFor's KDoc and XuperPrivilege.grants for the gate itself.
-        val host = pluginHostFor(plugin, http, storage, config, cookies, hosts, magisPluginBridge)
+        val host = pluginHostFor(plugin, http, storage, config, cookies, magisPluginBridge)
         val runtime = PluginRuntime.open(id, script, host, PluginEnv(appVersion = BuildConfig.VERSION_NAME))
         // F5: drop this plugin's PluginHttp the moment its runtime is closed -- idle timeout, or an
         // explicit pool.close() from DefaultPluginAdmin's disable/update/uninstall -- so pluginHttps
@@ -740,6 +773,7 @@ class AppGraph(context: Context) {
             // In the plugin's data dir: uninstalling deletes it with the rest.
             cacheFileFor = { id -> java.io.File(pluginStore.dataDir(id), "home.json") },
             sessionRevision = ::pluginSessionRevision,
+            currentHosts = ::currentPluginHosts,
         )
     }
 
@@ -937,6 +971,7 @@ class AppGraph(context: Context) {
                     cacheDir = pluginStore.dataDir(p.id),
                     allCachesRoot = pluginStore.dataDir(p.id).parentFile,
                     syncCache = { rows -> database.liveChannelCacheDao().replacePlaylistRows(provider, rows) },
+                    currentHosts = { currentPluginHosts(p) },
                 )
             },
         )

@@ -54,7 +54,7 @@ class PluginReferenceTest {
         val dir = tmp.root.resolve(id).apply { mkdirs() }
         val cookies = PluginCookies(File(dir, PluginCookies.FILE_NAME), hosts)
         val http = PluginHttp(base, id, hosts, "9.9.9", cookies = cookies, allowInsecureLocalhost = insecure)
-        val host = DefaultPluginHost(id, http, PluginStorage(File(dir, "storage.json")), PluginConfig(config), cookies, hosts, allowInsecureLocalhost = insecure, logger = {})
+        val host = DefaultPluginHost(id, http, PluginStorage(File(dir, "storage.json")), PluginConfig(config), cookies, allowInsecureLocalhost = insecure, logger = {})
         val rt = PluginRuntime.open(id, script, host, PluginEnv(appVersion = "9.9.9")).also { opened += it }
         return rt to http
     }

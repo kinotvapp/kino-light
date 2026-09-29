@@ -17,6 +17,9 @@ interface PluginAdmin {
     fun setEnabled(id: String, enabled: Boolean)
     fun uninstall(id: String)
 
+    /** "Olvidar rechazos de host": clears every remembered "no" for [id] ([PluginRegistry.forgetRejections]). */
+    fun forgetHostRejections(id: String)
+
     /** Null when the plugin isn't installed any more. */
     suspend fun settingsOf(id: String): PluginSettingsForm?
 
@@ -73,6 +76,17 @@ class DefaultPluginAdmin(
 
     override fun setEnabled(id: String, enabled: Boolean) {
         registry.setEnabled(id, enabled)
+        runtimes.close(id)
+    }
+
+    /**
+     * Clears every remembered host rejection for [id] and closes its runtime, the same way
+     * [setEnabled] does: an already-open runtime's `PluginHttp.ReactiveApproval` keeps its own
+     * in-memory snapshot of the rejected hosts (taken when it opened) and would otherwise keep
+     * treating them as rejected until it next closes on its own.
+     */
+    override fun forgetHostRejections(id: String) {
+        registry.forgetRejections(id)
         runtimes.close(id)
     }
 

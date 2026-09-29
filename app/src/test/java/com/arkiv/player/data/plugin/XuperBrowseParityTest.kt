@@ -77,7 +77,6 @@ class XuperBrowseParityTest {
         PluginStorage(File(tmp.newFolder(), "storage.json")),
         PluginConfig.EMPTY,
         null,
-        EffectiveHosts(emptyList()),
         lazyOf(bridge(homeCatalog)),
     )
 

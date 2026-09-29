@@ -49,6 +49,16 @@ class PluginRuntimePool(
     private val sentinel: PluginCrashSentinel? = null,
     /** Where the sentinel's small file writes run. */
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    /**
+     * Whether [pluginId] had a reactive host-approval prompt queued or on screen at any moment since
+     * `since` (a [clock] reading): AppGraph wires it to `HostApprovalCenter.wasAsking`. A timeout of
+     * such a call still discards the runtime, but is NOT a strike toward [onUnresponsive]: the call's
+     * whole-call limit kept running while a person was deciding (see `HostApprovalCenter`'s KDoc),
+     * so it says nothing about the plugin itself hanging.
+     */
+    private val hostPromptSince: (pluginId: String, since: Long) -> Boolean = { _, _ -> false },
+    /** Monotonic clock for [hostPromptSince]; must be the one `HostApprovalCenter` uses. */
+    private val clock: () -> Long = System::nanoTime,
 ) : PluginCaller {
     private class Slot {
         val mutex = Mutex()
@@ -95,6 +105,7 @@ class PluginRuntimePool(
         return slot.mutex.withLock {
             slot.idleJob?.cancel()
             var completedNormally = false
+            val startedAt = clock()
             try {
                 sentinel?.let { s -> withContext(io) { s.begin(pluginId) } }
                 val runtime = slot.runtime?.takeUnless { it.isDiscarded } ?: open(pluginId).also { slot.runtime = it }
@@ -105,7 +116,8 @@ class PluginRuntimePool(
                 }
             } catch (e: PluginTimeoutException) {
                 slot.runtime = null
-                if (!background && ++slot.timeouts >= maxConsecutiveTimeouts) {
+                // A person deciding on a host prompt during this call: neither a strike nor a reset.
+                if (!background && !hostPromptSince(pluginId, startedAt) && ++slot.timeouts >= maxConsecutiveTimeouts) {
                     slot.timeouts = 0
                     onUnresponsive(pluginId)
                 }

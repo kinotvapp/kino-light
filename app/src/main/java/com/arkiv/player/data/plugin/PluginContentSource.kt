@@ -33,7 +33,7 @@ class PluginSetupRequiredException(val pluginId: String, message: String) : Runt
  * Search results carry `source = "plugin:<id>"` and a wrapped ref ([PluginRef]); `resolve` and
  * `episodesWithSeries` unwrap it and hand the plugin its OWN ref. [browse] and [searchPage] take
  * the plugin's own refs and cursors: they are never saved, only paged through. Everything the
- * plugin returns goes through [PluginOutput] first, gated to [hosts] (declared + the servers typed
+ * plugin returns goes through [PluginOutput] first, gated to [currentHosts] (declared + the servers typed
  * in its settings). Errors surface as [GatewayException] with the plugin's name, the same channel
  * the other sources use; a typed error ([PluginErrorException]) is worded by [PluginErrors], with
  * `geo_blocked` as a [GatewayBlockedException] (the player's blocked-content dialog) and
@@ -51,6 +51,14 @@ class PluginContentSource(
      */
     xuperStreams: XuperStreams? = null,
     private val log: (String) -> Unit = { android.util.Log.w("KinoPlugin", it) },
+    /**
+     * The hosts to check a call's output against, read AFTER the call returns (never cached): a
+     * host the person approved in the middle of that very call (reactive approval) must count for
+     * its answer too -- a stream or poster on the host `resolve()`/`search()` just fetched from. In
+     * production `AppGraph` reads the registry, which the approval writes before the retried
+     * `kino.fetch` goes out; [hosts] (a fixed set) otherwise.
+     */
+    private val currentHosts: () -> EffectiveHosts = { hosts },
 ) : ContentSource {
     private val id = plugin.manifest.id
     private val name = plugin.manifest.name
@@ -108,7 +116,7 @@ class PluginContentSource(
                 emit(SearchEvent.SourceError(source, error, System.currentTimeMillis() - t0, 0, cause = e))
                 return@flow
             }
-            val page = PluginOutput.page(out, PluginOutput.MAX_SEARCH_ITEMS, allowSeries, allowNext, hosts, allowLive) { log("[$id] $it") }
+            val page = PluginOutput.page(out, PluginOutput.MAX_SEARCH_ITEMS, allowSeries, allowNext, currentHosts(), allowLive) { log("[$id] $it") }
             page.items.forEach { emit(SearchEvent.ResultEvent(source, resultFrom(plugin, it))) }
             emit(SearchEvent.SourceDone(source, page.items.size, System.currentTimeMillis() - t0, more = page.next))
         }
@@ -118,14 +126,14 @@ class PluginContentSource(
     suspend fun searchPage(queryJson: String, cursor: String): GatewayPage {
         val arg = runCatching { JSONObject(queryJson) }.getOrElse { JSONObject() }.put("cursor", cursor.take(PluginOutput.MAX_CURSOR_CHARS))
         val out = callOrThrow("search", arg.toString(), SEARCH_TIMEOUT_MS)
-        return pageOf(PluginOutput.page(out, PluginOutput.MAX_SEARCH_ITEMS, allowSeries, allowNext, hosts, allowLive) { log("[$id] $it") })
+        return pageOf(PluginOutput.page(out, PluginOutput.MAX_SEARCH_ITEMS, allowSeries, allowNext, currentHosts(), allowLive) { log("[$id] $it") })
     }
 
     override suspend fun browse(ref: String, cursor: String?): GatewayPage {
         if (!allowNext) throw GatewayException("$name no tiene más para mostrar")
         val arg = JSONObject().put("ref", ref.take(PluginOutput.MAX_REF_CHARS)).put("cursor", cursor?.take(PluginOutput.MAX_CURSOR_CHARS) ?: JSONObject.NULL)
         val out = callOrThrow("browse", arg.toString(), BROWSE_TIMEOUT_MS)
-        return pageOf(PluginOutput.page(out, PluginOutput.MAX_BROWSE_ITEMS, allowSeries, allowNext = true, hosts, allowLive) { log("[$id] $it") })
+        return pageOf(PluginOutput.page(out, PluginOutput.MAX_BROWSE_ITEMS, allowSeries, allowNext = true, currentHosts(), allowLive) { log("[$id] $it") })
     }
 
     private fun pageOf(page: PluginPage) = GatewayPage(page.items.map { resultFrom(plugin, it) }, page.next)
@@ -135,7 +143,9 @@ class PluginContentSource(
         if (own.kind == PluginRef.SERIES) throw GatewayException("Elige un capítulo primero")
         val out = callOrThrow("resolve", JSONObject.quote(own.ref), RESOLVE_TIMEOUT_MS)
         // A channel's stream may be on any public host only if the INSTALLED record approved
-        // liveStreamHosts "any"; `hosts` keeps any typed servers either way.
+        // liveStreamHosts "any"; `hosts` keeps any typed servers either way. Read now, after the
+        // call: a host approved during it counts.
+        val hosts = currentHosts()
         val streamHosts = if (own.kind == PluginRef.LIVE) hosts.copy(anyPublicLiveHost = plugin.record.liveStreamHostsAny) else hosts
         val stream = try {
             PluginOutput.stream(out, streamHosts, xuper, allowDrm)
@@ -162,7 +172,7 @@ class PluginContentSource(
         if (own.kind != PluginRef.SERIES || "episodes" !in caps) throw GatewayException("Esto no tiene capítulos")
         val out = callOrThrow("episodes", JSONObject.quote(own.ref), EPISODES_TIMEOUT_MS)
         val parsed = try {
-            PluginOutput.episodes(out, { log("[$id] $it") }, hosts)
+            PluginOutput.episodes(out, { log("[$id] $it") }, currentHosts())
         } catch (e: PluginContractException) {
             throw GatewayException("$name: ${e.message}", e)
         }

@@ -73,6 +73,7 @@ private class RecordingPluginAdmin : PluginAdmin {
     override suspend fun checkUpdate(id: String): UpdateOutcome = UpdateOutcome.UpToDate
     override fun setEnabled(id: String, enabled: Boolean) {}
     override fun uninstall(id: String) {}
+    override fun forgetHostRejections(id: String) {}
     override suspend fun settingsOf(id: String): PluginSettingsForm? = null
     override suspend fun saveSettings(id: String, values: Map<String, Any?>): String? = null
 }
