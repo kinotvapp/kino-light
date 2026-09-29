@@ -477,17 +477,21 @@ private fun PlayerContent(
     // web: playing a Magis chapter announced a web source that doesn't exist on that path.
     // No other source turns on that flag (archive had its own banner, and it was removed in this
     // branch's pruning).
+    // "Mis canales" is built in, so the registry has no name for it.
+    fun pluginLabel(pluginId: String?): String? =
+        if (pluginId == com.arkiv.player.data.live.OwnLive.PLUGIN_ID) com.arkiv.player.data.live.OwnLive.NAME
+        else graph.pluginRegistry.nameOf(pluginId)
     val resolvingSourceName = remember(episodeId) {
         when (PlayerSource.kindFor(episodeId)) {
             SourceKind.MAGIS -> "de Xuper"
             SourceKind.DITU -> "de Caracol"
-            SourceKind.PLUGIN -> "de " + (graph.pluginRegistry.nameOf(
+            SourceKind.PLUGIN -> "de " + (pluginLabel(
                 com.arkiv.player.data.plugin.PluginIds.pluginIdOfEpisode(episodeId),
             ) ?: "un plugin")
             // An En vivo channel of a plugin (`live:plugin:<id>:<code>`): only its opens resolve.
             SourceKind.LIVE -> com.arkiv.player.data.gateway.LiveChannelKeys.parse(episodeId.removePrefix(PlayerSource.LIVE_PREFIX))
                 ?.first?.let(com.arkiv.player.data.gateway.LiveChannelKeys::pluginIdOf)
-                ?.let { "de " + (graph.pluginRegistry.nameOf(it) ?: "un plugin") } ?: "web"
+                ?.let { "de " + (pluginLabel(it) ?: "un plugin") } ?: "web"
             else -> "web"
         }
     }
