@@ -50,12 +50,10 @@ object OwnSourceValidator {
         else -> null
     }
 
+    /** A logo is display only, so http is fine (same rule as a plugin's images: `PluginOutput.imageUrl`). */
     fun checkLogo(raw: String): String? {
         if (raw.isBlank()) return null
-        return when (val r = checkUrl(raw)) {
-            is OwnUrlCheck.Refused -> r.message
-            is OwnUrlCheck.Ok -> if (r.cleartext) "El logo debe ser una dirección https" else null
-        }
+        return (checkUrl(raw) as? OwnUrlCheck.Refused)?.message
     }
 
     fun isDuplicate(url: String, existing: Collection<String>): Boolean {

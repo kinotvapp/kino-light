@@ -73,10 +73,11 @@ class OwnSourceValidatorTest {
         assertNotNull(OwnSourceValidator.checkHeaderValue("x".repeat(201)))
     }
 
-    @Test fun `a logo must be https on a public host, or blank`() {
+    @Test fun `a logo may be http or https on a public host, or blank`() {
         assertNull(OwnSourceValidator.checkLogo(""))
         assertNull(OwnSourceValidator.checkLogo("https://img.example.com/uno.png"))
-        assertNotNull(OwnSourceValidator.checkLogo("http://img.example.com/uno.png"))
+        assertNull(OwnSourceValidator.checkLogo("http://img.example.com/uno.png"))
+        assertNotNull(OwnSourceValidator.checkLogo("http://192.168.1.5/uno.png"))
         assertNotNull(OwnSourceValidator.checkLogo("https://192.168.1.5/uno.png"))
     }
 

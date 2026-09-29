@@ -30,7 +30,7 @@ class PluginOutputTest {
             assertEquals("Metrópolis", title)
             assertEquals("1927", year)
             assertEquals("https://x/p.jpg", poster)
-            assertEquals("", backdrop) // http images are dropped
+            assertEquals("http://x/b.jpg", backdrop) // http images are kept: art is display only
         }
         assertTrue(logs.isNotEmpty())
     }
@@ -488,6 +488,28 @@ class PluginOutputTest {
         )
         assertEquals(listOf("", "", ""), items.map { it.poster })
         assertEquals(listOf("https://cdn.example.com/b.jpg", "", ""), items.map { it.backdrop })
+    }
+
+    @Test fun `images may be http or https, on a public name or a public IPv4 address`() {
+        val items = items(
+            """[{"id":"a","ref":"r","title":"A","kind":"movie","poster":"http://cdn.example.com/p.jpg","backdrop":"https://cdn.example.com/b.jpg"},
+                {"id":"b","ref":"r","title":"B","kind":"movie","poster":"http://8.8.8.8/p.jpg","backdrop":"https://8.8.4.4:8443/b.jpg"}]""",
+            allowSeries = false,
+        )
+        assertEquals(listOf("http://cdn.example.com/p.jpg", "http://8.8.8.8/p.jpg"), items.map { it.poster })
+        assertEquals(listOf("https://cdn.example.com/b.jpg", "https://8.8.4.4:8443/b.jpg"), items.map { it.backdrop })
+    }
+
+    @Test fun `http images on the home network or a local name are dropped too, and other schemes never pass`() {
+        val items = items(
+            """[{"id":"a","ref":"r","title":"A","kind":"movie","poster":"http://192.168.1.1/cgi-bin/reboot","backdrop":"http://localhost:8080/b.jpg"},
+                {"id":"b","ref":"r","title":"B","kind":"movie","poster":"http://nas.local/p.jpg","backdrop":"http://10.0.0.5/b.jpg"},
+                {"id":"c","ref":"r","title":"C","kind":"movie","poster":"ftp://cdn.example.com/p.jpg","backdrop":"file:///sdcard/b.jpg"},
+                {"id":"d","ref":"r","title":"D","kind":"movie","poster":"HTTP://cdn.example.com/p.jpg","backdrop":"data:image/png;base64,AAAA"}]""",
+            allowSeries = false,
+        )
+        assertEquals(listOf("", "", "", ""), items.map { it.poster })
+        assertEquals(listOf("", "", "", ""), items.map { it.backdrop })
     }
 
     @Test fun `an image on a server the person typed is kept, exactly that server only`() {

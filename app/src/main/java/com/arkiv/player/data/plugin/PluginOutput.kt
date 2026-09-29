@@ -675,9 +675,12 @@ object PluginOutput {
         }.trim().take(max)
 
     /**
-     * https, ≤ [MAX_IMAGE_URL_CHARS] chars, and never an IP literal or a local name: a poster must
-     * not be a LAN probe. The exception is a URL on a server the person typed (scheme, host and
-     * port exactly): their own Jellyfin's posters are that server's.
+     * http or https, ≤ [MAX_IMAGE_URL_CHARS] chars, on a public name or a public IPv4 address, and
+     * never the home network or a local name: a poster must not be a LAN probe. Plain http is fine
+     * because a picture is display only (Coil sends none of the person's headers or cookies with it)
+     * and many catalogs and IPTV lists host their art that way; https-only left their images blank.
+     * The exception is a URL on a server the person typed (scheme, host and port exactly): their own
+     * Jellyfin's posters are that server's.
      */
     private fun image(o: JSONObject, key: String, hosts: EffectiveHosts): String = imageUrl((o.opt(key) as? String).orEmpty(), hosts)
 
@@ -687,7 +690,7 @@ object PluginOutput {
         if (v.length > MAX_IMAGE_URL_CHARS) return ""
         val url = v.toHttpUrlOrNull() ?: return ""
         if (hosts.userHostFor(url) != null) return v
-        if (url.scheme != "https" || !v.startsWith("https://")) return ""
-        return if (HostRules.isLocalAddress(url.host)) "" else v
+        if (!v.startsWith("https://") && !v.startsWith("http://")) return ""
+        return if (HostRules.isPublicIpv4Literal(url.host) || !HostRules.isLocalAddress(url.host)) v else ""
     }
 }

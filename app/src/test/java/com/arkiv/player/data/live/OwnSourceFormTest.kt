@@ -33,7 +33,7 @@ class OwnSourceFormTest {
     }
 
     @Test fun `every bad field is reported at once, keyed by field`() {
-        val e = invalid(OwnSourceForm(OwnKind.CHANNEL, " ", "http://192.168.1.5/a.m3u8", logo = "http://x.example.com/l.png",
+        val e = invalid(OwnSourceForm(OwnKind.CHANNEL, " ", "http://192.168.1.5/a.m3u8", logo = "http://192.168.1.9/l.png",
             userAgent = "a\nb", referer = "ñ"))
         assertEquals(setOf(OwnField.NAME, OwnField.URL, OwnField.LOGO, OwnField.USER_AGENT, OwnField.REFERER), e.keys)
     }

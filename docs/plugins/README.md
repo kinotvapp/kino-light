@@ -385,7 +385,7 @@ What it never allows:
 - subtitles, audio tracks and a `drm` block's `licenseUrl`: still your `hosts` only, and every
   redirect they make is judged the same way;
 - movies and episodes: a non-live `Stream` is checked exactly as before;
-- images: the poster rule (https, never local) does not change.
+- images: the poster rule (http or https, never local) does not change.
 
 The consent sheet shows it in red, "Puede reproducir canales desde cualquier servidor que indique su
 lista", and an update that newly adds it waits for the person's approval, like a new host.
@@ -504,7 +504,7 @@ all or nothing.
 | Text fields | `title` is required and non-blank, up to 200 characters. `overview` up to 2000; `lang` and `quality` up to 20 (for example `"es"`, `"1080p"`); `year` up to 10 (a number is accepted and converted). Longer text is cut; the text of `SeriesInfo` and `Episode` is cut the same way (200 characters for titles, 2000 for overviews). |
 | Extra item fields | All optional; a wrong one is ignored, not the item. `genres` at most 5, each at most 30 characters; `badges` (shown as chips, e.g. `"HD"`, `"Latino"`) at most 3 of at most 20; `rating` from 0 to 10; `runtimeMinutes` from 1 to 1000; `ids.tmdb` a positive integer (Kino uses it to match your title with TMDB, to find it again from search, and to enrich its info page -- see below); `ids.imdb` matches `^tt\d{5,10}$` (also enriches a movie's info page when you have no `ids.tmdb`). An episode's `airDate` is `YYYY-MM-DD`. |
 | `adult` | An item with `adult: true` is dropped: Kino has no place behind its 18+ lock for plugin titles yet. |
-| Images | `poster`, `backdrop` and `still` must be `https` URLs of at most 2048 characters, or they are ignored. Images are loaded by Kino directly and are **not** checked against `hosts` (they are display only), and Kino does not send your headers or cookies with them. This is the one exception to the host rule, with one limit: an image on an IP address or a local name (`localhost`, `.local`, `.lan`, …) is ignored too, unless it is on a server the person typed in your settings (then `http` works too). |
+| Images | `poster`, `backdrop` and `still` must be `http` or `https` URLs of at most 2048 characters, or they are ignored. Images are loaded by Kino directly and are **not** checked against `hosts` (they are display only), and Kino does not send your headers or cookies with them. This is the one exception to the host rule, with one limit: an image on the home network, a private or reserved IP address, or a local name (`localhost`, `.local`, `.lan`, …) is ignored too, unless it is on a server the person typed in your settings. A public IPv4 address is fine. |
 
 **`ids.tmdb` enriches the info page, not only matching.** When TMDB has this exact title (matched by
 `ids.tmdb`, or by `ids.imdb` on a movie when you gave no `ids.tmdb`), opening it adds three kinds of

@@ -92,8 +92,8 @@ class PlaylistGroupsTest {
         assertEquals("http://192.168.2.6:8096/img/poster/canal-7.png", channels.getValue("TuServidor").logo)
         assertEquals(null, channels.getValue("OtraLan").logo)
         assertEquals("https://cdn.example.com/c.png", channels.getValue("Publico").logo)
-        // Plain http on an undeclared public host: the plugin image rule requires https there too.
-        assertEquals(null, channels.getValue("PublicoHttp").logo)
+        // Plain http on a public host is fine too: a logo is display only (the plugin image rule).
+        assertEquals("http://cdn.example.com/c.png", channels.getValue("PublicoHttp").logo)
     }
 
     @Test fun `what the parse filtered is counted, and a parse cut by its time budget is a cut list`() {
