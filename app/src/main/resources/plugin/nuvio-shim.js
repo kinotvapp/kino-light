@@ -13,14 +13,40 @@ function require(name) {
 }
 
 // `kino.fetch(url, opts)` already takes the same `(url, opts)` shape Nuvio's own scrapers call
-// `fetch` with (method/headers/body/redirect), and its resolved response already exposes
-// `ok`/`status`/`url`/`headers` plus `.text()`/`.json()`/`.base64()` AS FUNCTIONS -- exactly the
-// Fetch API shape `fetch(...).then(r => r.json())` expects. No translation needed beyond passing
-// the two arguments through as-is; wrapping them into one bundled `req` object here previously
-// made `kino.fetch` receive that whole object as its `url` argument instead (`opts` then
-// undefined), corrupting the very URL a scraper asked for.
+// `fetch` with (method/headers/body/redirect); passing the two arguments through as-is is still
+// right (wrapping them into one bundled `req` object here previously made `kino.fetch` receive that
+// whole object as its `url` argument instead, `opts` then undefined, corrupting the very URL a
+// scraper asked for). But its resolved response's `text()`/`json()`/`base64()` are plain SYNCHRONOUS
+// functions -- correct and required for native Kino plugins (prelude.js's own contract, untouched
+// here), NOT the browser Fetch API shape real Nuvio scrapers assume, where `response.json()` and
+// `.text()` themselves return PROMISES (`response.json().then(fn)`, `await response.json()`) and
+// `response.headers.get(name)` looks a header up by name. This wrapper bridges kino's synchronous
+// response into that shape for scraper code only.
 function fetch(url, opts) {
-  return kino.fetch(url, opts || {});
+  return kino.fetch(url, opts || {}).then(function (r) {
+    // `r.headers`: a plain object, keys already lowercased, repeated headers joined with ", ", never
+    // `set-cookie` (see PluginHttp.kt) -- so a case-insensitive `get` only needs to lowercase the ask.
+    var raw = r.headers || {};
+    var headers = {
+      get: function (name) { var v = raw[String(name).toLowerCase()]; return v === undefined ? null : v; },
+      has: function (name) { return raw[String(name).toLowerCase()] !== undefined; },
+      forEach: function (fn) { for (var k in raw) fn(raw[k], k); },
+      entries: function () { var out = []; for (var k in raw) out.push([k, raw[k]]); return out; },
+    };
+    return {
+      ok: r.ok, status: r.status, url: r.url, statusText: "", redirected: false, headers: headers,
+      // `Promise.resolve().then(...)`, not `new Promise(function (resolve) { resolve(r.json()) })`:
+      // a throw INSIDE a `.then` callback is what reliably becomes a REJECTED promise (the mechanism
+      // the rest of this sandbox's own async/await already depends on) -- a throw while a `new
+      // Promise` executor is still running its OWN synchronous call stack, measured, escaped this
+      // engine's Promise machinery entirely instead of rejecting. This way both `await r.json()` and
+      // `r.json().then(fn)`/`.catch(fn)` see a real rejection, matching browser `fetch()`.
+      // `kino.fetch`'s own text()/json()/base64() stay synchronous underneath.
+      text: function () { return Promise.resolve().then(function () { return r.text(); }); },
+      json: function () { return Promise.resolve().then(function () { return r.json(); }); },
+      base64: function () { return Promise.resolve().then(function () { return r.base64(); }); },
+    };
+  });
 }
 
 globalThis.TMDB_API_KEY = "__NUVIO_TMDB_API_KEY__";
