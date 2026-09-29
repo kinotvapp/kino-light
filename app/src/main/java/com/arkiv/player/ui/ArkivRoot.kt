@@ -129,12 +129,12 @@ internal fun visibleTabRoutes(isColombia: Boolean, liveModule: Boolean, categori
     }
 
 /**
- * "Categorías" is the Xuper catalog's genres and featured rows (`CategoriesViewModel`): with no usable Xuper
- * plugin there is nothing to list, and other plugins' home rows never appear there. The tab (and the TV
- * rail's entry) exists only while that plugin is usable.
+ * "Categorías" lists the Xuper catalog's genres and featured rows (`CategoriesViewModel`) and, grouped by genre, the
+ * browsable Home rows of every other plugin ([hasGenreTiles]). With neither there is nothing to list, so the tab (and
+ * the TV rail's entry) is there only while the Xuper plugin is usable or some plugin has a row to browse.
  */
-internal fun categoriesTabAvailable(plugins: List<com.arkiv.player.data.plugin.InstalledPlugin>): Boolean =
-    com.arkiv.player.ui.home.CategoriesViewModel.xuperPluginId(plugins) != null
+internal fun categoriesTabAvailable(plugins: List<com.arkiv.player.data.plugin.InstalledPlugin>, hasGenreTiles: Boolean): Boolean =
+    com.arkiv.player.ui.home.CategoriesViewModel.xuperPluginId(plugins) != null || hasGenreTiles
 
 /** Whether tapping the top bar's logo goes to Inicio: on every section but Inicio itself. */
 internal fun logoGoesHome(currentRoute: String?): Boolean = currentRoute != null && currentRoute != "home"
@@ -157,7 +157,8 @@ fun ArkivRoot(
     // "En vivo" follows the live module (Xuper or any plugin with channels), without a restart.
     val liveOn by graph.liveModule.available.collectAsStateWithLifecycle()
     val installedForTabs by graph.pluginRegistry.plugins.collectAsStateWithLifecycle()
-    val categoriesOn = categoriesTabAvailable(installedForTabs)
+    val genreTiles by graph.genreTiles.collectAsStateWithLifecycle()
+    val categoriesOn = categoriesTabAvailable(installedForTabs, genreTiles.isNotEmpty())
     val tabs = remember(isColombia, liveOn, categoriesOn) {
         val routes = visibleTabRoutes(isColombia, liveOn, categoriesOn)
         TABS.filter { it.route in routes }

@@ -133,4 +133,30 @@ class CategoriesXuperTargetTest {
         withTimeout(5_000) { vm.loading.first { !it } }
         assertTrue(treeReads.get() > 0)
     }
+
+    private fun tile(plugin: String, title: String, ref: String, genre: String? = null) =
+        GenreTile(plugin, plugin.uppercase(), title, null, genre ?: com.arkiv.player.data.plugin.Genre.infer(title), ref)
+
+    @Test fun `with Xuper off, other plugins' rows are the whole tab, opened by their own plugin and ref`() {
+        val plugins = MutableStateFlow(listOf(plugin("tv1", "o/tv1")))
+        val tiles = MutableStateFlow(listOf(tile("tv1", "Deportes en vivo", "r-dep"), tile("tv2", "Recién agregadas", "r-new")))
+        val vm = CategoriesViewModel(catalog, plugins, tiles = tiles)
+        assertEquals(emptyList<CategorySpec>(), vm.rows.value)   // no Xuper: none of its catalog tiles
+        assertEquals(listOf("deportes", null), vm.genreSections.value.map { it.genre })
+        val spec = vm.specOf(vm.genreSections.value.first().tiles.single())
+        assertEquals(PluginMoreTarget.Browse("tv1", "Deportes en vivo", "r-dep"), vm.browseTarget(spec))
+    }
+
+    @Test fun `tiles of two plugins with the same ref never share a key`() {
+        val tiles = MutableStateFlow(listOf(tile("a", "Noticias", "same"), tile("b", "Noticias 2", "same")))
+        val vm = CategoriesViewModel(catalog, MutableStateFlow(emptyList()), tiles = tiles)
+        val specs = vm.genreSections.value.flatMap { it.tiles }.map(vm::specOf)
+        assertEquals(2, specs.map { it.id }.toSet().size)
+    }
+
+    @Test fun `a Xuper tile still opens through Xuper with its row id`() {
+        val plugins = MutableStateFlow(listOf(plugin("mi-xuper", XuperPrivilege.SOURCE_REPO)))
+        val vm = CategoriesViewModel(catalog, plugins)
+        assertEquals(PluginMoreTarget.Browse("mi-xuper", "Drama", "magis_g_series_drama"), vm.browseTarget(CategorySpec("magis_g_series_drama", "Drama", null)))
+    }
 }

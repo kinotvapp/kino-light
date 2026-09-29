@@ -28,6 +28,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterIsInstance
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.take
@@ -1045,6 +1046,20 @@ class AppGraph(context: Context) {
             database.ownLiveSourceDao().flowAll().map { it.isNotEmpty() },
         ) { providers, own -> providers || own }
             .stateIn(applicationScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, liveModule.hasSourceProviders.value)
+    }
+
+    /**
+     * The browsable Home rows of every plugin but Xuper, as Categorías tiles ([genreTilesOf]). Shared: the tab's
+     * availability and its screens read this one flow, so the plugins' `home()` answers (cached 6 h) are asked once.
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val genreTiles: kotlinx.coroutines.flow.StateFlow<List<com.arkiv.player.ui.home.GenreTile>> by lazy {
+        pluginRegistry.plugins
+            .flatMapLatest { plugins ->
+                val xuperId = com.arkiv.player.ui.home.CategoriesViewModel.xuperPluginId(plugins)
+                pluginHomeRows.rows().map { rows -> com.arkiv.player.ui.home.genreTilesOf(rows, xuperId) }
+            }
+            .stateIn(applicationScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, emptyList())
     }
 
     /** The person's own live sources ("Mis canales"). */

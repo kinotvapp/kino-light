@@ -60,10 +60,11 @@ class VisibleTabsTest {
         )
     }
 
-    @Test fun `the categories tab needs the usable Xuper plugin, not any plugin`() {
-        assertTrue(categoriesTabAvailable(listOf(xuper)))
-        assertFalse(categoriesTabAvailable(emptyList()))
-        assertFalse("another plugin's home rows are not Xuper's categories", categoriesTabAvailable(listOf(plugin("tv1", "o/tv1"))))
-        assertFalse("Xuper switched off", categoriesTabAvailable(listOf(plugin("xuper", XuperPrivilege.SOURCE_REPO, enabled = false))))
+    @Test fun `the categories tab needs the usable Xuper plugin or a plugin row to browse`() {
+        assertTrue(categoriesTabAvailable(listOf(xuper), hasGenreTiles = false))
+        assertTrue("another plugin with browsable rows is enough", categoriesTabAvailable(listOf(plugin("tv1", "o/tv1")), hasGenreTiles = true))
+        assertFalse(categoriesTabAvailable(emptyList(), hasGenreTiles = false))
+        assertFalse("a plugin with nothing to browse", categoriesTabAvailable(listOf(plugin("tv1", "o/tv1")), hasGenreTiles = false))
+        assertFalse("Xuper switched off", categoriesTabAvailable(listOf(plugin("xuper", XuperPrivilege.SOURCE_REPO, enabled = false)), hasGenreTiles = false))
     }
 }
