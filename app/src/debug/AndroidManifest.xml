@@ -24,5 +24,11 @@
         <receiver
             android:name="com.arkiv.player.debug.HostApprovalProbe"
             android:exported="true" />
+
+        <!-- Experiment: the real TvSideRail over a fake Home, to try its look and its D-pad; see TvSidebarLabActivity. -->
+        <activity
+            android:name="com.arkiv.player.debug.TvSidebarLabActivity"
+            android:exported="true"
+            android:screenOrientation="landscape" />
     </application>
 </manifest>

@@ -942,61 +942,15 @@ fun TvHomeScreen(
             }
         }
 
-        Column(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize().padding(start = TV_RAIL_CONTENT_START)) {
             // --- FIXED HERO (doesn't scroll; stays immovable up top, takes up the leftover space) ---
-            Column(Modifier.fillMaxWidth().weight(1f).padding(horizontal = 48.dp, vertical = 28.dp)) {
-                // Top bar.
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    KinoWordmark(height = 34.dp, modifier = Modifier.padding(end = 16.dp))
-                    TvNavButton(
-                        icon = Icons.Default.Search,
-                        label = "Buscar",
-                        onClick = onOpenSearch,
-                        modifier = Modifier.focusRequester(barFocus).onFocusChanged { barLandingFocused = it.isFocused },
-                    )
-                    TvNavButton(icon = Icons.Default.Refresh, label = "Recargar", onClick = { graph.reloadHomeCatalog() })
-                    TvNavButton(
-                        icon = Icons.Default.GridView,
-                        label = "Categorías",
-                        onClick = onOpenCategoriasHome,
-                    )
-                    // The native Xuper catalog tree ("categorias" route) and the live guide only
-                    // while the Xuper plugin is on, like the rest of its native surfaces.
-                    if (xuperLive) {
-                        TvNavButton(
-                            icon = Icons.Default.PlayCircle,
-                            label = "Xuper",
-                            onClick = onOpenCategorias,
-                        )
-                    }
-                    TvNavButton(
-                        icon = Icons.Default.VideoLibrary,
-                        label = "Mi biblioteca",
-                        onClick = onOpenLibrary,
-                    )
-                    // The live guide follows the whole module: Xuper or any plugin with channels.
-                    if (liveOn) {
-                        TvNavButton(
-                            icon = Icons.Default.LiveTv,
-                            label = "En vivo",
-                            onClick = onOpenLive,
-                        )
-                    }
-                    if (isColombia) {
-                        TvNavButton(icon = Icons.Default.Tv, label = "Caracol", onClick = onOpenCaracol)
-                    }
-                    // No "Torrent" button: this branch has no torrents, and ArkivTvRoot registers
-                    // no "torrent" route.
-                    TvNavButton(icon = Icons.Default.Settings, label = "Ajustes", onClick = onOpenSettings)
-                }
-
-                Spacer(Modifier.weight(1f))
-
-                // Focused item's title/description, bottom left.
+            // Vertically centred: with the top bar gone (it is a rail now) the hero starts at the top of the screen, and
+            // text pushed to the bottom left the whole upper half empty.
+            Column(
+                Modifier.fillMaxWidth().weight(1f).padding(horizontal = 48.dp, vertical = 28.dp),
+                verticalArrangement = Arrangement.Center,
+            ) {
+                // Focused item's title/description, centred vertically on the left.
                 featured?.let { f ->
                     Text(
                         f.title,
@@ -1318,6 +1272,24 @@ fun TvHomeScreen(
             }
         }
 
+        // EXPERIMENT (branch experiment/tv-sidebar): the top bar as a rail. "Buscar" keeps `barFocus`, so the landing and
+        // the refocus rules above keep working; only the shape of the bar changed.
+        val railItems = buildList {
+            add(
+                TvRailItem(
+                    Icons.Default.Search, "Buscar", onOpenSearch,
+                    Modifier.focusRequester(barFocus).onFocusChanged { barLandingFocused = it.isFocused },
+                ),
+            )
+            add(TvRailItem(Icons.Default.Refresh, "Recargar", { graph.reloadHomeCatalog() }))
+            add(TvRailItem(Icons.Default.GridView, "Categorías", onOpenCategoriasHome))
+            if (xuperLive) add(TvRailItem(Icons.Default.PlayCircle, "Xuper", onOpenCategorias))
+            add(TvRailItem(Icons.Default.VideoLibrary, "Mi biblioteca", onOpenLibrary))
+            if (liveOn) add(TvRailItem(Icons.Default.LiveTv, "En vivo", onOpenLive))
+            if (isColombia) add(TvRailItem(Icons.Default.Tv, "Caracol", onOpenCaracol))
+            add(TvRailItem(Icons.Default.Settings, "Ajustes", onOpenSettings))
+        }
+        TvSideRail(railItems, Modifier.align(Alignment.CenterStart))
     }
 }
 

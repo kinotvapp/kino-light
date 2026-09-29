@@ -3,6 +3,7 @@ package com.arkiv.player.ui
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithCache
@@ -103,6 +104,31 @@ fun KinoWordmark(height: Dp, modifier: Modifier = Modifier) {
                         drawCircle(Color.White, Wordmark.O_RADIUS, Wordmark.oCenter, style = Wordmark.ringStroke)
                         drawCircle(LogoRed, Wordmark.DOT_RADIUS, Wordmark.oCenter)
                         drawPath(tv, Color.White, style = Wordmark.tvStroke)
+                    }
+                }
+            },
+    )
+}
+
+/**
+ * The kino "o" alone -- its ring and the red dot, the launcher icon's mark -- [diameter] wide and tall. For places too
+ * narrow for the wordmark, like a collapsed navigation rail.
+ */
+@Composable
+fun KinoMark(diameter: Dp, modifier: Modifier = Modifier) {
+    Spacer(
+        modifier
+            .size(diameter)
+            .semantics { contentDescription = "Kino TV" }
+            .drawWithCache {
+                val scale = size.width / (2f * Wordmark.O_OUTER)
+                onDrawBehind {
+                    withTransform({
+                        scale(scale, scale, pivot = Offset.Zero)
+                        translate(-(Wordmark.oCenter.x - Wordmark.O_OUTER), -(Wordmark.oCenter.y - Wordmark.O_OUTER))
+                    }) {
+                        drawCircle(Color.White, Wordmark.O_RADIUS, Wordmark.oCenter, style = Wordmark.ringStroke)
+                        drawCircle(LogoRed, Wordmark.DOT_RADIUS, Wordmark.oCenter)
                     }
                 }
             },
