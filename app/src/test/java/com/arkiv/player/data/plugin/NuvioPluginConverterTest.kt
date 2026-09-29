@@ -2,6 +2,7 @@ package com.arkiv.player.data.plugin
 
 import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -73,5 +74,59 @@ class NuvioPluginConverterTest {
         } finally {
             runtime.close()
         }
+    }
+
+    /**
+     * `ProbePluginHost` always refuses `fetch` (it's the install-time no-network probe), so this uses
+     * a real working host stub -- same idea as `ArchiveOrgPluginTest.FixtureHost`, canned instead of
+     * recorded -- to actually exercise the shim's `fetch(...).then(r => r.json())` path end to end.
+     * This is the regression test for the bug where the shim read `r.text`/`r.json` as data instead
+     * of calling them as the functions kino.fetch's resolved response really exposes them as: before
+     * the fix, `r.text || ""` always evaluated to the function itself (functions are truthy), and
+     * `JSON.parse` on it threw a SyntaxError, so `getStreams` never resolved with real stream data.
+     */
+    private class FakeJsonHost(private val body: String) : PluginHost {
+        val requestedUrls = mutableListOf<String>()
+        override suspend fun fetch(requestJson: String): String {
+            val url = JSONObject(requestJson).getString("url")
+            requestedUrls += url
+            return JSONObject().put("ok", true).put("status", 200).put("url", url)
+                .put("headers", JSONObject()).put("text", body).toString()
+        }
+
+        override fun select(html: String, css: String): String = PluginHtml.selectJson(html, css)
+        override fun storageGet(key: String): String? = null
+        override fun storageSet(key: String, value: String, ttlMs: Long?) = Unit
+        override fun storageRemove(key: String) = Unit
+        override fun log(level: String, message: String) = Unit
+    }
+
+    @Test fun `resolve actually parses kino fetch's JSON response by calling r_json(), not reading it as data`() = runBlocking {
+        val result = NuvioPluginConverter.convert(scraper, source, repoSlug = "owner/repo", extraHosts = emptyList(), tmdbApiKey = "test-key")
+        val host = FakeJsonHost(
+            """{"streams":[{"title":"The Matrix","url":"https://cdn.fakesrc.example/matrix.mp4","quality":"1080p"}]}""",
+        )
+        val runtime = PluginRuntime.open("probe", result.script, host, PluginEnv(appVersion = "1.0"))
+        try {
+            val refJson = """{"tmdbId":603,"type":"movie","season":0,"episode":0}"""
+            // A quoted JSON string, exactly how `PluginContentSource.resolve` calls a real plugin's
+            // `resolve` (JSONObject.quote(own.ref)) -- exercising the adapter's string-ref branch,
+            // the one the torrent-rejection test above doesn't (it passes a raw object).
+            val out = JSONObject(runtime.call("resolve", JSONObject.quote(refJson), 20_000))
+            assertEquals("https://cdn.fakesrc.example/matrix.mp4", out.getString("url"))
+            assertEquals(listOf("https://fakesrc.example/api/603"), host.requestedUrls)
+        } finally {
+            runtime.close()
+        }
+    }
+
+    @Test fun `a long scraper id never lets the slug truncate away the anti-collision hash`() {
+        val longScraper = scraper.copy(id = "a".repeat(60))
+        val result = NuvioPluginConverter.convert(longScraper, source, repoSlug = "owner/repo", extraHosts = emptyList(), tmdbApiKey = "k")
+        val manifest = (ManifestParser.parse(result.manifestJson) as ManifestResult.Valid).manifest
+        assertTrue(manifest.id.length <= 40)
+        val hashSuffix = manifest.id.substringAfterLast('-')
+        assertEquals(6, hashSuffix.length)
+        assertTrue(hashSuffix.all { it in "0123456789abcdef" })
     }
 }

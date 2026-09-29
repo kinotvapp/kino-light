@@ -33,7 +33,14 @@ object NuvioPluginConverter {
     ): NuvioConversionResult {
         val slug = scraper.id.lowercase().replace(Regex("[^a-z0-9-]"), "-").trim('-').ifEmpty { "scraper" }
         val hash = sha256Hex(repoSlug.toByteArray(Charsets.UTF_8)).take(6)
-        val id = "nuvio-$slug-$hash".take(40)
+        // The hash disambiguates the same scraper id across two different Nuvio repos: its space is
+        // reserved FIRST, so a long slug is what shrinks -- capping the whole "nuvio-<slug>-<hash>"
+        // string at PluginManifest's 40-char id limit from the right would otherwise truncate into
+        // (or entirely erase) the hash for a sanitized slug of ~34+ characters.
+        val idPrefix = "nuvio-"
+        val idSuffix = "-$hash"
+        val maxSlugLen = (40 - idPrefix.length - idSuffix.length).coerceAtLeast(1)
+        val id = idPrefix + slug.take(maxSlugLen).trimEnd('-').ifEmpty { "s" } + idSuffix
 
         val hosts = (NuvioHostExtractor.extractHosts(scraperSource) + extraHosts)
             .distinct()

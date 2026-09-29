@@ -12,17 +12,15 @@ function require(name) {
   throw new Error("Nuvio compat: unsupported require('" + name + "')");
 }
 
+// `kino.fetch(url, opts)` already takes the same `(url, opts)` shape Nuvio's own scrapers call
+// `fetch` with (method/headers/body/redirect), and its resolved response already exposes
+// `ok`/`status`/`url`/`headers` plus `.text()`/`.json()`/`.base64()` AS FUNCTIONS -- exactly the
+// Fetch API shape `fetch(...).then(r => r.json())` expects. No translation needed beyond passing
+// the two arguments through as-is; wrapping them into one bundled `req` object here previously
+// made `kino.fetch` receive that whole object as its `url` argument instead (`opts` then
+// undefined), corrupting the very URL a scraper asked for.
 function fetch(url, opts) {
-  opts = opts || {};
-  var req = { url: url, method: opts.method || "GET", headers: opts.headers || {} };
-  if (opts.body !== undefined) req.body = { text: String(opts.body) };
-  return kino.fetch(req).then(function (r) {
-    return {
-      ok: r.ok, status: r.status, url: r.url, headers: r.headers,
-      json: function () { return Promise.resolve(JSON.parse(r.text || "")); },
-      text: function () { return Promise.resolve(r.text || ""); },
-    };
-  });
+  return kino.fetch(url, opts || {});
 }
 
 globalThis.TMDB_API_KEY = "__NUVIO_TMDB_API_KEY__";
