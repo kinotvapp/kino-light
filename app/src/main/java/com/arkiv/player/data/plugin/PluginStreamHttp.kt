@@ -40,11 +40,18 @@ object PluginStreamHttp {
         delegateDns: Dns = DohDns,
         xuper: XuperStreams? = null,
         strictOrigins: Collection<String> = emptySet(),
+        /**
+         * The plugin whose undeclared-but-askable hosts this client reports as
+         * [UndeclaredPlaybackHostException], so the player can ask the person
+         * ([PluginHostGate.playbackRefusal]). Only the player's stream client sets it; null (a
+         * download, a license client, every other caller) refuses exactly as before.
+         */
+        askAboutFor: String? = null,
     ): OkHttpClient = base.newBuilder()
         .followRedirects(false)
         .followSslRedirects(false)
         .dns(PluginDns(allowLoopback = allowInsecureLocalhost, delegate = delegateDns, userHostNames = hosts.userHostNames))
-        .addInterceptor(PluginStreamGate(hosts, allowInsecureLocalhost, xuper, strictOrigins.mapNotNull { it.toHttpUrlOrNull()?.toString() }.toSet()))
+        .addInterceptor(PluginStreamGate(hosts, allowInsecureLocalhost, xuper, strictOrigins.mapNotNull { it.toHttpUrlOrNull()?.toString() }.toSet(), askAboutFor))
         .build()
 }
 
@@ -55,15 +62,22 @@ class PluginStreamGate(
     private val xuper: XuperStreams? = null,
     /** Canonical URLs (`HttpUrl.toString()`) whose whole redirect chain is gated with [EffectiveHosts.strict]. */
     private val strictOrigins: Set<String> = emptySet(),
+    /** See [PluginStreamHttp.client]. Never used under `liveStreamHosts: "any"`: that path asks nothing. */
+    private val askAboutFor: String? = null,
 ) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         var request = chain.request()
         val gate = if (hosts.anyPublicLiveHost && request.url.toString() in strictOrigins) hosts.strict else hosts
+        val askable = askAboutFor.takeUnless { hosts.anyPublicLiveHost }
         var previous: okhttp3.HttpUrl? = null
         repeat(MAX_REDIRECTS + 1) {
             val from = previous
-            if (from == null) PluginHostGate.check(request.url, gate, allowInsecureLocalhost, xuper)
-            else PluginHostGate.checkRedirect(from, request.url, gate, allowInsecureLocalhost, xuper)
+            try {
+                if (from == null) PluginHostGate.check(request.url, gate, allowInsecureLocalhost, xuper)
+                else PluginHostGate.checkRedirect(from, request.url, gate, allowInsecureLocalhost, xuper)
+            } catch (e: HostNotAllowedException) {
+                throw PluginHostGate.playbackRefusal(e, request.url, gate, askable)
+            }
             val response = chain.proceed(request)
             val location = response.header("Location")
             if (response.code !in REDIRECTS || location == null) return response

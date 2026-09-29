@@ -31,6 +31,45 @@ fun interface StreamHostDecider {
     suspend fun decide(pluginId: String, pluginName: String, host: String, reason: HostApprovalReason): StreamHostDecision
 }
 
+/** What the player does after [PlaybackHostPrompts.onRefused]. */
+sealed interface PlaybackHostOutcome {
+    /** The host is approved: rebuild the player's gated client with the plugin's hosts read afresh and resume. */
+    data object Retry : PlaybackHostOutcome
+
+    /** Show [message] (Spanish, names the host) as the playback error. */
+    data class Fail(val message: String) : PlaybackHostOutcome
+}
+
+/**
+ * Reactive host approval for what the PLAYER reaches while a plugin stream plays: the gated client
+ * refused a request (an HLS playlist's segments or keys on another CDN, a redirect hop) only because
+ * the host is undeclared, and it is askable ([UndeclaredPlaybackHostException]). Asked through the
+ * same [StreamHostDecider] as a returned Stream's hosts ([StreamHostApproval]): the same dialog, no
+ * time limit, the same per-plugin memory, the same registry writes and 20-host cap.
+ *
+ * One question per host per playback attempt ([newAttempt], called on every fresh resolve): a host
+ * refused again after its "yes" -- the rebuilt player still can't use it -- ends in an error, never
+ * the same question in a loop. Different hosts are asked one after the other, as they come.
+ * Not thread-safe: the player's ViewModel drives it from one coroutine at a time.
+ */
+class PlaybackHostPrompts(private val decider: StreamHostDecider) {
+    private val asked = HashSet<String>()
+
+    /** A new playback attempt (a fresh resolve): every host may be asked about once more. */
+    fun newAttempt() = asked.clear()
+
+    suspend fun onRefused(pluginId: String, pluginName: String, host: String): PlaybackHostOutcome {
+        if (!asked.add(host)) return PlaybackHostOutcome.Fail("$pluginName: el video no se pudo cargar desde $host")
+        return when (decider.decide(pluginId, pluginName, host, HostApprovalReason.VIDEO)) {
+            StreamHostDecision.APPROVED -> PlaybackHostOutcome.Retry
+            StreamHostDecision.REJECTED -> PlaybackHostOutcome.Fail("$pluginName: el video usa otro servidor ($host) que no permitiste")
+            StreamHostDecision.LIMIT_REACHED -> PlaybackHostOutcome.Fail(
+                "$pluginName: el video usa otro servidor ($host), pero $pluginName ya tiene el máximo de ${ManifestParser.MAX_HOSTS} servidores aprobados",
+            )
+        }
+    }
+}
+
 /**
  * Reactive host approval for what a plugin's `resolve` RETURNED, not only for what its `kino.fetch`
  * reached: the Stream's URL (or a subtitle, audio track or license URL) is on a host the plugin never

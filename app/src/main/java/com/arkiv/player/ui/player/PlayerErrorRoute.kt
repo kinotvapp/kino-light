@@ -16,6 +16,12 @@ internal enum class PlayerErrorRoute {
 
     /** A VOD error: the error dialog. */
     FINAL,
+
+    /**
+     * A request was refused only because its host is undeclared, and askable
+     * (`UndeclaredPlaybackHostException`): the person is asked, and a "yes" rebuilds the player.
+     */
+    ASK_HOST,
 }
 
 /**
@@ -26,6 +32,8 @@ internal enum class PlayerErrorRoute {
  * - [drmError]: an `ERROR_CODE_DRM_*`; [drmSoftwareRefused]: this device would not run Widevine at
  *   the software level, so no session can ever open on it.
  * - [audioTracksActive]: side audio tracks are still merged in.
+ * - [askableHost]: the error is the gate's `UndeclaredPlaybackHostException` (see [undeclaredPlaybackHost])
+ *   and someone is there to ask; it wins over everything else.
  *
  * A live channel's DRM error goes through its reopen budget like any cut (a fresh resolve may bring
  * a fresh license) -- except when the device refused the software level: nothing a reopen brings
@@ -37,7 +45,11 @@ internal fun playerErrorRoute(
     drmError: Boolean,
     drmSoftwareRefused: Boolean,
     audioTracksActive: Boolean,
+    askableHost: Boolean = false,
 ): PlayerErrorRoute = when {
+    // First: an undeclared host is neither an audio track's fault nor a cut a reopen would fix (the
+    // rebuilt player would meet the same refusal); only the person's answer changes anything.
+    askableHost -> PlayerErrorRoute.ASK_HOST
     live && liveInPlace -> PlayerErrorRoute.LIVE_IN_PLACE
     drmError && (!live || drmSoftwareRefused) -> PlayerErrorRoute.DRM_FINAL
     audioTracksActive -> PlayerErrorRoute.DROP_AUDIO

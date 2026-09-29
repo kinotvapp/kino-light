@@ -221,6 +221,13 @@ internal fun StreamExoPlayer(
      */
     onLiveError: ((LiveErrorKind, String) -> PluginLiveRecovery)? = null,
     /**
+     * A plugin stream's request was refused only because its host is undeclared and askable
+     * ([StreamHttp.PluginGated.pluginId] set): called with that host and where playback was, instead
+     * of any other error route (see `PlayerViewModel.onPluginHostRefused`). Null: such a refusal is
+     * an error like any other, as before.
+     */
+    onUndeclaredHost: ((host: String, positionMs: Long) -> Unit)? = null,
+    /**
      * Every track report, with the side [audioTracks] merged in RIGHT NOW: the list starts as
      * [audioTracks] and shrinks when [fallbackAudioTracks] drops a failing one and the source is
      * rebuilt, so the audio menu must be labelled against this one, never the Stream's original.
@@ -249,8 +256,14 @@ internal fun StreamExoPlayer(
         val pluginFactories: PluginHttpFactories? = (http as? StreamHttp.PluginGated)?.let {
             // Under liveStreamHosts "any", side-loaded subtitles and audio tracks stay strict on every hop.
             val sideUrls = if (it.hosts.anyPublicLiveHost) subtitleConfigs.map { c -> c.uri.toString() } + audioTracks.map { a -> a.url } else emptyList()
-            val streamClient = graph.pluginStreamClient(it.hosts, it.xuper, sideUrls)
-            val licenseClient = if (it.hosts.anyPublicLiveHost) graph.pluginStreamClient(it.hosts.strict, it.xuper) else streamClient
+            val streamClient = graph.pluginStreamClient(it.hosts, it.xuper, sideUrls, askAboutFor = it.pluginId)
+            // Never askable: a license redirect to a new host would carry the plugin's licenseHeaders
+            // (its auth) there, and a DRM session's failure takes its own route (DRM_FINAL).
+            val licenseClient = when {
+                it.hosts.anyPublicLiveHost -> graph.pluginStreamClient(it.hosts.strict, it.xuper)
+                it.pluginId != null -> graph.pluginStreamClient(it.hosts, it.xuper)
+                else -> streamClient
+            }
             pluginHttpFactories(streamClient, requestHeaders, drm?.licenseHeaders.orEmpty(), licenseClient)
         }
         val httpFactory: DataSource.Factory = when (http) {
@@ -472,14 +485,23 @@ internal fun StreamExoPlayer(
             override fun onPlayerError(error: PlaybackException) {
                 val msg = error.message ?: "Error de reproducción (${error.errorCode})"
                 val liveKind = if (onLiveError != null) liveErrorKind(error) else null
+                val undeclared = if (onUndeclaredHost != null) undeclaredPlaybackHost(error) else null
                 val route = playerErrorRoute(
                     live = liveKind != null,
                     liveInPlace = liveKind?.recoverableInPlace == true,
                     drmError = PluginWidevine.isDrmError(error.errorCode),
                     drmSoftwareRefused = prepared.drmSoftwareLevelRefused.get(),
                     audioTracksActive = activeAudioTracks.isNotEmpty(),
+                    askableHost = undeclared != null,
                 )
                 when (route) {
+                    // The player stays stopped on this error while the person decides; a "yes"
+                    // rebuilds it (new hosts = new StreamHttp) at this same position.
+                    PlayerErrorRoute.ASK_HOST -> {
+                        val position = exoPlayer.currentPosition.coerceAtLeast(0L)
+                        Log.w(TAG, "request refused: ${undeclared!!.host} is not declared by ${undeclared.pluginId} -> asking at ${position}ms")
+                        onUndeclaredHost!!(undeclared.host, position)
+                    }
                     // A live channel's playlist-level error (behind the live window, reset, stuck) is
                     // never an audio track's fault: it is fixed in place before anything is blamed.
                     PlayerErrorRoute.LIVE_IN_PLACE, PlayerErrorRoute.LIVE_CUT -> recoverLive(liveKind!!, msg, error)
@@ -738,8 +760,36 @@ internal sealed interface StreamHttp {
      * [xuper]: the stream is the recognized Xuper plugin's (`PluginAccess.Ready.xuper`), so the
      * gate also honors `AppGraph`'s one [com.arkiv.player.data.plugin.XuperStreams]; see `AppGraph.pluginStreamClient`.
      */
-    data class PluginGated(val hosts: com.arkiv.player.data.plugin.EffectiveHosts, val xuper: Boolean = false) : StreamHttp
+    data class PluginGated(
+        val hosts: com.arkiv.player.data.plugin.EffectiveHosts,
+        val xuper: Boolean = false,
+        /**
+         * The plugin whose undeclared-but-askable hosts the STREAM client reports as
+         * [com.arkiv.player.data.plugin.UndeclaredPlaybackHostException] (see `askAboutFor` in
+         * [com.arkiv.player.data.plugin.PluginStreamHttp.client]); never the license client. Null
+         * refuses exactly as before.
+         */
+        val pluginId: String? = null,
+    ) : StreamHttp
 }
+
+/** The gate's askable refusal, wherever ExoPlayer wrapped it (`PlaybackException` > `HttpDataSourceException` > …). */
+internal fun undeclaredPlaybackHost(error: Throwable): com.arkiv.player.data.plugin.UndeclaredPlaybackHostException? =
+    generateSequence(error) { it.cause?.takeIf { cause -> cause !== it } }
+        .take(MAX_CAUSE_DEPTH)
+        .filterIsInstance<com.arkiv.player.data.plugin.UndeclaredPlaybackHostException>()
+        .firstOrNull()
+
+private const val MAX_CAUSE_DEPTH = 16
+
+/**
+ * This plugin item once the person approved a host the player needed: the same item with
+ * [declared] as its approved hosts (typed servers, insecure hosts and the live flag untouched) and
+ * [positionMs] as where to start, or the live edge (0) for a channel. A new host set is a new
+ * [StreamHttp] and so a new player (`StreamExoPlayer` is keyed on it), started where the person was.
+ */
+internal fun PlayerData.afterHostApproved(declared: List<String>, positionMs: Long, live: Boolean): PlayerData =
+    copy(pluginHosts = pluginHosts.copy(declared = declared), startPositionMs = if (live) 0L else positionMs.coerceAtLeast(0L))
 
 /**
  * The data-source factories of a gated plugin stream, both over a host-gated client (so a license
@@ -780,8 +830,8 @@ private fun userAgentOf(headers: Map<String, String>): String =
     headers.entries.firstOrNull { it.key.equals("User-Agent", true) }?.value ?: "okhttp/4.12.0"
 
 /** Only a PLUGIN stream is gated; an empty host list is still gated (it reaches nothing). */
-internal fun streamHttpFor(kind: SourceKind, pluginHosts: com.arkiv.player.data.plugin.EffectiveHosts, xuper: Boolean = false): StreamHttp =
-    if (kind == SourceKind.PLUGIN) StreamHttp.PluginGated(pluginHosts, xuper) else StreamHttp.Default
+internal fun streamHttpFor(kind: SourceKind, pluginHosts: com.arkiv.player.data.plugin.EffectiveHosts, xuper: Boolean = false, pluginId: String? = null): StreamHttp =
+    if (kind == SourceKind.PLUGIN) StreamHttp.PluginGated(pluginHosts, xuper, pluginId) else StreamHttp.Default
 
 /**
  * A subtitle's type: the `format` the source declared (plugins), else guessed from its path. VTT

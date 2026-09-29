@@ -389,7 +389,61 @@ class PlayerViewModel internal constructor(
     private val xuperLiveBlocked: StateFlow<String?> = MutableStateFlow(null),
     /** The En vivo module: opens a plugin channel from zapping and notices its provider leaving. Null in tests that don't play live. */
     private val liveModule: com.arkiv.player.data.live.LiveModule? = null,
+    /**
+     * Asks the person about a host the player reached while a plugin stream played that the plugin
+     * never declared (`AppGraph.streamHostApproval`). Null (tests): such a refusal is a plain error.
+     */
+    hostDecider: com.arkiv.player.data.plugin.StreamHostDecider? = null,
 ) : ViewModel() {
+
+    /** One question per host per playback attempt; see [onPluginHostRefused]. */
+    private val playbackHostPrompts = hostDecider?.let { com.arkiv.player.data.plugin.PlaybackHostPrompts(it) }
+
+    /** The question [onPluginHostRefused] is waiting on, if any: one at a time, cancelled by a new [load]. */
+    private var hostPromptJob: kotlinx.coroutines.Job? = null
+
+    /** Whether the player may ask about an undeclared host at all (PlayerScreen wires the callback only then). */
+    val asksAboutPlaybackHosts: Boolean get() = playbackHostPrompts != null
+
+    /**
+     * The plugin stream on screen had a request refused ONLY because its host is undeclared and
+     * askable (`UndeclaredPlaybackHostException`, see `StreamExoPlayer.onUndeclaredHost`): an HLS
+     * playlist's segments on another CDN, a redirect hop. The player is stopped on that error; the
+     * person is asked with the same dialog as for a returned Stream ([PlaybackHostPrompts], no time
+     * limit, same per-plugin memory). A "yes" republishes the item with the plugin's hosts read
+     * afresh and [positionMs] as its start, which rebuilds the player's gated client and resumes
+     * there; a "no" (or a host refused before, a full cap, the same host again) is an error that
+     * names the host. Leaving the player cancels the question with nothing written.
+     */
+    fun onPluginHostRefused(host: String, positionMs: Long) {
+        val prompts = playbackHostPrompts ?: return
+        val item = _magisItem.value ?: return
+        if (item.kind != SourceKind.PLUGIN || hostPromptJob?.isActive == true) return
+        val pluginId = com.arkiv.player.data.plugin.PluginIds.pluginIdOfEpisode(item.episodeId) ?: return
+        val name = plugins?.nameOf(pluginId) ?: "Plugin"
+        val live = com.arkiv.player.data.plugin.PluginIds.isLiveEpisode(item.episodeId)
+        Log.w(PLAY, "plugin playback: $host refused for $pluginId at ${positionMs}ms -> asking")
+        hostPromptJob = viewModelScope.launch {
+            val outcome = prompts.onRefused(pluginId, name, host)
+            // Something else took the screen meanwhile (a new title, a re-resolve): this answer is stale.
+            if (_magisItem.value !== item) return@launch
+            when (outcome) {
+                com.arkiv.player.data.plugin.PlaybackHostOutcome.Retry -> {
+                    val ready = plugins?.accessFor(pluginId) as? com.arkiv.player.data.plugin.PluginAccess.Ready
+                    if (ready == null) {
+                        _error.value = "$name: el video no se pudo cargar desde $host"
+                        return@launch
+                    }
+                    Log.w(PLAY, "plugin playback: $host approved -> rebuilding at ${positionMs}ms")
+                    _magisItem.value = item.afterHostApproved(ready.hosts.declared, positionMs, live)
+                }
+                is com.arkiv.player.data.plugin.PlaybackHostOutcome.Fail -> {
+                    Log.w(PLAY, "plugin playback: $host -> ${outcome.message}")
+                    _error.value = outcome.message
+                }
+            }
+        }
+    }
 
     private val _playlist = MutableStateFlow<PlaylistData?>(null)
     val playlist: StateFlow<PlaylistData?> = _playlist.asStateFlow()
@@ -508,6 +562,8 @@ class PlayerViewModel internal constructor(
         // it's no longer the active one. See [DituState].
         ditu.newRequest(episodeId)
         clearTrivia()
+        // A host question for the previous title belongs to nobody now.
+        hostPromptJob?.cancel()
         // What the live gate asks about (see [xuperLiveStopMessage]): only a `live:` id is stoppable.
         loadedEpisodeId = episodeId
         // Live mode (Task 14): CUTS OFF HERE, before touching anything on the VOD path below --
@@ -736,6 +792,8 @@ class PlayerViewModel internal constructor(
         // A plugin open still in flight belongs to the channel zapping just left; loadPlugin may
         // have turned `resolving` on, and nothing else would turn it off.
         pluginOpenJob?.let { if (it.isActive) { it.cancel(); _resolving.value = false } }
+        // Likewise a host question the previous channel's player raised.
+        hostPromptJob?.cancel()
         val channel = zapping?.current ?: return
         if (channel.provider != LiveChannelKeys.XUPER) { openPluginChannel(channel); return }
         _liveChannel.value = channel
@@ -1600,7 +1658,9 @@ class PlayerViewModel internal constructor(
         // from, and `access` above was read before it existed. Only ever the same plugin's own
         // record, freshly read; if it stopped being Ready meanwhile, the earlier answer stands.
         val hostsReady = (plugins?.accessFor(pluginId) as? com.arkiv.player.data.plugin.PluginAccess.Ready) ?: ready
-        pluginExpiry = com.arkiv.player.data.plugin.PluginStreamExpiry(System.currentTimeMillis(), play.expiresInSeconds)
+        // A fresh Stream is a new playback attempt: each host the player then meets may be asked about once.
+        playbackHostPrompts?.newAttempt()
+        pluginExpiry =com.arkiv.player.data.plugin.PluginStreamExpiry(System.currentTimeMillis(), play.expiresInSeconds)
         val header = if (live) null else repo.headerInfo(episodeId)
         _webExtras.value = WebExtras(episodeId, play.headers, pluginSubtitles(play.subtitles), pluginAudioTracks(play.audioTracks), drm = pluginDrm(play))
         // A live stream has no "where you were": it starts at the player's default position (the

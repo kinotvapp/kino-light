@@ -517,8 +517,14 @@ class AppGraph(context: Context) {
      * [PluginContentSource] reads -- never a second table, or a URL accepted at resolve time would
      * be refused at playback. False for every other plugin: the gate is then exactly as before.
      */
-    fun pluginStreamClient(hosts: EffectiveHosts, xuper: Boolean = false, strictOrigins: Collection<String> = emptySet()): okhttp3.OkHttpClient =
-        PluginStreamHttp.client(pluginBaseHttp, hosts, xuper = xuperStreams.takeIf { xuper }, strictOrigins = strictOrigins)
+    fun pluginStreamClient(
+        hosts: EffectiveHosts,
+        xuper: Boolean = false,
+        strictOrigins: Collection<String> = emptySet(),
+        /** The player's stream client only: that plugin's askable misses become `UndeclaredPlaybackHostException`. */
+        askAboutFor: String? = null,
+    ): okhttp3.OkHttpClient =
+        PluginStreamHttp.client(pluginBaseHttp, hosts, xuper = xuperStreams.takeIf { xuper }, strictOrigins = strictOrigins, askAboutFor = askAboutFor)
 
     /** The live PluginHttp of each open runtime, so the pool can reset its per-call request budget. */
     private val pluginHttps = java.util.concurrent.ConcurrentHashMap<String, PluginHttp>()
@@ -579,10 +585,12 @@ class AppGraph(context: Context) {
 
     /**
      * Reactive host approval for a returned Stream's URLs (the player's resolve only, see
-     * `InteractivePluginCall`): the same dialog, registry writes and 20-host cap as [openPluginRuntime]'s
-     * fetch-time approval, and the plugin's open runtime, if any, learns the answer too.
+     * `InteractivePluginCall`) and for the hosts the player itself reaches while a plugin stream plays
+     * (`PlayerViewModel.onPluginHostRefused`): the same dialog, registry writes and 20-host cap as
+     * [openPluginRuntime]'s fetch-time approval, and the plugin's open runtime, if any, learns the
+     * answer too.
      */
-    private val streamHostApproval: StreamHostApproval by lazy {
+    val streamHostApproval: StreamHostApproval by lazy {
         StreamHostApproval(hostApprovalCenter, pluginRegistry, openRuntimeHttp = { id -> pluginHttps[id] })
     }
 

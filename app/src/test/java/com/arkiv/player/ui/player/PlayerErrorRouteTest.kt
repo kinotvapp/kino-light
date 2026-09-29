@@ -10,7 +10,17 @@ class PlayerErrorRouteTest {
         drmError: Boolean = false,
         drmSoftwareRefused: Boolean = false,
         audio: Boolean = false,
-    ) = playerErrorRoute(live, liveInPlace, drmError, drmSoftwareRefused, audio)
+        askHost: Boolean = false,
+    ) = playerErrorRoute(live, liveInPlace, drmError, drmSoftwareRefused, audio, askHost)
+
+    // A request refused ONLY because its host is undeclared (and askable) is a question for the
+    // person, not an audio track's fault, a live cut or a final error: asking comes first.
+    @Test fun `an askable undeclared host is asked about before anything else is blamed`() {
+        assertEquals(PlayerErrorRoute.ASK_HOST, route(askHost = true))
+        assertEquals(PlayerErrorRoute.ASK_HOST, route(askHost = true, audio = true))
+        assertEquals(PlayerErrorRoute.ASK_HOST, route(askHost = true, live = true, liveInPlace = true))
+        assertEquals(PlayerErrorRoute.ASK_HOST, route(askHost = true, live = true))
+    }
 
     @Test fun `a VOD error with nothing to blame is final`() {
         assertEquals(PlayerErrorRoute.FINAL, route())

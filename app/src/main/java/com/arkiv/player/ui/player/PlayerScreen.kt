@@ -408,6 +408,7 @@ private fun PlayerContent(
                     plugins = graph.pluginRegistry,
                     xuperLiveBlocked = graph.xuperLiveBlocked,
                     liveModule = graph.liveModule,
+                    hostDecider = graph.streamHostApproval,
                 )
             }
         },
@@ -2954,7 +2955,12 @@ private fun PlayerContent(
                 audioTracks = webExtras?.audioTracks ?: emptyList(),
                 drm = webExtras?.drm,
                 requestHeaders = mItem.requestHeaders,
-                http = streamHttpFor(mItem.kind, mItem.pluginHosts, mItem.pluginXuper),
+                // The plugin's id lets the stream client report an undeclared-but-askable host
+                // (onUndeclaredHost below) instead of a bare "Source error".
+                http = streamHttpFor(
+                    mItem.kind, mItem.pluginHosts, mItem.pluginXuper,
+                    pluginId = com.arkiv.player.data.plugin.PluginIds.pluginIdOfEpisode(mItem.episodeId).takeIf { vm.asksAboutPlaybackHosts },
+                ),
                 mimeType = mItem.mime.ifBlank { null },
                 crashTag = if (mItem.kind == SourceKind.PLUGIN) "plugin" else "magis",
                 onPlayerReady = { player ->
@@ -2964,6 +2970,11 @@ private fun PlayerContent(
                 },
                 onTextureViewReady = { tv -> magisTextureView = tv },
                 onError = { msg -> vm.onMagisExoError(msg) },
+                onUndeclaredHost = if (mItem.kind == SourceKind.PLUGIN && vm.asksAboutPlaybackHosts) {
+                    { host, positionMs -> vm.onPluginHostRefused(host, positionMs) }
+                } else {
+                    null
+                },
                 // A plugin's live channel: errors go to the live recovery (rejoin the edge, resolve
                 // again, warn after three reopens), never to the VOD dialog. See onPluginLiveError.
                 onLiveError = if (com.arkiv.player.data.plugin.PluginIds.isLiveEpisode(mItem.episodeId)) {

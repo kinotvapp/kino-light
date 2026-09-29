@@ -33,7 +33,16 @@ import java.util.concurrent.atomic.AtomicInteger
  */
 open class PluginFetchException(val code: String, message: String) : IOException(message)
 
-class HostNotAllowedException(val host: String) : PluginFetchException("host_not_allowed", "host no permitido: ${host.take(200)}")
+open class HostNotAllowedException(val host: String) : PluginFetchException("host_not_allowed", "host no permitido: ${host.take(200)}")
+
+/**
+ * The PLAYER's gate refused [host] only because plugin [pluginId] never declared it, and it is a miss
+ * reactive approval could close ([PluginHostGate.isPromptableMiss]): an HLS playlist's segments on
+ * another CDN, a redirect hop. Thrown only by a client built to ask ([PluginStreamHttp.client]'s
+ * `askAboutFor`), so the player can put the question to the person ([PlaybackHostPrompts]); to
+ * anything else it is the same `host_not_allowed` as ever, with the same message.
+ */
+class UndeclaredPlaybackHostException(val pluginId: String, host: String) : HostNotAllowedException(host)
 
 /** [PluginDns] refused every address a name resolved to. */
 class PrivateAddressException(val hostname: String) : UnknownHostException("$hostname apunta a una dirección privada")
@@ -126,6 +135,16 @@ object PluginHostGate {
         if (!HostRules.isValidPattern(url.host) || url.host.startsWith("*.")) return false
         return !HostRules.matches(url.host, hosts.declared)
     }
+
+    /**
+     * The player's gate refused [url] with [refusal]: an [UndeclaredPlaybackHostException] for
+     * [askAboutFor] when that refusal is exactly a promptable miss ([isPromptableMiss] against
+     * [hosts], the rules `kino.fetch` and a returned Stream use), [refusal] itself otherwise -- and
+     * always when [askAboutFor] is null (a download, a license client: nobody to ask, or nothing
+     * that should be asked).
+     */
+    fun playbackRefusal(refusal: HostNotAllowedException, url: HttpUrl, hosts: EffectiveHosts, askAboutFor: String?): HostNotAllowedException =
+        if (askAboutFor != null && isPromptableMiss(url, hosts)) UndeclaredPlaybackHostException(askAboutFor, url.host) else refusal
 }
 
 /**
