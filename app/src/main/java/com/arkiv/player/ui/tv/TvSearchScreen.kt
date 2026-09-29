@@ -76,6 +76,9 @@ import com.arkiv.player.ui.search.SearchPlayback
 import com.arkiv.player.ui.search.SearchViewModel
 import com.arkiv.player.ui.search.SourceTab
 import com.arkiv.player.ui.search.TitleCard
+import com.arkiv.player.ui.search.refineEpisodeLabel
+import com.arkiv.player.ui.search.refineSeasonLabel
+import com.arkiv.player.ui.search.rememberRefineData
 import com.arkiv.player.ui.search.countsByTab
 import com.arkiv.player.ui.search.tabsFor
 import com.arkiv.player.ui.search.visibleRows
@@ -662,65 +665,10 @@ private fun TvRefineContent(
     onAllSeries: () -> Unit,
     onPickEpisode: (season: Int?, episode: Int) -> Unit,
 ) {
-    var localDetail by remember(card) { mutableStateOf<TmdbDetail?>(null) }
-    var localAnimeShow by remember(card) { mutableStateOf<AnimeShow?>(null) }
-
-    val effectiveDetail = vmDetail?.takeIf { it.id == card.tmdbId } ?: localDetail
-    val effectiveAnimeShow = vmAnimeShow?.takeIf { it.id == card.anilistId } ?: localAnimeShow
-
-    // Only requests what the VM doesn't already have (avoids a refetch on returning from RESULTS with back()).
-    LaunchedEffect(card.tmdbId, vmDetail) {
-        val tmdbId = card.tmdbId ?: return@LaunchedEffect
-        if (card.kind != "series") return@LaunchedEffect
-        if (vmDetail?.id == tmdbId) return@LaunchedEffect
-        localDetail = runCatching { tmdbApi.detail("tv", tmdbId) }.getOrNull()
-    }
-    LaunchedEffect(card.anilistId, vmAnimeShow) {
-        val anilistId = card.anilistId ?: return@LaunchedEffect
-        if (card.kind != "anime") return@LaunchedEffect
-        if (vmAnimeShow?.id == anilistId) return@LaunchedEffect
-        localAnimeShow = runCatching { aniListApi.details(anilistId) }.getOrNull()
-    }
-
-    var selectedSeason by remember(card) { mutableStateOf<Int?>(null) }
-    var episodesBySeason by remember(card) { mutableStateOf<Map<Int, List<TmdbEpisode>>>(emptyMap()) }
-    var loadingEpisodes by remember(card) { mutableStateOf(false) }
-
-    // Preselects the first "real" season (skips specials = season 0) as soon as they're known.
-    LaunchedEffect(effectiveDetail) {
-        if (selectedSeason == null) {
-            val seasons = effectiveDetail?.seasons.orEmpty()
-            selectedSeason = seasons.firstOrNull { it.seasonNumber >= 1 }?.seasonNumber
-                ?: seasons.firstOrNull()?.seasonNumber
-        }
-    }
-
-    // Loads the focused/chosen season's chapters; caches per season to avoid repeating the fetch
-    // when going back and forth between already-seen seasons.
-    // `selectedSeason` changes with FOCUS (the chip's onFocus), so going through the seasons with
-    // the D-pad restarts this effect once per chip. Two fixes here:
-    //  - delay(250) at the start, BEFORE touching `loadingEpisodes` or the cache: if the user keeps
-    //    scrubbing, every restart cancels the previous coroutine during the delay and it never gets
-    //    to fire the TMDB fetch — avoids one call per chip.
-    //  - `loadingEpisodes` only gets set to true AFTER the cache check, and the fetch goes in a
-    //    try/finally: if the season was already cached, the flag never gets touched; if the fetch
-    //    gets cancelled halfway (focus moved to another season), the finally sets it back to false
-    //    all the same, so it never gets stuck on "Cargando…".
-    LaunchedEffect(selectedSeason, card.tmdbId) {
-        val season = selectedSeason ?: return@LaunchedEffect
-        val tmdbId = card.tmdbId ?: return@LaunchedEffect
-        delay(250)
-        if (episodesBySeason.containsKey(season)) return@LaunchedEffect
-        loadingEpisodes = true
-        try {
-            // `.orEmpty()`: this only paints the chapter list; a network failure looks the same as
-            // an empty season and gets retried just by entering again.
-            val eps = runCatching { tmdbApi.seasonEpisodes(tmdbId, season) }.getOrNull().orEmpty()
-            episodesBySeason = episodesBySeason + (season to eps)
-        } finally {
-            loadingEpisodes = false
-        }
-    }
+    // The season follows FOCUS here (see TvSeasonChip), so the fetch waits 250 ms: scrubbing the chips with the D-pad
+    // must not fetch once per chip.
+    val refine = rememberRefineData(card, vmDetail, vmAnimeShow, tmdbApi, aniListApi, seasonDebounceMs = 250)
+    val selectedSeason = refine.selectedSeason
 
     // Initial focus on "Toda la serie" (Step 2 of the brief).
     val allSeriesFocus = remember(card) { FocusRequester() }
@@ -729,9 +677,10 @@ private fun TvRefineContent(
         runCatching { allSeriesFocus.requestFocus() }
     }
 
-    val seasons = effectiveDetail?.seasons.orEmpty()
-    val currentEpisodes = selectedSeason?.let { episodesBySeason[it] }.orEmpty()
-    val animeTotal = effectiveAnimeShow?.episodes ?: 0
+    val seasons = refine.seasons
+    val currentEpisodes = refine.currentEpisodes
+    val loadingEpisodes = refine.loadingEpisodes
+    val animeTotal = refine.animeTotal
 
     LazyColumn(
         // The margin goes INSIDE the list (contentPadding), not as external padding: on focus,
@@ -796,8 +745,8 @@ private fun TvRefineContent(
                                 TvSeasonChip(
                                     season = season,
                                     selected = season.seasonNumber == selectedSeason,
-                                    onFocus = { selectedSeason = season.seasonNumber },
-                                    onClick = { selectedSeason = season.seasonNumber },
+                                    onFocus = { refine.selectSeason(season.seasonNumber) },
+                                    onClick = { refine.selectSeason(season.seasonNumber) },
                                 )
                             }
                         }
@@ -816,14 +765,14 @@ private fun TvRefineContent(
                     }
                     items(currentEpisodes, key = { it.episode }) { ep ->
                         TvRefineRow(
-                            label = "E${ep.episode} · ${ep.name}",
+                            label = refineEpisodeLabel(ep),
                             onClick = { onPickEpisode(selectedSeason, ep.episode) },
                         )
                     }
                 } else {
                     item {
                         Text(
-                            if (effectiveDetail == null) "Cargando temporadas…" else "Sin temporadas disponibles.",
+                            if (!refine.detailLoaded) "Cargando temporadas…" else "Sin temporadas disponibles.",
                             color = ArkivTextSecondary,
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.padding(top = 16.dp),
@@ -850,7 +799,7 @@ private fun TvRefineContent(
                 } else {
                     item {
                         Text(
-                            if (effectiveAnimeShow == null) "Cargando episodios…" else "Cantidad de episodios desconocida — usa \"Toda la serie\".",
+                            if (!refine.animeLoaded) "Cargando episodios…" else "Cantidad de episodios desconocida — usa \"Toda la serie\".",
                             color = ArkivTextSecondary,
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.padding(top = 16.dp),
@@ -959,7 +908,7 @@ private fun TvSeasonChip(
         ),
     ) {
         Text(
-            text = if (season.seasonNumber == 0) "Especiales" else "T${season.seasonNumber}",
+            text = refineSeasonLabel(season.seasonNumber),
             style = MaterialTheme.typography.titleSmall,
             color = androidx.compose.ui.graphics.Color.White,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
