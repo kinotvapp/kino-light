@@ -30,10 +30,12 @@ fun addsChannels(plugin: InstalledPlugin): Boolean =
         ManifestParser.CHANNELS in plugin.manifest.capabilities &&
         !XuperPrivilege.grants(plugin.record)
 
-/** The module's providers, in order: Xuper first while its gate is open, then plugins in registry order. Pure. */
+/** The module's providers, in order: Xuper first while its gate is open, then plugins in registry order, then the person's own channels ([OwnLive]), which are always there. Pure. */
 fun liveProviderIds(plugins: List<InstalledPlugin>): List<String> = buildList {
     if (xuperLiveAllowed(plugins)) add(LiveChannelKeys.XUPER)
     plugins.filter(::addsChannels).forEach { add(LiveChannelKeys.pluginProvider(it.id)) }
+    // The person's own channels, always: it is what keeps En vivo (and the "+" on it) reachable with nothing installed.
+    add(OwnLive.PROVIDER)
 }
 
 /**
@@ -46,6 +48,8 @@ fun liveBlockedMessage(
     place: String = com.arkiv.player.data.plugin.PluginsPlace.current,
 ): String {
     if (providerId == LiveChannelKeys.XUPER) return XuperLiveGate.blockedMessage(plugins) ?: UNAVAILABLE
+    // Built in, never "a plugin that is no longer installed".
+    if (providerId == OwnLive.PROVIDER) return UNAVAILABLE
     val p = LiveChannelKeys.pluginIdOf(providerId)?.let { id -> plugins.firstOrNull { it.id == id } }
         ?: return "Este canal venía de un plugin que ya no está instalado"
     val name = p.manifest.name
@@ -79,6 +83,7 @@ class LiveCatalog(
     scope: CoroutineScope,
     private val xuperProvider: () -> LiveChannelProvider,
     private val pluginProvider: (InstalledPlugin) -> LiveChannelProvider,
+    private val ownProvider: () -> LiveChannelProvider,
 ) : LiveModule {
     /** The live instances by provider id, with the key they were built for. */
     private val built = HashMap<String, Pair<String, LiveChannelProvider>>()
@@ -89,12 +94,16 @@ class LiveCatalog(
         gone.keys.forEach(built::remove)
         gone.values.forEach { it.second.close() }
         ids.map { id ->
-            val plugin = LiveChannelKeys.pluginIdOf(id)?.let { pid -> list.first { it.id == pid } }
+            val plugin = if (id == OwnLive.PROVIDER) null else LiveChannelKeys.pluginIdOf(id)?.let { pid -> list.first { it.id == pid } }
             val key = plugin?.changeKey() ?: id
             val current = built[id]
             if (current != null && current.first == key) return@map current.second
             current?.second?.close()
-            (if (plugin == null) xuperProvider() else pluginProvider(plugin)).also { built[id] = key to it }
+            (when {
+                id == OwnLive.PROVIDER -> ownProvider()
+                plugin == null -> xuperProvider()
+                else -> pluginProvider(plugin)
+            }).also { built[id] = key to it }
         }
     }
 

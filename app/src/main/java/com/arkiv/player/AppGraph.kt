@@ -1002,7 +1002,26 @@ class AppGraph(context: Context) {
                     currentHosts = { currentPluginHosts(p) },
                 )
             },
+            ownProvider = {
+                val root = java.io.File(appContext.cacheDir, "own-live")
+                com.arkiv.player.data.live.OwnLiveProvider(
+                    sources = { database.ownLiveSourceDao().all() },
+                    // The gated stream client with the own-hosts policy: public hosts only, http or https,
+                    // every redirect hop checked, a name that resolves into the LAN refused (PluginDns).
+                    fetcher = com.arkiv.player.data.live.PluginPlaylistFetcher(
+                        com.arkiv.player.data.plugin.PluginStreamHttp.client(pluginBaseHttp, com.arkiv.player.data.live.OwnLive.hosts),
+                    ),
+                    cacheDir = java.io.File(root, "own"),
+                    allCachesRoot = root,
+                    syncCache = { rows -> database.liveChannelCacheDao().replacePlaylistRows(com.arkiv.player.data.live.OwnLive.PROVIDER, rows) },
+                )
+            },
         )
+    }
+
+    /** The person's own live sources ("Mis canales"). */
+    val ownLiveStore: com.arkiv.player.data.live.OwnLiveStore by lazy {
+        com.arkiv.player.data.live.OwnLiveStore(database.ownLiveSourceDao())
     }
 
     /** The message the player shows for a Xuper channel while [xuperLive] is off, else null. */

@@ -48,4 +48,25 @@ class PluginDnsTest {
     }
 
     private fun v6(text: String) = InetAddress.getByName(text)
+
+    private fun refusedFor(vararg ip: Int): Boolean {
+        val addr = java.net.InetAddress.getByAddress(ip.map { it.toByte() }.toByteArray())
+        return try {
+            PluginDns(delegate = object : okhttp3.Dns {
+                override fun lookup(hostname: String): List<java.net.InetAddress> = listOf(addr)
+            }).lookup("tv.example.com")
+            false
+        } catch (e: PrivateAddressException) {
+            true
+        }
+    }
+
+    @Test fun `ranges refused for IPv4 literals are refused when a name resolves to them`() {
+        org.junit.Assert.assertTrue(refusedFor(192, 0, 0, 8))
+        org.junit.Assert.assertTrue(refusedFor(192, 0, 2, 5))
+        org.junit.Assert.assertTrue(refusedFor(198, 18, 0, 5))
+        org.junit.Assert.assertTrue(refusedFor(198, 19, 255, 1))
+        org.junit.Assert.assertFalse(refusedFor(198, 20, 0, 1))
+        org.junit.Assert.assertFalse(refusedFor(8, 8, 8, 8))
+    }
 }
