@@ -357,4 +357,41 @@ class MagisHomeClassifierTest {
         // "x" is an anime title (precedence): it's NOT in top-rated movies.
         assertFalse(result.row("magis_top_peliculas").all.any { it.id == "x" })
     }
+
+    // --- "Recién agregadas" and "Series con capítulos nuevos": newest upload first, by the upload date when we have it.
+
+    private fun shelved(id: String, at: Long, type: String = "movie") =
+        CatalogItem(id = id, title = id, poster = null, durationS = 0, type = type, shelvedAtMs = at)
+
+    @Test
+    fun `recent movies are ordered by upload date, whatever order the portal sent`() {
+        val result = MagisHomeClassifier.classify(
+            mapOf("peliculas" to listOf(section("2026", listOf(shelved("old", 100), shelved("newest", 300), shelved("mid", 200))))),
+        )
+        assertEquals(listOf("newest", "mid", "old"), result.row("magis_recent_peliculas").shown.map { it.id })
+    }
+
+    @Test
+    fun `without upload dates the portal's order is kept`() {
+        val result = MagisHomeClassifier.classify(
+            mapOf("peliculas" to listOf(section("2026", listOf(shelved("b", 0), shelved("a", 0), shelved("c", 0))))),
+        )
+        assertEquals(listOf("b", "a", "c"), result.row("magis_recent_peliculas").shown.map { it.id })
+    }
+
+    @Test
+    fun `an item with no date sits after the dated ones, in its own order`() {
+        val result = MagisHomeClassifier.classify(
+            mapOf("peliculas" to listOf(section("2026", listOf(shelved("nodate1", 0), shelved("dated", 500), shelved("nodate2", 0))))),
+        )
+        assertEquals(listOf("dated", "nodate1", "nodate2"), result.row("magis_recent_peliculas").shown.map { it.id })
+    }
+
+    @Test
+    fun `series with new chapters are ordered by upload date too`() {
+        val result = MagisHomeClassifier.classify(
+            mapOf("series" to listOf(section("2026", listOf(shelved("s1", 10, "teleplay"), shelved("s2", 20, "teleplay"))))),
+        )
+        assertEquals(listOf("s2", "s1"), result.row("magis_new_series").shown.map { it.id })
+    }
 }

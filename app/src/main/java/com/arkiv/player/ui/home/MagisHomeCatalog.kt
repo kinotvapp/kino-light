@@ -19,7 +19,7 @@ data class MagisHome(val rows: List<MagisHomeRow>, val missing: Set<MagisKind>)
  * The home's rows, straight from the Magis catalog: the four VOD roots requested in parallel and
  * classified on the device ([MagisHomeClassifier]). The adults root is never asked for.
  *
- * [tree] is `MagisLiveCatalog.tree` in the app (6 h in-memory cache, so the home and "Ver todo"
+ * [tree] is `MagisLiveCatalog.tree` in the app (2 h in-memory cache, so the home and "Ver todo"
  * share one fetch); a lambda here so the JVM tests don't need the portal. A root that fails (portal
  * error, timeout) just contributes nothing to [load] -- it doesn't take the other three down with
  * it. Failures aren't cached, so another [load] asks again only for the roots that are missing.
@@ -133,7 +133,10 @@ class MagisHomeCatalog(
     }
 
     companion object {
-        /** 6 h, the interval the user chose and the same one MagisLiveCatalog's in-memory cache uses. */
-        const val TTL_MS = 6 * 60 * 60 * 1000L
+        /**
+         * 2 h (it was 6): the portal adds about 3 movies a day and "Recién agregadas" is what people come to see, so a
+         * Home older than a couple of hours is missing something. Matches the tree cache of `MagisLiveCatalog`.
+         */
+        const val TTL_MS = 2 * 60 * 60 * 1000L
     }
 }

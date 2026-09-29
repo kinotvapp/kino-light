@@ -59,6 +59,7 @@ object HomeCatalogCodec {
                 .put("genres", JSONArray(it.genres))
                 .put("description", it.description)
                 .put("episodeCount", it.episodeCount)
+            if (it.shelvedAtMs > 0) o.put("shelvedAt", it.shelvedAtMs)
             if (it.poster != null) o.put("poster", it.poster)
             if (it.score != null) o.put("score", it.score)
             if (it.backdrop != null) o.put("backdrop", it.backdrop)
@@ -84,6 +85,7 @@ object HomeCatalogCodec {
                 backdrop = if (o.has("backdrop") && !o.isNull("backdrop")) o.optString("backdrop") else null,
                 description = o.optString("description"),
                 episodeCount = o.optInt("episodeCount"),
+                shelvedAtMs = o.optLong("shelvedAt"),
             )
         }
     }

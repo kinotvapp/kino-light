@@ -1271,6 +1271,7 @@ fun TvHomeScreen(
                                             modifier = if (cardKey == cardToRestore) Modifier.focusRequester(returnFocus) else Modifier,
                                             badge = live ?: row.pluginName,
                                             badgeColor = if (live != null) ArkivRed else androidx.compose.ui.graphics.Color(row.color),
+                                            isNew = com.arkiv.player.data.gateway.ShelveTime.hasNewBadge(item.extra["badges"]),
                                             onFocus = {
                                                 navSound()
                                                 featured = pluginCardFeatured(row, item)

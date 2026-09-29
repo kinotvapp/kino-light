@@ -724,6 +724,7 @@ private fun PluginRow(
                     modifier = Modifier.width(sizes.posterWidth),
                     // A live channel says so on its card (red, like the native live row); a title wears nothing here.
                     badge = com.arkiv.player.ui.catalog.liveBadge(item),
+                    isNew = com.arkiv.player.data.gateway.ShelveTime.hasNewBadge(item.extra["badges"]),
                     onClick = { onOpen(item) },
                     onLongClick = { onOpen(item) },
                 )

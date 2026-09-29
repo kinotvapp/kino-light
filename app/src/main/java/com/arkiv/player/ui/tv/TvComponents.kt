@@ -102,6 +102,8 @@ fun TvLandscapeCard(
      * See [com.arkiv.player.data.newcontent.NewEpisodeCounter].
      */
     newEpisodes: Int = 0,
+    /** Uploaded in the last 48 h (see `ShelveTime`): "NUEVO" in the bottom start corner, the one nothing else uses. */
+    isNew: Boolean = false,
     onFocus: () -> Unit = {},
     onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit,
@@ -158,6 +160,20 @@ fun TvLandscapeCard(
                         .padding(6.dp)
                         .clip(RoundedCornerShape(4.dp))
                         .background(Color(0xAA000000))
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                )
+            }
+            if (isNew) {
+                Text(
+                    text = com.arkiv.player.data.gateway.ShelveTime.NEW_BADGE,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White,
+                    maxLines = 1,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(6.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(ArkivRed)
                         .padding(horizontal = 6.dp, vertical = 2.dp),
                 )
             }
