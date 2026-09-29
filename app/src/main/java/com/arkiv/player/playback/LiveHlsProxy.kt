@@ -3,7 +3,6 @@ package com.arkiv.player.playback
 import com.arkiv.player.data.gateway.ChannelCdn
 import com.arkiv.player.data.gateway.LiveSession
 import kotlinx.coroutines.runBlocking
-import java.net.HttpURLConnection
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URL
@@ -47,7 +46,11 @@ class LiveHlsProxy(
      * do, and the next open of the channel resolves again. See [com.arkiv.player.data.magis.LiveSeedRotation].
      */
     private val onPlaylistConflict: (channel: String, license: String) -> Unit = { _, _ -> },
+    /** How CDN hosts are resolved. DoH by default: see [OriginConnections]. Tests hand in the system resolver. */
+    dns: okhttp3.Dns = com.arkiv.player.data.net.DohDns,
 ) {
+
+    private val origin = OriginConnections(dns, CONNECT_TIMEOUT_MS, READ_TIMEOUT_MS)
 
     @Volatile private var server: ServerSocket? = null
     @Volatile private var running = false
@@ -308,7 +311,7 @@ class LiveHlsProxy(
      * HALF the real rejections it should take to see (finding F1 from the final review).
      * [notified] avoids that.
      */
-    private fun requestFromOrigin(url: String, s: LiveSession, cdn: ChannelCdn = cdnFor(s)): HttpURLConnection? {
+    private fun requestFromOrigin(url: String, s: LiveSession, cdn: ChannelCdn = cdnFor(s)): OriginResponse? {
         var notified = false
         // The WHAT of the log: we don't know anything about this CDN yet (the VOD one takes
         // between 0.2s and 20s per range, measured; the live one was never measured). Without the
@@ -319,16 +322,17 @@ class LiveHlsProxy(
         var followedRedirect = false
         repeat(2) { attempt ->
             val t0 = System.currentTimeMillis()
-            val c = (URL(target).openConnection() as HttpURLConnection).apply {
-                connectTimeout = CONNECT_TIMEOUT_MS
-                readTimeout = 20_000
-                setRequestProperty("Content-Auth", runBlocking { contentAuth(s, cdn) })
-                setRequestProperty("Content-License", s.license)
-                setRequestProperty("User-Agent", UA)
-                setRequestProperty("App", APP)
-                setRequestProperty("App-Version", APP_VERSION)
-                setRequestProperty("X-Buffer", "0")
-            }
+            val c = origin.open(
+                target,
+                mapOf(
+                    "Content-Auth" to runBlocking { contentAuth(s, cdn) },
+                    "Content-License" to s.license,
+                    "User-Agent" to UA,
+                    "App" to APP,
+                    "App-Version" to APP_VERSION,
+                    "X-Buffer" to "0",
+                ),
+            )
             // A connection that never answers used to be silent: nothing was logged until a CDN replied. Naming the
             // exception and how long it took is what tells a dead address from a slow CDN.
             val code = try {
@@ -339,7 +343,7 @@ class LiveHlsProxy(
                 throw e
             }
             val ms = System.currentTimeMillis() - t0
-            // A redirect on the same host (http to https) is followed once; HttpURLConnection won't cross protocols.
+            // A redirect on the same host (http to https) is followed once; [OriginConnections] never follows one by itself.
             if (code in OriginRedirect.CODES) {
                 val location = c.getHeaderField("Location")
                 val next = if (followedRedirect) null else OriginRedirect.sameHost(target, location)
@@ -397,7 +401,7 @@ class LiveHlsProxy(
      * Never throws: this runs on the rejection path, and breaking here would turn a channel that
      * merely fails into one that also loses the connection.
      */
-    private fun originReason(c: HttpURLConnection): String = runCatching {
+    private fun originReason(c: OriginResponse): String = runCatching {
         val body = c.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty().trim()
         val says = if (body.isNotEmpty()) {
             body.take(300).replace('\n', ' ')
@@ -454,7 +458,7 @@ class LiveHlsProxy(
         // loop at the first CDN and answered 502 without ever trying the backup -the same hole the
         // segments had-.
         val inOrder = (listOfNotNull(activeCdn) + s.cdns).distinctBy { it.cflHost }
-        var c: java.net.HttpURLConnection? = null
+        var c: OriginResponse? = null
         var rawPlaylist: String? = null
         var chosen: ChannelCdn? = null
         var anyAnswered = false
@@ -579,7 +583,8 @@ class LiveHlsProxy(
         output.write("HTTP/1.1 200 OK\r\nContent-Type: video/mp2t\r\n\r\n".toByteArray())
         // Bytes are counted while copying, not from Content-Length: the CDN can cut off partway
         // and that looks like a short segment, which is exactly what leaves the player starved.
-        val copy = copySegment(c.inputStream, output)
+        // OkHttp only frees the connection once the body is read to the end; a cut copy would otherwise leak it.
+        val copy = try { copySegment(c.inputStream, output) } finally { c.disconnect() }
         // Split in two on purpose: the wait for the first byte (the CDN, and the retries while the segment is
         // being published) and the copy (the link) are different problems. Compared with the segment's own
         // duration, from the playlist, they say whether the buffer can keep up or can only shrink.
@@ -630,7 +635,7 @@ class LiveHlsProxy(
             runCatching {
                 val host = hostWithPort.substringBefore(':')
                 val t0 = System.currentTimeMillis()
-                val all = java.net.InetAddress.getAllByName(host).joinToString { it.hostAddress ?: "?" }
+                val all = origin.dns.lookup(host).joinToString { it.hostAddress ?: "?" }
                 LiveLog.i("dns $host → [$all] in ${System.currentTimeMillis() - t0}ms")
             }.onFailure { LiveLog.w("dns $hostWithPort failed: ${it.javaClass.simpleName}: ${it.message}") }
         }.apply { isDaemon = true }.start()
@@ -657,7 +662,7 @@ class LiveHlsProxy(
      * ~30s of cushion. Spending up to ~1s waiting for it to be published doesn't empty anything;
      * giving up on it right away does.
      */
-    private fun getSegment(url: String, s: LiveSession): HttpURLConnection? {
+    private fun getSegment(url: String, s: LiveSession): OriginResponse? {
         val name = url.substringAfterLast('/')
         repeat(SEGMENT_ATTEMPTS) { attempt ->
             val c = requestOk(url, s)
@@ -699,7 +704,7 @@ class LiveHlsProxy(
      * without this `runCatching` takes the whole response down with it and the player sees the
      * connection cut.
      */
-    private fun requestOk(url: String, s: LiveSession, cdn: ChannelCdn = cdnFor(s)): HttpURLConnection? {
+    private fun requestOk(url: String, s: LiveSession, cdn: ChannelCdn = cdnFor(s)): OriginResponse? {
         val c = runCatching { requestFromOrigin(url, s, cdn) }.getOrNull() ?: return null
         if (runCatching { c.responseCode }.getOrDefault(-1) == 200) return c
         runCatching { c.disconnect() }
@@ -797,6 +802,7 @@ class LiveHlsProxy(
          * retry 0.8 s later connecting in 176 ms) before the retries and the other CDNs got their turn.
          */
         private const val CONNECT_TIMEOUT_MS = 4_000
+        private const val READ_TIMEOUT_MS = 20_000
 
         /** Stands in for an HTTP status in the log when a CDN answered 200 with a body that is not a playlist. */
         private const val NOT_A_PLAYLIST = 599

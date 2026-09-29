@@ -150,4 +150,36 @@ class DlnaXmlTest {
         assertEquals("error UPnP 999", DlnaXml.describeError(999))
         assertEquals("sin código", DlnaXml.describeError(null))
     }
+
+    // --- control URL resolution ----------------------------------------------
+
+    @Test
+    fun `a relative control path against a base with no path keeps the port apart from the path`() {
+        // java.net.URI glues them together: "http://host:16206AVTransport/..." -> "Invalid URL port".
+        assertEquals(
+            "http://192.168.1.40:16206/AVTransport/ctl",
+            DlnaXml.resolveUrl("http://192.168.1.40:16206", "AVTransport/ctl"),
+        )
+    }
+
+    @Test
+    fun `an absolute control path replaces the base path`() {
+        assertEquals(
+            "http://192.168.1.40:8008/upnp/control/avt",
+            DlnaXml.resolveUrl("http://192.168.1.40:8008/ssdp/device-desc.xml", "/upnp/control/avt"),
+        )
+    }
+
+    @Test
+    fun `a relative control path resolves against the description's folder`() {
+        assertEquals(
+            "http://192.168.1.40:8008/ssdp/avt",
+            DlnaXml.resolveUrl("http://192.168.1.40:8008/ssdp/device-desc.xml", "avt"),
+        )
+    }
+
+    @Test
+    fun `an unparsable base gives null`() {
+        assertNull(DlnaXml.resolveUrl("http://bad host/", "avt"))
+    }
 }

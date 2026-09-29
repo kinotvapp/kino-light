@@ -16,7 +16,6 @@ import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.SocketTimeoutException
-import java.net.URI
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
@@ -289,12 +288,12 @@ class DlnaController(
             return null
         }
         val base = urlBase ?: location
-        val resolved = runCatching { URI(base).resolve(ctrl).toString() }.getOrNull()
+        val resolved = DlnaXml.resolveUrl(base, ctrl)
         if (resolved == null) {
             DlnaLog.w("parseDevice: could not resolve controlURL '$ctrl' against '${DlnaXml.safeUrl(base)}'")
             return null
         }
-        val cmResolved = connectionManagerUrl?.let { runCatching { URI(base).resolve(it).toString() }.getOrNull() }
+        val cmResolved = connectionManagerUrl?.let { DlnaXml.resolveUrl(base, it) }
         DlnaLog.i("parseDevice: OK '$friendlyName' -> ${DlnaXml.safeUrl(resolved)}")
         return DlnaDevice(
             friendlyName = friendlyName,

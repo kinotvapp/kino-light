@@ -101,6 +101,19 @@ internal object DlnaXml {
         return if (scheme.isEmpty()) "$hostPort$shortPath" else "$scheme://$hostPort$shortPath"
     }
 
+    /**
+     * [ref] (a `controlURL` from a device description) resolved against [base], or null if [base] is not a URL.
+     *
+     * `java.net.URI.resolve` on a base with no path (`http://host:16206`, a common `URLBase`) glues a relative
+     * reference straight onto the port (`http://host:16206AVTransport`), which OkHttp then rejects as an
+     * invalid port. An empty path is treated as `/`, as RFC 3986 says.
+     */
+    fun resolveUrl(base: String, ref: String): String? = runCatching {
+        val uri = java.net.URI(base)
+        val rooted = if (uri.path.isNullOrEmpty() && uri.host != null) java.net.URI("$base/") else uri
+        rooted.resolve(ref).toString()
+    }.getOrNull()
+
     /** A UPnP AVTransport / ConnectionManager error code in words (UPnP AV spec + the common vendor ones). */
     fun describeError(code: Int?): String = when (code) {
         null -> "sin código"
