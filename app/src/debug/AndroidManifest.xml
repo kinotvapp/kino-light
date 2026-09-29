@@ -24,5 +24,10 @@
         <receiver
             android:name="com.arkiv.player.debug.HostApprovalProbe"
             android:exported="true" />
+        <!-- Plays one URL with the plugin player's ExoPlayer setup and logs the decoder's view; see StreamProbeActivity. -->
+        <activity
+            android:name="com.arkiv.player.debug.StreamProbeActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen" />
     </application>
 </manifest>
