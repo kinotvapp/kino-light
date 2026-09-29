@@ -15,6 +15,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
@@ -85,8 +86,8 @@ interface ScriptRuntime {
  * One plugin's QuickJS sandbox (quickjs-kt 1.0.0-alpha13), on its own thread.
  *
  * Every QuickJS touch — creation, evaluation, async-binding resumptions, close — runs on that one
- * thread: the engine isn't thread-safe. A call is started on the runtime's scope and AWAITED under
- * `withTimeout`, so a synchronous infinite loop can't hold the caller: it gets
+ * thread: the engine isn't thread-safe. A call is started on the runtime's scope and AWAITED on
+ * its [PluginCallClock] (a `withTimeout` that stops while the person is asked something), so a synchronous infinite loop can't hold the caller: it gets
  * [PluginTimeoutException] and the runtime is discarded. The engine can't be interrupted, so the
  * stuck evaluation keeps its thread until it returns (forever, for `while(true){}`); the runtime is
  * closed only after the in-flight call completes, because closing mid-evaluation frees the context
@@ -100,6 +101,7 @@ class PluginRuntime private constructor(
     dispatcher: CoroutineDispatcher,
     private val js: QuickJs,
     override val exports: Set<String>,
+    private val calls: PluginCallTracker,
 ) : ScriptRuntime {
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val lock = Any()
@@ -109,24 +111,37 @@ class PluginRuntime private constructor(
     @Volatile override var isDiscarded = false
         private set
 
+    /**
+     * [timeoutMs] is the call's budget on a [PluginCallClock]: it stops while the call is waiting for
+     * the person (a host prompt, see [PluginCall.askWhileAlive]) and otherwise runs exactly like a
+     * `withTimeout`. The call is published on [calls] for its whole life, and ended however it ends.
+     */
     override suspend fun call(function: String, argJson: String, timeoutMs: Long): String {
+        val call = PluginCall(
+            function = function,
+            interactive = currentCoroutineContext()[BackgroundPluginCall] == null,
+            clock = PluginCallClock(timeoutMs),
+        )
         val job = synchronized(lock) {
             if (isDiscarded) throw PluginScriptException("El plugin se reinició, vuelve a intentar")
             val code = "await __kinoCall(${JSONObject.quote(function)}, ${JSONObject.quote(argJson)})"
+            // Published before the evaluation starts: its very first kino.fetch already sees it.
+            calls.begin(call)
             scope.async { guarded { js.evaluate<String?>(code) } }.also { inFlight = it }
         }
         try {
+            if (!call.clock.awaitWithin(job)) {
+                close()
+                throw PluginTimeoutException(function, timeoutMs)
+            }
             // __kinoCall always answers a JSON string; null only comes from an engine that lost its
             // way back into Kotlin (a failed native callback), never from the plugin itself.
-            val result = withTimeout(timeoutMs) { job.await() }
+            val result = job.await()
                 ?: run { close(); throw PluginScriptException(NO_RESULT) }
             // The prelude's __kinoCall already refuses this in JS; this only keeps a bigger string
             // (should the prelude ever be bypassed) away from the JSON parsers downstream.
             if (result.length > MAX_RESULT_CHARS) throw PluginScriptException(RESULT_TOO_BIG)
             return result
-        } catch (e: TimeoutCancellationException) {
-            close()
-            throw PluginTimeoutException(function, timeoutMs)
         } catch (e: CancellationException) {
             // The CALLER was cancelled (e.g. a superseded search), not our own timeout: `job` keeps
             // running on the runtime's thread regardless, since it's on `scope`, not the caller's.
@@ -150,6 +165,9 @@ class PluginRuntime private constructor(
             // quickjs-kt built from a plugin error's `name` (see EngineFailure).
             throw PluginScriptException(errorText(e.message, e.javaClass.simpleName), boundedCause(e))
         } finally {
+            // Over, whatever way it ended: from here on a stray kino.fetch of this script (a
+            // scraper's own retries outliving a timeout) finds no call to ask the person for.
+            calls.end(call)
             synchronized(lock) { if (inFlight === job && job.isCompleted) inFlight = null }
         }
     }
@@ -253,12 +271,19 @@ class PluginRuntime private constructor(
          * throw at module top level, and [PluginTimeoutException] if loading takes longer than
          * [PluginEnv.loadTimeoutMs] (a top-level infinite loop leaks that thread, see the class KDoc).
          */
-        suspend fun open(label: String, script: String, host: PluginHost, env: PluginEnv): PluginRuntime =
-            open(label, script, host, env, prelude(env))
+        suspend fun open(label: String, script: String, host: PluginHost, env: PluginEnv, calls: PluginCallTracker = PluginCallTracker()): PluginRuntime =
+            open(label, script, host, env, prelude(env), calls)
 
         /** [open] with the prelude source given: tests use it to load a prelude that aborts. */
         @OptIn(ExperimentalCoroutinesApi::class) // Deferred.getCompleted(), read only after completion is confirmed
-        internal suspend fun open(label: String, script: String, host: PluginHost, env: PluginEnv, preludeCode: String): PluginRuntime {
+        internal suspend fun open(
+            label: String,
+            script: String,
+            host: PluginHost,
+            env: PluginEnv,
+            preludeCode: String,
+            calls: PluginCallTracker = PluginCallTracker(),
+        ): PluginRuntime {
             val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "plugin-$label").apply { isDaemon = true } }
             val dispatcher = executor.asCoroutineDispatcher()
             val loading = CoroutineScope(SupervisorJob() + dispatcher).async {
@@ -287,7 +312,7 @@ class PluginRuntime private constructor(
                     val names = js.evaluate<String>(
                         "Object.keys(__kinoExports).filter(k => typeof __kinoExports[k] === 'function').join(',')",
                     )
-                    PluginRuntime(executor, dispatcher, js, names.split(',').filter { it.isNotEmpty() }.toSet())
+                    PluginRuntime(executor, dispatcher, js, names.split(',').filter { it.isNotEmpty() }.toSet(), calls)
                 } catch (e: Throwable) {
                     runCatching { js.close() }
                     // Also covers a module that throws, at top level, an error named after a Java
