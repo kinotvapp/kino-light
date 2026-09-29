@@ -6,6 +6,8 @@ import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.arkiv.player.data.magis.EncryptedPrefs
+import com.arkiv.player.data.net.DnsMode
+import com.arkiv.player.data.net.DohDns
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -75,6 +77,15 @@ class SettingsStore(context: Context) : com.arkiv.player.data.onboarding.Onboard
     // ON by default, as it has always been; some people can't stand it, so Ajustes can turn it off.
     private val _uiSoundsEnabled = MutableStateFlow(prefs.getBoolean(KEY_UI_SOUNDS, true))
     val uiSoundsEnabled: StateFlow<Boolean> = _uiSoundsEnabled
+
+    // Which resolver the app asks for hosts' addresses (Ajustes -> "DNS seguro"). Cloudflare by default; the network
+    // layer reads it through [DohDns.mode], so it is pushed there here at creation and on every change.
+    private val _dnsMode = MutableStateFlow(DnsMode.fromKey(prefs.getString(KEY_DNS_MODE, null)))
+    val dnsMode: StateFlow<DnsMode> = _dnsMode
+
+    init {
+        DohDns.mode = _dnsMode.value
+    }
 
     // Marker for the 2026-08-14 one-time recents purge (see `ArkivApp.onCreate`). Same rescue as
     // [adultsUnlocked]: if it's lost, the purge simply runs once more -- no StateFlow needed
@@ -152,6 +163,13 @@ class SettingsStore(context: Context) : com.arkiv.player.data.onboarding.Onboard
         }.apply()
         if (mode == EffectsMode.AUTO) _effectsAutoReduced.value = false
         _effectsMode.value = mode
+    }
+
+    fun setDnsMode(mode: DnsMode) {
+        if (_dnsMode.value == mode) return
+        prefs.edit().putString(KEY_DNS_MODE, mode.key).apply()
+        _dnsMode.value = mode
+        DohDns.mode = mode
     }
 
     fun setUiSoundsEnabled(v: Boolean) {
@@ -297,6 +315,7 @@ class SettingsStore(context: Context) : com.arkiv.player.data.onboarding.Onboard
         private const val KEY_EFFECTS_SLOW_STRIKES = "efectos_muestras_lentas"
         private const val KEY_STARTUP_PROFILE_VERSION = "perfil_arranque_version"
         private const val KEY_UI_SOUNDS = "sonidos_interfaz"
+        private const val KEY_DNS_MODE = "dns_modo"
 
         /** The encrypted file `SecureDeviceStore` used to write (deleted in Task 9). */
         private const val OLD_ACCOUNTS_STORE_FILE = "arkiv_pb_secure"

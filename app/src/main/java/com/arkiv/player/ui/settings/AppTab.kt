@@ -11,6 +11,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -335,6 +336,23 @@ internal fun AppTab(onOpenDownloads: () -> Unit = {}) {
             checked = funFactsEnabled,
             onCheckedChange = { graph.settings.setFunFactsEnabled(it) },
         )
+    }
+
+    val dnsMode by graph.settings.dnsMode.collectAsState()
+    Row(
+        modifier = Modifier.fillMaxWidth(0.9f).padding(top = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("DNS seguro", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                "Si tu proveedor de internet bloquea canales o servicios, prueba con Google. Se aplica de inmediato.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        OutlinedButton(onClick = { graph.settings.setDnsMode(dnsMode.next()) }) {
+            Text(dnsMode.label)
+        }
     }
 
     Text(

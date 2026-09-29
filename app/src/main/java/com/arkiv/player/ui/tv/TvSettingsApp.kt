@@ -277,6 +277,19 @@ internal fun TvSettingsApp() {
         color = ArkivTextSecondary,
     )
 
+    // Which DNS the app asks for hosts' addresses. Some internet providers block channels and services by lying in
+    // their own DNS (measured in Chile); the fix people already know is changing it, so it is a setting here too.
+    val dnsMode by graph.settings.dnsMode.collectAsState()
+    TvActionOption(
+        "DNS seguro: ${dnsMode.label}",
+        onClick = { graph.settings.setDnsMode(dnsMode.next()) },
+    )
+    Text(
+        "Si tu proveedor de internet bloquea canales o servicios, prueba con Google. Se aplica de inmediato.",
+        style = MaterialTheme.typography.bodySmall,
+        color = ArkivTextSecondary,
+    )
+
     // The "tick" the TV plays every time focus moves to another card. Some people can't stand it.
     val uiSounds by graph.settings.uiSoundsEnabled.collectAsState()
     TvActionOption(
