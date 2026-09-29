@@ -53,6 +53,7 @@ import com.arkiv.player.ui.plugin.RECOMMENDED_TITLE
 import com.arkiv.player.ui.plugin.SOURCE_PICKER_DONE
 import com.arkiv.player.ui.plugin.sourcePickerLine
 import com.arkiv.player.ui.plugin.SOURCE_PICKER_TITLE
+import com.arkiv.player.ui.plugin.communityCardKey
 import com.arkiv.player.ui.plugin.installedCardArt
 import com.arkiv.player.ui.plugin.legacyFirst
 import com.arkiv.player.ui.plugin.pickerInstalledRows
@@ -90,11 +91,39 @@ internal fun pickerFocusBlocks(installedIds: List<String>, recommendedIds: List<
         GridBlock.Cards(recommendedIds.map(::pickerRecommendedKey), headerKey = PICKER_RECOMMENDED_HEADER_KEY),
     ) + communityFocusBlocks(community)
 
+/** Where the picker puts focus by itself ([pickerInitialFocus]). */
+internal sealed interface PickerFocus {
+    /** The card with this grid key. */
+    data class Card(val key: String) : PickerFocus
+
+    /** "Listo": there is no card to land on. */
+    data object Done : PickerFocus
+
+    /** Nowhere: the person is already walking the screen, and focus is never taken from under them. */
+    data object Stay : PickerFocus
+}
+
+/**
+ * Where the picker's automatic focus goes: the first "De la comunidad" card ([communityFirstKey]) when
+ * there is one, else the first recommended card ([recommendedFirstKey]), else "Listo". "Tus plugins" still
+ * comes first in the layout, but a new person is pointed at the community (the official Xuper plugin lives
+ * there). Once the person has pressed a key ([userHasMoved]) nothing moves by itself: a community list that
+ * shows up late only takes focus while the screen is untouched.
+ */
+internal fun pickerInitialFocus(communityFirstKey: String?, recommendedFirstKey: String?, userHasMoved: Boolean): PickerFocus = when {
+    userHasMoved -> PickerFocus.Stay
+    communityFirstKey != null -> PickerFocus.Card(communityFirstKey)
+    recommendedFirstKey != null -> PickerFocus.Card(recommendedFirstKey)
+    else -> PickerFocus.Done
+}
+
 /**
  * "Elige tus fuentes" on the TV. Laid out like [com.arkiv.player.ui.plugin.SourcePickerScreen] ("Tus plugins" for
  * the person's switched-off or damaged ones first), for the D-pad:
- * - Initial focus is the first recommended card (its action is "Instalar"); if there is no card within
- *   [PICKER_FOCUS_GRACE_MS], or it will not take focus, "Listo" does. "Listo" and not the community
+ * - Initial focus is the first "De la comunidad" card, scrolled into view, else the first recommended card
+ *   ([pickerInitialFocus]); if there is no card within [PICKER_FOCUS_GRACE_MS], or it will not take focus,
+ *   "Listo" does. A community list that arrives after the landing takes focus only if no key has been
+ *   pressed since the screen opened. "Listo" and not the community
  *   "Actualizar": it sits outside the lazy grid, so it is always composed and on screen whatever the
  *   community list is doing (loading, empty offline, scrolled away), and it stays focusable while disabled.
  * - Success is each target's OWN focus state, never `requestFocus()`'s return (it reports nothing; see
@@ -131,9 +160,32 @@ fun TvSourcePickerScreen(onFinish: () -> Unit, onBack: () -> Unit) {
     var screenHasFocus by remember { mutableStateOf(false) }
     val dialogOpen = state.consent != null || state.configuring != null
     val hasCards by rememberUpdatedState(rows.isNotEmpty())
+    val communityFirstKey = community.rows.firstOrNull()?.let(::communityCardKey)
+    val currentCommunityFirstKey by rememberUpdatedState(communityFirstKey)
+    // Any key pressed on the screen: from then on focus is never moved by itself (see pickerInitialFocus).
+    var userHasMoved by remember { mutableStateOf(false) }
 
-    // The first card when there is one and it takes focus, "Listo" otherwise.
-    suspend fun landFocus() {
+    val gridState = rememberLazyGridState()
+    val gridFocus = rememberTvGridFocus(gridState)
+
+    // Scrolls the community card [key] in and focuses it; whether it took focus. The move is asked again every
+    // few attempts: on the first frames the grid may not be laid out yet, and a reveal then scrolls nothing.
+    // [yieldToKeys]: give up as soon as the person presses a key (a late list never takes focus from them).
+    suspend fun focusCommunityCard(key: String, yieldToKeys: Boolean): Boolean {
+        repeat(PICKER_FOCUS_ATTEMPTS) { attempt ->
+            if (gridFocus.lastFocused == key) return true
+            if (yieldToKeys && userHasMoved) return false
+            if (attempt % 10 == 0) gridFocus.focus(key, down = true)
+            delay(WAIT_BETWEEN_FOCUS_ATTEMPTS_MS)
+        }
+        return gridFocus.lastFocused == key
+    }
+
+    // The first community card on the first landing ([initial]); then the first recommended card when there is one
+    // and it takes focus, "Listo" otherwise.
+    suspend fun landFocus(initial: Boolean) {
+        val community = currentCommunityFirstKey.takeIf { initial }
+        if (community != null && focusCommunityCard(community, yieldToKeys = false)) return
         if (hasCards && retryFocus(
                 attempts = PICKER_FOCUS_ATTEMPTS,
                 isAlreadyFocused = { firstCardFocused },
@@ -152,25 +204,35 @@ fun TvSourcePickerScreen(onFinish: () -> Unit, onBack: () -> Unit) {
     }
 
     LaunchedEffect(Unit) {
-        withTimeoutOrNull(PICKER_FOCUS_GRACE_MS) { snapshotFlow { hasCards }.first { it } }
-        landFocus()
+        withTimeoutOrNull(PICKER_FOCUS_GRACE_MS) { snapshotFlow { hasCards || currentCommunityFirstKey != null }.first { it } }
+        landFocus(initial = true)
         placed = true
+    }
+    // A community list that shows up after the landing: its first card takes focus, unless a key was pressed.
+    LaunchedEffect(communityFirstKey, placed) {
+        if (!placed || dialogOpen) return@LaunchedEffect
+        val target = pickerInitialFocus(communityFirstKey, rows.firstOrNull()?.entry?.id?.let(::pickerRecommendedKey), userHasMoved)
+        if (target is PickerFocus.Card && target.key == communityFirstKey && gridFocus.lastFocused != target.key) {
+            focusCommunityCard(target.key, yieldToKeys = true)
+        }
     }
     val cardKeys = installedRows.map { pickerInstalledKey(it.entry.id) } + rows.map { it.entry.id } + community.rows.map { it.entry.repo }
     LaunchedEffect(cardKeys, plugins.size, dialogOpen) {
         // A frame for a removed node (or a closed dialog) to clear focus before asking who holds it.
         delay(WAIT_BETWEEN_FOCUS_ATTEMPTS_MS)
-        if (pickerNeedsRefocus(placed, screenHasFocus, dialogOpen)) landFocus()
+        if (pickerNeedsRefocus(placed, screenHasFocus, dialogOpen)) landFocus(initial = false)
     }
 
-    val gridState = rememberLazyGridState()
-    val gridFocus = rememberTvGridFocus(gridState)
     val focusDone: () -> Unit = { runCatching { doneFocus.requestFocus() } }
     val density = LocalDensity.current
     val bringIntoView = remember(density) { KeepMarginBringIntoView(with(density) { FOCUS_MARGIN.toPx() }) }
     Column(
         Modifier.fillMaxSize().background(ArkivBlack).padding(horizontal = 64.dp, vertical = 24.dp)
-            .onFocusChanged { screenHasFocus = it.hasFocus },
+            .onFocusChanged { screenHasFocus = it.hasFocus }
+            .onPreviewKeyEvent { e ->
+                if (e.type == KeyEventType.KeyDown) userHasMoved = true
+                false
+            },
     ) {
         Text(SOURCE_PICKER_TITLE, style = MaterialTheme.typography.headlineMedium, color = Color.White)
         Text(sourcePickerLine(isTv = true), style = MaterialTheme.typography.bodyLarge, color = ArkivTextSecondary, modifier = Modifier.padding(top = 8.dp))
