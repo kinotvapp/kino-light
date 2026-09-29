@@ -424,7 +424,7 @@ class PluginsViewModelTest {
         val consent = vm.state.value.consent
         assertNotNull(consent)
         assertEquals("fakesrc", consent!!.nuvioOrigin?.scraperId)
-        assertEquals(listOf("fakesrc.example"), consent.manifest.hosts)
+        assertEquals(listOf("api.themoviedb.org", "fakesrc.example"), consent.manifest.hosts)
     }
 
     @Test fun `the source picker's Instalar on a damaged Nuvio-origin plugin re-converts its scraper instead of the generic preview`() {
@@ -450,7 +450,7 @@ class PluginsViewModelTest {
         val consent = vm.state.value.consent
         assertNotNull(consent)
         assertEquals("fakesrc", consent!!.nuvioOrigin?.scraperId)
-        assertEquals(listOf("fakesrc.example"), consent.manifest.hosts)
+        assertEquals(listOf("api.themoviedb.org", "fakesrc.example"), consent.manifest.hosts)
     }
 
     @Test fun `reinstalling a normal plugin still goes through the generic preview`() {
