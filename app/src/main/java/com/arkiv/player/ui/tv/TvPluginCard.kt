@@ -28,6 +28,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -66,14 +68,13 @@ import com.arkiv.player.ui.theme.ArkivTextSecondary
 /** Corner radius shared by the card and its tile; the tile is clipped to it so the art never pokes out of the top corners. */
 private val CARD_CORNER = 12.dp
 
-/** Side of the box the plugin's icon is drawn in (and decoded for: Coil samples the file down to it). */
-private val ICON_SIZE = 96.dp
+/** Side of the plugin's app-style icon at the top of a card. */
+private val APP_ICON_SIZE = 72.dp
 
 /** Height of the placeholder initial, in dp (not sp: it must not grow with the font scale, see [CardTile]). */
-private val INITIAL_SIZE = 56.dp
+private val INITIAL_SIZE = 36.dp
 
-/** Tile shape of a card: 16:9, or the wide, low strip of a [compact] card. */
-private const val TILE_RATIO = 1.5f
+/** Shape of the low strip of a [compact] card. */
 private const val COMPACT_TILE_RATIO = 3.5f
 
 /** Side of the icon (or height of the initial) of a compact tile, which has the art beside its pill instead of under it. */
@@ -159,31 +160,39 @@ internal fun PluginCardSurface(
 ) {
     var iconFailed by remember(iconFile) { mutableStateOf(false) }
     val cover = iconFile != null && !iconFailed
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(CARD_CORNER)).background(ArkivSurfaceHigh)) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(CARD_CORNER))
+            .background(ArkivSurfaceHigh)
+            .background(Brush.verticalGradient(listOf(Color(tileColorArgb).copy(alpha = 0.35f), Color.Transparent))),
+    ) {
         if (compact) {
             CompactCardTile(name, iconFile.takeIf { cover }, { iconFailed = true }, tileColorArgb, pill)
         } else {
-            // The art on the plugin's colour with a soft glow; its bottom edge fades into the panel the texts sit on.
-            Box(Modifier.fillMaxWidth().aspectRatio(TILE_RATIO).background(Color(tileColorArgb))) {
-                Box(Modifier.matchParentSize().background(Brush.radialGradient(listOf(Color.White.copy(alpha = 0.22f), Color.Transparent))))
-                if (cover) {
-                    // Fit, never Crop: a logo must show whole.
-                    AsyncImage(
-                        model = iconFile,
-                        contentDescription = null,
-                        contentScale = ContentScale.Fit,
-                        onError = { iconFailed = true },
-                        modifier = Modifier.matchParentSize().padding(start = 24.dp, end = 24.dp, top = 24.dp, bottom = 36.dp),
-                    )
-                } else {
-                    BoxWithConstraints(Modifier.matchParentSize(), contentAlignment = Alignment.Center) {
-                        TileArt(name = name, tileColorArgb = tileColorArgb, letterSize = tileArtSize(maxHeight.value, INITIAL_SIZE.value))
+            // The plugin's icon like an app icon, on its own colour, with the pill at the other end.
+            Row(
+                Modifier.fillMaxWidth().padding(start = 12.dp, top = 12.dp, end = 12.dp),
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Box(
+                    Modifier.size(APP_ICON_SIZE).clip(RoundedCornerShape(16.dp)).background(Color(tileColorArgb)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (cover) {
+                        // Fit, never Crop: a logo must show whole.
+                        AsyncImage(
+                            model = iconFile,
+                            contentDescription = null,
+                            contentScale = ContentScale.Fit,
+                            onError = { iconFailed = true },
+                            modifier = Modifier.fillMaxSize().padding(8.dp),
+                        )
+                    } else {
+                        TileArt(name = name, tileColorArgb = tileColorArgb, letterSize = INITIAL_SIZE.value)
                     }
                 }
-                Box(
-                    Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(0.3f)
-                        .background(Brush.verticalGradient(listOf(Color.Transparent, ArkivSurfaceHigh))),
-                )
                 if (pill != null) {
                     Text(
                         text = pill,
@@ -192,7 +201,8 @@ internal fun PluginCardSurface(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier
-                            .padding(start = 8.dp, top = 8.dp, end = 8.dp)
+                            .weight(1f, fill = false)
+                            .padding(start = 8.dp)
                             .clip(RoundedCornerShape(50))
                             .background(ArkivRed)
                             .padding(horizontal = 10.dp, vertical = 2.dp),

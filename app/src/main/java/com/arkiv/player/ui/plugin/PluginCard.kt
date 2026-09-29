@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -37,6 +38,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -59,14 +62,8 @@ import com.arkiv.player.ui.tv.catalogRowLabel
 /** Corner radius shared by the card and its tile. */
 private val CARD_CORNER = 12.dp
 
-/** Side of the box the plugin's icon is drawn in (and decoded for: Coil samples the file down to it). */
-private val ICON_SIZE = 72.dp
-
-/** Height of the placeholder initial, in dp (not sp: it must not grow with the font scale, see [CardTile]). */
-private val INITIAL_SIZE = 44.dp
-
-/** The art's space above the texts: a bit taller than 16:9, so the whole logo has room. */
-private const val TILE_ASPECT = 1.5f
+/** Side of the plugin's app-style icon at the top of a card. */
+private val APP_ICON_SIZE = 56.dp
 
 /** The tonal button's container: the brand red at low strength, so it reads as this card's action without shouting. */
 private val ACTION_CONTAINER = ArkivRed.copy(alpha = 0.30f)
@@ -178,43 +175,45 @@ fun PluginCard(
 internal fun PluginCardSurface(name: String, iconFile: File?, tileColorArgb: Long, pill: String?, body: @Composable () -> Unit) {
     var iconFailed by remember(iconFile) { mutableStateOf(false) }
     val cover = iconFile != null && !iconFailed
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(CARD_CORNER)).background(ArkivSurface)) {
-        // The art on the plugin's colour, with a soft glow behind it; its bottom edge fades into the panel the texts sit on.
-        Box(Modifier.fillMaxWidth().aspectRatio(TILE_ASPECT).background(Color(tileColorArgb))) {
-            Box(Modifier.matchParentSize().background(Brush.radialGradient(listOf(Color.White.copy(alpha = 0.22f), Color.Transparent))))
-            if (cover) {
-                // Fit, never Crop: a logo must show whole.
-                AsyncImage(
-                    model = iconFile,
-                    contentDescription = null,
-                    contentScale = ContentScale.Fit,
-                    onError = { iconFailed = true },
-                    modifier = Modifier.matchParentSize().padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 28.dp),
-                )
-            } else {
-                BoxWithConstraints(Modifier.matchParentSize(), contentAlignment = Alignment.Center) {
-                    // The size is in dp, converted to sp, so the letter does not grow with the font scale and run under the pill.
-                    val letterSize = with(LocalDensity.current) { tileArtSize(maxHeight.value, INITIAL_SIZE.value).dp.toSp() }
-                    if (letterSize.value > 0f) {
-                        // Decoration: the card's name is read right below, so a screen reader must not say the letter first.
-                        Text(
-                            text = cardInitial(name),
-                            style = MaterialTheme.typography.headlineLarge,
-                            fontSize = letterSize,
-                            lineHeight = letterSize,
-                            fontWeight = FontWeight.Black,
-                            color = Color(onTileColor(tileColorArgb)),
-                            modifier = Modifier.clearAndSetSemantics { },
-                        )
-                    }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(CARD_CORNER))
+            .background(ArkivSurface)
+            .background(Brush.verticalGradient(listOf(Color(tileColorArgb).copy(alpha = 0.35f), Color.Transparent))),
+    ) {
+        // The plugin's icon like an app icon, on its own colour, with the pill at the other end.
+        Row(
+            Modifier.fillMaxWidth().padding(start = 12.dp, top = 12.dp, end = 12.dp),
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Box(
+                Modifier.size(APP_ICON_SIZE).clip(RoundedCornerShape(14.dp)).background(Color(tileColorArgb)),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (cover) {
+                    // Fit, never Crop: a logo must show whole.
+                    AsyncImage(
+                        model = iconFile,
+                        contentDescription = null,
+                        contentScale = ContentScale.Fit,
+                        onError = { iconFailed = true },
+                        modifier = Modifier.fillMaxSize().padding(6.dp),
+                    )
+                } else {
+                    // Decoration: the card's name is read right below, so a screen reader must not say the letter first.
+                    Text(
+                        text = cardInitial(name),
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Black,
+                        color = Color(onTileColor(tileColorArgb)),
+                        modifier = Modifier.clearAndSetSemantics { },
+                    )
                 }
             }
-            Box(
-                Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(0.3f)
-                    .background(Brush.verticalGradient(listOf(Color.Transparent, ArkivSurface))),
-            )
             if (pill != null) {
-                // Solid, not the translucent MetaChip: it sits on art of any colour.
+                // Solid, not the translucent MetaChip: it sits on any colour.
                 Text(
                     text = pill,
                     style = MaterialTheme.typography.labelSmall,
@@ -223,7 +222,8 @@ internal fun PluginCardSurface(name: String, iconFile: File?, tileColorArgb: Lon
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier
-                        .padding(start = 6.dp, top = 6.dp, end = 6.dp)
+                        .weight(1f, fill = false)
+                        .padding(start = 6.dp)
                         .clip(RoundedCornerShape(50))
                         .background(ArkivRed)
                         .padding(horizontal = 8.dp, vertical = 2.dp),
