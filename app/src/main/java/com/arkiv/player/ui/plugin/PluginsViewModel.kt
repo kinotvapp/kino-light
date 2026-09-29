@@ -514,11 +514,15 @@ class PluginsViewModel(
         val input = _state.value.address.trim()
         if (input.isEmpty()) return
         busy(pluginId = null) {
-            val scrapers = nuvioPluginInstaller?.let { withContext(io) { it.previewRepo(input) } }
+            val preview = nuvioPluginInstaller?.let { withContext(io) { it.previewRepo(input) } }
             when {
-                scrapers != null && scrapers.isNotEmpty() ->
-                    _state.update { it.copy(nuvioPicker = NuvioPickerState(repoInput = input, scrapers = scrapers)) }
-                scrapers != null ->
+                preview != null && preview.scrapers.isNotEmpty() ->
+                    // preview.address, not the raw typed `input`: when the default branch wasn't
+                    // Nuvio-shaped and NuvioPluginInstaller fell back to `@main`/`@master`, this is
+                    // the address that actually worked -- pickNuvioScraper must re-resolve from THAT
+                    // one, not retry the same failing default branch.
+                    _state.update { it.copy(nuvioPicker = NuvioPickerState(repoInput = preview.address, scrapers = preview.scrapers)) }
+                preview != null ->
                     _state.update { it.copy(message = "Este repositorio de Nuvio no tiene scrapers instalables en Android") }
                 else -> _state.update { it.copy(consent = admin.preview(input)) }
             }

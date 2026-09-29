@@ -47,8 +47,9 @@ class NuvioPluginInstallerTest {
     }
 
     @Test fun `previewRepo lists installable scrapers for a Nuvio-format repo`() = runBlocking {
-        val scrapers = nuvio.previewRepo("owner/nuvio-repo")
-        assertEquals(listOf("fakesrc"), scrapers!!.map { it.id })
+        val preview = nuvio.previewRepo("owner/nuvio-repo")
+        assertEquals(listOf("fakesrc"), preview!!.scrapers.map { it.id })
+        assertEquals("owner/nuvio-repo", preview.address) // HEAD worked first try: no `@ref` suffix
     }
 
     @Test fun `previewRepo returns null for a repo whose manifest isn't Nuvio-shaped`() = runBlocking {
@@ -56,6 +57,61 @@ class NuvioPluginInstallerTest {
             "https://raw.githubusercontent.com/owner/other/HEAD/manifest.json" to """{"hello":"world"}""",
         )), tmdbApiKey = "k")
         assertNull(notNuvio.previewRepo("owner/other"))
+    }
+
+    // ---- default-branch fallback (spec: yoruix/nuvio-providers's default branch is `template`) ----
+
+    /** Placeholder shape a repo's default branch can serve instead of a real Nuvio manifest. */
+    private val placeholderManifest = """[{"disabled":true}]"""
+
+    @Test fun `previewRepo falls back to @main when the default branch parses but isn't Nuvio-shaped`() = runBlocking {
+        val n = NuvioPluginInstaller(installer, fetcher(mapOf(
+            "https://raw.githubusercontent.com/yoruix/nuvio-providers/HEAD/manifest.json" to placeholderManifest,
+            "https://raw.githubusercontent.com/yoruix/nuvio-providers/main/manifest.json" to manifestJson,
+            "https://raw.githubusercontent.com/yoruix/nuvio-providers/main/providers/fakesrc.js" to scraperJs,
+        )), tmdbApiKey = "k")
+        val preview = n.previewRepo("yoruix/nuvio-providers")
+        assertEquals("yoruix/nuvio-providers@main", preview!!.address)
+        assertEquals(listOf("fakesrc"), preview.scrapers.map { it.id })
+    }
+
+    @Test fun `previewRepo tries @master after @main also fails`() = runBlocking {
+        val n = NuvioPluginInstaller(installer, fetcher(mapOf(
+            "https://raw.githubusercontent.com/o/r/HEAD/manifest.json" to placeholderManifest,
+            // no .../main/manifest.json entry at all: 404s, same as @main not existing
+            "https://raw.githubusercontent.com/o/r/master/manifest.json" to manifestJson,
+        )), tmdbApiKey = "k")
+        val preview = n.previewRepo("o/r")
+        assertEquals("o/r@master", preview!!.address)
+    }
+
+    @Test fun `an explicit @ref is tried once and never falls back`() = runBlocking {
+        val n = NuvioPluginInstaller(installer, fetcher(mapOf(
+            "https://raw.githubusercontent.com/o/r/HEAD/manifest.json" to manifestJson, // a real Nuvio manifest, but never asked for
+            "https://raw.githubusercontent.com/o/r/main/manifest.json" to placeholderManifest,
+        )), tmdbApiKey = "k")
+        assertNull(n.previewRepo("o/r@main")) // must not fall back to HEAD (nor try @master)
+    }
+
+    @Test fun `previewRepo tries no fallback at all when the default branch has no manifest json`() = runBlocking {
+        val requested = mutableListOf<String>()
+        val n = NuvioPluginInstaller(installer, PluginFetcher { url, _ -> requested += url; throw FileNotFoundException(url) }, tmdbApiKey = "k")
+        assertNull(n.previewRepo("owner/native-plugin-repo")) // looks like a plain native Kino plugin address
+        assertEquals(listOf("https://raw.githubusercontent.com/owner/native-plugin-repo/HEAD/manifest.json"), requested)
+    }
+
+    @Test fun `previewScraper installs from the address that actually worked, and records it as the origin`() = runBlocking {
+        val n = NuvioPluginInstaller(installer, fetcher(mapOf(
+            "https://raw.githubusercontent.com/yoruix/nuvio-providers/HEAD/manifest.json" to placeholderManifest,
+            "https://raw.githubusercontent.com/yoruix/nuvio-providers/main/manifest.json" to manifestJson,
+            "https://raw.githubusercontent.com/yoruix/nuvio-providers/main/providers/fakesrc.js" to scraperJs,
+        )), tmdbApiKey = "k")
+        val repoPreview = n.previewRepo("yoruix/nuvio-providers")!!
+        // Mirrors PluginsViewModel.add()/pickNuvioScraper: the picker re-resolves from the address
+        // that actually worked, not the person's raw typed text.
+        val preview = n.previewScraper(repoPreview.address, "fakesrc")
+        val record = n.install(preview)
+        assertEquals("yoruix/nuvio-providers@main", record.nuvioRepo)
     }
 
     @Test fun `previewScraper converts, validates, and installs, and playback resolves`() = runBlocking {

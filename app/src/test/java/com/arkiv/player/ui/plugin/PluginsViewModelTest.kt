@@ -341,6 +341,30 @@ class PluginsViewModelTest {
         assertTrue(admin.previewed.isEmpty())
     }
 
+    /**
+     * `yoruix/nuvio-providers` (GitHub redirects the old name `tapframe/nuvio-providers` to it) has
+     * default branch `template`, whose `manifest.json` is a placeholder, not Nuvio-shaped -- see
+     * [NuvioPluginInstallerTest]'s own fallback tests for the installer-level behavior this exercises
+     * end to end: the picker opens off the address that actually worked (`@main`), and picking a
+     * scraper from it re-resolves from THAT address, not the person's raw, still-failing typed text.
+     */
+    @Test fun `typing an address whose default branch is not Nuvio-shaped still opens the picker via the @main fallback`() {
+        val admin = FakeAdmin()
+        val nuvio = nuvioInstaller(mapOf(
+            "https://raw.githubusercontent.com/yoruix/nuvio-providers/HEAD/manifest.json" to """[{"disabled":true}]""",
+            "https://raw.githubusercontent.com/yoruix/nuvio-providers/main/manifest.json" to nuvioManifestJson,
+            "https://raw.githubusercontent.com/yoruix/nuvio-providers/main/providers/fakesrc.js" to nuvioScraperJs,
+        ))
+        val vm = PluginsViewModel(admin, io = dispatcher, nuvioPluginInstaller = nuvio)
+        vm.onAddressChange("yoruix/nuvio-providers")
+        vm.add()
+        assertEquals(listOf("fakesrc"), vm.state.value.nuvioPicker?.scrapers?.map { it.id })
+        assertEquals("yoruix/nuvio-providers@main", vm.state.value.nuvioPicker?.repoInput)
+        vm.pickNuvioScraper("fakesrc")
+        assertNotNull(vm.state.value.consent)
+        assertTrue("fakesrc.example" in vm.state.value.consent!!.newHosts)
+    }
+
     @Test fun `a typed address that is not a Nuvio manifest falls back to the normal consent, even with a Nuvio installer wired in`() {
         val admin = FakeAdmin().apply { previewResult = { preview } }
         val nuvio = nuvioInstaller(emptyMap()) // no manifest.json at all: previewRepo answers null

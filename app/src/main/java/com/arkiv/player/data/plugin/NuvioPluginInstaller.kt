@@ -3,6 +3,9 @@ package com.arkiv.player.data.plugin
 import java.io.FileNotFoundException
 import java.io.IOException
 
+/** [NuvioPluginInstaller.previewRepo]'s result: [address] is the one that actually worked -- with an explicit `@ref` when a fallback (see [NuvioPluginInstaller.resolveNuvioManifest]) was needed -- so [PluginsViewModel.pickNuvioScraper] hands it, not the person's raw typed text, to [NuvioPluginInstaller.previewScraper]. */
+data class NuvioRepoPreview(val address: String, val scrapers: List<NuvioScraperEntry>)
+
 /**
  * The Nuvio-format twin of [PluginInstaller]: detects a Nuvio provider repo, lists its scrapers,
  * converts a chosen one into a real Kino plugin via [NuvioPluginConverter], and installs/updates it
@@ -14,28 +17,58 @@ class NuvioPluginInstaller(
     private val fetcher: PluginFetcher,
     private val tmdbApiKey: String,
 ) {
-    /** Null when [input] doesn't parse as a plugin address, or its manifest isn't Nuvio-shaped: the caller falls back to [PluginInstaller.preview]. */
-    suspend fun previewRepo(input: String): List<NuvioScraperEntry>? {
+    /** Null when [input] doesn't parse as a plugin address, or no candidate branch has a Nuvio-shaped manifest: the caller falls back to [PluginInstaller.preview]. */
+    suspend fun previewRepo(input: String): NuvioRepoPreview? {
         val address = PluginAddress.parse(input) ?: return null
-        val text = try {
-            fetcher.fetch(address.rawUrl(MANIFEST_FILE), MAX_MANIFEST_BYTES).toString(Charsets.UTF_8)
-        } catch (e: IOException) {
+        val (resolved, manifest) = try {
+            resolveNuvioManifest(address)
+        } catch (e: InstallException) {
             return null
         }
-        val manifest = NuvioManifestParser.parse(text) ?: return null
-        return NuvioManifestParser.installable(manifest)
+        return NuvioRepoPreview(resolved.canonical, NuvioManifestParser.installable(manifest))
     }
 
-    suspend fun previewScraper(input: String, scraperId: String): InstallPreview {
-        val address = PluginAddress.parse(input) ?: throw InstallException("Dirección de repositorio inválida")
-        val text = try {
-            fetcher.fetch(address.rawUrl(MANIFEST_FILE), MAX_MANIFEST_BYTES).toString(Charsets.UTF_8)
+    /**
+     * Fetches `manifest.json` at [typed] and parses it as Nuvio-shaped, returning it together with
+     * the [PluginAddress] it actually came from. [typed] with an explicit `@ref` (the person asked
+     * for that branch specifically, or this is a re-resolution of an address [previewRepo] already
+     * settled on) is tried exactly once, whatever happens.
+     *
+     * A plain `owner/repo` address (`ref == `[PluginAddress.HEAD]`) that parses as WRONG-SHAPED --
+     * `yoruix/nuvio-providers` (GitHub redirects the old name `tapframe/nuvio-providers` to it) has
+     * default branch `template`, where `manifest.json` is a placeholder array, not
+     * `{name, scrapers:[...]}` -- also tries `@main`, then `@master`, keeping the first one that
+     * parses. A manifest.json that doesn't exist AT ALL on the default branch never gets this retry:
+     * that 404 is what a plain native Kino plugin address (no Nuvio manifest, ever) looks like too,
+     * and trying `@main`/`@master` for every one of those would add two dead network round trips
+     * before [PluginsViewModel.add] falls through to [PluginInstaller]'s own native-plugin preview.
+     */
+    private suspend fun resolveNuvioManifest(typed: PluginAddress): Pair<PluginAddress, NuvioProviderManifest> {
+        val primaryText = try {
+            fetcher.fetch(typed.rawUrl(MANIFEST_FILE), MAX_MANIFEST_BYTES).toString(Charsets.UTF_8)
         } catch (e: FileNotFoundException) {
-            throw InstallException("No encontré manifest.json en ${address.canonical}")
+            throw InstallException("No encontré manifest.json en ${typed.canonical}")
         } catch (e: IOException) {
             throw InstallException(installReadFailureMessage(e))
         }
-        val manifest = NuvioManifestParser.parse(text) ?: throw InstallException("Este repositorio no tiene el formato de plugins de Nuvio")
+        NuvioManifestParser.parse(primaryText)?.let { return typed to it }
+        if (typed.ref != PluginAddress.HEAD) throw InstallException("Este repositorio no tiene el formato de plugins de Nuvio")
+        for (ref in FALLBACK_REFS) {
+            val candidate = typed.copy(ref = ref)
+            val text = try {
+                fetcher.fetch(candidate.rawUrl(MANIFEST_FILE), MAX_MANIFEST_BYTES).toString(Charsets.UTF_8)
+            } catch (e: IOException) {
+                continue
+            }
+            val manifest = NuvioManifestParser.parse(text) ?: continue
+            return candidate to manifest
+        }
+        throw InstallException("Este repositorio no tiene el formato de plugins de Nuvio")
+    }
+
+    suspend fun previewScraper(input: String, scraperId: String): InstallPreview {
+        val typed = PluginAddress.parse(input) ?: throw InstallException("Dirección de repositorio inválida")
+        val (address, manifest) = resolveNuvioManifest(typed)
         val scraper = manifest.scrapers.firstOrNull { it.id == scraperId } ?: throw InstallException("No encontré el scraper \"$scraperId\" en este repositorio")
 
         val scraperSource = try {
@@ -136,5 +169,8 @@ class NuvioPluginInstaller(
     companion object {
         const val MANIFEST_FILE = "manifest.json"
         const val MAX_MANIFEST_BYTES = 256 * 1024
+
+        /** Tried in order, only after a ref-less address's default branch parses as NOT Nuvio-shaped. */
+        private val FALLBACK_REFS = listOf("main", "master")
     }
 }
