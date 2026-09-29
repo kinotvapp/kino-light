@@ -635,6 +635,10 @@ class AppGraph(context: Context) {
         val calls = PluginCallTracker()
         val http = PluginHttp(
             pluginBaseHttp, id, hosts, BuildConfig.VERSION_NAME, cookies = cookies,
+            // The person's DNS setting (DoH by default), like the player's plugin client and every
+            // other client of the app. With the system resolver kino.fetch lookups took 5 s on the
+            // KALLEY R3 (measured: dns-ok@5032ms, @5087ms) and up to the whole 15 s request limit.
+            delegateDns = com.arkiv.player.data.net.DohDns,
             reactiveApproval = PluginHttp.ReactiveApproval(
                 pluginName = plugin.manifest.name,
                 requester = hostApprovalCenter,
