@@ -163,9 +163,12 @@ object NuvioPluginConverter {
      * - `episodes` lists every season but 0 (specials, which Nuvio scrapers don't carry) from TMDB's
      *   `/tv/<id>` and `/tv/<id>/season/<n>`, fetched together, dropping episodes that haven't aired.
      * - `resolve` calls the wrapped `getStreams` exactly as Nuvio does: the id as a string, `"tv"`
-     *   with the season and episode, or `"movie"` with `null, null` (never `0, 0`). It picks the first
-     *   result that isn't torrent-only (Kino's sandbox has no BitTorrent client, spec §6.2), and logs
-     *   how many streams came back and how many were dropped (torrents, no url). With nothing
+     *   with the season and episode, or `"movie"` with `null, null` (never `0, 0`). Of the results that
+     *   aren't torrent-only (Kino's sandbox has no BitTorrent client, spec §6.2) it picks by quality,
+     *   read from `quality`/`title`/`name` whatever their type: 1080p, then 720p, then anything else,
+     *   and 2160p/4K last (most TVs and phones here can't decode 4K HEVC); ties keep the scraper's
+     *   order. It logs how many streams came back, how many were dropped (torrents, no url) and
+     *   which quality it played. With nothing
      *   playable it says why, for [PluginFailureText]: `unavailable` [ONLY_TORRENTS], `unavailable`
      *   [SCRAPER_ERROR_PREFIX] + the scraper's first `console.error`, or `not_found` [NO_STREAMS].
      *
@@ -198,6 +201,34 @@ object NuvioPluginConverter {
         }
 
         function __nuvioRef(ref) { return (typeof ref === "string") ? JSON.parse(ref) : ref; }
+
+        // A stream's quality label from Nuvio's quality/title/name, whatever a scraper put there.
+        function __nuvioQualityText(s) {
+          return [s.quality, s.title, s.name].map(function (v) {
+            try { return (v === null || v === undefined) ? "" : String(v); } catch (e) { return ""; }
+          }).join(" ").toLowerCase();
+        }
+
+        // 0 = 1080p, 1 = 720p, 2 = anything else, 3 = 2160p/4K (most devices here can't decode 4K HEVC).
+        function __nuvioQualityRank(s) {
+          var t = __nuvioQualityText(s);
+          if (/(^|[^a-z0-9])(2160p?|4k|uhd)([^a-z0-9]|$)/.test(t)) return 3;
+          if (/(^|[^a-z0-9])(1080p?|fhd|full ?hd)([^a-z0-9]|$)/.test(t)) return 0;
+          if (/(^|[^a-z0-9])720p?([^a-z0-9]|$)/.test(t)) return 1;
+          return 2;
+        }
+
+        var __NUVIO_QUALITY_NAMES = ["1080p", "720p", "other", "4K"];
+
+        // The best of the playable streams by that rank; ties keep the scraper's own order.
+        function __nuvioPick(playable) {
+          var best = playable[0], bestRank = __nuvioQualityRank(best);
+          for (var i = 1; i < playable.length; i++) {
+            var r = __nuvioQualityRank(playable[i]);
+            if (r < bestRank) { best = playable[i]; bestRank = r; }
+          }
+          return { stream: best, rank: bestRank };
+        }
 
         function __nuvioTmdbLanguage() {
           var lang = String(kino.lang || "");
@@ -297,7 +328,9 @@ object NuvioPluginConverter {
           var torrents = streams.filter(function (s) { return s && s.infoHash; }).length;
           var noUrl = streams.filter(function (s) { return s && !s.infoHash && !s.url; }).length;
           var playable = streams.filter(function (s) { return s && s.url && !s.infoHash; });
-          var picked = playable.length ? String(playable[0].url).replace(/^[a-z]+:\/\/([^\/?#]*).*$/i, "$1") : "nothing";
+          var choice = playable.length ? __nuvioPick(playable) : null;
+          var picked = choice ? String(choice.stream.url).replace(/^[a-z]+:\/\/([^\/?#]*).*$/i, "$1") +
+            " (" + __NUVIO_QUALITY_NAMES[choice.rank] + " of " + playable.length + " playable)" : "nothing";
           console.log("[Kino] getStreams returned " + streams.length + " streams; dropped " + torrents +
             (torrents === 1 ? " torrent, " : " torrents, ") + noUrl + " without url; playing " + picked);
           if (!playable.length) {
@@ -306,7 +339,7 @@ object NuvioPluginConverter {
             if (said) throw kino.error("unavailable", "$SCRAPER_ERROR_PREFIX" + said);
             throw kino.error("not_found", "$NO_STREAMS");
           }
-          var best = playable[0];
+          var best = choice.stream;
           return { url: best.url, headers: best.headers, mime: best.mime };
         }
     """.trimIndent()
