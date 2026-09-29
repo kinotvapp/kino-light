@@ -808,6 +808,19 @@ test("checkOutput reads inline streams and playlist declarations as the app does
   assert.deepEqual(stringy.value.playlists.map((p) => [p.resolve, p.epgUrl]), [[false, ""]]);
 });
 
+test("checkOutput reads a playlist's streamHeaders as the app does: filtered like a Stream's headers, apart from headers", () => {
+  const m = { ...JSON.parse(manifest({ apiVersion: 3, hosts: ["cdn.example.com"] })), capabilities: ["home", "resolve", "channels"] };
+  const withHeaders = checkOutput("liveCategories", { playlist: {
+    url: "https://cdn.example.com/l.m3u", format: "m3u", headers: { Authorization: "Bearer T" },
+    streamHeaders: { "User-Agent": "VLC/3.0.20", Referer: "https://cdn.example.com/", Host: "evil", "X-Bad": "a\nb" },
+  } }, m);
+  const playlist = withHeaders.value.playlists[0];
+  assert.deepEqual(playlist.headers, { Authorization: "Bearer T" });
+  assert.deepEqual(playlist.streamHeaders, { "User-Agent": "VLC/3.0.20", Referer: "https://cdn.example.com/" });
+  const without = checkOutput("liveCategories", { playlist: { url: "https://cdn.example.com/l.m3u", format: "m3u" } }, m);
+  assert.deepEqual(without.value.playlists[0].streamHeaders, {});
+});
+
 test("run.mjs builds the live arguments the app sends", async () => {
   const seen = [];
   const plugin = {

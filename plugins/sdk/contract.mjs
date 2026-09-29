@@ -488,7 +488,7 @@ function playlistOf(p, { manifest, servers }, drop) {
   const refreshHours = h >= live().minRefreshHours && h <= live().maxRefreshHours ? h : live().defaultRefreshHours;
   const hideGroups = [...new Set((Array.isArray(p.hideGroups) ? p.hideGroups : []).slice(0, live().maxHideGroups)
     .map((g) => (typeof g === "string" ? g.trim().toLowerCase().slice(0, 100) : "")).filter(Boolean))];
-  return { url, headers: headersOf(p.headers), epgUrl, refreshHours, hideGroups, resolve: p.resolve === true };
+  return { url, headers: headersOf(p.headers), epgUrl, refreshHours, hideGroups, resolve: p.resolve === true, streamHeaders: headersOf(p.streamHeaders) };
 }
 
 /** liveCategories(), read as PluginOutput.liveCategories: `{ categories, playlists }`. */

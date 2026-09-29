@@ -17,6 +17,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -342,5 +343,44 @@ class PluginLivePlaylistTest {
         assertEquals(all.map { it.liveCode }.toSet(), p.knownChannels().map { it.liveCode }.toSet())
         assertTrue(all.isNotEmpty())
         assertEquals(listOf("liveCategories"), calls)
+    }
+
+    private val agentList = """
+        #EXTM3U
+        #EXTINF:-1 tvg-id="c1" group-title="G",Uno
+        https://live.example.com/c1/index.m3u8
+        #EXTINF:-1 tvg-id="c2" group-title="G",Dos
+        #EXTVLCOPT:http-user-agent=EntryAgent/9
+        https://live.example.com/c2/index.m3u8
+    """.trimIndent()
+
+    private fun agentProvider(downloadHeaders: MutableList<Map<String, String>>): PluginLiveProvider {
+        val declared = PluginCaller { _, _, _, _ ->
+            """{"playlist":{"url":"https://lists.example.com/agents.m3u","format":"m3u",
+                "headers":{"Authorization":"Bearer T"},
+                "streamHeaders":{"User-Agent":"VLC/3.0.20","Referer":"https://lists.example.com/"}}}"""
+        }
+        val agentFetcher = LivePlaylistFetcher { _, headers, _ -> downloadHeaders += headers; agentList.toByteArray() }
+        return PluginLiveProvider(plugin, declared, fetcher = agentFetcher, cacheDir = tmp.newFolder(), clock = { now }, log = {})
+    }
+
+    @Test fun `a list's streamHeaders go with every channel it plays, never with its download`() = runBlocking {
+        val downloadHeaders = mutableListOf<Map<String, String>>()
+        val p = agentProvider(downloadHeaders)
+        val channels = p.categories(false).flatMap { p.channels(it.id) }
+        val uno = channels.first { it.name == "Uno" }
+        val headers = (p.open(uno) as LiveOpening.Plugin).channel.direct!!.headers
+        assertEquals("VLC/3.0.20", headers["User-Agent"])
+        assertEquals("https://lists.example.com/", headers["Referer"])
+        assertFalse("the list's own credentials never reach a stream host", headers.containsKey("Authorization"))
+        assertEquals(mapOf("Authorization" to "Bearer T"), downloadHeaders.first())
+    }
+
+    @Test fun `a channel that names its own agent in the list keeps it, the rest of the list's headers stay`() = runBlocking {
+        val p = agentProvider(mutableListOf())
+        val dos = p.categories(false).flatMap { p.channels(it.id) }.first { it.name == "Dos" }
+        val headers = (p.open(dos) as LiveOpening.Plugin).channel.direct!!.headers
+        assertEquals("EntryAgent/9", headers.entries.single { it.key.equals("User-Agent", ignoreCase = true) }.value)
+        assertEquals("https://lists.example.com/", headers["Referer"])
     }
 }

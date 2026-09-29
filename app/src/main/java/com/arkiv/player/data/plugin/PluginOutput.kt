@@ -119,6 +119,12 @@ data class PluginPlaylist(
     val refreshHours: Int = PluginLiveContract.DEFAULT_REFRESH_HOURS,
     val hideGroups: Set<String> = emptySet(),
     val resolve: Boolean = false,
+    /**
+     * Headers the PLAYER sends for every channel of this list (a `User-Agent` some channels insist on, a `Referer`),
+     * as a Stream's `headers` do. Apart from [headers] on purpose: those carry the list's own credentials and go only
+     * to the list's host, never to the many hosts the channels are on. A header an M3U entry names itself wins.
+     */
+    val streamHeaders: Map<String, String> = emptyMap(),
 )
 
 /** What a `liveCategories()` answer holds: the plugin's own sections and the playlists it declares. */
@@ -394,7 +400,10 @@ object PluginOutput {
             (0 until minOf(a.length(), PluginLiveContract.MAX_HIDE_GROUPS))
                 .mapNotNull { (a.opt(it) as? String)?.trim()?.lowercase()?.take(100)?.takeIf(String::isNotEmpty) }.toSet()
         } ?: emptySet()
-        return PluginPlaylist(url, headersOf(p.optJSONObject("headers")), epg, hours, hide, p.opt("resolve") == true)
+        return PluginPlaylist(
+            url, headersOf(p.optJSONObject("headers")), epg, hours, hide, p.opt("resolve") == true,
+            streamHeaders = headersOf(p.optJSONObject("streamHeaders")),
+        )
     }
 
     /**

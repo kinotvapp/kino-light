@@ -178,6 +178,13 @@ interface KinoPlaylist {
     url: string;
     format: "m3u";
     headers?: Record<string, string>;
+    /**
+     * Headers the PLAYER sends for every channel of the list: a `User-Agent` some channels only answer to, a
+     * `Referer`. Filtered like a Stream's `headers` (at most 20). Kept apart from `headers` on purpose: those carry
+     * the list's own credentials and go only to the list's host, never to the hosts the channels are on. A header an
+     * M3U entry names itself (`#EXTVLCOPT:http-user-agent=...`) wins. Kino versions before this field ignore it.
+     */
+    streamHeaders?: Record<string, string>;
     epg?: { url: string; format: "xmltv" };
     refreshHours?: number;
     hideGroups?: string[];

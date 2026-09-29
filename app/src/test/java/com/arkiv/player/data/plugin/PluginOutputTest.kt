@@ -695,4 +695,23 @@ class PluginOutputTest {
         val lan = assertThrows(PluginContractException::class.java) { PluginOutput.stream("""{"url":"http://10.0.0.2/1.m3u8"}""", any) }
         assertEquals("El video apunta a 10.0.0.2, una dirección local", lan.message)
     }
+
+    @Test fun `a playlist can carry streamHeaders for the player, apart from the headers of its download`() {
+        val hosts = EffectiveHosts(listOf("lists.example.com"))
+        val json = """{"playlist":{"url":"https://lists.example.com/a.m3u","format":"m3u",
+            "headers":{"Authorization":"Bearer T"},
+            "streamHeaders":{"User-Agent":"VLC/3.0.20 LibVLC/3.0.20","Referer":"https://lists.example.com/","Host":"evil","X-Long":"${"x".repeat(5000)}"}}}"""
+        val playlist = PluginOutput.liveCategories(json, hosts).playlists.single()
+        assertEquals(mapOf("Authorization" to "Bearer T"), playlist.headers)
+        assertEquals(
+            mapOf("User-Agent" to "VLC/3.0.20 LibVLC/3.0.20", "Referer" to "https://lists.example.com/"),
+            playlist.streamHeaders,
+        )
+    }
+
+    @Test fun `a playlist without streamHeaders has none`() {
+        val hosts = EffectiveHosts(listOf("lists.example.com"))
+        val playlist = PluginOutput.liveCategories("""{"playlist":{"url":"https://lists.example.com/a.m3u","format":"m3u"}}""", hosts).playlists.single()
+        assertTrue(playlist.streamHeaders.isEmpty())
+    }
 }

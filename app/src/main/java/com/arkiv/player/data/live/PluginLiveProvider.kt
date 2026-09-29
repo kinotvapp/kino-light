@@ -581,7 +581,13 @@ class PluginLiveProvider(
         if (source.playlist.resolve) {
             return opening(channel, known.copy(ref = PluginRef(pluginId, channel.code, PluginRef.LIVE, entry.url).encode()), null)
         }
-        val stream = PluginStream(url = entry.url, headers = PluginOutput.headersOf(JSONObject(entry.headers as Map<*, *>)))
+        val entryHeaders = PluginOutput.headersOf(JSONObject(entry.headers as Map<*, *>))
+        // The list's streamHeaders (a User-Agent, a Referer) under the entry's own: a header the entry names wins,
+        // whatever its spelling ("user-agent" replaces "User-Agent").
+        val headers = LinkedHashMap<String, String>()
+        source.playlist.streamHeaders.forEach { (k, v) -> if (entryHeaders.keys.none { it.equals(k, ignoreCase = true) }) headers[k] = v }
+        headers.putAll(entryHeaders)
+        val stream = PluginStream(url = entry.url, headers = headers)
         return opening(channel, known, PluginContentSource.livePlayable(stream))
     }
 
