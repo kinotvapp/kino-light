@@ -403,6 +403,32 @@ class PluginsViewModelTest {
         assertEquals(listOf("fakesrc.example"), consent.manifest.hosts)
     }
 
+    @Test fun `the source picker's Instalar on a damaged Nuvio-origin plugin re-converts its scraper instead of the generic preview`() {
+        val admin = FakeAdmin()
+        val nuvio = nuvioInstaller(mapOf(
+            "https://raw.githubusercontent.com/owner/nuvio-repo/HEAD/manifest.json" to nuvioManifestJson,
+            "https://raw.githubusercontent.com/owner/nuvio-repo/HEAD/providers/fakesrc.js" to nuvioScraperJs,
+        ))
+        // Built exactly as the picker's own view model is (phone and TV share it), not a hand-wired one.
+        val vm = newSourcePickerViewModel(admin, FakeCatalog(), NoCatalogArt, NoDiscovery, nuvio, io = dispatcher)
+        val damaged = InstalledPlugin(
+            manifest.copy(id = "nuvio-fakesrc-abc123"),
+            InstalledRecord("owner/nuvio-repo", "1.0.0", "x", listOf("fakesrc.example"), 0L, damaged = true,
+                nuvioRepo = "owner/nuvio-repo", nuvioScraperId = "fakesrc"),
+            null,
+        )
+        // The picker's "Tus plugins" row for it, and the very action its "Instalar" button runs.
+        val row = pickerInstalledRows(listOf(damaged), shown = emptyList()).single()
+        assertEquals(CatalogAction.INSTALL, catalogActionOf(row))
+        runCatalogAction(vm, row)
+        assertTrue(admin.previewed.isEmpty())
+        assertNull(vm.state.value.message)
+        val consent = vm.state.value.consent
+        assertNotNull(consent)
+        assertEquals("fakesrc", consent!!.nuvioOrigin?.scraperId)
+        assertEquals(listOf("fakesrc.example"), consent.manifest.hosts)
+    }
+
     @Test fun `reinstalling a normal plugin still goes through the generic preview`() {
         val admin = FakeAdmin().apply { previewResult = { preview } }
         val vm = PluginsViewModel(admin, io = dispatcher, nuvioPluginInstaller = nuvioInstaller(emptyMap()))

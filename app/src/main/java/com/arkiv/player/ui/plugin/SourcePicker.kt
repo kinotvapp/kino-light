@@ -23,8 +23,15 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.arkiv.player.data.onboarding.Onboarding
 import com.arkiv.player.data.plugin.InstalledPlugin
+import com.arkiv.player.data.plugin.NuvioPluginInstaller
+import com.arkiv.player.data.plugin.PluginAdmin
 import com.arkiv.player.data.plugin.catalog.CatalogArt
+import com.arkiv.player.data.plugin.catalog.CatalogArtProvider
 import com.arkiv.player.data.plugin.catalog.CatalogEntry
+import com.arkiv.player.data.plugin.catalog.CatalogProvider
+import com.arkiv.player.data.plugin.discovery.PluginDiscoveryProvider
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import com.arkiv.player.ui.theme.ArkivBlack
 import com.arkiv.player.ui.theme.ArkivRed
 import com.arkiv.player.ui.rememberGraph
@@ -174,6 +181,29 @@ internal fun SourceDecisionCover() {
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
 }
 
+/**
+ * The picker's view model as [sourcePickerViewModel] builds it. [nuvioPluginInstaller] is required, not
+ * optional: the picker's "Tus plugins" rows offer "Instalar" on a damaged plugin ([pickerInstalledRows]),
+ * and a Nuvio-converted one can only be reinstalled by re-converting its scraper
+ * ([PluginsViewModel.reinstall]). Without it the person, stuck in a mandatory picker, would be told to go
+ * to Ajustes ▸ Plugins, which they cannot reach from here.
+ */
+internal fun newSourcePickerViewModel(
+    admin: PluginAdmin,
+    catalogProvider: CatalogProvider,
+    artProvider: CatalogArtProvider,
+    discovery: PluginDiscoveryProvider,
+    nuvioPluginInstaller: NuvioPluginInstaller,
+    io: CoroutineDispatcher = Dispatchers.IO,
+): PluginsViewModel = PluginsViewModel(
+    admin,
+    io = io,
+    catalogProvider = catalogProvider,
+    artProvider = artProvider,
+    discovery = discovery,
+    nuvioPluginInstaller = nuvioPluginInstaller,
+)
+
 /** The picker's own [PluginsViewModel], scoped to its route: catalog, art and community discovery. */
 @Composable
 internal fun sourcePickerViewModel(): PluginsViewModel {
@@ -182,7 +212,7 @@ internal fun sourcePickerViewModel(): PluginsViewModel {
         key = "source-picker",
         factory = viewModelFactory {
             initializer {
-                PluginsViewModel(graph.pluginAdmin, catalogProvider = graph.pluginCatalog, artProvider = graph.catalogArt, discovery = graph.pluginDiscovery)
+                newSourcePickerViewModel(graph.pluginAdmin, graph.pluginCatalog, graph.catalogArt, graph.pluginDiscovery, graph.nuvioPluginInstaller)
             }
         },
     )
