@@ -7,7 +7,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.CookieJar
 import okhttp3.Dns
 import okhttp3.FormBody
@@ -120,6 +119,11 @@ object PluginHostGate {
         if (hosts.userHostFor(url) != null) return false
         if (hosts.anyPublicLiveHost) return false
         if (HostRules.isLocalAddress(url.host)) return false
+        // Only a host a manifest could itself have declared: approving one is adding it to
+        // `hosts` verbatim, so a shape HostRules refuses there (a trailing dot, an underscore, a
+        // single label, a `*`) would be persisted as a pattern that never matches again -- asked
+        // about, approved, and then still refused and asked about again on every retry.
+        if (!HostRules.isValidPattern(url.host) || url.host.startsWith("*.")) return false
         return !HostRules.matches(url.host, hosts.declared)
     }
 }
@@ -185,20 +189,41 @@ class PluginDns(
  * With [reactiveApproval] set, a host that [PluginHostGate.isPromptableMiss] calls a genuine gap
  * (not a hard refusal) is asked about in the moment instead of failing outright; see
  * [ReactiveApproval] and [ensureHostAllowed]. Null (every existing caller) keeps today's behavior.
+ * An approved host is written into [liveHosts] -- the ONE host set this runtime's cookie jar and
+ * `kino.cookies.get` read too (see [LiveHosts]) -- so the rest of the same call sees it everywhere,
+ * not only in the next `kino.fetch`.
  *
  * Runs on [Dispatchers.IO]; the cookie jar is written there too.
  */
 class PluginHttp(
     base: OkHttpClient,
     private val pluginId: String,
-    @Volatile private var hosts: EffectiveHosts,
+    /** This runtime's shared host set; [PluginCookies] gets the SAME instance in `AppGraph`. */
+    val liveHosts: LiveHosts,
     appVersion: String,
     private val cookies: PluginCookies? = null,
     private val allowInsecureLocalhost: Boolean = false,
     /** MockWebServer tests only, as in [PluginStreamHttp.client]: where a declared name resolves. Production keeps the system's. */
     delegateDns: Dns = Dns.SYSTEM,
     private val reactiveApproval: ReactiveApproval? = null,
+    private val log: (String) -> Unit = { android.util.Log.w("KinoPlugin", it) },
 ) {
+    /** Over a fixed host set of its own: tests, and any caller that shares it with nothing else. */
+    constructor(
+        base: OkHttpClient,
+        pluginId: String,
+        hosts: EffectiveHosts,
+        appVersion: String,
+        cookies: PluginCookies? = null,
+        allowInsecureLocalhost: Boolean = false,
+        delegateDns: Dns = Dns.SYSTEM,
+        reactiveApproval: ReactiveApproval? = null,
+        log: (String) -> Unit = { android.util.Log.w("KinoPlugin", it) },
+    ) : this(base, pluginId, LiveHosts(hosts), appVersion, cookies, allowInsecureLocalhost, delegateDns, reactiveApproval, log)
+
+    /** What this plugin may reach right now: declared + typed servers + anything approved reactively since the runtime opened. */
+    val hosts: EffectiveHosts get() = liveHosts.value
+
     /** A request body as the prelude sends it; see [PluginHttp.Request.body]. */
     sealed interface Body {
         data class Text(val text: String) : Body
@@ -254,8 +279,9 @@ class PluginHttp(
      * host share a single prompt; see [askOnce].
      */
     private val pendingApprovals = ConcurrentHashMap<String, CompletableDeferred<Boolean?>>()
-    /** Guards [askOnce]'s winner-only mutation of [hosts] and its calls to [ReactiveApproval]'s
-     *  callbacks: a plain JVM monitor, never held across a suspension point. */
+    /** Guards [askOnce]'s winner-only mutation of [liveHosts] and its calls to [ReactiveApproval]'s
+     *  callbacks: a plain JVM monitor, never held across a suspension point. [liveHosts] has no
+     *  other writer, so its readers (the cookie jar, `kino.cookies.get`) need no lock of their own. */
     private val hostsLock = Any()
     private val client: OkHttpClient = base.newBuilder()
         .followRedirects(false)
@@ -333,6 +359,8 @@ class PluginHttp(
                 throw e
             }
             when (askOnce(ra, url.host)) {
+                // Still refused only when the cap filled up while the person was deciding: askOnce
+                // then logged why, and this rethrows the original host_not_allowed.
                 true -> checkOnce(from, url)
                 false -> throw e
                 null -> throw PluginFetchException("timeout", "no hubo respuesta a tiempo para conectarse a ${url.host}")
@@ -353,6 +381,10 @@ class PluginHttp(
      *   Every other concurrent caller only awaits that winner's [CompletableDeferred]; with N concurrent
      *   misses on the same host, [EffectiveHosts.declared] gains the host once, not N times, and the
      *   registry callback fires once, not N times.
+     * - How long to wait is [HostApprovalRequester]'s call, not this class's: [HostApprovalCenter]
+     *   starts its [HostApprovalCenter.TIMEOUT_MS] clock only once the dialog is actually on screen,
+     *   so a request queued behind another plugin's dialog doesn't spend its own window waiting in
+     *   line. Its `null` ("no answer in time") surfaces as a `timeout` [PluginFetchException].
      * - [hostsLock] also makes the 20-host cap check-and-add atomic against a DIFFERENT host being
      *   approved by another winner at the same moment: two winners racing at 19 declared hosts can no
      *   longer both add their host and land at 21.
@@ -383,12 +415,19 @@ class PluginHttp(
                 }
             }
             try {
-                val answer = withTimeoutOrNull(REACTIVE_APPROVAL_TIMEOUT_MS) { ra.requester.request(pluginId, ra.pluginName, host) }
+                val answer = ra.requester.request(pluginId, ra.pluginName, host)
                 synchronized(hostsLock) {
                     when (answer) {
-                        true -> if (hosts.declared.size < ManifestParser.MAX_HOSTS) {
-                            hosts = hosts.copy(declared = hosts.declared + host)
-                            ra.onApproved(host)
+                        true -> {
+                            val current = liveHosts.value
+                            if (current.declared.size < ManifestParser.MAX_HOSTS) {
+                                liveHosts.value = current.copy(declared = current.declared + host)
+                                ra.onApproved(host)
+                            } else {
+                                // Checked before asking too (ensureHostAllowed); reachable only when a
+                                // DIFFERENT host's approval filled the last slot while this prompt was up.
+                                log("[$pluginId] host $host approved but not added: already at the ${ManifestParser.MAX_HOSTS}-host limit")
+                            }
                         }
                         false -> {
                             ra.rejectedHosts = ra.rejectedHosts + host
@@ -457,8 +496,6 @@ class PluginHttp(
         const val MAX_BODY_BYTES = 5 * 1024 * 1024
         const val MAX_REQUESTS_PER_CALL = 60
         const val MAX_REDIRECTS = 10
-        /** How long a `kino.fetch` waits for the person to answer a reactive host-approval prompt before failing as a timeout. See this plan's "Deviation from the spec" note for why this isn't a pause of the call's own clock. */
-        const val REACTIVE_APPROVAL_TIMEOUT_MS = 12_000L
         val METHODS = listOf("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE")
         val ERROR_CODES = listOf("host_not_allowed", "timeout", "network", "too_large", "invalid_request")
         /** `contract.json` `fetch.bodyKinds`; the prelude sends one of these in every request's `body.kind`. */

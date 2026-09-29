@@ -89,7 +89,6 @@ class XuperHomeParityTest {
         PluginStorage(File(tmp.newFolder(), "storage.json")),
         PluginConfig.EMPTY,
         null,
-        EffectiveHosts(emptyList()),
         lazyOf(bridge(homeCatalog)),
     )
 
@@ -209,7 +208,6 @@ class XuperHomeParityTest {
             PluginStorage(File(tmp.newFolder(), "storage.json")),
             PluginConfig.EMPTY,
             null,
-            EffectiveHosts(emptyList()),
             lazy<MagisPluginBridge> { throw IllegalStateException("boom de prueba") },
         )
         val envelope = JSONObject(host.xuperHome())

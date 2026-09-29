@@ -99,8 +99,17 @@ class PluginLiveProvider(
      * that is gone. A failure here is logged, never a failed listing.
      */
     private val syncCache: suspend (rows: List<LiveChannelCacheEntity>) -> Unit = {},
+    /**
+     * The plugin's strict hosts NOW, read each time an answer is checked: a host approved
+     * reactively during `liveCategories`/`liveChannels` must count for the URLs that call just
+     * returned. AppGraph reads the registry; by default, [plugin]'s own snapshot. (Playlist and EPG
+     * downloads, and the entries they list, keep this instance's snapshot: the app fetches those,
+     * not the plugin, so no prompt is ever raised for them.)
+     */
+    private val currentHosts: () -> com.arkiv.player.data.plugin.EffectiveHosts = { plugin.hosts },
 ) : LiveChannelProvider {
     private val pluginId = plugin.id
+    /** For playlist entries (app-fetched, never behind a prompt): the snapshot, not re-read per entry. */
     private val liveHosts = plugin.liveHosts
     private val allowDrm = "drm" in plugin.manifest.capabilities
     override val id: String = LiveChannelKeys.pluginProvider(pluginId)
@@ -304,7 +313,7 @@ class PluginLiveProvider(
             lock.withLock { freshCatalog()?.let { return@shared it } }
             val out = PluginCalls.callOrThrow(caller, pluginId, name, "liveCategories", "null", PluginLiveContract.CATEGORIES_TIMEOUT_MS)
             // Strict hosts: a declared playlist and its guide are downloaded by the app, never under "any".
-            val catalog = PluginOutput.liveCategories(out, plugin.hosts) { log("[$pluginId] $it") }
+            val catalog = PluginOutput.liveCategories(out, currentHosts()) { log("[$pluginId] $it") }
             if (catalog.categories.isNotEmpty() || catalog.playlists.isNotEmpty()) {
                 lock.withLock { catalogCache = (clock() + LIST_TTL_MS) to catalog }
             }
@@ -352,7 +361,7 @@ class PluginLiveProvider(
         for (page in 1..PluginLiveContract.MAX_PAGES_PER_CATEGORY) {
             val arg = JSONObject().put("categoryId", categoryId).put("cursor", cursor ?: JSONObject.NULL).toString()
             val out = PluginCalls.callOrThrow(caller, pluginId, name, "liveChannels", arg, PluginLiveContract.CHANNELS_TIMEOUT_MS)
-            val p = PluginOutput.liveChannels(out, liveHosts, allowDrm) { log("[$pluginId] $it") }
+            val p = PluginOutput.liveChannels(out, currentHosts().copy(anyPublicLiveHost = plugin.record.liveStreamHostsAny), allowDrm) { log("[$pluginId] $it") }
             val fresh = p.items.filter { seenIds.add(it.id) }
             items += fresh
             val next = p.next ?: break

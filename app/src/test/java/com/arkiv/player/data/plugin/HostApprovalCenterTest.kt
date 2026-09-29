@@ -3,7 +3,9 @@ package com.arkiv.player.data.plugin
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlinx.coroutines.CancellationException
 
@@ -38,6 +40,59 @@ class HostApprovalCenterTest {
         assertEquals("b.example", req2.host)
         req2.respond(true)
         assertEquals(true, second.await())
+    }
+
+    @Test fun `an unanswered prompt times out as null and leaves the screen`() = runTest {
+        val center = HostApprovalCenter()
+        val result = async { center.request("plug1", "Uno", "a.example") }
+        var req = center.pending.value
+        while (req == null) { kotlinx.coroutines.yield(); req = center.pending.value }
+        kotlinx.coroutines.delay(HostApprovalCenter.TIMEOUT_MS + 1)
+        assertNull(result.await())
+        assertNull(center.pending.value)
+        // A late tap on the (already gone) dialog changes nothing.
+        req.respond(true)
+        assertNull(center.pending.value)
+    }
+
+    // The window starts when the dialog is SHOWN, not when the request started waiting in line:
+    // the second plugin waits 10 s behind the first dialog and still gets its whole own window.
+    @Test fun `a queued request's timeout starts only once it is shown`() = runTest {
+        val center = HostApprovalCenter()
+        val first = async { center.request("plug1", "Uno", "a.example") }
+        var req = center.pending.value
+        while (req == null) { kotlinx.coroutines.yield(); req = center.pending.value }
+        val second = async { center.request("plug2", "Dos", "b.example") }
+        kotlinx.coroutines.delay(10_000)
+        req.respond(true)
+        assertEquals(true, first.await())
+        var req2 = center.pending.value
+        while (req2 == null) { kotlinx.coroutines.yield(); req2 = center.pending.value }
+        // 10 s queued + 11 s shown: past 12 s since it started waiting, still inside its own window.
+        kotlinx.coroutines.delay(HostApprovalCenter.TIMEOUT_MS - 1_000)
+        assertEquals("b.example", center.pending.value?.host)
+        req2.respond(true)
+        assertEquals(true, second.await())
+    }
+
+    @Test fun `wasAsking covers a request queued, shown, or finished since the given moment`() = runTest {
+        var now = 0L
+        val center = HostApprovalCenter(clock = { now })
+        assertFalse(center.wasAsking("plug1", since = 0))
+        val first = async { center.request("plug1", "Uno", "a.example") }
+        var req = center.pending.value
+        while (req == null) { kotlinx.coroutines.yield(); req = center.pending.value }
+        val queued = async { center.request("plug2", "Dos", "b.example") }
+        kotlinx.coroutines.yield()
+        assertTrue(center.wasAsking("plug1", since = 0)) // on screen
+        assertTrue(center.wasAsking("plug2", since = 0)) // waiting in line
+        now = 50
+        req.respond(false)
+        first.await()
+        assertTrue(center.wasAsking("plug1", since = 10)) // answered after that call began
+        assertFalse(center.wasAsking("plug1", since = 60)) // a call that began after it ended
+        assertFalse(center.wasAsking("other", since = 0))
+        queued.cancel()
     }
 
     @Test fun `NoHostApprovalRequester always denies`() = runTest {

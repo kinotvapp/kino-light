@@ -7,7 +7,9 @@ import java.util.Base64
 
 /**
  * The production [PluginHost]: [PluginHttp] for the network, [PluginStorage] for `kino.storage`,
- * [config] for `kino.config`, [PluginCookies] for `kino.cookies`.
+ * [config] for `kino.config`, [PluginCookies] for `kino.cookies`. The hosts `kino.cookies.get`
+ * may read are [PluginHttp.hosts] -- one live set per runtime, not a parameter of its own that
+ * could drift from what `kino.fetch` allows.
  *
  * [PluginHttp]'s 60-request budget is reset with [PluginHttp.beginCall] once per *top-level* plugin
  * capability call (`search`/`home`/`browse`/`episodes`/`resolve`), not once per [fetch]: `fetch`
@@ -23,7 +25,6 @@ class DefaultPluginHost(
     private val storage: PluginStorage,
     private val config: PluginConfig = PluginConfig.EMPTY,
     private val cookies: PluginCookies? = null,
-    private val hosts: EffectiveHosts = EffectiveHosts(emptyList()),
     /** MockWebServer tests only, as in [PluginHttp]. */
     private val allowInsecureLocalhost: Boolean = false,
     private val logger: (String) -> Unit = { android.util.Log.i("KinoPlugin", it) },
@@ -96,7 +97,9 @@ class DefaultPluginHost(
 
     override fun cookieGet(url: String, name: String): String? {
         val u = url.toHttpUrlOrNull() ?: return null
-        if (runCatching { PluginHostGate.check(u, hosts, allowInsecureLocalhost) }.isFailure) return null
+        // [http]'s own, live host set (see [LiveHosts]): never a copy taken when the runtime opened,
+        // which would miss a host approved reactively earlier in this very call.
+        if (runCatching { PluginHostGate.check(u, http.hosts, allowInsecureLocalhost) }.isFailure) return null
         return cookies?.get(u, name)
     }
 

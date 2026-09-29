@@ -1,6 +1,7 @@
 package com.arkiv.player.data.plugin
 
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -63,6 +64,44 @@ class PluginRuntimePoolTest {
         fail = false; pool.call("p", "search", "{}", 10); fail = true
         repeat(2) { runCatching { pool.call("p", "search", "{}", 10) } }
         assertEquals(emptyList<String>(), flagged)
+    }
+
+    /**
+     * A call whose whole-call limit ran out while the person was still deciding on a host prompt
+     * says nothing about the plugin hanging: no strike. Neither does it wipe the earlier strikes --
+     * a plugin that really hangs around it still gets switched off.
+     */
+    @Test fun `a timeout while a host prompt is up is not a strike, and does not reset the count`() = runTest {
+        val center = HostApprovalCenter()
+        val flagged = mutableListOf<String>()
+        var prompting = false
+        val pool = PluginRuntimePool(
+            open = {
+                FakeRuntime {
+                    // The call's kino.fetch is asking the person when its clock runs out; the prompt
+                    // outlives the call (the JS job keeps going on the discarded runtime's thread).
+                    if (prompting) backgroundScope.launch { center.request("p", "P", "new.example") }
+                    kotlinx.coroutines.yield()
+                    throw PluginTimeoutException(it, 10)
+                }
+            },
+            onUnresponsive = { flagged += it },
+            scope = backgroundScope,
+            hostPromptSince = center::wasAsking,
+        )
+        suspend fun timeout(withPrompt: Boolean) {
+            prompting = withPrompt
+            assertTrue(runCatching { pool.call("p", "search", "{}", 10) }.exceptionOrNull() is PluginTimeoutException)
+            runCurrent()
+            center.pending.value?.respond(false)
+            runCurrent()
+        }
+        timeout(withPrompt = false)
+        timeout(withPrompt = false)
+        repeat(3) { timeout(withPrompt = true) }
+        assertEquals(emptyList<String>(), flagged)
+        timeout(withPrompt = false) // the third real strike
+        assertEquals(listOf("p"), flagged)
     }
 
     /** A 30-chapter queue against a slow server must not switch the plugin off for search and Home. */

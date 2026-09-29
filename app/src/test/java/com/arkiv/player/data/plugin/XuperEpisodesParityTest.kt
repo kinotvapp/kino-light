@@ -142,7 +142,6 @@ class XuperEpisodesParityTest {
         PluginStorage(File(tmp.newFolder(), "storage.json")),
         PluginConfig.EMPTY,
         null,
-        EffectiveHosts(emptyList()),
         lazyOf(bridge),
     )
 

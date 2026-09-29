@@ -229,7 +229,7 @@ class PluginFetchApiTest {
             val cookieFile = tmp.root.resolve("cookies.json")
             val cookies = PluginCookies(cookieFile, hosts)
             val http = PluginHttp(OkHttpClient(), "api", hosts, "9.9.9", cookies = cookies, allowInsecureLocalhost = true)
-            val host = DefaultPluginHost("api", http, PluginStorage(tmp.root.resolve("s.json")), cookies = cookies, hosts = hosts, allowInsecureLocalhost = true, logger = {})
+            val host = DefaultPluginHost("api", http, PluginStorage(tmp.root.resolve("s.json")), cookies = cookies, allowInsecureLocalhost = true, logger = {})
             val base = "http://localhost:${server.port}"
             val rt = open(
                 """
@@ -289,7 +289,7 @@ class PluginFetchApiTest {
             val cookies = PluginCookies(tmp.root.resolve("cookies-typed.json"), hosts)
             val client = OkHttpClient.Builder().socketFactory(LanToLoopback).build()
             val http = PluginHttp(client, "api", hosts, "9.9.9", cookies = cookies)
-            val host = DefaultPluginHost("api", http, PluginStorage(tmp.root.resolve("s-typed.json")), cookies = cookies, hosts = hosts, logger = {})
+            val host = DefaultPluginHost("api", http, PluginStorage(tmp.root.resolve("s-typed.json")), cookies = cookies, logger = {})
             val base = "http://10.0.2.2:${server.port}"
             val rt = open(
                 """
@@ -327,7 +327,7 @@ class PluginFetchApiTest {
         // DefaultPluginHost.request).
         val hosts = EffectiveHosts(listOf("x.example"))
         val http = PluginHttp(OkHttpClient(), "api", hosts, "9.9.9", allowInsecureLocalhost = true)
-        val host = DefaultPluginHost("api", http, PluginStorage(tmp.root.resolve("s2.json")), hosts = hosts, allowInsecureLocalhost = true, logger = {})
+        val host = DefaultPluginHost("api", http, PluginStorage(tmp.root.resolve("s2.json")), allowInsecureLocalhost = true, logger = {})
         val badRedirect = JSONObject().put("url", "https://x.example/").put("redirect", "teleport").toString()
         assertEquals("invalid_request", JSONObject(host.fetch(badRedirect)).getJSONObject("error").getString("code"))
         val badBody = JSONObject().put("url", "https://x.example/")

@@ -7,6 +7,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import okhttp3.Dns
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -346,6 +347,40 @@ class PluginHttpTest {
         assertFalse(PluginHostGate.isPromptableMiss("https://anything.example/x".toHttpUrl(), hosts.copy(anyPublicLiveHost = true)))
     }
 
+    @Test fun `isPromptableMiss refuses a host no manifest could declare`() {
+        val hosts = EffectiveHosts(listOf("archive.org"))
+        // Approving is adding the host verbatim to `hosts`: a shape HostRules.isValidPattern refuses
+        // would be persisted as a pattern that never matches again, and asked about forever.
+        listOf("https://intranet/x", "https://a_b.example.com/x", "https://example.com./x").forEach { u ->
+            assertFalse(u, PluginHostGate.isPromptableMiss(u.toHttpUrl(), hosts))
+        }
+        // A `*` is never a host: whatever HttpUrl makes of it, it must never be approved as a pattern.
+        listOf("https://*.example.com/x", "https://a*.example.com/x").forEach { u ->
+            u.toHttpUrlOrNull()?.let { assertFalse(u, PluginHostGate.isPromptableMiss(it, hosts)) }
+        }
+    }
+
+    @Test fun `isPromptableMiss against a wildcard declaration`() {
+        val hosts = EffectiveHosts(listOf("*.example.com"))
+        // Covered by the pattern: not a miss.
+        assertFalse(PluginHostGate.isPromptableMiss("https://cdn.example.com/x".toHttpUrl(), hosts))
+        assertFalse(PluginHostGate.isPromptableMiss("https://a.b.example.com/x".toHttpUrl(), hosts))
+        // `*.example.com` covers subdomains only, never the apex (HostRules): that IS a genuine miss.
+        assertTrue(PluginHostGate.isPromptableMiss("https://example.com/x".toHttpUrl(), hosts))
+        // A lookalike that merely ends in the same letters is a different host.
+        assertTrue(PluginHostGate.isPromptableMiss("https://badexample.com/x".toHttpUrl(), hosts))
+    }
+
+    @Test fun `a malformed undeclared host fails as host_not_allowed without asking`() = runTest {
+        var asked = false
+        val h = PluginHttp(
+            OkHttpClient(), "test", EffectiveHosts(listOf("archive.org")), "1.0", allowInsecureLocalhost = true,
+            reactiveApproval = PluginHttp.ReactiveApproval("P", HostApprovalRequester { _, _, _ -> asked = true; true }, {}, {}, emptySet()),
+        )
+        assertEquals("host_not_allowed", fetchError(h, PluginHttp.Request("https://a_b.example.com/x")).code)
+        assertFalse(asked)
+    }
+
     // `isPromptableMiss` requires https (Task 2), and this suite never sets up a real TLS listener
     // (no other test in this file does either — everything else uses `allowInsecureLocalhost` +
     // plain http on `localhost`). So this test proves the gate opened, not that bytes came back: an
@@ -394,13 +429,15 @@ class PluginHttpTest {
         assertFalse(asked)
     }
 
+    // The requester owns the waiting window (HostApprovalCenter times itself out once the dialog is
+    // on screen, see HostApprovalCenterTest); its null -- "no answer in time" -- is what's under test.
     @Test fun `an unanswered prompt fails as timeout, not host_not_allowed, and is never remembered`() = runTest {
         var rejected = false
         val h = PluginHttp(
             OkHttpClient(), "test", EffectiveHosts(listOf("archive.org")), "1.0", allowInsecureLocalhost = true,
             reactiveApproval = PluginHttp.ReactiveApproval(
                 "P",
-                HostApprovalRequester { _, _, _ -> kotlinx.coroutines.delay(PluginHttp.REACTIVE_APPROVAL_TIMEOUT_MS + 5_000); true },
+                HostApprovalRequester { _, _, _ -> null },
                 {}, { rejected = true }, emptySet(),
             ),
         )
@@ -457,5 +494,95 @@ class PluginHttpTest {
         assertEquals(2, asks) // the winner's original ask, plus the loser's own retry-as-new-winner ask
         assertFalse(result.exceptionOrNull() is CancellationException)
         assertEquals("network", (result.exceptionOrNull() as PluginFetchException).code)
+    }
+
+    // The side effects of one shared prompt happen once, not once per caller that shared it. The
+    // prompt is held open until the second caller has had time to arrive and wait on it; should it
+    // arrive late anyway, it finds the host already declared and asks nothing -- so every assertion
+    // below holds either way, and a regression to "each waiter applies the answer" fails it.
+    @Test fun `two concurrent misses on the same host approve it once and add it once`() = runBlocking {
+        val offline = object : Dns { override fun lookup(hostname: String): List<InetAddress> = throw java.net.UnknownHostException(hostname) }
+        val live = LiveHosts(EffectiveHosts(listOf("archive.org")))
+        val approvedCalls = java.util.concurrent.atomic.AtomicInteger()
+        val asks = java.util.concurrent.atomic.AtomicInteger()
+        val asking = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val h = PluginHttp(
+            OkHttpClient(), "test", live, "1.0", allowInsecureLocalhost = true, delegateDns = offline,
+            reactiveApproval = PluginHttp.ReactiveApproval(
+                "P",
+                HostApprovalRequester { _, _, _ -> asks.incrementAndGet(); asking.complete(Unit); release.await(); true },
+                { approvedCalls.incrementAndGet() }, {}, emptySet(),
+            ),
+        )
+        val url = "https://new-cdn.example/x"
+        val r1 = async(kotlinx.coroutines.Dispatchers.Default) { runCatching { h.fetch(PluginHttp.Request(url)) } }
+        asking.await()
+        val r2 = async(kotlinx.coroutines.Dispatchers.Default) { runCatching { h.fetch(PluginHttp.Request(url)) } }
+        kotlinx.coroutines.delay(200)
+        release.complete(Unit)
+        // Both got past the host gate (offline DNS -> "network"), neither was refused.
+        assertEquals("network", (r1.await().exceptionOrNull() as PluginFetchException).code)
+        assertEquals("network", (r2.await().exceptionOrNull() as PluginFetchException).code)
+        assertEquals(1, asks.get())
+        assertEquals(1, approvedCalls.get())
+        assertEquals(listOf("archive.org", "new-cdn.example"), live.value.declared)
+    }
+
+    // Finding 1 of the final review: the cookie jar and `kino.cookies.get` read the SAME live host
+    // set as kino.fetch, so a host approved mid-call is theirs too for the rest of that call.
+    @Test fun `a reactively approved host is at once allowed by the shared cookie jar and kino cookies get`() = runTest {
+        val offline = object : Dns { override fun lookup(hostname: String): List<InetAddress> = throw java.net.UnknownHostException(hostname) }
+        val live = LiveHosts(EffectiveHosts(listOf("archive.org")))
+        val jar = PluginCookies(tmp.root.resolve("cookies-live.json"), live)
+        val h = PluginHttp(
+            OkHttpClient(), "test", live, "1.0", cookies = jar, allowInsecureLocalhost = true, delegateDns = offline,
+            reactiveApproval = PluginHttp.ReactiveApproval("P", HostApprovalRequester { _, _, _ -> true }, {}, {}, emptySet()),
+        )
+        val host = DefaultPluginHost("test", h, PluginStorage(tmp.root.resolve("s-live.json")), cookies = jar, logger = {})
+        val newHost = "https://new-cdn.example/".toHttpUrl()
+        val sid = okhttp3.Cookie.parse(newHost, "sid=abc; Path=/")!!
+        // Before: the jar keeps nothing from a host the plugin may not reach.
+        jar.saveFromResponse(newHost, listOf(sid))
+        assertEquals(0, jar.size())
+        assertNull(host.cookieGet(newHost.toString(), "sid"))
+        assertEquals("network", fetchError(h, PluginHttp.Request("https://new-cdn.example/login")).code)
+        // After the person said yes: no second host list lagging behind anywhere.
+        jar.saveFromResponse(newHost, listOf(sid))
+        assertEquals(1, jar.size())
+        assertEquals("abc", host.cookieGet(newHost.toString(), "sid"))
+        assertTrue(HostRules.matches("new-cdn.example", h.hosts.declared))
+    }
+
+    // An approval that finds the 20-host cap already filled (by a DIFFERENT host approved while this
+    // prompt was up) adds nothing and says so in the log instead of failing silently.
+    @Test fun `an approval that lands on a full host cap is logged and the fetch stays refused`() = runBlocking {
+        val offline = object : Dns { override fun lookup(hostname: String): List<InetAddress> = throw java.net.UnknownHostException(hostname) }
+        val live = LiveHosts(EffectiveHosts((1..19).map { "h$it.example.com" }))
+        val logs = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val approved = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val slowAsking = CompletableDeferred<Unit>()
+        val releaseSlow = CompletableDeferred<Unit>()
+        val h = PluginHttp(
+            OkHttpClient(), "test", live, "1.0", allowInsecureLocalhost = true, delegateDns = offline,
+            reactiveApproval = PluginHttp.ReactiveApproval(
+                "P",
+                HostApprovalRequester { _, _, host ->
+                    if (host == "slow.example.org") { slowAsking.complete(Unit); releaseSlow.await() }
+                    true
+                },
+                { approved += it }, {}, emptySet(),
+            ),
+            log = { logs += it },
+        )
+        val slow = async(kotlinx.coroutines.Dispatchers.Default) { runCatching { h.fetch(PluginHttp.Request("https://slow.example.org/x")) } }
+        slowAsking.await()
+        // Meanwhile another host is approved and takes the 20th slot.
+        assertEquals("network", fetchError(h, PluginHttp.Request("https://fast.example.org/x")).code)
+        releaseSlow.complete(Unit)
+        assertEquals("host_not_allowed", (slow.await().exceptionOrNull() as PluginFetchException).code)
+        assertEquals(listOf("fast.example.org"), approved.toList())
+        assertEquals(20, live.value.declared.size)
+        assertTrue(logs.toString(), logs.any { "slow.example.org" in it && "20" in it })
     }
 }
