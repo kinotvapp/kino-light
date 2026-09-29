@@ -42,57 +42,47 @@ class HostApprovalCenterTest {
         assertEquals(true, second.await())
     }
 
-    @Test fun `an unanswered prompt times out as null and leaves the screen`() = runTest {
+    // The 12 s window is gone: the plugin call's clock is paused while it asks (PluginCallClock), so
+    // nothing but the person -- or the call ending, which cancels this request -- takes it down.
+    @Test fun `a fetch prompt waits for the person however long they take`() = runTest {
         val center = HostApprovalCenter()
         val result = async { center.request("plug1", "Uno", "a.example") }
         var req = center.pending.value
         while (req == null) { kotlinx.coroutines.yield(); req = center.pending.value }
-        kotlinx.coroutines.delay(HostApprovalCenter.TIMEOUT_MS + 1)
-        assertNull(result.await())
-        assertNull(center.pending.value)
-        // A late tap on the (already gone) dialog changes nothing.
+        kotlinx.coroutines.delay(10 * 60_000)
+        assertTrue("still waiting after ten minutes", result.isActive)
+        assertEquals(req, center.pending.value)
         req.respond(true)
-        assertNull(center.pending.value)
+        assertEquals(true, result.await())
     }
 
-    // The window starts when the dialog is SHOWN, not when the request started waiting in line:
-    // the second plugin waits 10 s behind the first dialog and still gets its whole own window.
-    @Test fun `a queued request's timeout starts only once it is shown`() = runTest {
-        val center = HostApprovalCenter()
-        val first = async { center.request("plug1", "Uno", "a.example") }
-        var req = center.pending.value
-        while (req == null) { kotlinx.coroutines.yield(); req = center.pending.value }
-        val second = async { center.request("plug2", "Dos", "b.example") }
-        kotlinx.coroutines.delay(10_000)
-        req.respond(true)
-        assertEquals(true, first.await())
-        var req2 = center.pending.value
-        while (req2 == null) { kotlinx.coroutines.yield(); req2 = center.pending.value }
-        // 10 s queued + 11 s shown: past 12 s since it started waiting, still inside its own window.
-        kotlinx.coroutines.delay(HostApprovalCenter.TIMEOUT_MS - 1_000)
-        assertEquals("b.example", center.pending.value?.host)
-        req2.respond(true)
-        assertEquals(true, second.await())
-    }
-
-    @Test fun `wasAsking covers a request queued, shown, or finished since the given moment`() = runTest {
+    // On the TV a "RIGHT, CENTER" meant for one prompt landed on the next one, which had replaced it
+    // with focus back on "Rechazar". A prompt that follows another closely waits longer before it
+    // accepts any answer.
+    @Test fun `a prompt shown right after another one closed arms later than a first one`() = runTest {
         var now = 0L
         val center = HostApprovalCenter(clock = { now })
-        assertFalse(center.wasAsking("plug1", since = 0))
         val first = async { center.request("plug1", "Uno", "a.example") }
         var req = center.pending.value
         while (req == null) { kotlinx.coroutines.yield(); req = center.pending.value }
-        val queued = async { center.request("plug2", "Dos", "b.example") }
-        kotlinx.coroutines.yield()
-        assertTrue(center.wasAsking("plug1", since = 0)) // on screen
-        assertTrue(center.wasAsking("plug2", since = 0)) // waiting in line
-        now = 50
-        req.respond(false)
+        assertEquals(HostApprovalCenter.ARM_DELAY_MS, req.armDelayMs)
+        val second = async { center.request("plug1", "Uno", "b.example") }
+        now = 5_000_000_000L
+        req.respond(true)
         first.await()
-        assertTrue(center.wasAsking("plug1", since = 10)) // answered after that call began
-        assertFalse(center.wasAsking("plug1", since = 60)) // a call that began after it ended
-        assertFalse(center.wasAsking("other", since = 0))
-        queued.cancel()
+        var req2 = center.pending.value
+        while (req2 == null || req2 === req) { kotlinx.coroutines.yield(); req2 = center.pending.value }
+        assertEquals(HostApprovalCenter.SUCCESSOR_ARM_DELAY_MS, req2.armDelayMs)
+        assertTrue(HostApprovalCenter.SUCCESSOR_ARM_DELAY_MS >= 1_000)
+        req2.respond(false)
+        second.await()
+        // Long after the last one closed, a new prompt is a first one again.
+        now += 60_000_000_000L
+        val third = async { center.request("plug1", "Uno", "c.example") }
+        var req3 = center.pending.value
+        while (req3 == null) { kotlinx.coroutines.yield(); req3 = center.pending.value }
+        assertEquals(HostApprovalCenter.ARM_DELAY_MS, req3.armDelayMs)
+        third.cancel()
     }
 
     // A Stream URL on an undeclared host is asked about AFTER the plugin's call returned, with the
@@ -102,7 +92,7 @@ class HostApprovalCenterTest {
         val result = async { center.requestUntilAnswered("plug1", "Uno", "cdn.example", HostApprovalReason.VIDEO) }
         var req = center.pending.value
         while (req == null) { kotlinx.coroutines.yield(); req = center.pending.value }
-        kotlinx.coroutines.delay(HostApprovalCenter.TIMEOUT_MS * 10)
+        kotlinx.coroutines.delay(10 * 60_000)
         assertTrue("still waiting after ten fetch windows", result.isActive)
         assertEquals(req, center.pending.value)
         req.respond(true)

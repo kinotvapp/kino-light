@@ -141,7 +141,7 @@ class StreamHostApprovalTest {
         val e = runCatching { playing.await() }.exceptionOrNull()
         assertEquals("$NAME: El video apunta a cdn.other.example, que el plugin no declaró", e?.message)
         assertNull("no dialog for a host already refused", center.pending.value)
-        assertFalse(center.wasAsking(ID, since = 0L))
+        assertEquals("never shown a dialog", 0, center.shownCount)
     }
 
     // Local addresses, IP literals and plain http are hard refusals for kino.fetch too
@@ -165,7 +165,7 @@ class StreamHostApprovalTest {
             assertEquals(url, expected, e?.message)
             assertNull(url, center.pending.value)
         }
-        assertFalse(center.wasAsking(ID, since = 0L))
+        assertEquals("never shown a dialog", 0, center.shownCount)
         assertEquals(listOf("example.com"), record.hosts)
         assertEquals(emptyList<String>(), record.rejectedHosts)
     }
@@ -178,7 +178,7 @@ class StreamHostApprovalTest {
         val e = runCatching { play(source(answer)).await() }.exceptionOrNull()
         assertEquals(expected, e?.message)
         assertNull(center.pending.value)
-        assertFalse(center.wasAsking(ID, since = 0L))
+        assertEquals("never shown a dialog", 0, center.shownCount)
     }
 
     @Test fun `with 20 hosts already approved the stream fails with a clear message and no question`() = runTest {
@@ -280,7 +280,7 @@ class StreamHostApprovalTest {
         // Even if a background job somehow ran inside an interactive context, background wins.
         assertEquals(expected, runCatching { withContext(InteractivePluginCall + BackgroundPluginCall) { source(answer).resolve(movie) } }.exceptionOrNull()?.message)
         assertNull(center.pending.value)
-        assertFalse(center.wasAsking(ID, since = 0L))
+        assertEquals("never shown a dialog", 0, center.shownCount)
         assertEquals(emptyList<String>(), record.rejectedHosts)
     }
 
@@ -289,7 +289,7 @@ class StreamHostApprovalTest {
     @Test fun `the stream prompt is not dismissed by the fetch-time window`() = runTest {
         val playing = play(source("""{"url":"https://cdn.other.example/v.mp4"}"""))
         val req = nextPrompt()
-        kotlinx.coroutines.delay(HostApprovalCenter.TIMEOUT_MS * 5)
+        kotlinx.coroutines.delay(5 * 60_000)
         assertTrue(playing.isActive)
         assertEquals(req, center.pending.value)
         req.respond(true)

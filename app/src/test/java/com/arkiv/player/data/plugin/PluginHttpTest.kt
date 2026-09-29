@@ -585,4 +585,112 @@ class PluginHttpTest {
         assertEquals(20, live.value.declared.size)
         assertTrue(logs.toString(), logs.any { "slow.example.org" in it && "20" in it })
     }
+
+    // --- Only a call someone is waiting on may ask (PluginCallTracker) ---
+
+    private val offlineDns = object : Dns { override fun lookup(hostname: String): List<InetAddress> = throw java.net.UnknownHostException(hostname) }
+
+    private fun runningCall(function: String, interactive: Boolean = true) =
+        PluginCall(function, interactive, PluginCallClock(20_000))
+
+    private class Asked {
+        val hosts = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val approved = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val rejected = java.util.concurrent.CopyOnWriteArrayList<String>()
+    }
+
+    private fun trackedHttp(
+        calls: PluginCallTracker,
+        asked: Asked,
+        logs: MutableList<String> = java.util.concurrent.CopyOnWriteArrayList(),
+        answer: suspend (String) -> Boolean? = { true },
+    ) = PluginHttp(
+        OkHttpClient(), "test", EffectiveHosts(listOf("archive.org")), "1.0", allowInsecureLocalhost = true, delegateDns = offlineDns,
+        reactiveApproval = PluginHttp.ReactiveApproval(
+            "P", HostApprovalRequester { _, _, host -> asked.hosts += host; answer(host) },
+            { asked.approved += it }, { asked.rejected += it }, emptySet(),
+        ),
+        calls = calls,
+        log = { logs += it },
+    )
+
+    @Test fun `a miss while no call is running asks nothing and records nothing`() = runTest {
+        val asked = Asked()
+        val logs = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val h = trackedHttp(PluginCallTracker(), asked, logs)
+        assertEquals("host_not_allowed", fetchError(h, PluginHttp.Request("https://greenmotors.cc/x")).code)
+        assertEquals(emptyList<String>(), asked.hosts.toList())
+        assertEquals(emptyList<String>(), asked.rejected.toList())
+        assertTrue(logs.toString(), logs.any { "greenmotors.cc" in it && "not asked" in it })
+    }
+
+    // Search, Home rows and "Ver más" run for many sources at once while the person types or scrolls:
+    // a dialog per source would bury the screen. Only resolve (the person tapped play) and episodes ask.
+    @Test fun `a miss during search, home or browse asks nothing`() = runTest {
+        for (function in listOf("search", "home", "browse", "liveChannels")) {
+            val asked = Asked()
+            val calls = PluginCallTracker().apply { begin(runningCall(function)) }
+            val h = trackedHttp(calls, asked)
+            assertEquals(function, "host_not_allowed", fetchError(h, PluginHttp.Request("https://new-cdn.example/x")).code)
+            assertEquals(function, emptyList<String>(), asked.hosts.toList())
+            assertEquals(function, emptyList<String>(), asked.rejected.toList())
+        }
+    }
+
+    @Test fun `a miss in a background call asks nothing`() = runTest {
+        val asked = Asked()
+        val calls = PluginCallTracker().apply { begin(runningCall("resolve", interactive = false)) }
+        assertEquals("host_not_allowed", fetchError(trackedHttp(calls, asked), PluginHttp.Request("https://new-cdn.example/x")).code)
+        assertEquals(emptyList<String>(), asked.hosts.toList())
+    }
+
+    @Test fun `a miss during resolve or episodes asks, with the call's clock stopped while it waits`() = runTest {
+        for (function in listOf("resolve", "episodes")) {
+            val asked = Asked()
+            val call = runningCall(function)
+            val calls = PluginCallTracker().apply { begin(call) }
+            var remainingWhileAsking: Long? = -1
+            val h = trackedHttp(calls, asked) { remainingWhileAsking = call.clock.remainingMs(); true }
+            // Offline DNS: "network" proves the approved request went past the host gate.
+            assertEquals(function, "network", fetchError(h, PluginHttp.Request("https://new-cdn.example/x")).code)
+            assertEquals(function, listOf("new-cdn.example"), asked.hosts.toList())
+            assertEquals(function, listOf("new-cdn.example"), asked.approved.toList())
+            assertNull("$function: the clock is paused while the person decides", remainingWhileAsking)
+            assertTrue(function, call.clock.remainingMs()!! > 0)
+        }
+    }
+
+    // The person leaves the screen (or the call fails) while the question is up: it comes down and
+    // nothing is recorded, not even as a rejection.
+    @Test fun `a question whose call ends while it is on screen comes down and records nothing`() = runBlocking {
+        val asked = Asked()
+        val call = runningCall("resolve")
+        val calls = PluginCallTracker().apply { begin(call) }
+        val showing = CompletableDeferred<Unit>()
+        var questionCancelled = false
+        val h = trackedHttp(calls, asked) {
+            showing.complete(Unit)
+            try { kotlinx.coroutines.awaitCancellation() } finally { questionCancelled = true }
+        }
+        val fetch = async(kotlinx.coroutines.Dispatchers.Default) { runCatching { h.fetch(PluginHttp.Request("https://gamerxyt.com/x")) } }
+        kotlinx.coroutines.withTimeout(5_000) { showing.await() }
+        calls.end(call)
+        val failure = kotlinx.coroutines.withTimeout(5_000) { fetch.await() }.exceptionOrNull()
+        assertEquals("host_not_allowed", (failure as PluginFetchException).code)
+        assertTrue(questionCancelled)
+        assertEquals(emptyList<String>(), asked.rejected.toList())
+        assertEquals(emptyList<String>(), asked.approved.toList())
+        // And a later miss of that same finished call asks nothing more.
+        assertEquals("host_not_allowed", fetchError(h, PluginHttp.Request("https://gamerxyt.com/y")).code)
+        assertEquals(listOf("gamerxyt.com"), asked.hosts.toList())
+    }
+
+    @Test fun `the same host is asked once per call`() = runTest {
+        val asked = Asked()
+        val calls = PluginCallTracker().apply { begin(runningCall("resolve")) }
+        val h = trackedHttp(calls, asked) { false }
+        repeat(3) { assertEquals("host_not_allowed", fetchError(h, PluginHttp.Request("https://greenmotors.cc/$it")).code) }
+        assertEquals(listOf("greenmotors.cc"), asked.hosts.toList())
+        assertEquals(listOf("greenmotors.cc"), asked.rejected.toList())
+    }
 }

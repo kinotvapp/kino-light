@@ -96,6 +96,13 @@ class PluginContentSource(
      * [SEARCH_TIMEOUT_MS]. So the backstop is own limit + that queue wait + a grace for the runtime
      * load. With equal limits the backstop always won, the call was cancelled instead of timing
      * out, and a hanging search never counted.
+     *
+     * The plugin's clock can pause while the person answers a host prompt ([PluginCallClock]), but
+     * a `search` never asks ([PluginCall.asksAboutHosts]), so its own limit never stretches and this
+     * backstop can't cut a call someone is answering. The one stretch is the queue wait: a `resolve`
+     * or `episodes` of the same plugin that is waiting for the person holds the pool's lock for as
+     * long as they take. The backstop then drops the queued SEARCH (a cancellation, not a
+     * "no responde" strike), which is right: the call being answered keeps running.
      */
     override val searchTimeoutMs: Long? =
         SEARCH_TIMEOUT_MS + maxOf(HOME_TIMEOUT_MS, BROWSE_TIMEOUT_MS, EPISODES_TIMEOUT_MS, RESOLVE_TIMEOUT_MS) + SEARCH_BACKSTOP_GRACE_MS

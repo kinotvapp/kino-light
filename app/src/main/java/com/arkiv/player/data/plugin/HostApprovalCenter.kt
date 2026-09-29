@@ -6,15 +6,13 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.withTimeoutOrNull
-import java.util.concurrent.ConcurrentHashMap
 
 /** Asks the person, in the moment, whether a plugin may reach a host its manifest never declared. */
 fun interface HostApprovalRequester {
     /**
-     * true = allowed, false = refused (remembered), null = no answer in time (NOT remembered: the
-     * next miss asks again). How long "in time" is belongs to the implementation, see
-     * [HostApprovalCenter.TIMEOUT_MS].
+     * true = allowed, false = refused (remembered), null = no answer (NOT remembered: the next miss
+     * asks again). [HostApprovalCenter] never answers null: it waits for the person, and its caller
+     * cancels it when nobody is waiting any more (see [PluginCall.askWhileAlive]).
      */
     suspend fun request(pluginId: String, pluginName: String, host: String): Boolean?
 }
@@ -37,6 +35,8 @@ data class HostApprovalRequest(
     val pluginName: String,
     val host: String,
     val reason: HostApprovalReason = HostApprovalReason.FETCH,
+    /** How long the dialog ignores every answer after it appears (see [HostApprovalCenter.SUCCESSOR_ARM_DELAY_MS]). */
+    val armDelayMs: Long = HostApprovalCenter.ARM_DELAY_MS,
     val respond: (Boolean) -> Unit,
 ) {
     /**
@@ -56,80 +56,72 @@ data class HostApprovalRequest(
 /**
  * Bridges the coroutine inside [PluginHttp] (running on [kotlinx.coroutines.Dispatchers.IO], deep in
  * a plugin call) to the Compose dialog collected from [pending] at the app's root. [mutex] means a
- * second plugin's request simply waits its turn instead of showing a second dialog on top of the
- * first -- see the spec's "aprobación reactiva" section for why one at a time is enough (a
- * [PluginRuntime] only ever runs one call at a time for a given plugin; two DIFFERENT plugins racing
- * here is rare).
+ * second request simply waits its turn instead of showing a second dialog on top of the first (or
+ * REPLACING it under the person's finger): one dialog at a time, the next one only once the person
+ * answered the current one or its caller went away.
  *
- * The [timeoutMs] window starts only once THIS request holds [mutex] and is about to be shown:
- * time spent queued behind another plugin's dialog doesn't come out of it. What does keep running
- * meanwhile is the plugin call's own whole-call limit (`PluginRuntime.call`'s `withTimeout`, 15 s
- * for `search`, 20 s for the rest) -- that clock isn't paused (a documented follow-up). So a person
- * slow to answer can still see the call time out; [wasAsking] is how `PluginRuntimePool` keeps such
- * a timeout from counting toward the plugin's "No responde".
+ * No request has a time limit of its own. A `kino.fetch` prompt used to close itself after 12 s;
+ * now the plugin call's clock is paused for as long as its question is queued or on screen
+ * ([PluginCall.askWhileAlive], [PluginCallClock]), and the question is cancelled -- taken down,
+ * nothing recorded -- the moment that call ends. So a dialog only ever leaves the screen because the
+ * person answered it or nobody is waiting for the answer any more.
  *
- * The same dialog also asks about a host a returned Stream's URL is on ([requestUntilAnswered]):
- * no window there, see its KDoc.
+ * A dialog that appears within [SUCCESSOR_WINDOW_MS] of the previous one closing arms later
+ * ([HostApprovalRequest.armDelayMs]): on the TV a "RIGHT, CENTER" meant for one prompt landed on the
+ * next, whose focus was back on "Rechazar", and rejected the host the person meant to allow.
  */
 class HostApprovalCenter(
-    private val timeoutMs: Long = TIMEOUT_MS,
-    /** Monotonic, same unit as the `since` [wasAsking] is given: `System.nanoTime`. */
+    /** Monotonic nanoseconds (`System.nanoTime`): when the last dialog closed. */
     private val clock: () -> Long = System::nanoTime,
 ) : HostApprovalRequester {
     private val mutex = Mutex()
     private val _pending = MutableStateFlow<HostApprovalRequest?>(null)
     val pending: StateFlow<HostApprovalRequest?> = _pending.asStateFlow()
 
-    /** Per plugin: requests queued or showing right now. */
-    private val asking = ConcurrentHashMap<String, Int>()
-    /** Per plugin: [clock] when its last request finished (answered, timed out or cancelled). */
-    private val lastAsked = ConcurrentHashMap<String, Long>()
+    /** [clock] when the last dialog left the screen; null before the first one. */
+    @Volatile private var lastClosedAt: Long? = null
 
-    override suspend fun request(pluginId: String, pluginName: String, host: String): Boolean? =
-        ask(pluginId, pluginName, host, HostApprovalReason.FETCH, timeoutMs)
+    /** How many dialogs were ever put on screen: lets a test prove a path never asked. */
+    @Volatile internal var shownCount = 0
+        private set
+
+    /** A `kino.fetch` of the plugin's own reached a host it never declared; never null (see [HostApprovalRequester]). */
+    override suspend fun request(pluginId: String, pluginName: String, host: String): Boolean =
+        ask(pluginId, pluginName, host, HostApprovalReason.FETCH)
 
     /**
-     * [request] without its [timeoutMs] window, for a question asked AFTER the plugin's call already
-     * returned: a URL of the Stream its `resolve` gave back is on a host it never declared (see
-     * [StreamHostApproval]). No plugin call is running against a clock by then, and the person is
-     * looking at the screen waiting for their video, so the dialog stays until they answer. Every
-     * other way out is the same as [request]'s: BACK or a tap outside answers false
-     * (`MainActivity`), and cancelling the caller -- the person leaving the player clears its
-     * ViewModel -- takes the dialog down and returns nothing.
-     *
-     * While it waits it holds the one-dialog-at-a-time [mutex]: another plugin's `kino.fetch`
-     * prompt queues behind it (its own window starts only once shown; its call may time out
-     * meanwhile, which [wasAsking] keeps from counting as a "No responde" strike).
+     * A URL of the Stream a `resolve` returned, or a host the player met mid-playback, is on a host
+     * the plugin never declared (see [StreamHostApproval]): the same dialog, worded by [reason].
+     * BACK or a tap outside answers false (`MainActivity`), and cancelling the caller -- the person
+     * leaving the player clears its ViewModel -- takes the dialog down and returns nothing.
      */
     suspend fun requestUntilAnswered(pluginId: String, pluginName: String, host: String, reason: HostApprovalReason): Boolean =
-        ask(pluginId, pluginName, host, reason, timeoutMs = null) == true
+        ask(pluginId, pluginName, host, reason)
 
-    /** One dialog; [timeoutMs] null waits for an answer however long it takes. */
-    private suspend fun ask(pluginId: String, pluginName: String, host: String, reason: HostApprovalReason, timeoutMs: Long?): Boolean? {
-        asking.merge(pluginId, 1, Int::plus)
-        try {
-            return mutex.withLock {
-                if (timeoutMs == null) {
-                    awaitAnswer(pluginId, pluginName, host, reason)
-                } else {
-                    withTimeoutOrNull(timeoutMs) { awaitAnswer(pluginId, pluginName, host, reason) }
-                }
+    private suspend fun ask(pluginId: String, pluginName: String, host: String, reason: HostApprovalReason): Boolean =
+        mutex.withLock {
+            try {
+                awaitAnswer(pluginId, pluginName, host, reason)
+            } finally {
+                lastClosedAt = clock()
             }
-        } finally {
-            lastAsked[pluginId] = clock()
-            asking.computeIfPresent(pluginId) { _, n -> (n - 1).takeIf { it > 0 } }
         }
+
+    private fun armDelayMs(): Long {
+        val closed = lastClosedAt ?: return ARM_DELAY_MS
+        return if ((clock() - closed) / 1_000_000 < SUCCESSOR_WINDOW_MS) SUCCESSOR_ARM_DELAY_MS else ARM_DELAY_MS
     }
 
     private suspend fun awaitAnswer(pluginId: String, pluginName: String, host: String, reason: HostApprovalReason): Boolean =
         suspendCancellableCoroutine { cont ->
             var req: HostApprovalRequest? = null
-            req = HostApprovalRequest(pluginId, pluginName, host, reason) { approved ->
+            req = HostApprovalRequest(pluginId, pluginName, host, reason, armDelayMs()) { approved ->
                 _pending.compareAndSet(req, null)
                 if (cont.isActive) cont.resume(approved) {}
             }
             cont.invokeOnCancellation { _pending.compareAndSet(req, null) }
             if (cont.isActive) {
+                shownCount++
                 _pending.value = req
                 // A cancellation landing between the check above and the publish ran
                 // its handler BEFORE `req` was published, so that handler's CAS found
@@ -139,16 +131,14 @@ class HostApprovalCenter(
             }
         }
 
-    /**
-     * Whether [pluginId] had a host prompt queued or on screen at any moment since [since] (a
-     * [clock] reading taken when a call began): its call may have run out of time because a
-     * person was deciding, not because the plugin hung.
-     */
-    fun wasAsking(pluginId: String, since: Long): Boolean =
-        (asking[pluginId] ?: 0) > 0 || lastAsked[pluginId]?.let { it - since >= 0 } == true
-
     companion object {
-        /** How long a shown prompt waits for an answer before the fetch behind it fails as `timeout` (not remembered). */
-        const val TIMEOUT_MS = 12_000L
+        /** How long a dialog ignores every answer after it appears: a double tap meant for the screen behind it. */
+        const val ARM_DELAY_MS = 400L
+
+        /** The same, for a dialog that follows another one closely (see the class KDoc). */
+        const val SUCCESSOR_ARM_DELAY_MS = 1_200L
+
+        /** "Closely": appearing less than this after the previous dialog closed. */
+        const val SUCCESSOR_WINDOW_MS = 3_000L
     }
 }

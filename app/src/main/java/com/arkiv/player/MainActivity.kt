@@ -85,9 +85,6 @@ private const val CONTENT_SETTLE_MS = 400L
  *  user reaches them after the background warm-up has had time to finish. */
 private const val WARMUP_MAX_WAIT_MS = 8000L
 
-/** How long a freshly shown host-approval dialog ignores every answer: longer than a reflexive double-tap. */
-private const val HOST_APPROVAL_ARM_DELAY_MS = 400L
-
 /**
  * Whether a rooted device gets blocked. **Off on purpose**: today we want a device with root to
  * still be able to use the app.
@@ -153,10 +150,11 @@ class MainActivity : AppCompatActivity() {
                         FocusWhenReady(rejectFocus)
                         // Every answer -- either button, back, a tap outside -- is ignored for a moment
                         // after a request appears: a double-tap that answered the previous prompt must
-                        // not also answer this one, a different plugin's or host's, unseen.
+                        // not also answer this one, a different plugin's or host's, unseen. Longer for
+                        // a prompt that follows another closely (HostApprovalCenter decides).
                         var armed by remember { mutableStateOf(false) }
                         LaunchedEffect(Unit) {
-                            delay(HOST_APPROVAL_ARM_DELAY_MS)
+                            delay(req.armDelayMs)
                             armed = true
                         }
                         val answer: (Boolean) -> Unit = { approved -> if (armed) req.respond(approved) }

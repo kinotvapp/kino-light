@@ -728,6 +728,14 @@ seconds of your call's time. Ask for the form the content is.
 - **Redirects** (301, 302, 303, 307, 308) are followed by Kino, up to 10 hops; each hop is checked
   and counted as a request. A 303, or a 301/302 after a POST, turns into a GET without a body. With
   `redirect: "manual"` you get the 3xx answer instead (a login form usually answers 302 on success).
+- **A host you forgot may be asked about, during `resolve` and `episodes` only.** When one of those
+  calls fetches an `https` host you did not declare (a redirect hop included), Kino asks the person
+  ("Quiere conectarse por primera vez a `<host>`. ¿Permitir?"). Your call's time limit stops while
+  they decide, and the fetch goes on after "Permitir"; "Rechazar" or Back fails it as
+  `host_not_allowed` and is remembered. The question comes down unanswered, with nothing remembered,
+  if your call ends first (it failed, timed out, or the person left). `search`, `home`, `browse`, the
+  live lists, a download and a call that is already over never ask: the fetch just fails as
+  `host_not_allowed`. Don't rely on it: declare your hosts.
 - **A non-2xx answer does not throw**: check `r.ok`. Everything else that goes wrong throws an error
   with a `code` you can test (`e.code === "timeout"`):
 
@@ -925,7 +933,7 @@ does anything with season numbers or ordering: how a backend spells "season 2" i
 | --- | --- |
 | Manifest / entry file / icon | 16 KB / 1 MB / 128 KB |
 | Memory / stack, per plugin | 64 MB / 1 MB |
-| Time per call | `search` 15 s; `home`, `browse`, `episodes`, `resolve` 20 s each; `liveCategories`, `liveChannels`, `guide` 20 s each; counting all your fetches and sleeps together |
+| Time per call | `search` 15 s; `home`, `browse`, `episodes`, `resolve` 20 s each; `liveCategories`, `liveChannels`, `guide` 20 s each; counting all your fetches and sleeps together, but not the time the person spends answering a host question for that call |
 | Loading the module (its top level) | 10 s |
 | Idle sandbox | closed after 5 minutes without calls |
 | Consecutive timeouts | 3 in a row and Kino disables the plugin ("No responde") |

@@ -212,6 +212,11 @@ class PluginDns(
  * `kino.cookies.get` read too (see [LiveHosts]) -- so the rest of the same call sees it everywhere,
  * not only in the next `kino.fetch`.
  *
+ * With [calls] (the runtime's [PluginCallTracker], always set in production), the person is asked
+ * only on behalf of a call someone is waiting on ([PluginCall.asksAboutHosts]: alive, not a
+ * background job, `resolve` or `episodes`); any other miss fails silently as `host_not_allowed`,
+ * logged, with nothing remembered.
+ *
  * Runs on [Dispatchers.IO]; the cookie jar is written there too.
  */
 class PluginHttp(
@@ -225,6 +230,7 @@ class PluginHttp(
     /** MockWebServer tests only, as in [PluginStreamHttp.client]: where a declared name resolves. Production keeps the system's. */
     delegateDns: Dns = Dns.SYSTEM,
     private val reactiveApproval: ReactiveApproval? = null,
+    private val calls: PluginCallTracker? = null,
     private val log: (String) -> Unit = { android.util.Log.w("KinoPlugin", it) },
 ) {
     /** Over a fixed host set of its own: tests, and any caller that shares it with nothing else. */
@@ -237,8 +243,9 @@ class PluginHttp(
         allowInsecureLocalhost: Boolean = false,
         delegateDns: Dns = Dns.SYSTEM,
         reactiveApproval: ReactiveApproval? = null,
+        calls: PluginCallTracker? = null,
         log: (String) -> Unit = { android.util.Log.w("KinoPlugin", it) },
-    ) : this(base, pluginId, LiveHosts(hosts), appVersion, cookies, allowInsecureLocalhost, delegateDns, reactiveApproval, log)
+    ) : this(base, pluginId, LiveHosts(hosts), appVersion, cookies, allowInsecureLocalhost, delegateDns, reactiveApproval, calls, log)
 
     /** What this plugin may reach right now: declared + typed servers + anything approved reactively since the runtime opened. */
     val hosts: EffectiveHosts get() = liveHosts.value
@@ -377,14 +384,30 @@ class PluginHttp(
             ) {
                 throw e
             }
-            when (askOnce(ra, url.host)) {
+            val call = calls?.current
+            if (calls != null && (call == null || !call.asksAboutHosts)) {
+                // Nobody to ask on this call's behalf: it is over (a scraper's own retries outliving
+                // its timeout), a background job, or a search/Home/browse call. Fail as ever,
+                // silently: no dialog, nothing remembered.
+                log("[$pluginId] ${call?.function ?: "no call running"}: undeclared host ${url.host} not asked (${notAskedWhy(call)})")
+                throw e
+            }
+            when (askOnce(ra, url.host, call)) {
                 // Still refused only when the cap filled up while the person was deciding: askOnce
                 // then logged why, and this rethrows the original host_not_allowed.
                 true -> checkOnce(from, url)
                 false -> throw e
-                null -> throw PluginFetchException("timeout", "no hubo respuesta a tiempo para conectarse a ${url.host}")
+                // No answer: the call ended while the question was up (it came down unanswered).
+                // Without a tracker, a requester that gave up (tests): a timeout, as it always was.
+                null -> if (call != null) throw e else throw PluginFetchException("timeout", "no hubo respuesta a tiempo para conectarse a ${url.host}")
             }
         }
+    }
+
+    private fun notAskedWhy(call: PluginCall?): String = when {
+        call == null || !call.isAlive -> "its call is over"
+        !call.interactive -> "background call"
+        else -> "${call.function} never asks"
     }
 
     private fun checkOnce(from: HttpUrl?, url: HttpUrl) {
@@ -400,10 +423,10 @@ class PluginHttp(
      *   Every other concurrent caller only awaits that winner's [CompletableDeferred]; with N concurrent
      *   misses on the same host, [EffectiveHosts.declared] gains the host once, not N times, and the
      *   registry callback fires once, not N times.
-     * - How long to wait is [HostApprovalRequester]'s call, not this class's: [HostApprovalCenter]
-     *   starts its [HostApprovalCenter.TIMEOUT_MS] clock only once the dialog is actually on screen,
-     *   so a request queued behind another plugin's dialog doesn't spend its own window waiting in
-     *   line. Its `null` ("no answer in time") surfaces as a `timeout` [PluginFetchException].
+     * - With [call] (production), the wait is [PluginCall.askWhileAlive]: the call's clock is paused
+     *   for as long as the question is queued or on screen, and the question is cancelled -- null,
+     *   nothing recorded -- when the call ends first. Without one (tests), a requester's own `null`
+     *   surfaces as a `timeout` [PluginFetchException], as it always did.
      * - [hostsLock] also makes the 20-host cap check-and-add atomic against a DIFFERENT host being
      *   approved by another winner at the same moment: two winners racing at 19 declared hosts can no
      *   longer both add their host and land at 21.
@@ -420,7 +443,7 @@ class PluginHttp(
      *   `CancellationException` to any `kino.fetch` error code, so letting it through as-is would kill
      *   the loser's call with an unclassified failure instead of a real answer.
      */
-    private suspend fun askOnce(ra: ReactiveApproval, host: String): Boolean? {
+    private suspend fun askOnce(ra: ReactiveApproval, host: String, call: PluginCall?): Boolean? {
         while (true) {
             var mine: CompletableDeferred<Boolean?>? = null
             val shared = pendingApprovals.computeIfAbsent(host) { CompletableDeferred<Boolean?>().also { mine = it } }
@@ -434,7 +457,13 @@ class PluginHttp(
                 }
             }
             try {
-                val answer = ra.requester.request(pluginId, ra.pluginName, host)
+                // With a call: its clock stopped while the person decides, and the question taken
+                // down (null, nothing recorded) if the call ends first.
+                val answer = if (call != null) {
+                    call.askWhileAlive { ra.requester.request(pluginId, ra.pluginName, host) }
+                } else {
+                    ra.requester.request(pluginId, ra.pluginName, host)
+                }
                 synchronized(hostsLock) {
                     when (answer) {
                         true -> {

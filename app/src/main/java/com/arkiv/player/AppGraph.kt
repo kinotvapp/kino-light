@@ -605,9 +605,6 @@ class AppGraph(context: Context) {
             beforeCall = { id -> pluginHttps[id]?.beginCall() },
             // Same dir as PluginStore's data root: uninstall deletes the markers with the rest.
             sentinel = PluginCrashSentinel(java.io.File(appContext.filesDir, "plugin-data")),
-            // A call that timed out while its plugin had a host prompt up (or queued) isn't a
-            // "no responde" strike: the person was deciding, the plugin wasn't hanging.
-            hostPromptSince = { id, since -> hostApprovalCenter.wasAsking(id, since) },
         )
     }
 
@@ -633,6 +630,9 @@ class AppGraph(context: Context) {
         val cookies = PluginCookies(java.io.File(dataDir, PluginCookies.FILE_NAME), hosts)
         // Whatever jar this replaces is stopped from writing (see PluginJarRegistry's KDoc).
         pluginJars.put(id, cookies)
+        // The runtime publishes its running call here; the http reads it to ask the person only
+        // while someone waits on that call, with the call's clock paused (see PluginCall).
+        val calls = PluginCallTracker()
         val http = PluginHttp(
             pluginBaseHttp, id, hosts, BuildConfig.VERSION_NAME, cookies = cookies,
             reactiveApproval = PluginHttp.ReactiveApproval(
@@ -646,13 +646,14 @@ class AppGraph(context: Context) {
                 onRejected = { host -> pluginRegistry.rejectHost(id, host) },
                 rejectedHosts = plugin.record.rejectedHosts.toSet(),
             ),
+            calls = calls,
         )
         pluginHttps[id] = http
         val storage = PluginStorage(java.io.File(dataDir, "storage.json"))
         // Only the one recognized Xuper source gets the extra kino.xuper.* host functions -- see
         // pluginHostFor's KDoc and XuperPrivilege.grants for the gate itself.
         val host = pluginHostFor(plugin, http, storage, config, cookies, magisPluginBridge)
-        val runtime = PluginRuntime.open(id, script, host, PluginEnv(appVersion = BuildConfig.VERSION_NAME))
+        val runtime = PluginRuntime.open(id, script, host, PluginEnv(appVersion = BuildConfig.VERSION_NAME), calls)
         // F5: drop this plugin's PluginHttp the moment its runtime is closed -- idle timeout, or an
         // explicit pool.close() from DefaultPluginAdmin's disable/update/uninstall -- so pluginHttps
         // never keeps a stale, no-longer-approved host list around after the runtime that used it is

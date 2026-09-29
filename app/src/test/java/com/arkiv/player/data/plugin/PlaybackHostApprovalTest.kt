@@ -173,7 +173,7 @@ class PlaybackHostApprovalTest {
         val outcome = refused(prompts(), "seg.other.example").await()
         assertEquals(PlaybackHostOutcome.Fail("$NAME: el video usa otro servidor (seg.other.example) que no permitiste"), outcome)
         assertNull(center.pending.value)
-        assertFalse(center.wasAsking(ID, since = 0L))
+        assertEquals("never shown a dialog", 0, center.shownCount)
     }
 
     @Test fun `with the 20-host cap full it fails clearly without asking`() = runTest {
@@ -220,7 +220,7 @@ class PlaybackHostApprovalTest {
     @Test fun `the question waits past the fetch window`() = runTest {
         val outcome = refused(prompts(), "seg.other.example")
         val req = nextPrompt()
-        kotlinx.coroutines.delay(HostApprovalCenter.TIMEOUT_MS * 5)
+        kotlinx.coroutines.delay(5 * 60_000)
         assertTrue(outcome.isActive)
         req.respond(true)
         assertEquals(PlaybackHostOutcome.Retry, outcome.await())

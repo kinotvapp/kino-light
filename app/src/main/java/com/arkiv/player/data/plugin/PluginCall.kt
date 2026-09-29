@@ -26,8 +26,22 @@ class PluginCall internal constructor(
     /** False once the call is over, whatever way it ended. */
     val isAlive: Boolean get() = ended.isActive
 
+    /**
+     * Whether a `kino.fetch` of this call may put an undeclared host to the person: only while the
+     * call is alive, someone is on screen for it, and it is one the person started by choosing a
+     * title ([ASKING_FUNCTIONS]). `search`, `home`, `browse` and the live lists run for many sources
+     * at once while the person types or scrolls; a dialog per source there would bury the screen, so
+     * their misses fail silently (logged) as they did before reactive approval existed.
+     */
+    val asksAboutHosts: Boolean get() = isAlive && interactive && function in ASKING_FUNCTIONS
+
     internal fun end() {
         ended.complete()
+    }
+
+    companion object {
+        /** `resolve` (the person pressed play) and `episodes` (they opened a series). */
+        val ASKING_FUNCTIONS = setOf("resolve", "episodes")
     }
 
     /**
