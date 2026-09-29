@@ -126,6 +126,8 @@ class PluginInstaller(
     private val clock: () -> Long = System::currentTimeMillis,
     /** [PluginSettings.PERMISSIONS]; tests pass their own (SDK v1 has none, so nothing else can reach this). */
     private val knownPermissions: Set<String> = PluginSettings.PERMISSIONS,
+    /** Diagnostics only (logcat, the same "KinoPlugin" tag as [PluginHttp]'s); tests capture it. */
+    private val log: (String) -> Unit = { android.util.Log.w("KinoPlugin", it) },
 ) {
     suspend fun preview(input: String): InstallPreview {
         val address = PluginAddress.parse(input)
@@ -170,9 +172,12 @@ class PluginInstaller(
         if (missing.isNotEmpty()) throw InstallException("El plugin no carga: le falta ${missing.sorted().joinToString(", ")}")
         val sha = sha256Hex(script)
         val installedAt = clock()
+        // Set by the build that really commits (the one finishInstall runs with the fresh previous
+        // install), and logged only once that commit went through.
+        var droppedByCap = emptyList<String>()
         fun buildRecord(previous: StoredPlugin?) = InstalledRecord(
             address = preview.address.canonical, version = m.version, sha256 = sha,
-            hosts = hostsCarriedOver(m.hosts, previous), installedAt = installedAt,
+            hosts = hostsCarriedOver(m.hosts, previous) { droppedByCap = it }, installedAt = installedAt,
             enabled = previous?.record?.enabled ?: true, lastUpdateCheckAt = installedAt,
             permissions = m.permissions, capabilities = m.capabilities.toList(), insecureHosts = m.insecureHosts.toList(),
             exports = exports.sorted(), liveStreamHostsAny = m.liveStreamHostsAny,
@@ -187,7 +192,14 @@ class PluginInstaller(
             // commit below, not from one taken before the fetch/probe above (see its KDoc) --
             // nothing outside this store observes the staged one before that commit.
             store.writeFiles(staging, preview.manifestJson, m.entry, script, icon, buildRecord(null))
-            return store.finishInstall(staging, m.id, isUpdate = preview.isUpdate) { previous -> buildRecord(previous) }
+            val record = store.finishInstall(staging, m.id, isUpdate = preview.isUpdate) { previous -> buildRecord(previous) }
+            for (host in droppedByCap) {
+                log(
+                    "[${m.id}] reactively approved host $host not carried over to ${m.version}: its own hosts fill " +
+                        "the ${ManifestParser.MAX_HOSTS}-host limit; the person will be asked again if it's needed",
+                )
+            }
+            return record
         } catch (e: IOException) {
             throw InstallException("No se pudo guardar el plugin: ${e.message}")
         } finally {
@@ -293,11 +305,22 @@ class PluginInstaller(
          * isn't kept twice. The consent sheet is unaffected: [previewFor]'s `newHosts` already
          * compares the manifest against the whole installed record, so a reactively-approved host
          * the new version declares asks nothing, and a genuinely new one still waits for approval.
+         *
+         * [onDroppedByCap] gets the reactive hosts left out ONLY because the cap was full (never one
+         * the new manifest covers, nor one the old manifest declared), and only when there is one,
+         * so [commit] can say so in the log instead of dropping them silently.
          */
-        internal fun hostsCarriedOver(declared: List<String>, previous: StoredPlugin?): List<String> {
+        internal fun hostsCarriedOver(
+            declared: List<String>,
+            previous: StoredPlugin?,
+            onDroppedByCap: (List<String>) -> Unit = {},
+        ): List<String> {
             val old = previous ?: return declared
             val reactive = old.record.hosts.filter { h -> h !in old.manifest.hosts && !HostRules.matches(h, declared) }
-            return (declared + reactive).distinct().take(maxOf(declared.size, ManifestParser.MAX_HOSTS))
+            val kept = (declared + reactive).distinct().take(maxOf(declared.size, ManifestParser.MAX_HOSTS))
+            val dropped = reactive.filter { it !in kept }.distinct()
+            if (dropped.isNotEmpty()) onDroppedByCap(dropped)
+            return kept
         }
 
         const val MAX_SCRIPT_BYTES = 1024 * 1024
