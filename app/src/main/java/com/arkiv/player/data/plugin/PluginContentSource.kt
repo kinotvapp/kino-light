@@ -5,6 +5,7 @@ import com.arkiv.player.data.gateway.GatewayAudioTrack
 import com.arkiv.player.data.gateway.GatewayBlockedException
 import com.arkiv.player.data.gateway.GatewayEpisode
 import com.arkiv.player.data.gateway.GatewayException
+import com.arkiv.player.data.gateway.PluginBlockedException
 import com.arkiv.player.data.gateway.GatewayPage
 import com.arkiv.player.data.gateway.GatewayPlayable
 import com.arkiv.player.data.gateway.GatewayResult
@@ -314,6 +315,7 @@ class UnusablePluginSource(private val access: PluginPlayback) : ContentSource {
     private fun blocked(ref: String): GatewayException {
         val pluginId = ref.removePrefix("${PluginRef.PREFIX}:").substringBefore(':', "").takeIf { it.isNotEmpty() }
         // Ready = it became usable after this call's source list was read: asking again works.
-        return GatewayException(access.accessFor(pluginId).blockedMessage() ?: "El plugin no está listo, inténtalo de nuevo")
+        val message = access.accessFor(pluginId).blockedMessage()
+        return if (message != null) PluginBlockedException(message) else GatewayException("El plugin no está listo, inténtalo de nuevo")
     }
 }
