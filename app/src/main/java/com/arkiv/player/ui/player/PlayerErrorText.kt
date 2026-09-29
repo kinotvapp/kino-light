@@ -34,8 +34,11 @@ internal fun playerErrorMessage(error: PlaybackException, videoHeight: Int, vide
             code == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT -> "No se pudo conectar con el servidor del video"
         code == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS -> "El servidor del video respondió con un error"
         code == PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND -> "El video ya no está en el servidor"
+        // An extractor that crashed on the bytes (Loader.UnexpectedLoaderException) or refused them
+        // (ParserException) is filed under IO_UNSPECIFIED: the data arrived, it could not be read.
+        code in PARSING_CODES || causes.any { it is androidx.media3.common.ParserException || it.javaClass.simpleName == "UnexpectedLoaderException" } ->
+            "El video llegó dañado o en un formato que Kino no reconoce"
         code in IO_CODES -> "Se cortó la conexión con el servidor del video"
-        code in PARSING_CODES -> "El video llegó dañado o en un formato que Kino no reconoce"
         else -> "No se pudo reproducir este video"
     }
 }

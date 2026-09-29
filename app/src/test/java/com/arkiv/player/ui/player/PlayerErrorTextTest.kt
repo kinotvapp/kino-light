@@ -52,6 +52,16 @@ class PlayerErrorTextTest {
         assertEquals("El video llegó dañado o en un formato que Kino no reconoce", say(PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED))
     }
 
+    // Measured on the KALLEY R3 (4KHDHub's 1080p MKV): ExoPlayer files an extractor's crash under
+    // ERROR_CODE_IO_UNSPECIFIED, wrapped in Loader.UnexpectedLoaderException ("No valid varint
+    // length mask found"). The data arrived; it just could not be read.
+    @Test fun `an extractor that chokes on the file says the video arrived damaged, not that the connection dropped`() {
+        val choked = androidx.media3.exoplayer.upstream.Loader.UnexpectedLoaderException(IllegalStateException("No valid varint length mask found"))
+        assertEquals("El video llegó dañado o en un formato que Kino no reconoce", say(PlaybackException.ERROR_CODE_IO_UNSPECIFIED, choked))
+        val parser = androidx.media3.common.ParserException.createForMalformedContainer("bad box", null)
+        assertEquals("El video llegó dañado o en un formato que Kino no reconoce", say(PlaybackException.ERROR_CODE_IO_UNSPECIFIED, parser))
+    }
+
     @Test fun `a refused server is named, the home network said plainly`() {
         assertEquals(
             "El video pidió un servidor no permitido (seg.other.example)",
