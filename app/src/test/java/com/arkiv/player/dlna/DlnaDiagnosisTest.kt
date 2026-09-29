@@ -2,6 +2,8 @@ package com.arkiv.player.dlna
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class DlnaDiagnosisTest {
@@ -90,5 +92,22 @@ class DlnaDiagnosisTest {
             DlnaDiagnosis.TRANSPORT_ERROR, DlnaDiagnosis.NEVER_FETCHED, DlnaDiagnosis.STOPPED_EARLY,
             DlnaDiagnosis.STUCK_LOADING, DlnaDiagnosis.POSITION_STALLED, "something_else",
         ).forEach { assertEquals(true, DlnaDiagnosis.userMessage(it).isNotBlank()) }
+    }
+
+    @Test fun `a Play that never answered while the TV is already fetching our media is not a failure`() {
+        assertTrue(DlnaDiagnosis.playStillLoading(noHttpAnswer = true, tvRequests = 3))
+    }
+
+    @Test fun `a Play with no answer and no request from the TV is a failure`() {
+        assertFalse(DlnaDiagnosis.playStillLoading(noHttpAnswer = true, tvRequests = 0))
+    }
+
+    @Test fun `a Play the TV answered with a rejection is a failure whatever it fetched`() {
+        assertFalse(DlnaDiagnosis.playStillLoading(noHttpAnswer = false, tvRequests = 5))
+    }
+
+    @Test fun `a vendor-prefixed loading state (LG_TRANSITIONING) counts as loading`() {
+        assertEquals(DlnaDiagnosis.STUCK_LOADING, DlnaDiagnosis.failure(snap(sincePlayMs = 40_000, state = "LG_TRANSITIONING", lanHits = 30)))
+        assertNull(DlnaDiagnosis.failure(snap(sincePlayMs = 10_000, state = "LG_TRANSITIONING", lanHits = 30)))
     }
 }

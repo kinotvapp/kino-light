@@ -485,7 +485,10 @@ class DlnaController(
             Thread.sleep(600L + 600L * attempt)
             play = playSoap(c.device)
         }
-        if (!play.ok) return failSoap(c, "play", play)
+        if (!play.ok) {
+            if (!DlnaDiagnosis.playStillLoading(noHttpAnswer = play.error != null, tvRequests = DlnaLog.lanHits.get())) return failSoap(c, "play", play)
+            DlnaLog.w("cast: Play has not answered yet but the TV already made ${DlnaLog.lanHits.get()} request(s): keeping the cast, the monitor will judge it")
+        }
 
         c.playAtMs = SystemClock.elapsedRealtime()
         DlnaLog.i("cast: Play accepted, watching the renderer's transport state")
