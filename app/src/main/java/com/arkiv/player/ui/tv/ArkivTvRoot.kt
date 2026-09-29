@@ -331,7 +331,6 @@ fun ArkivTvRoot(
             PlayerScreen(
                 episodeId = episodeId,
                 onBack = { navController.popBackStack() },
-                onOpenEpisodes = { navController.popBackStack() },
                 onNextEpisode = { goToPlayer(it) },
                 isTv = true,
                 // The player leaves: after configuring, Back returns to where the title was.

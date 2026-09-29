@@ -612,16 +612,9 @@ fun ArkivRoot(
             }
             composable("player/{episodeId}") { entry ->
                 val episodeId = Uri.decode(entry.arguments?.getString("episodeId").orEmpty())
-                val itemId = episodeId.substringBefore("::")
                 PlayerScreen(
                     episodeId = episodeId,
                     onBack = { navController.popBackStack() },
-                    onOpenEpisodes = {
-                        navController.navigate("detail/${Uri.encode(itemId)}") {
-                            popUpTo("player/{episodeId}") { inclusive = true }
-                            launchSingleTop = true
-                        }
-                    },
                     onNextEpisode = { goToPlayer(it) },
                     // The player leaves: after configuring, Back returns to where the title was.
                     // No destination at all for the recognized Xuper plugin -- see
