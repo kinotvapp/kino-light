@@ -58,7 +58,10 @@ data class PluginEnv(
     val loadTimeoutMs: Long = 10_000,
 )
 
-open class PluginException(message: String, cause: Throwable? = null) : Exception(message, cause)
+open class PluginException(message: String, cause: Throwable? = null) : Exception(message, cause) {
+    /** What the failed call's `kino.fetch`es met (set by [PluginRuntime.call]): see [PluginFailureText]. */
+    @Volatile var trace: PluginCallTrace? = null
+}
 class PluginTimeoutException(function: String, ms: Long) :
     PluginException("${function.take(100)} no respondió en ${(ms + 999) / 1000} s") {
     /** The limit that was exceeded, rounded up to whole seconds: what the person is told. */
@@ -122,6 +125,17 @@ class PluginRuntime private constructor(
             interactive = currentCoroutineContext()[BackgroundPluginCall] == null,
             clock = PluginCallClock(timeoutMs),
         )
+        try {
+            return run(call, argJson, timeoutMs)
+        } catch (e: PluginException) {
+            // What its fetches met travels with the failure: PluginFailureText words it.
+            e.trace = call.trace
+            throw e
+        }
+    }
+
+    private suspend fun run(call: PluginCall, argJson: String, timeoutMs: Long): String {
+        val function = call.function
         val job = synchronized(lock) {
             if (isDiscarded) throw PluginScriptException("El plugin se reinició, vuelve a intentar")
             val code = "await __kinoCall(${JSONObject.quote(function)}, ${JSONObject.quote(argJson)})"

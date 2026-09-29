@@ -320,8 +320,10 @@ class PluginHttp(
     fun beginCall() = requests.set(0)
 
     suspend fun fetch(req: Request): Response = withContext(Dispatchers.IO) {
+        // The call this fetch belongs to, read once: what it meets goes on that call's trace.
+        val trace = calls?.current?.trace
         try {
-            doFetch(req)
+            doFetch(req, trace)
         } catch (e: PluginFetchException) {
             throw e
         } catch (e: PrivateAddressException) {
@@ -335,7 +337,7 @@ class PluginHttp(
         }
     }
 
-    private suspend fun doFetch(req: Request): Response {
+    private suspend fun doFetch(req: Request, trace: PluginCallTrace?): Response {
         var url = req.url.toHttpUrlOrNull() ?: throw invalid("URL inválida: ${req.url.take(200)}")
         var method = req.method.uppercase().takeIf { it in METHODS } ?: throw invalid("método no permitido: ${req.method.take(20)}")
         var body = req.body
@@ -347,11 +349,12 @@ class PluginHttp(
         var previous: HttpUrl? = null
         repeat(MAX_REDIRECTS + 1) {
             val from = previous
-            ensureHostAllowed(from, url)
+            ensureHostAllowed(from, url, trace)
             if (requests.incrementAndGet() > MAX_REQUESTS_PER_CALL) {
                 throw invalid("demasiadas solicitudes en una sola llamada (máximo $MAX_REQUESTS_PER_CALL)")
             }
-            callClient.newCall(buildRequest(url, method, body, req.headers)).execute().use { resp ->
+            executeTraced(callClient, buildRequest(url, method, body, req.headers), url.host, trace).use { resp ->
+                if (resp.code >= 400) trace?.answered(url.host, resp.code)
                 val location = resp.header("Location")
                 if (resp.code in REDIRECTS && location != null && !req.manualRedirects) {
                     previous = url
@@ -368,35 +371,60 @@ class PluginHttp(
         throw PluginFetchException("network", "demasiadas redirecciones")
     }
 
+    /** One request, on [trace] as waiting while it is out, and as a failed site if it never answers. */
+    private fun executeTraced(client: OkHttpClient, request: okhttp3.Request, host: String, trace: PluginCallTrace?): okhttp3.Response {
+        trace?.started(host)
+        try {
+            return client.newCall(request).execute()
+        } catch (e: IOException) {
+            when (e) {
+                is PluginFetchException, is PrivateAddressException -> Unit
+                is InterruptedIOException -> trace?.failed(host, PluginCallTrace.Failure.TIMEOUT)
+                is UnknownHostException -> trace?.failed(host, PluginCallTrace.Failure.DNS)
+                else -> trace?.failed(host, PluginCallTrace.Failure.NETWORK)
+            }
+            throw e
+        } finally {
+            trace?.finished(host)
+        }
+    }
+
     /**
      * [PluginHostGate.check]/[checkRedirect], with one recovery path: a promptable miss the person
      * approves in the moment is retried once, after [askOnce] has added the host to [hosts] and
      * persisted the decision -- exactly once, even when several concurrent misses on the same host
-     * shared one prompt (see [askOnce]).
+     * shared one prompt (see [askOnce]). Every refusal goes on [trace] with why.
      */
-    private suspend fun ensureHostAllowed(from: HttpUrl?, url: HttpUrl) {
+    private suspend fun ensureHostAllowed(from: HttpUrl?, url: HttpUrl, trace: PluginCallTrace?) {
         try {
             checkOnce(from, url)
         } catch (e: HostNotAllowedException) {
-            val ra = reactiveApproval
-            if (ra == null || !PluginHostGate.isPromptableMiss(url, hosts) ||
-                url.host in ra.rejectedHosts || hosts.declared.size >= ManifestParser.MAX_HOSTS
-            ) {
+            fun refuse(why: PluginCallTrace.Refusal): Nothing {
+                trace?.refused(url.host, why)
                 throw e
             }
+            val ra = reactiveApproval
+            if (ra == null || !PluginHostGate.isPromptableMiss(url, hosts)) refuse(PluginCallTrace.Refusal.NOT_ASKED)
+            if (url.host in ra.rejectedHosts) refuse(PluginCallTrace.Refusal.REJECTED_BEFORE)
+            if (hosts.declared.size >= ManifestParser.MAX_HOSTS) refuse(PluginCallTrace.Refusal.LIMIT)
             val call = calls?.current
             if (calls != null && (call == null || !call.asksAboutHosts)) {
                 // Nobody to ask on this call's behalf: it is over (a scraper's own retries outliving
                 // its timeout), a background job, or a search/Home/browse call. Fail as ever,
                 // silently: no dialog, nothing remembered.
                 log("[$pluginId] ${call?.function ?: "no call running"}: undeclared host ${url.host} not asked (${notAskedWhy(call)})")
-                throw e
+                refuse(PluginCallTrace.Refusal.NOT_ASKED)
             }
             when (askOnce(ra, url.host, call)) {
                 // Still refused only when the cap filled up while the person was deciding: askOnce
                 // then logged why, and this rethrows the original host_not_allowed.
-                true -> checkOnce(from, url)
-                false -> throw e
+                true -> try {
+                    checkOnce(from, url)
+                } catch (still: HostNotAllowedException) {
+                    trace?.refused(url.host, PluginCallTrace.Refusal.LIMIT)
+                    throw still
+                }
+                false -> refuse(PluginCallTrace.Refusal.REJECTED_NOW)
                 // No answer: the call ended while the question was up (it came down unanswered).
                 // Without a tracker, a requester that gave up (tests): a timeout, as it always was.
                 null -> if (call != null) throw e else throw PluginFetchException("timeout", "no hubo respuesta a tiempo para conectarse a ${url.host}")

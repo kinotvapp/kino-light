@@ -685,6 +685,52 @@ class PluginHttpTest {
         assertEquals(listOf("gamerxyt.com"), asked.hosts.toList())
     }
 
+    // --- What a call's fetches met, for telling the person why it failed (PluginCallTrace) ---
+
+    @Test fun `the call's trace records refusals, with why`() = runTest {
+        val search = runningCall("search")
+        trackedHttp(PluginCallTracker().apply { begin(search) }, Asked()).let { runCatching { it.fetch(PluginHttp.Request("https://new-cdn.example/x")) } }
+        assertEquals(listOf(PluginCallTrace.Refused("new-cdn.example", PluginCallTrace.Refusal.NOT_ASKED)), search.trace.events)
+
+        val resolve = runningCall("resolve")
+        trackedHttp(PluginCallTracker().apply { begin(resolve) }, Asked()) { false }.let { runCatching { it.fetch(PluginHttp.Request("https://gamerxyt.com/x")) } }
+        assertEquals(listOf(PluginCallTrace.Refused("gamerxyt.com", PluginCallTrace.Refusal.REJECTED_NOW)), resolve.trace.events)
+
+        val again = runningCall("resolve")
+        val before = PluginHttp(
+            OkHttpClient(), "test", EffectiveHosts(listOf("archive.org")), "1.0", allowInsecureLocalhost = true,
+            reactiveApproval = PluginHttp.ReactiveApproval("P", HostApprovalRequester { _, _, _ -> true }, {}, {}, setOf("greenmotors.cc")),
+            calls = PluginCallTracker().apply { begin(again) },
+        )
+        runCatching { before.fetch(PluginHttp.Request("https://greenmotors.cc/x")) }
+        assertEquals(listOf(PluginCallTrace.Refused("greenmotors.cc", PluginCallTrace.Refusal.REJECTED_BEFORE)), again.trace.events)
+    }
+
+    @Test fun `the call's trace records a site that could not be found, and nothing left waiting`() = runTest {
+        val call = runningCall("resolve")
+        // Approved at once, then the offline DNS fails it: "no se encontró el sitio".
+        trackedHttp(PluginCallTracker().apply { begin(call) }, Asked()).let { runCatching { it.fetch(PluginHttp.Request("https://4khdhub.click/x")) } }
+        assertEquals(listOf(PluginCallTrace.Failed("4khdhub.click", PluginCallTrace.Failure.DNS)), call.trace.events)
+        assertNull(call.trace.waitingFor)
+    }
+
+    @Test fun `the call's trace records a server error and a timeout`() = runBlocking {
+        val call = runningCall("resolve")
+        val h = PluginHttp(
+            OkHttpClient(), "test", EffectiveHosts(listOf("localhost")), "1.0", allowInsecureLocalhost = true,
+            calls = PluginCallTracker().apply { begin(call) },
+        )
+        server.enqueue(MockResponse().setResponseCode(503))
+        server.enqueue(MockResponse().setBody("ok").setHeadersDelay(3, java.util.concurrent.TimeUnit.SECONDS))
+        assertEquals(503, h.fetch(PluginHttp.Request(url("/a"))).status)
+        assertEquals("timeout", fetchError(h, PluginHttp.Request(url("/slow"), timeoutMs = 300)).code)
+        assertEquals(
+            listOf(PluginCallTrace.Answered("localhost", 503), PluginCallTrace.Failed("localhost", PluginCallTrace.Failure.TIMEOUT)),
+            call.trace.events,
+        )
+        assertNull(call.trace.waitingFor)
+    }
+
     @Test fun `the same host is asked once per call`() = runTest {
         val asked = Asked()
         val calls = PluginCallTracker().apply { begin(runningCall("resolve")) }

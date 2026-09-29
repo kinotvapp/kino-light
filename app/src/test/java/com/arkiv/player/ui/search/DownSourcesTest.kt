@@ -100,6 +100,17 @@ class DownSourcesTest {
         assertEquals(listOf("Configura Jellyfin en Ajustes ▸ Plugins"), downSourceNotices(state, SourceTab.ALL))
     }
 
+    // A reason Kino itself worked out (PluginFailureText) is already a whole sentence naming the source.
+    @Test fun `a failure Kino explained is its own sentence`() {
+        // Untyped on purpose (a script's own throw): only Kino's explanation makes it a sentence.
+        val e = com.arkiv.player.data.plugin.PluginScriptException("fetch failed").apply {
+            trace = com.arkiv.player.data.plugin.PluginCallTrace().apply { refused("cdn.example", com.arkiv.player.data.plugin.PluginCallTrace.Refusal.NOT_ASKED) }
+        }
+        val state = SourcesState().withLabel("plugin:c", "Castle")
+            .withFailure("plugin:c", "Castle necesita cdn.example, que no está aprobado", e)
+        assertEquals(listOf("Castle necesita cdn.example, que no está aprobado"), downSourceNotices(state, SourceTab.ALL))
+    }
+
     /**
      * Fix round 1, finding 1 (spec §3.6 "Any other error keeps today's generic handling"): an
      * UNTYPED plugin error code (outside `PluginErrors.CODES`) must NOT show the plugin's raw text

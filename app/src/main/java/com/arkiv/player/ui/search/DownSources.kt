@@ -54,7 +54,9 @@ private fun isDown(tab: SourceTab, state: SourcesState): Boolean = tab.key in st
 /** Whether [cause] is a plugin error whose CODE is one of the typed ones (`PluginErrors.CODES`):
  *  only those already carry their own whole Spanish sentence. */
 private fun isTypedPluginError(cause: Throwable?): Boolean =
-    (cause as? com.arkiv.player.data.plugin.PluginErrorException)?.let { com.arkiv.player.data.plugin.PluginErrors.userMessage(it.code, "") != null } == true
+    (cause as? com.arkiv.player.data.plugin.PluginErrorException)?.let { com.arkiv.player.data.plugin.PluginErrors.userMessage(it.code, "") != null } == true ||
+        // A reason Kino worked out itself (a refused host, a site that didn't answer): also a whole sentence.
+        (cause as? Exception)?.let { com.arkiv.player.data.plugin.PluginCalls.explained(it, "") != null } == true
 
 /**
  * One line per down source matching [tab] ("Todo" shows them all). They go above the list, with

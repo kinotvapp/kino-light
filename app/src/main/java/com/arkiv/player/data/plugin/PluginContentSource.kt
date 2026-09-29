@@ -122,14 +122,19 @@ class PluginContentSource(
                 // DownSources shows "<plugin> no respondió: <error>" (or the typed error's own
                 // sentence). A timeout's own message names the capability in English: never shown.
                 // Its own seconds, not the search limit: the pool's LOAD timeout (10 s) lands here too.
-                val error = when (e) {
+                // A reason Kino worked out itself (a refused host, a site that didn't answer) comes
+                // first; it is a whole sentence, which DownSources shows as is.
+                val error = PluginCalls.explained(e, name) ?: when (e) {
                     is PluginTimeoutException -> "tardó más de ${e.seconds} s"
                     is PluginErrorException -> PluginErrors.userMessage(e.code, name) ?: e.message ?: "error del plugin"
                     else -> e.message ?: "error del plugin"
                 }
+                val trace = (e as? PluginException)?.trace?.summary()?.takeIf { it.isNotEmpty() }
+                log("[$id] search failed after ${System.currentTimeMillis() - t0} ms: $error" + (trace?.let { " [$it]" } ?: ""))
                 emit(SearchEvent.SourceError(source, error, System.currentTimeMillis() - t0, 0, cause = e))
                 return@flow
             }
+            log("[$id] search ok after ${System.currentTimeMillis() - t0} ms")
             val page = PluginOutput.page(out, PluginOutput.MAX_SEARCH_ITEMS, allowSeries, allowNext, currentHosts(), allowLive) { log("[$id] $it") }
             page.items.forEach { emit(SearchEvent.ResultEvent(source, resultFrom(plugin, it))) }
             emit(SearchEvent.SourceDone(source, page.items.size, System.currentTimeMillis() - t0, more = page.next))

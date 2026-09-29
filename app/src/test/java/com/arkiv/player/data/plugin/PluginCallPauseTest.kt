@@ -121,6 +121,19 @@ class PluginCallPauseTest {
         assertNull(kotlinx.coroutines.withTimeout(5_000) { outcome.await() })
     }
 
+    // What the call's fetches met travels with its failure, for PluginFailureText.
+    @Test fun `a failed call carries its trace, a timeout included`() {
+        val calls = PluginCallTracker()
+        val failing = "export async function resolve(r) { await kino.fetch('https://a.example/x'); throw kino.error('not_found', 'sin resultados') }"
+        val rt = runBlocking { open(failing, calls) { req -> calls.current!!.trace.failed("a.example", PluginCallTrace.Failure.DNS); ok(req) } }
+        val e = assertThrows(PluginErrorException::class.java) { runBlocking { rt.call("resolve", "null", 5_000) } }
+        assertEquals(listOf(PluginCallTrace.Failed("a.example", PluginCallTrace.Failure.DNS)), e.trace?.events)
+
+        val hanging = runBlocking { open(fetchOnce, calls) { req -> calls.current!!.trace.started("slow.example"); delay(2_000); ok(req) } }
+        val t = assertThrows(PluginTimeoutException::class.java) { runBlocking { hanging.call("resolve", "null", 300) } }
+        assertEquals("slow.example", t.trace?.waitingFor)
+    }
+
     @Test fun `a call that is over asks nothing at all`() = runBlocking {
         val calls = PluginCallTracker()
         var seen: PluginCall? = null

@@ -23,6 +23,9 @@ class PluginCall internal constructor(
 ) {
     private val ended = Job()
 
+    /** What this call's `kino.fetch`es met: the material for telling the person why it failed. */
+    val trace = PluginCallTrace()
+
     /** False once the call is over, whatever way it ended. */
     val isAlive: Boolean get() = ended.isActive
 
@@ -87,5 +90,54 @@ class PluginCallTracker {
     internal fun end(call: PluginCall) {
         call.end()
         if (current === call) current = null
+    }
+}
+
+/**
+ * What one call's `kino.fetch`es met, in order: hosts refused (and why), sites that failed to answer
+ * (and how), HTTP errors, and which requests are still waiting for an answer. [PluginHttp] writes it;
+ * [PluginRuntime] hands it to the call's failure ([PluginException.trace]) and [PluginFailureText]
+ * reads it. Bounded: a runaway scraper can't grow it past [MAX_EVENTS].
+ */
+class PluginCallTrace {
+    enum class Refusal { REJECTED_NOW, REJECTED_BEFORE, NOT_ASKED, LIMIT }
+    enum class Failure { DNS, TIMEOUT, NETWORK }
+
+    sealed interface Event { val host: String }
+    data class Refused(override val host: String, val why: Refusal) : Event
+    data class Failed(override val host: String, val how: Failure) : Event
+    data class Answered(override val host: String, val status: Int) : Event
+
+    private val lock = Any()
+    private val list = mutableListOf<Event>()
+    private val inFlight = LinkedHashMap<String, Int>()
+
+    val events: List<Event> get() = synchronized(lock) { list.toList() }
+
+    /** A request to [host] that went out and has not come back yet, if any. */
+    val waitingFor: String? get() = synchronized(lock) { inFlight.keys.lastOrNull() }
+
+    fun refused(host: String, why: Refusal) = add(Refused(host, why))
+    fun failed(host: String, how: Failure) = add(Failed(host, how))
+    fun answered(host: String, status: Int) = add(Answered(host, status))
+
+    fun started(host: String) = synchronized(lock) { inFlight.merge(host, 1, Int::plus); Unit }
+    fun finished(host: String) = synchronized(lock) { inFlight.computeIfPresent(host) { _, n -> (n - 1).takeIf { it > 0 } }; Unit }
+
+    private fun add(e: Event) = synchronized(lock) { if (list.size < MAX_EVENTS) list += e }
+
+    /** One line for the log: every event, compact. */
+    fun summary(): String = synchronized(lock) {
+        (list.map { e ->
+            when (e) {
+                is Refused -> "${e.host} refused ${e.why}"
+                is Failed -> "${e.host} ${e.how}"
+                is Answered -> "${e.host} ${e.status}"
+            }
+        } + inFlight.keys.map { "$it waiting" }).joinToString(", ")
+    }
+
+    companion object {
+        const val MAX_EVENTS = 100
     }
 }
