@@ -64,8 +64,8 @@ private val ICON_SIZE = 72.dp
 /** Height of the placeholder initial, in dp (not sp: it must not grow with the font scale, see [CardTile]). */
 private val INITIAL_SIZE = 44.dp
 
-/** The tile's height is 9/16 of its width, the same 16:9 as the TV card. */
-private const val TILE_ASPECT = 16f / 9f
+/** The image space above the texts: a bit taller than 16:9, so more of the plugin's art shows. */
+private const val TILE_ASPECT = 1.3f
 
 /** The tonal button's container: the brand red at low strength, so it reads as this card's action without shouting. */
 private val ACTION_CONTAINER = ArkivRed.copy(alpha = 0.30f)
@@ -191,7 +191,7 @@ internal fun PluginCardSurface(name: String, iconFile: File?, tileColorArgb: Lon
         // Dark where the texts are (the bottom), fading away towards the top so the art shows through.
         Box(
             Modifier.matchParentSize().background(
-                Brush.verticalGradient(0f to Color.Transparent, 0.3f to Color.Transparent, 0.55f to Color(0x8C000000), 0.78f to Color(0xD0000000), 1f to Color(0xF5000000)),
+                Brush.verticalGradient(0f to Color.Transparent, 0.15f to Color.Transparent, 0.35f to Color(0x99000000), 0.5f to Color(0xD0000000), 1f to Color(0xF5000000)),
             ),
         )
         Column {

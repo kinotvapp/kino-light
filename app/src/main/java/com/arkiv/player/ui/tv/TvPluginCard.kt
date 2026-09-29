@@ -72,7 +72,7 @@ private val ICON_SIZE = 96.dp
 private val INITIAL_SIZE = 56.dp
 
 /** Tile shape of a card: 16:9, or the wide, low strip of a [compact] card. */
-private const val TILE_RATIO = 16f / 9f
+private const val TILE_RATIO = 1.5f
 private const val COMPACT_TILE_RATIO = 3.5f
 
 /** Side of the icon (or height of the initial) of a compact tile, which has the art beside its pill instead of under it. */
@@ -171,7 +171,7 @@ internal fun PluginCardSurface(
         // Dark where the texts are (the bottom), fading away towards the top so the art shows through.
         Box(
             Modifier.matchParentSize().background(
-                Brush.verticalGradient(0f to Color.Transparent, 0.3f to Color.Transparent, 0.55f to Color(0x8C000000), 0.78f to Color(0xD0000000), 1f to Color(0xF5000000)),
+                Brush.verticalGradient(0f to Color.Transparent, 0.15f to Color.Transparent, 0.35f to Color(0x99000000), 0.5f to Color(0xD0000000), 1f to Color(0xF5000000)),
             ),
         )
         Column {
