@@ -1,5 +1,6 @@
 package com.arkiv.player.ui.live
 
+import com.arkiv.player.data.plugin.Genre
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.arkiv.player.data.db.LiveChannelCacheDao
@@ -108,7 +109,17 @@ data class LiveUiState(
     val notice: String? = null,
     /** The module has no provider left (the last plugin switched off, Xuper's gate closed): nothing to load or retry. */
     val moduleEmpty: Boolean = false,
+    /** The genre the categories are narrowed to; null = all. */
+    val genre: String? = null,
 ) {
+    /** The genres the active provider's categories span, in vocabulary order; empty when there is nothing to choose between. */
+    val genres: List<String> get() {
+        val present = categories.mapNotNull { it.genre }.toSet()
+        return if (present.size < 2) emptyList() else Genre.IDS.filter { it in present }
+    }
+    /** [categories] narrowed to [genre]; the one being watched stays, so the row never drops what is on screen. */
+    val visibleCategories: List<ProviderCategory> get() =
+        if (genre == null || genres.isEmpty()) categories else categories.filter { it.genre == genre || it.id == activeCategory }
     val visible: List<LiveChannel> get() = filterChannels(channels, search)
     /** More than one provider: provider chips, and a badge on each channel. */
     val showProviders: Boolean get() = providers.size > 1
@@ -328,6 +339,9 @@ class LiveViewModel(
             }
         }
     }
+
+    /** A genre chip; choosing the one already chosen (or null) shows every category again. */
+    fun chooseGenre(id: String?) = _state.update { it.copy(genre = id.takeIf { g -> g != it.genre }) }
 
     fun chooseCategory(id: String) {
         if (id == CATEGORY_FAVORITES) { load(_state.value.activeProvider, id); return }

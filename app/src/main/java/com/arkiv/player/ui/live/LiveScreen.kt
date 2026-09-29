@@ -1,5 +1,6 @@
 package com.arkiv.player.ui.live
 
+import com.arkiv.player.data.plugin.Genre
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -265,6 +266,18 @@ fun LiveScreen(
             }
         }
 
+        if (state.genres.isNotEmpty()) {
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(bottom = 4.dp),
+            ) {
+                items(state.genres, key = { it }) { g ->
+                    CategoryChip(label = Genre.label(g), icon = null, selected = state.genre == g, onClick = { vm.chooseGenre(g) })
+                }
+            }
+        }
+
         LazyRow(
             contentPadding = PaddingValues(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -285,7 +298,7 @@ fun LiveScreen(
                     onClick = { view = LocalView.RECENT },
                 )
             }
-            items(state.categories, key = { it.id }) { cat ->
+            items(state.visibleCategories, key = { it.id }) { cat ->
                 CategoryChip(
                     label = cat.name,
                     icon = null,

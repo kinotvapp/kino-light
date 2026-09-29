@@ -1,5 +1,6 @@
 package com.arkiv.player.ui.tv
 
+import com.arkiv.player.data.plugin.Genre
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -447,7 +448,10 @@ fun TvLiveGuideScreen(onWatchChannel: (LiveChannel) -> Unit, onBack: () -> Unit)
                             onClick = { view = TvLocalView.RECENT },
                         )
                     }
-                    items(state.categories, key = { it.id }) { cat ->
+                    items(state.genres, key = { "genre:$it" }) { g ->
+                        TvCategoryChip(label = Genre.label(g), icon = null, selected = state.genre == g, onClick = { vm.chooseGenre(g) })
+                    }
+                    items(state.visibleCategories, key = { it.id }) { cat ->
                         TvCategoryChip(
                             label = cat.name,
                             icon = null,

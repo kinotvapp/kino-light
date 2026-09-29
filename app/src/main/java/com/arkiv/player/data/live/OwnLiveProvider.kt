@@ -1,5 +1,6 @@
 package com.arkiv.player.data.live
 
+import com.arkiv.player.data.plugin.Genre
 import com.arkiv.player.data.db.LiveChannelCacheEntity
 import com.arkiv.player.data.db.OwnLiveSourceEntity
 import com.arkiv.player.data.gateway.GatewayException
@@ -170,7 +171,7 @@ internal class OwnLiveProvider(
 
         singles.groupBy { it.groupName.orEmpty().trim() }.forEach { (group, items) ->
             val categoryId = "own:" + sha1Hex(group).take(10)
-            categories += ProviderCategory(categoryId, group.ifEmpty { "Canales sueltos" })
+            categories += ProviderCategory(categoryId, group.ifEmpty { "Canales sueltos" }, Genre.infer(group))
             byCategory[categoryId] = items.mapIndexed { i, s -> LiveChannel(s.id, s.name, i + 1, s.logo, provider = id) }
         }
 

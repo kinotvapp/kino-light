@@ -1,5 +1,6 @@
 package com.arkiv.player.data.live
 
+import com.arkiv.player.data.plugin.Genre
 import com.arkiv.player.data.db.LiveChannelCacheEntity
 import com.arkiv.player.data.gateway.GatewayException
 import com.arkiv.player.data.gateway.GatewayPlayable
@@ -191,7 +192,7 @@ class PluginLiveProvider(
     private suspend fun categoriesNow(): List<ProviderCategory> {
         val catalog = catalog()
         lock.withLock {
-            pluginCategories = catalog.categories.map { ProviderCategory(it.id, it.title) }
+            pluginCategories = catalog.categories.map { ProviderCategory(it.id, it.title, Genre.of(it.genre, it.title)) }
             categoriesKnown = true
             reconcile(catalog.playlists)
         }
