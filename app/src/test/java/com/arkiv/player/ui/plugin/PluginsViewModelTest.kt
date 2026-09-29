@@ -4,11 +4,15 @@ import com.arkiv.player.data.plugin.InstallException
 import com.arkiv.player.data.plugin.InstallPreview
 import com.arkiv.player.data.plugin.InstalledPlugin
 import com.arkiv.player.data.plugin.InstalledRecord
+import com.arkiv.player.data.plugin.NuvioPluginInstaller
 import com.arkiv.player.data.plugin.PluginAddress
 import com.arkiv.player.data.plugin.PluginAdmin
+import com.arkiv.player.data.plugin.PluginFetcher
+import com.arkiv.player.data.plugin.PluginInstaller
 import com.arkiv.player.data.plugin.PluginManifest
 import com.arkiv.player.data.plugin.PluginSetting
 import com.arkiv.player.data.plugin.PluginSettingsForm
+import com.arkiv.player.data.plugin.PluginStore
 import com.arkiv.player.data.plugin.SettingType
 import com.arkiv.player.data.plugin.PluginTimeoutException
 import com.arkiv.player.data.plugin.UpdateOutcome
@@ -48,7 +52,11 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import java.io.File
+import java.io.FileNotFoundException
 import java.io.IOException
 import java.util.concurrent.Executors
 
@@ -288,6 +296,100 @@ class PluginsViewModelTest {
         gate.complete(Unit)
         assertEquals(preview, vm.state.value.consent)
         assertFalse(vm.state.value.busy)
+    }
+
+    // ---- Nuvio: a typed address that is a provider repo opens the scraper picker instead ----
+
+    @get:Rule val tmp = TemporaryFolder()
+
+    private val nuvioManifestJson = """
+        { "name": "nuvio-providers", "scrapers": [
+          { "id": "fakesrc", "name": "FakeSrc", "filename": "providers/fakesrc.js", "enabled": true, "supportedTypes": ["movie"] }
+        ] }
+    """.trimIndent()
+    private val nuvioScraperJs = """
+        function getStreams() { return [{ name: "FakeSrc", title: "t", url: "https://fakesrc.example/v.mp4", quality: "1080p" }]; }
+        module.exports = { getStreams: getStreams };
+    """.trimIndent()
+
+    /**
+     * A real [NuvioPluginInstaller] (it is a concrete class, not an interface: faking it would mean
+     * duplicating its own logic), wired to serve exactly [files] and backed by a throwaway
+     * [PluginStore] on [tmp]. [PluginInstaller]'s own fetcher and probe are never reached by
+     * `previewRepo`/`previewScraper` (only `install`/`checkUpdate` touch them), so they are stubs
+     * that fail loudly if that ever changes.
+     */
+    private fun nuvioInstaller(files: Map<String, String>): NuvioPluginInstaller {
+        val store = PluginStore(File(tmp.root, "plugins"), File(tmp.root, "plugin-data"))
+        val pluginInstaller = PluginInstaller(
+            store,
+            PluginFetcher { url, _ -> throw FileNotFoundException(url) },
+            probe = { error("not used by previewRepo/previewScraper") },
+        )
+        return NuvioPluginInstaller(pluginInstaller, PluginFetcher { url, _ -> files[url]?.toByteArray() ?: throw FileNotFoundException(url) }, tmdbApiKey = "test-key")
+    }
+
+    @Test fun `a typed address that is a Nuvio provider repo opens the scraper picker, not the normal consent`() {
+        val admin = FakeAdmin()
+        val nuvio = nuvioInstaller(mapOf("https://raw.githubusercontent.com/owner/nuvio-repo/HEAD/manifest.json" to nuvioManifestJson))
+        val vm = PluginsViewModel(admin, io = dispatcher, nuvioPluginInstaller = nuvio)
+        vm.onAddressChange("owner/nuvio-repo")
+        vm.add()
+        assertEquals(listOf("fakesrc"), vm.state.value.nuvioPicker?.scrapers?.map { it.id })
+        assertEquals("owner/nuvio-repo", vm.state.value.nuvioPicker?.repoInput)
+        assertNull(vm.state.value.consent)
+        assertTrue(admin.previewed.isEmpty())
+    }
+
+    @Test fun `a typed address that is not a Nuvio manifest falls back to the normal consent, even with a Nuvio installer wired in`() {
+        val admin = FakeAdmin().apply { previewResult = { preview } }
+        val nuvio = nuvioInstaller(emptyMap()) // no manifest.json at all: previewRepo answers null
+        val vm = PluginsViewModel(admin, io = dispatcher, nuvioPluginInstaller = nuvio)
+        vm.onAddressChange("owner/not-nuvio")
+        vm.add()
+        assertEquals(listOf("owner/not-nuvio"), admin.previewed)
+        assertEquals(preview, vm.state.value.consent)
+        assertNull(vm.state.value.nuvioPicker)
+    }
+
+    @Test fun `a Nuvio repo with no installable scrapers says so instead of opening an empty picker`() {
+        val admin = FakeAdmin()
+        val disabledManifest = """{ "name": "n", "scrapers": [ { "id": "x", "filename": "x.js", "enabled": false } ] }"""
+        val nuvio = nuvioInstaller(mapOf("https://raw.githubusercontent.com/owner/empty/HEAD/manifest.json" to disabledManifest))
+        val vm = PluginsViewModel(admin, io = dispatcher, nuvioPluginInstaller = nuvio)
+        vm.onAddressChange("owner/empty")
+        vm.add()
+        assertNull(vm.state.value.nuvioPicker)
+        assertNull(vm.state.value.consent)
+        assertEquals("Este repositorio de Nuvio no tiene scrapers instalables en Android", vm.state.value.message)
+    }
+
+    @Test fun `picking a scraper converts it and opens the same consent sheet, clearing the picker`() {
+        val admin = FakeAdmin()
+        val nuvio = nuvioInstaller(mapOf(
+            "https://raw.githubusercontent.com/owner/nuvio-repo/HEAD/manifest.json" to nuvioManifestJson,
+            "https://raw.githubusercontent.com/owner/nuvio-repo/HEAD/providers/fakesrc.js" to nuvioScraperJs,
+        ))
+        val vm = PluginsViewModel(admin, io = dispatcher, nuvioPluginInstaller = nuvio)
+        vm.onAddressChange("owner/nuvio-repo")
+        vm.add()
+        vm.pickNuvioScraper("fakesrc")
+        assertNull(vm.state.value.nuvioPicker)
+        assertNotNull(vm.state.value.consent)
+        assertTrue("fakesrc.example" in vm.state.value.consent!!.newHosts)
+        // Hands off to the SAME confirmInstall/admin.install path: nothing installs on its own here.
+        assertTrue(admin.installed.isEmpty())
+    }
+
+    @Test fun `cancelling the scraper picker clears it without previewing anything`() {
+        val admin = FakeAdmin()
+        val nuvio = nuvioInstaller(mapOf("https://raw.githubusercontent.com/owner/nuvio-repo/HEAD/manifest.json" to nuvioManifestJson))
+        val vm = PluginsViewModel(admin, io = dispatcher, nuvioPluginInstaller = nuvio)
+        vm.onAddressChange("owner/nuvio-repo")
+        vm.add()
+        vm.cancelNuvioPicker()
+        assertNull(vm.state.value.nuvioPicker)
+        assertNull(vm.state.value.consent)
     }
 
     @Test fun `toggling goes to the admin`() {

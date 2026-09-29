@@ -61,6 +61,7 @@ import com.arkiv.player.ui.plugin.CatalogAction
 import com.arkiv.player.ui.plugin.CatalogRow
 import com.arkiv.player.ui.plugin.CatalogUiState
 import com.arkiv.player.ui.plugin.CommunityUiState
+import com.arkiv.player.ui.plugin.NuvioScraperPickerDialog
 import com.arkiv.player.ui.plugin.PluginConfigDialog
 import com.arkiv.player.ui.plugin.PluginConsentDialog
 import com.arkiv.player.ui.plugin.PluginUninstallDialog
@@ -135,7 +136,17 @@ internal fun TvPluginsContent(
     val graph = rememberGraph()
     val vm: PluginsViewModel = viewModel(
         key = "plugins",
-        factory = viewModelFactory { initializer { PluginsViewModel(graph.pluginAdmin, catalogProvider = graph.pluginCatalog, artProvider = graph.catalogArt, discovery = graph.pluginDiscovery) } },
+        factory = viewModelFactory {
+            initializer {
+                PluginsViewModel(
+                    graph.pluginAdmin,
+                    catalogProvider = graph.pluginCatalog,
+                    artProvider = graph.catalogArt,
+                    discovery = graph.pluginDiscovery,
+                    nuvioPluginInstaller = graph.nuvioPluginInstaller,
+                )
+            }
+        },
     )
     val plugins by vm.plugins.collectAsStateWithLifecycle()
     val state by vm.state.collectAsStateWithLifecycle()
@@ -269,6 +280,7 @@ internal fun TvPluginsContent(
             },
         )
     }
+    state.nuvioPicker?.let { NuvioScraperPickerDialog(it, onPick = vm::pickNuvioScraper, onCancel = vm::cancelNuvioPicker) }
     state.consent?.let {
         PluginConsentDialog(
             it,

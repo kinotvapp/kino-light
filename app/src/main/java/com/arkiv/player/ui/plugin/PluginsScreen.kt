@@ -1,13 +1,16 @@
 package com.arkiv.player.ui.plugin
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
@@ -15,7 +18,10 @@ import androidx.compose.foundation.lazy.grid.LazyGridItemSpanScope
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.CircularProgressIndicator
@@ -27,6 +33,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PrimaryScrollableTabRow
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -38,20 +45,27 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import coil.compose.AsyncImage
 import com.arkiv.player.data.plugin.InstalledPlugin
+import com.arkiv.player.data.plugin.NuvioScraperEntry
 import com.arkiv.player.data.plugin.catalog.CatalogArt
 import com.arkiv.player.ui.rememberGraph
 import com.arkiv.player.ui.theme.ArkivBlack
 import com.arkiv.player.ui.theme.ArkivRed
+import com.arkiv.player.ui.theme.ArkivSurface
 import com.arkiv.player.ui.theme.ArkivTextSecondary
 import com.arkiv.player.ui.tv.gridLinesWithStatus
 
@@ -101,7 +115,17 @@ internal fun PluginsContent(bottomInset: Dp, modifier: Modifier = Modifier) {
     val graph = rememberGraph()
     val vm: PluginsViewModel = viewModel(
         key = "plugins",
-        factory = viewModelFactory { initializer { PluginsViewModel(graph.pluginAdmin, catalogProvider = graph.pluginCatalog, artProvider = graph.catalogArt, discovery = graph.pluginDiscovery) } },
+        factory = viewModelFactory {
+            initializer {
+                PluginsViewModel(
+                    graph.pluginAdmin,
+                    catalogProvider = graph.pluginCatalog,
+                    artProvider = graph.catalogArt,
+                    discovery = graph.pluginDiscovery,
+                    nuvioPluginInstaller = graph.nuvioPluginInstaller,
+                )
+            }
+        },
     )
     val plugins by vm.plugins.collectAsStateWithLifecycle()
     val state by vm.state.collectAsStateWithLifecycle()
@@ -173,6 +197,7 @@ internal fun PluginsContent(bottomInset: Dp, modifier: Modifier = Modifier) {
             },
         )
     }
+    state.nuvioPicker?.let { NuvioScraperPickerDialog(it, onPick = vm::pickNuvioScraper, onCancel = vm::cancelNuvioPicker) }
     state.consent?.let {
         PluginConsentDialog(
             it,
@@ -188,6 +213,75 @@ internal fun PluginsContent(bottomInset: Dp, modifier: Modifier = Modifier) {
     }
     state.confirmUninstall?.let { PluginUninstallDialog(it, onConfirm = vm::confirmUninstall, onCancel = vm::cancelUninstall) }
     state.configuring?.let { PluginConfigDialog(it, isTv = false, vm = vm) }
+}
+
+/**
+ * Shown when [PluginsUiState.nuvioPicker] is non-null: [PluginsViewModel.add] found a Nuvio provider repo
+ * (its own `manifest.json` shape, nothing like a Kino plugin's) instead of a normal manifest at the typed
+ * address. One row per installable scraper ([com.arkiv.player.data.plugin.NuvioManifestParser.installable]
+ * already dropped the disabled and Android-disabled ones); picking one hands off to
+ * [PluginsViewModel.pickNuvioScraper], which converts it and opens the SAME consent dialog and "Instalar"
+ * button as any other install -- nothing here installs anything on its own. Styled like
+ * [PluginConsentDialog] (a plain [Dialog], the same [Surface]/padding/scroll): no TV-specific twin needed,
+ * unlike [com.arkiv.player.ui.tv.TvAddCustomPluginDialog] -- there is no text field here fighting the D-pad
+ * for Up/Down, so the ordinary focus search plus [focusRing] (already how the consent and uninstall
+ * dialogs behave on TV) are enough. Both [PluginsContent] and
+ * [com.arkiv.player.ui.tv.TvPluginsContent] call this same composable, unchanged.
+ */
+@Composable
+internal fun NuvioScraperPickerDialog(picker: NuvioPickerState, onPick: (String) -> Unit, onCancel: () -> Unit) {
+    val cancelFocus = remember { FocusRequester() }
+    FocusWhenReady(cancelFocus)
+    Dialog(onDismissRequest = onCancel) {
+        Surface(shape = RoundedCornerShape(16.dp), color = ArkivSurface, modifier = Modifier.widthIn(max = 520.dp)) {
+            Column(Modifier.padding(24.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Elige un scraper para instalar",
+                    style = MaterialTheme.typography.titleLarge, color = Color.White, fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    "Este repositorio de Nuvio tiene varios scrapers. Cada uno se instala como un plugin aparte.",
+                    style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary,
+                )
+                picker.scrapers.forEach { scraper -> NuvioScraperRow(scraper, onClick = { onPick(scraper.id) }) }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End)) {
+                    TextButton(onClick = onCancel, modifier = Modifier.focusRequester(cancelFocus).focusRing()) { Text("Cancelar") }
+                }
+            }
+        }
+    }
+}
+
+/** One row of [NuvioScraperPickerDialog]: the scraper's logo (if it has one), its name and a language/type badge ([nuvioScraperBadge]). */
+@Composable
+private fun NuvioScraperRow(scraper: NuvioScraperEntry, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = MIN_TARGET)
+            .clickable(onClick = onClick)
+            .focusRing()
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        if (scraper.logo != null) {
+            AsyncImage(model = scraper.logo, contentDescription = null, modifier = Modifier.size(36.dp))
+        }
+        Column(Modifier.weight(1f)) {
+            Text(scraper.name, style = MaterialTheme.typography.bodyLarge, color = Color.White)
+            nuvioScraperBadge(scraper)?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary) }
+        }
+    }
+}
+
+/** The badge line under a scraper's name in [NuvioScraperRow]: its content languages and supported types, or null with neither. */
+internal fun nuvioScraperBadge(scraper: NuvioScraperEntry): String? {
+    val parts = listOfNotNull(
+        scraper.contentLanguage.takeIf { it.isNotEmpty() }?.joinToString("/") { it.uppercase() },
+        scraper.supportedTypes.takeIf { it.isNotEmpty() }?.joinToString(", "),
+    )
+    return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
 }
 
 /**
