@@ -1173,7 +1173,21 @@ Before you publish, check that:
 ### Get found
 
 Kino lists community plugins by searching GitHub for public repositories with the topic
-`kino-plugin` (forks are left out). To be listed:
+`kino-plugin` (forks are left out).
+
+**Without the `kino-plugin` topic, Kino will not find your plugin.** It is the only way the app
+discovers a plugin: a perfect manifest, a public repository and a thousand stars change nothing if the
+topic is missing. Put it on **the repository that contains `kino-plugin.json`** (a common mistake:
+adding it to another repository by the same author that only holds data, such as an `.m3u` playlist).
+Check it: `curl -s https://api.github.com/repos/OWNER/REPO | tr -d ' \n' | grep -o '"topics":\[[^]]*\]'`
+must print `"kino-plugin"` inside the list.
+
+**Descriptions.** The card shows the `description` of your **manifest** (up to 300 characters; empty
+leaves the card without text), so write one. The GitHub repository description (About) is not read by
+the app and does not affect discovery, but set it too:
+`gh repo edit OWNER/REPO --add-topic kino-plugin --description "What your plugin does"` does both.
+
+To be listed:
 
 1. On your repository's GitHub page, add the topic `kino-plugin` (About ▸ ⚙ ▸ Topics).
 2. Keep `kino-plugin.json` at the root of the repository: Kino reads it to show your plugin's name,
