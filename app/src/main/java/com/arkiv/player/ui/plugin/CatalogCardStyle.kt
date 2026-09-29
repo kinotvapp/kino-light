@@ -89,8 +89,11 @@ internal fun cardActionLabel(action: CatalogAction): String = when (action) {
     CatalogAction.INSTALLED -> "Instalado"
 }
 
-/** How many lines of description a card shows before it ends with an ellipsis. */
-internal fun cardDescriptionLines(): Int = 2
+/**
+ * How many lines of description a card shows before it ends with an ellipsis: two, or one on a [compact]
+ * TV card (~150 dp wide, five to a line, where every dp of height counts to fit two sections on one screen).
+ */
+internal fun cardDescriptionLines(compact: Boolean = false): Int = if (compact) 1 else 2
 
 /**
  * How many lines a card's status takes, and how many a card without one reserves when its neighbour in

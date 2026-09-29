@@ -76,15 +76,24 @@ class TvGridFocusTest {
         assertNull(gridStopHeader(blocks, 4, "unknown"))
     }
 
-    @Test fun `the picker fits four cards on a 960 dp TV and five on a 1280 dp one`() {
+    @Test fun `the picker fits five cards on a 960 dp TV and six on a 1280 dp one`() {
         // A 1280x720 px box at 213 dpi is ~961 dp wide; its grid gets ~833 dp after the side paddings.
-        assertEquals(4, tvPickerColumns(833f))
+        assertEquals(5, tvPickerColumns(833f))
         // 1280 dp minus the screen's 64 dp side paddings.
-        assertEquals(5, tvPickerColumns(1152f))
+        assertEquals(6, tvPickerColumns(1152f))
+    }
+
+    @Test fun `each compact card keeps at least 150 dp`() {
+        for (width in 300..2000 step 7) {
+            val columns = tvPickerColumns(width.toFloat())
+            val card = (width - (columns - 1) * PICKER_CARD_GAP_DP) / columns
+            if (columns > 2) assert(card >= 150f) { "$width dp: $columns columns of $card dp" }
+        }
     }
 
     @Test fun `the picker column count follows the width, within bounds`() {
-        assertEquals(4, tvPickerColumns(900f))
+        assertEquals(4, tvPickerColumns(700f))
+        assertEquals(5, tvPickerColumns(900f))
         assertEquals(2, tvPickerColumns(300f))
         assertEquals(6, tvPickerColumns(4000f))
     }

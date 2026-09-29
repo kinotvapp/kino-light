@@ -61,15 +61,15 @@ internal fun gridStopHeader(blocks: List<GridBlock>, columns: Int, key: String):
     return block.headerKey.takeIf { block.keys.indexOf(key) < columns.coerceAtLeast(1) }
 }
 
-/** The narrowest a compact picker card gets, and the room between two cards (the grid's own spacing). */
-private const val PICKER_CARD_MIN_WIDTH_DP = 180f
+/** The narrowest a compact card gets, and the room between two cards (the grid's own spacing). */
+private const val PICKER_CARD_MIN_WIDTH_DP = 150f
 internal const val PICKER_CARD_GAP_DP = 16f
 
 /**
- * How many compact cards "Elige tus fuentes" lays in a line of [widthDp]: as many as fit at
- * [PICKER_CARD_MIN_WIDTH_DP] each (4 on a common 1280x720 px box, ~961 dp wide at 213 dpi; 5 on a
- * 1280 dp TV), so Recomendados and the first line of "De la comunidad" share the first screen; never
- * fewer than 2 nor more than 6.
+ * How many compact cards a TV plugin grid ("Elige tus fuentes", Ajustes ▸ Plugins ▸ Recomendados) lays in
+ * a line of [widthDp]: as many as fit at [PICKER_CARD_MIN_WIDTH_DP] each (5 on a common 1280x720 px box,
+ * ~961 dp wide at 213 dpi, whose grid gets ~833 dp; 6 on a 1280 dp TV), so Recomendados and the first
+ * line of "De la comunidad" share the first screen; never fewer than 2 nor more than 6.
  */
 internal fun tvPickerColumns(widthDp: Float): Int =
     ((widthDp + PICKER_CARD_GAP_DP) / (PICKER_CARD_MIN_WIDTH_DP + PICKER_CARD_GAP_DP)).toInt().coerceIn(2, 6)

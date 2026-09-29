@@ -32,7 +32,6 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Border
 import androidx.tv.material3.Card
@@ -70,7 +69,10 @@ private val INITIAL_SIZE = 56.dp
 
 /** Tile shape of a card: 16:9, or the wide, low strip of a [compact] card. */
 private const val TILE_RATIO = 16f / 9f
-private const val COMPACT_TILE_RATIO = 3f
+private const val COMPACT_TILE_RATIO = 3.5f
+
+/** Side of the icon (or height of the initial) of a compact tile, which has the art beside its pill instead of under it. */
+private val COMPACT_ART_SIZE = 32.dp
 
 /**
  * One recommended plugin as a card of the Plugins screen's Recomendados grid: a 16:9 tile in the plugin's own colour
@@ -85,8 +87,10 @@ private const val COMPACT_TILE_RATIO = 3f
  * leaves room for it in the cards that have none, so the cards of a grid line end at the same height
  * (see [gridLinesWithStatus]).
  *
- * [compact] is for a grid that has to show many cards on one screen ("Elige tus fuentes"): the same
- * card, texts and actions, with a much lower tile ([COMPACT_TILE_RATIO] instead of 16:9) and tighter padding.
+ * [compact] is for a grid that has to show many cards on one screen ("Elige tus fuentes" and Ajustes ▸
+ * Plugins ▸ Recomendados, ~150 dp wide each, see [tvPickerColumns]): the same texts and actions, with a
+ * much lower tile ([COMPACT_TILE_RATIO] instead of 16:9, the art beside the pill: [CompactCardTile]), a
+ * smaller name, ONE line of description ([cardDescriptionLines]) and tighter padding.
  *
  * [modifier] goes first in the chain: a `focusRequester` on it reaches the card's own focus target.
  */
@@ -115,20 +119,18 @@ fun TvPluginCard(
         ),
     ) {
         Column(Modifier.clearAndSetSemantics { }) {
-            CardTile(
-                name = entry.name,
-                iconFile = art?.iconFile,
-                tileColorArgb = tileColor(art),
-                pill = cardPill(row),
-                ratio = if (compact) COMPACT_TILE_RATIO else TILE_RATIO,
-            )
+            if (compact) {
+                CompactCardTile(name = entry.name, iconFile = art?.iconFile, tileColorArgb = tileColor(art), pill = cardPill(row))
+            } else {
+                CardTile(name = entry.name, iconFile = art?.iconFile, tileColorArgb = tileColor(art), pill = cardPill(row))
+            }
             CardTexts(
                 name = entry.name,
                 description = entry.description,
                 action = action,
                 status = cardStatus(row),
                 reserveStatusLine = reserveStatusLine,
-                verticalPadding = if (compact) 6.dp else 10.dp,
+                compact = compact,
             )
         }
     }
@@ -150,13 +152,12 @@ fun TvPluginCard(
  * instead of a catalog [CatalogArt], so its own icon and colour (not just the catalog's) can win.
  */
 @Composable
-internal fun CardTile(name: String, iconFile: File?, tileColorArgb: Long, pill: String?, ratio: Float = TILE_RATIO) {
+internal fun CardTile(name: String, iconFile: File?, tileColorArgb: Long, pill: String?) {
     val tile = tileColorArgb
-    var iconFailed by remember(iconFile) { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .aspectRatio(ratio)
+            .aspectRatio(TILE_RATIO)
             .clip(RoundedCornerShape(topStart = CARD_CORNER, topEnd = CARD_CORNER))
             .background(Color(tile)),
     ) {
@@ -178,31 +179,86 @@ internal fun CardTile(name: String, iconFile: File?, tileColorArgb: Long, pill: 
             modifier = Modifier.fillMaxWidth().weight(1f),
             contentAlignment = Alignment.Center,
         ) {
-            if (iconFile != null && !iconFailed) {
-                val iconSize = tileArtSize(maxHeight.value, ICON_SIZE.value)
-                if (iconSize > 0f) {
-                    AsyncImage(
-                        model = iconFile,
-                        contentDescription = null,
-                        contentScale = ContentScale.Fit,
-                        onError = { iconFailed = true },
-                        modifier = Modifier.size(iconSize.dp),
-                    )
-                }
-            } else {
-                // The size is in dp, converted to sp, so the letter does not grow with the font scale and run under the pill.
-                val letterSize = with(LocalDensity.current) { tileArtSize(maxHeight.value, INITIAL_SIZE.value).dp.toSp() }
-                if (letterSize.value > 0f) {
-                    Text(
-                        text = cardInitial(name),
-                        style = MaterialTheme.typography.headlineLarge,
-                        fontSize = letterSize,
-                        lineHeight = letterSize,
-                        fontWeight = FontWeight.Black,
-                        color = Color(onTileColor(tile)),
-                    )
-                }
+            TileArt(
+                name = name,
+                iconFile = iconFile,
+                tileColorArgb = tile,
+                iconSize = tileArtSize(maxHeight.value, ICON_SIZE.value),
+                letterSize = tileArtSize(maxHeight.value, INITIAL_SIZE.value),
+            )
+        }
+    }
+}
+
+/**
+ * The tile of a [compact][TvPluginCard] card: a strip [COMPACT_TILE_RATIO] wide, too low for the pill to take
+ * a row of its own above the art (the art would be left ~16 dp). With a pill the art sits at the start, at
+ * [COMPACT_ART_SIZE] (or what the strip leaves), and the pill beside it, one line with an ellipsis; without
+ * one the art is centred, as on a full card.
+ */
+@Composable
+private fun CompactCardTile(name: String, iconFile: File?, tileColorArgb: Long, pill: String?) {
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(COMPACT_TILE_RATIO)
+            .clip(RoundedCornerShape(topStart = CARD_CORNER, topEnd = CARD_CORNER))
+            .background(Color(tileColorArgb)),
+        contentAlignment = if (pill == null) Alignment.Center else Alignment.CenterStart,
+    ) {
+        val artSize = tileArtSize(maxHeight.value, COMPACT_ART_SIZE.value)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.padding(horizontal = 6.dp),
+        ) {
+            TileArt(name = name, iconFile = iconFile, tileColorArgb = tileColorArgb, iconSize = artSize, letterSize = artSize)
+            if (pill != null) {
+                Text(
+                    text = pill,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(ArkivRed)
+                        .padding(horizontal = 6.dp, vertical = 1.dp),
+                )
             }
+        }
+    }
+}
+
+/**
+ * A tile's art: the plugin's icon at [iconSize] dp when there is one AND it decodes, else its initial at
+ * [letterSize] dp (converted to sp, so it does not grow with the font scale). Nothing at a size of zero.
+ */
+@Composable
+private fun TileArt(name: String, iconFile: File?, tileColorArgb: Long, iconSize: Float, letterSize: Float) {
+    var iconFailed by remember(iconFile) { mutableStateOf(false) }
+    if (iconFile != null && !iconFailed) {
+        if (iconSize > 0f) {
+            AsyncImage(
+                model = iconFile,
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                onError = { iconFailed = true },
+                modifier = Modifier.size(iconSize.dp),
+            )
+        }
+    } else {
+        val letter = with(LocalDensity.current) { letterSize.dp.toSp() }
+        if (letter.value > 0f) {
+            Text(
+                text = cardInitial(name),
+                style = MaterialTheme.typography.headlineLarge,
+                fontSize = letter,
+                lineHeight = letter,
+                fontWeight = FontWeight.Black,
+                color = Color(onTileColor(tileColorArgb)),
+            )
         }
     }
 }
@@ -214,20 +270,27 @@ private fun CardTexts(
     action: CatalogAction,
     status: PluginStatus?,
     reserveStatusLine: Boolean,
-    verticalPadding: Dp,
+    compact: Boolean,
 ) {
     Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = verticalPadding),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = if (compact) 10.dp else 12.dp, vertical = if (compact) 4.dp else 10.dp),
+        verticalArrangement = Arrangement.spacedBy(if (compact) 1.dp else 2.dp),
     ) {
-        Text(name, style = MaterialTheme.typography.titleMedium, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        // minLines as well as maxLines: a one-line description still takes two, so every card is as tall as the next.
+        Text(
+            name,
+            style = if (compact) MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = Color.White,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        // minLines as well as maxLines: a shorter description still takes its lines, so every card is as tall as the next.
         Text(
             description,
             style = MaterialTheme.typography.bodySmall,
             color = ArkivTextSecondary,
-            minLines = cardDescriptionLines(),
-            maxLines = cardDescriptionLines(),
+            minLines = cardDescriptionLines(compact),
+            maxLines = cardDescriptionLines(compact),
             overflow = TextOverflow.Ellipsis,
         )
         // Why the action says Activar / Configurar / Instalar again, in the short words of a card (see cardStatusLabel).

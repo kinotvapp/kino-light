@@ -4,6 +4,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -11,6 +12,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -18,14 +21,11 @@ import androidx.compose.foundation.lazy.grid.LazyGridItemSpanScope
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -49,9 +49,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.clearAndSetSemantics
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -84,7 +82,7 @@ import com.arkiv.player.ui.theme.ArkivRed
 import com.arkiv.player.ui.theme.ArkivTextSecondary
 import kotlinx.coroutines.delay
 
-/** Recommended plugins per line of the grid. */
+/** Installed plugins per line of the Instalados grid (Recomendados lays compact cards: [tvPickerColumns]). */
 internal const val TV_CATALOG_COLUMNS = 3
 
 /**
@@ -101,27 +99,27 @@ private val FULL_WIDTH: LazyGridItemSpanScope.() -> GridItemSpan = { GridItemSpa
  * What the Plugins screen shows on the TV, laid out for the D-pad: no title and no Back handling of its own
  * (the host adds them and the horizontal padding; the content takes its width and height from its parent).
  * From top to bottom: what an action answers (the progress bar and its message), ONE header row with the two
- * tabs ([TvTab]: **Recomendados** and **Instalados (n)**) and, at its end, the **Agregar** button, and the
- * selected tab's body.
+ * tabs ([TvTab]: **Recomendados** and **Instalados (n)**), on Recomendados the **Buscar plugins** button
+ * ([TvPluginSearch], which opens the search field in its place), and at its end the **Agregar** button, and
+ * the selected tab's body.
  *
- * - **Recomendados**: the search field, the notice while the list is only the copy shipped in the APK (with
- *   "Reintentar"), and the recommended plugins as cards ([TvPluginCard]) in [TV_CATALOG_COLUMNS] columns of one
- *   lazy grid.
- * - **Instalados**: the installed plugins as cards ([TvInstalledPluginCard]) in one lazy grid, the same
- *   [TV_CATALOG_COLUMNS] columns as Recomendados; OK on a card opens its actions dialog
+ * - **Recomendados**: the notice while the list is only the copy shipped in the APK (with "Reintentar"), and
+ *   the recommended plugins as compact cards ([TvPluginCard], as many per line as [tvPickerColumns] fits, the
+ *   same as "Elige tus fuentes") of one lazy grid, then "De la comunidad".
+ * - **Instalados**: the installed plugins as cards ([TvInstalledPluginCard]) in one lazy grid of
+ *   [TV_CATALOG_COLUMNS] columns; OK on a card opens its actions dialog
  *   ([TvInstalledActionsDialog]). With nothing installed, a line saying so and "Ver recomendados".
  * - **Agregar** opens [TvAddCustomPluginDialog] for the custom `usuario/repositorio`. Installing always goes
  *   through the consent sheet, and that sheet replaces the dialog while it is up (see [addModalVisible]).
  *
  * The header row is never inside a scrolling list (a scroll would drag it away as focus went down and
  * getting back would be a fumble). D-pad: Left and Right move among the tabs and the button, OK on a tab
- * selects it. Down enters the selected tab's body: the first card, NOT the search field (a text field that
- * takes focus opens the keyboard by itself, and going down should not), or the first installed card.
- * Up from the search field and from the first installed card returns to the SELECTED tab.
+ * selects it. Down enters the selected tab's body: the first card, or the first installed card.
+ * Up from the first installed card returns to the SELECTED tab.
  *
  * Focus is not placed on a card when it opens: the person is walking Ajustes' own tab row. [entryFocus] is
  * put on the selected tab chip of this content's header row, so the host can send Down from its own tab row
- * there, and Up from the header row leads to [upFocus] (the host's tab row). Up from the search field and
+ * there, and Up from the header row (the search field included) leads to [upFocus] (the host's tab row). Up
  * from the first installed card leads to the selected tab chip, one level down.
  *
  * The selected tab and whether the person asked for the dialog survive recreation ([rememberSaveable]); the
@@ -146,7 +144,6 @@ internal fun TvPluginsContent(
     val art by vm.art.collectAsStateWithLifecycle()
     val rowMessageId = rowMessagePluginId(state, plugins)
     val rows = legacyFirst(catalog.rows)
-    val statusLines = remember(rows) { gridLinesWithStatus(rows, TV_CATALOG_COLUMNS) }
 
     var tab by rememberSaveable { mutableStateOf(PluginsTab.RECOMMENDED) }
     var addRequested by rememberSaveable { mutableStateOf(false) }
@@ -198,6 +195,11 @@ internal fun TvPluginsContent(
                 Text(it, style = MaterialTheme.typography.bodyMedium, color = Color.White, modifier = Modifier.padding(top = 8.dp))
             }
         }
+        val downTarget = when (tab) {
+            // A requester on a card that is not composed throws: with no cards, Down takes its usual course.
+            PluginsTab.RECOMMENDED -> firstRowFocus.takeIf { rows.isNotEmpty() }
+            PluginsTab.INSTALLED -> installedEntryFocus
+        }
         PluginsHeader(
             tab = tab,
             installedCount = plugins.size,
@@ -206,10 +208,11 @@ internal fun TvPluginsContent(
             addFocus = addFocus,
             entryFocus = entryFocus,
             upFocus = upFocus,
-            downTarget = when (tab) {
-                // A requester on a card that is not composed throws: with no cards, Down takes its usual course.
-                PluginsTab.RECOMMENDED -> firstRowFocus.takeIf { rows.isNotEmpty() }
-                PluginsTab.INSTALLED -> installedEntryFocus
+            downTarget = downTarget,
+            search = if (tab == PluginsTab.RECOMMENDED) {
+                { TvPluginSearch(query = state.query, onQueryChange = vm::onQueryChange, upFocus = upFocus, downTarget = downTarget) }
+            } else {
+                null
             },
             onSelect = { tab = it },
             onAdd = {
@@ -226,13 +229,10 @@ internal fun TvPluginsContent(
             when (tab) {
                 PluginsTab.RECOMMENDED -> RecommendedTab(
                     vm = vm,
-                    query = state.query,
                     catalog = catalog,
                     community = community,
                     rows = rows,
-                    statusLines = statusLines,
                     art = art,
-                    selectedTabFocus = selectedTabFocus,
                     firstRowModifier = firstRowModifier,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
@@ -292,7 +292,8 @@ internal fun TvPluginsContent(
  * person. [downTarget] is where Down leads, or null to let the key take its usual course. [upFocus] is where
  * Up leads (the host's tab row above the header), or null when nothing lies above. [entryFocus] is the host's
  * way in: it is attached to the SELECTED tab chip, wherever the selection is (nobody uses it while the row
- * recomposes, unlike the per-chip [tabFocus]).
+ * recomposes, unlike the per-chip [tabFocus]). [search] (the Recomendados search, [TvPluginSearch]) goes
+ * between the tabs and "Agregar", or nothing on Instalados.
  *
  * The tabs are a [LazyRow], as in Ajustes: a plain `Row` would give each chip the row's whole width, since a
  * [TvTab] fills what it is given.
@@ -307,6 +308,7 @@ private fun PluginsHeader(
     entryFocus: FocusRequester?,
     upFocus: FocusRequester?,
     downTarget: FocusRequester?,
+    search: (@Composable () -> Unit)?,
     onSelect: (PluginsTab) -> Unit,
     onAdd: () -> Unit,
 ) {
@@ -336,6 +338,10 @@ private fun PluginsHeader(
                 )
             }
         }
+        if (search != null) {
+            search()
+            Spacer(Modifier.width(10.dp))
+        }
         TvCompactAction(
             label = "Agregar",
             icon = Icons.Filled.Add,
@@ -354,113 +360,105 @@ private fun PluginsHeader(
 }
 
 /**
- * Recomendados: the search field, the notice while the list is only the copy shipped in the APK, and the
- * recommended plugins, each a [TvPluginCard] in one cell of a [TV_CATALOG_COLUMNS]-column grid. Everything but
- * the cards is a full-width item. "De la comunidad" follows the cards ([tvCommunityItems]). Up from the search field leads to the selected tab ([selectedTabFocus]);
- * the first card carries [firstRowModifier] (the initial focus, and Down from the header row).
+ * Recomendados: the notice while the list is only the copy shipped in the APK, and the recommended plugins,
+ * each a compact [TvPluginCard] in one cell of a grid of [tvPickerColumns] columns (the rule and the card of
+ * "Elige tus fuentes"). Everything but the cards is a full-width item. "De la comunidad" follows the cards
+ * ([tvCommunityItems]). The search lives in the header row ([TvPluginSearch]). The first card carries
+ * [firstRowModifier] (Down from the header row).
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun RecommendedTab(
     vm: PluginsViewModel,
-    query: String,
     catalog: CatalogUiState,
     community: CommunityUiState,
     rows: List<CatalogRow>,
-    statusLines: List<Boolean>,
     art: Map<String, CatalogArt>,
-    selectedTabFocus: FocusRequester,
     firstRowModifier: Modifier,
     modifier: Modifier = Modifier,
 ) {
-    val focusManager = LocalFocusManager.current
     val gridState = rememberLazyGridState()
     val gridFocus = rememberTvGridFocus(gridState)
-    // Up/Down among the cards, "Actualizar" and the community cards go by line (see TvGridFocus): the geometric
-    // search let Down from some columns skip "De la comunidad". Above the first card line the key takes its usual course.
-    gridFocus.update(listOf(GridBlock.Cards(rows.map { "card-${it.entry.id}" })) + communityFocusBlocks(community), TV_CATALOG_COLUMNS)
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(TV_CATALOG_COLUMNS),
-        state = gridState,
-        modifier = modifier,
-        contentPadding = PaddingValues(top = 16.dp, bottom = 24.dp),
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        item(key = "search", span = FULL_WIDTH) {
-            OutlinedTextField(
-                value = query,
-                onValueChange = vm::onQueryChange,
-                label = { Text("Buscar plugins") },
-                singleLine = true,
-                // `Done` just leaves the field (the list filters as you type).
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { focusManager.moveFocus(FocusDirection.Down) }),
-                modifier = Modifier
-                    .fillMaxWidth(0.6f)
-                    .noFocusToTheRight()
-                    // Up leaves the field for the selected tab (see dpadLeavesTheField): the header row sits right above it.
-                    .focusProperties { up = selectedTabFocus }
-                    .dpadLeavesTheField(focusManager),
-            )
-        }
-        // Only while the list is still the copy shipped in the APK. The notice waits for the refresh to end
-        // (it may still succeed); meanwhile the action reads "Actualizando…" and does nothing, but stays
-        // focusable so focus is not thrown out from under the person when the label changes.
-        // The notice's line is laid out from the first frame, invisible until there is a notice to show
-        // (see [refreshNoticeSlot]): the initial focus scrolls the grid against this block, and a line
-        // that appeared afterwards pushed the cards down and cut the focused first card at the bottom.
-        catalogRefreshLine(catalog)?.let { line ->
-            item(key = "seed-notice", span = FULL_WIDTH) {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.noFocusToTheRight()) {
-                    refreshNoticeSlot(catalog)?.let { slot ->
-                        val shown = line.notice != null
-                        Text(
-                            slot,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (shown) ArkivTextSecondary else Color.Transparent,
-                            // The placeholder is not read out either, and it never takes focus (a Text does not).
-                            modifier = if (shown) Modifier else Modifier.clearAndSetSemantics { },
-                        )
+    BoxWithConstraints(modifier) {
+        val columns = tvPickerColumns(maxWidth.value)
+        val statusLines = remember(rows, columns) { gridLinesWithStatus(rows, columns) }
+        // Up/Down among the cards, "Actualizar" and the community cards go by line (see TvGridFocus): the geometric
+        // search let Down from some columns skip "De la comunidad". Above the first card line the key takes its usual course.
+        gridFocus.update(listOf(GridBlock.Cards(rows.map { "card-${it.entry.id}" })) + communityFocusBlocks(community), columns)
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(columns),
+            state = gridState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(top = 12.dp, bottom = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(PICKER_CARD_GAP_DP.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            // Only while the list is still the copy shipped in the APK. The notice waits for the refresh to end
+            // (it may still succeed); meanwhile the action reads "Actualizando…" and does nothing, but stays
+            // focusable so focus is not thrown out from under the person when the label changes.
+            // The notice's line is laid out from the first frame, invisible until there is a notice to show
+            // (see [refreshNoticeSlot]): the initial focus scrolls the grid against this block, and a line
+            // that appeared afterwards pushed the cards down and cut the focused first card at the bottom.
+            catalogRefreshLine(catalog)?.let { line ->
+                item(key = "seed-notice", span = FULL_WIDTH) {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.noFocusToTheRight()) {
+                        refreshNoticeSlot(catalog)?.let { slot ->
+                            val shown = line.notice != null
+                            Text(
+                                slot,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (shown) ArkivTextSecondary else Color.Transparent,
+                                // The placeholder is not read out either, and it never takes focus (a Text does not).
+                                modifier = if (shown) Modifier else Modifier.clearAndSetSemantics { },
+                            )
+                        }
+                        TvActionOption(label = line.actionLabel) { if (line.actionEnabled) vm.reloadCatalog() }
                     }
-                    TvActionOption(label = line.actionLabel) { if (line.actionEnabled) vm.reloadCatalog() }
                 }
             }
-        }
-        // Nothing to show yet and a download pending (the rows are there from the first frame otherwise).
-        if (catalog.loading) {
-            item(key = "loading", span = FULL_WIDTH) {
-                CircularProgressIndicator(color = ArkivRed, strokeWidth = 2.dp, modifier = Modifier.size(24.dp))
+            // Nothing to show yet and a download pending (the rows are there from the first frame otherwise).
+            if (catalog.loading) {
+                item(key = "loading", span = FULL_WIDTH) {
+                    CircularProgressIndicator(color = ArkivRed, strokeWidth = 2.dp, modifier = Modifier.size(24.dp))
+                }
             }
-        }
-        // One cell per plugin. The first card takes the initial focus; the last card, and every card of the last
-        // column, have nothing to their right (see cardHasNothingToTheRight). Up from the first line reaches the
-        // search field (or the "Agregar" button above the last column) and Down from a header item the first
-        // card: nothing else here overrides the D-pad, the geometry finds them.
-        itemsIndexed(rows, key = { _, row -> "card-${row.entry.id}" }) { index, row ->
-            TvPluginCard(
-                row = row,
-                art = art[row.entry.repo],
-                modifier = gridFocus.stop("card-${row.entry.id}")
-                    .then(if (index == 0) firstRowModifier else Modifier)
-                    .then(if (cardHasNothingToTheRight(index, rows.lastIndex, TV_CATALOG_COLUMNS)) Modifier.noFocusToTheRight() else Modifier),
-                reserveStatusLine = statusLines.getOrElse(index) { false },
-                onClick = { runCatalogAction(vm, row) },
+            // One cell per plugin. The first card is where Down from the header row leads; the last card, and every
+            // card of the last column, have nothing to their right (see cardHasNothingToTheRight). Up from the first
+            // line reaches the header row by the geometry.
+            itemsIndexed(rows, key = { _, row -> "card-${row.entry.id}" }) { index, row ->
+                TvPluginCard(
+                    row = row,
+                    art = art[row.entry.repo],
+                    modifier = gridFocus.stop("card-${row.entry.id}")
+                        .then(if (index == 0) firstRowModifier else Modifier)
+                        .then(if (cardHasNothingToTheRight(index, rows.lastIndex, columns)) Modifier.noFocusToTheRight() else Modifier),
+                    reserveStatusLine = statusLines.getOrElse(index) { false },
+                    compact = true,
+                    onClick = { runCatalogAction(vm, row) },
+                )
+            }
+            // Both lists are filtered by the same query: "no match" only when neither has a card to show.
+            if (rows.isEmpty() && community.rows.isEmpty() && !catalog.loading) {
+                item(key = "no-match", span = FULL_WIDTH) {
+                    Text("No hay plugins que coincidan.", style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary)
+                }
+            }
+            tvCommunityItems(
+                community,
+                art,
+                columns,
+                onRefresh = vm::refreshCommunity,
+                onAction = { runCatalogAction(vm, it) },
+                focus = gridFocus,
+                compact = true,
             )
         }
-        // Both lists are filtered by the same query: "no match" only when neither has a card to show.
-        if (rows.isEmpty() && community.rows.isEmpty() && !catalog.loading) {
-            item(key = "no-match", span = FULL_WIDTH) {
-                Text("No hay plugins que coincidan.", style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary)
-            }
-        }
-        tvCommunityItems(community, art, TV_CATALOG_COLUMNS, onRefresh = vm::refreshCommunity, onAction = { runCatalogAction(vm, it) }, focus = gridFocus)
     }
 }
 
 /**
  * Instalados: the installed plugins as cards, one [TvInstalledPluginCard] per plugin in a lazy grid of
- * [TV_CATALOG_COLUMNS] columns (the same [RecommendedTab] draws). With none installed it says so and offers
+ * [TV_CATALOG_COLUMNS] columns. With none installed it says so and offers
  * "Ver recomendados" ([onBrowseRecommended]). [message] goes to the card it is about, if any (see
  * [rowMessagePluginId]); every card of the message's own grid line reserves the room for it
  * ([installedGridLinesWithMessage]), as [RecommendedTab] does for a card's status.
