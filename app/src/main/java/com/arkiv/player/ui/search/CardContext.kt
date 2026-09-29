@@ -4,7 +4,7 @@ import com.arkiv.player.data.RecentTitle
 import com.arkiv.player.data.catalog.AnimeShow
 import com.arkiv.player.data.catalog.TmdbItem
 
-enum class SearchPhase { QUERY, REFINE, RESULTS }
+enum class SearchPhase { QUERY, RESULTS }
 
 /** Phase 1 card. kind: "movie" | "series" (TMDB) | "anime" (AniList). */
 data class TitleCard(

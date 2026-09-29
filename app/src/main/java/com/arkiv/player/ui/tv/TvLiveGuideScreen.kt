@@ -567,8 +567,7 @@ private fun TvNoteLine(text: String) {
  * inside it). Pressing OK plays the channel directly, whether there's programming or not.
  *
  * `Surface` (tv-material3), not a `Box` + `clickable` + `focusable` by hand like the previous
- * program block had: it's the same component `TvRefineRow`/`TvSeasonChip` already use for
- * navigable rows, and the focus (red background + 3dp white border) reads clearly from three
+ * program block had: the focus (red background + 3dp white border) reads clearly from three
  * meters away.
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
