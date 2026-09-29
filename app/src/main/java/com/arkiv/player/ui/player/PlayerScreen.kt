@@ -3080,7 +3080,13 @@ private fun PlayerContent(
                             },
                             onDoubleTap = { o ->
                                 // No seek in live (no duration or "forward/back" that makes sense).
-                                if (!isLive) { if (o.x < size.width / 2) seekBy(-seekStepMs) else seekBy(seekStepMs) }
+                                // `currentSeekBy`/`currentIsLive`, NOT `seekBy`/`isLive`: this block is
+                                // launched once and keeps the lambdas of that first composition, when
+                                // the Magis/plugin player didn't exist yet (`activePlayer` was still
+                                // the idle `controller`), so the jump was computed from ITS position.
+                                if (!currentIsLive) {
+                                    if (o.x < size.width / 2) currentSeekBy(-seekStepMs) else currentSeekBy(seekStepMs)
+                                }
                             },
                             onLongPress = {
                                 // Not while casting: the temporary 2× acts on the local player,
@@ -3117,7 +3123,7 @@ private fun PlayerContent(
                                 totalDx = 0f; totalDy = 0f
                                 // While casting, the horizontal seek must start/apply on the
                                 // active player (Chromecast), not always the local one.
-                                seekTarget = activePlayer.currentPosition.coerceAtLeast(0)
+                                seekTarget = currentPlayer.currentPosition.coerceAtLeast(0)
                             },
                             onDragEnd = {
                                 // Live (Task 14): the vertical swipe IS zapping -- up moves to the
@@ -3126,13 +3132,13 @@ private fun PlayerContent(
                                 // the phone, and doesn't compete with anything else (no
                                 // seek/volume/brightness in live, see onDrag below). On a Caracol
                                 // channel there's no zapping (it belongs to Magis live): the swipe does nothing.
-                                if (isLive) {
+                                if (currentIsLive) {
                                     if (isModuleLive && !horizontal && kotlin.math.abs(totalDy) > ZAP_THRESHOLD_PX) {
                                         if (totalDy < 0) vm.zapNext() else vm.zapPrevious()
                                         liveState.showInfo()
                                     }
                                 } else if (horizontal) {
-                                    activePlayer.seekTo(seekTarget); mirror.jumpTo(seekTarget); bump()
+                                    currentPlayer.seekTo(seekTarget); mirror.jumpTo(seekTarget); bump()
                                 } else if (totalDy > 240f && totalDy > kotlin.math.abs(totalDx) * 1.5f) {
                                     onOpenEpisodesState.value()
                                 }
@@ -3144,9 +3150,9 @@ private fun PlayerContent(
                                 if (!decided) { decided = true; horizontal = kotlin.math.abs(drag.x) >= kotlin.math.abs(drag.y) }
                                 // Live: nothing to draw frame by frame -- the zap is resolved
                                 // entirely in onDragEnd, above. No seek/volume/brightness, see its comment.
-                                if (isLive) return@detectDragGestures
+                                if (currentIsLive) return@detectDragGestures
                                 if (horizontal) {
-                                    val dur = activePlayer.duration.coerceAtLeast(1)
+                                    val dur = currentPlayer.duration.coerceAtLeast(1)
                                     seekTarget = (seekTarget + (drag.x / size.width * 90_000f).toLong()).coerceIn(0L, dur)
                                     gestures.showHud("⏱ ${formatDuration(seekTarget)}")
                                 } else if (startX <= size.width / 2) {
