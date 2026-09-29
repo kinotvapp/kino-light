@@ -45,7 +45,7 @@ import com.arkiv.player.ui.tv.TvRailItem
 import com.arkiv.player.ui.tv.TvSideRail
 
 /**
- * Debug-only lab for the TV side rail (branch experiment/tv-sidebar): the REAL [TvSideRail] over a fake Home (a hero and
+ * Debug-only lab for the TV side rail: the REAL [TvSideRail] over a fake Home (a hero and
  * two rows of cards), so its look and its D-pad behaviour can be tried on any device or emulator without activating the
  * app. Open it with
  *

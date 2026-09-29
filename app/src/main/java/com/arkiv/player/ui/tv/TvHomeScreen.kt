@@ -1297,8 +1297,8 @@ fun TvHomeScreen(
             }
         }
 
-        // EXPERIMENT (branch experiment/tv-sidebar): the top bar as a rail. "Buscar" keeps `barFocus`, so the landing and
-        // the refocus rules above keep working; only the shape of the bar changed.
+        // The navigation, as a rail on the left. "Buscar" keeps `barFocus`, so the landing and the refocus rules above
+        // keep working: they were written for the old top bar and only the shape of the bar changed.
         val railItems = buildList {
             add(
                 TvRailItem(
