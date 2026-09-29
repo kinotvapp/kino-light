@@ -52,6 +52,8 @@ import com.arkiv.player.playback.LiveErrorKind
 import com.arkiv.player.playback.MpegTs
 import com.arkiv.player.playback.SourceKind
 import com.arkiv.player.playback.TsDurationProbe
+import com.arkiv.player.playback.VodSyncMonitor
+import com.arkiv.player.playback.VodSyncStats
 import com.arkiv.player.playback.fallbackRenderers
 import com.arkiv.player.ui.rememberGraph
 import kotlinx.coroutines.delay
@@ -379,6 +381,19 @@ internal fun StreamExoPlayer(
         )
         Log.i(TAG, "DisposableEffect hooked · state=${exoPlayer.playbackState} isPlaying=${exoPlayer.isPlaying}")
 
+        // A film (not a plugin's live channel) is watched for the signs of out-of-sync audio: one report at most, and
+        // a device sends one a day. See [VodSyncMonitor].
+        val syncMonitor = if (onLiveError == null) {
+            VodSyncMonitor(
+                player = exoPlayer,
+                context = context,
+                sourceTag = crashTag,
+                externalAudioTracks = { activeAudioTracks.size },
+                mayReport = { VodSyncStats.mayReport(System.currentTimeMillis(), graph.settings.avSyncReportedAtMs) },
+                onReported = { graph.settings.avSyncReportedAtMs = System.currentTimeMillis() },
+            ).also { exoPlayer.addAnalyticsListener(it) }
+        } else null
+
         val listener = object : Player.Listener {
 
             override fun onVideoSizeChanged(videoSize: VideoSize) {
@@ -519,6 +534,10 @@ internal fun StreamExoPlayer(
 
         onDispose {
             Log.i(TAG, "onDispose · pos=${exoPlayer.currentPosition}ms isPlaying=${exoPlayer.isPlaying}")
+            syncMonitor?.let {
+                runCatching { it.finish() }
+                exoPlayer.removeAnalyticsListener(it)
+            }
             exoPlayer.removeListener(listener)
             exoPlayer.clearVideoTextureView(textureView)
             exoPlayer.release()
