@@ -35,6 +35,11 @@ data class PlaybackPrefs(
     val textColor: Long = 0xFFFFFFFF,  // ARGB
     val backgroundColor: Long = 0x80000000, // ARGB (box background)
     val edge: Int = EDGE_OUTLINE,      // 0 none, 1 outline, 2 drop shadow
+    /**
+     * TV only: false = the system's caption style (the box's own Android settings), true = the
+     * style above. A phone always uses the style above, so it ignores this.
+     */
+    val tvCustomStyle: Boolean = false,
 ) {
     /**
      * Do these prefs pick the same languages as [other]? Ignores style (size, colors, edge).
@@ -60,7 +65,7 @@ data class PlaybackPrefs(
         .put("subtitleMode", subtitleMode.name)
         .put("sizePercent", sizePercent)
         .put("textColor", textColor).put("backgroundColor", backgroundColor)
-        .put("edge", edge).toString()
+        .put("edge", edge).put("tvCustomStyle", tvCustomStyle).toString()
 
     companion object {
         const val EDGE_NONE = 0
@@ -87,6 +92,7 @@ data class PlaybackPrefs(
                 textColor = o.optLong("textColor", base.textColor),
                 backgroundColor = o.optLong("backgroundColor", base.backgroundColor),
                 edge = o.optInt("edge", base.edge),
+                tvCustomStyle = o.optBoolean("tvCustomStyle", base.tvCustomStyle),
             )
         }.getOrNull()
 
