@@ -3,17 +3,16 @@ package com.arkiv.player.data.plugin
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertThrows
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The two real-device gaps found in a phone test of the Nuvio importer (spec §5.2 follow-up): the
+ * Two real-device gaps found in a phone test of the Nuvio importer (spec §5.2 follow-up): the
  * shim's `fetch` didn't give scraper code the browser Fetch API's PROMISE-returning
  * `response.json()`/`.text()` (MoviesDrive silently fell back to a stale domain instead of crashing:
- * `response.json().then(...)` threw "not a function"), and its flat cheerio subset had no `.find()`
- * or `$(el)` at all (AllWish: "cheerio .find() on a result set has no translation"). Both run the
- * generated `plugin.js` through the REAL QuickJS sandbox, same pattern as [NuvioPluginConverterTest].
+ * `response.json().then(...)` threw "not a function"), and cheerio had no `.find()` or `$(el)`
+ * (AllWish). cheerio is now the real library ([NuvioRuntimeLibrariesTest] covers its tree walking);
+ * the cases below stay as regressions of what those scrapers do. All run the generated `plugin.js`
+ * through the REAL QuickJS sandbox, same pattern as [NuvioPluginConverterTest].
  */
 class NuvioShimCompatTest {
     private val scraper = NuvioScraperEntry(
@@ -155,19 +154,5 @@ class NuvioShimCompatTest {
         """.trimIndent()
         val url = resolvedUrl(source, FakeFetchHost(html))
         assertEquals("https://cdn.example/1//movie/9", url)
-    }
-
-    @Test fun `a still-unsupported cheerio traversal method keeps throwing a clear error`() {
-        val source = """
-            var cheerio = require("cheerio");
-            function getStreams() {
-              var ${'$'} = cheerio.load("<div class=\"item\"><a href=\"/x\">x</a></div>");
-              ${'$'}(".item").parent();
-              return [];
-            }
-            module.exports = { getStreams: getStreams };
-        """.trimIndent()
-        val e = assertThrows(PluginScriptException::class.java) { resolvedUrl(source, FakeFetchHost("")) }
-        assertTrue("expected the clear no-translation message, got: ${e.message}", e.message.orEmpty().contains("has no translation"))
     }
 }

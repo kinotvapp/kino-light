@@ -19,6 +19,11 @@ object PluginPrelude {
      */
     val nuvioShim: String by lazy { read("plugin/nuvio-shim.js") }
 
+    /** The real libraries a Nuvio scraper may `require` (see [NuvioLibrary]), each read once. */
+    private val nuvioVendor = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    fun nuvioVendor(file: String): String = nuvioVendor.getOrPut(file) { read("plugin/nuvio-vendor/$file") }
+
     private fun read(path: String): String =
         (PluginPrelude::class.java.classLoader ?: throw IllegalStateException("no class loader"))
             .getResourceAsStream(path)?.use { it.readBytes().toString(Charsets.UTF_8) }

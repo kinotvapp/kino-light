@@ -8,9 +8,27 @@ import java.security.MessageDigest
 data class NuvioConversionResult(val script: String, val manifestJson: String, val hosts: List<String>, val warnings: List<String>)
 
 /**
+ * A real library of Nuvio's own runtime (its providers README, "Available Modules", plus the `Buffer`
+ * real scrapers use), vendored unmodified under `resources/plugin/nuvio-vendor/` ([file]; its header
+ * says which npm version and how it was built). A generated script carries one only when the
+ * scraper's source [needs] it: cheerio alone is ~190 KB that QuickJS parses on every sandbox load.
+ * [binding] is what the library needs declared in the module scope after it (Node's `Buffer` global).
+ */
+internal enum class NuvioLibrary(val file: String, private val trigger: Regex, val binding: String = "") {
+    // Any mention: `require("cheerio-without-node-native")`, its `cheerio`/`react-native-cheerio` aliases.
+    CHEERIO("cheerio.js", Regex("cheerio")),
+    CRYPTO_JS("crypto-js.js", Regex("crypto-js")),
+    // The global (`Buffer.from(...)`) or the module; never `ArrayBuffer`/`messageBuffer` (no word boundary).
+    BUFFER("buffer.js", Regex("""\bBuffer\b|["'`]buffer["'`]"""), binding = "var Buffer = __nuvioLibBuffer.Buffer;\n");
+
+    fun needs(scraperSource: String): Boolean = trigger.containsMatchIn(scraperSource)
+}
+
+/**
  * Turns one Nuvio scraper into a Kino plugin (spec §5): the compat shim ([PluginPrelude.nuvioShim])
- * + the scraper's own source, byte for byte but wrapped in its own IIFE, + a small adapter mapping
- * Nuvio's `getStreams(tmdbId, mediaType, season, episode)` onto Kino's `search`/`resolve` (spec §6).
+ * + the real libraries the scraper can `require` ([NuvioLibrary]) + the scraper's own source, byte
+ * for byte but wrapped in its own IIFE, + a small adapter mapping Nuvio's
+ * `getStreams(tmdbId, mediaType, season, episode)` onto Kino's `search`/`resolve` (spec §6).
  * Pure and offline -- every network call (fetching the scraper's raw `.js`, the optional
  * `domains.json`) happens in `NuvioPluginInstaller`, before this runs.
  *
@@ -22,9 +40,12 @@ data class NuvioConversionResult(val script: String, val manifestJson: String, v
  * scraper's source instead runs inside an isolating IIFE with its own private `module`/`exports`
  * (exposed to the adapter as `__nuvioModuleExports`), so its own top-level declarations only ever
  * SHADOW the shim's in a nested scope -- never a redefinition, never an error. A scraper that
- * declares its own top-level `require` does lose access to the shim's `require('cheerio')`/
- * `require('crypto-js')` from inside its own body (shadowed), but that's rare in practice and far
- * better than the hard syntax error this replaces.
+ * declares its own top-level `require` does lose access to the shim's `require('cheerio')` etc.
+ * from inside its own body (shadowed), but that's rare in practice and far better than the hard
+ * syntax error this replaces. The vendored libraries sit between the shim and the scraper: each is
+ * an esbuild IIFE defining one `__nuvioLib*` module-scope variable, evaluated after the shim has
+ * declared what one of them reads at load time (crypto-js's random source) and before the scraper's
+ * top level `require`s them.
  *
  * The generated manifest always names the literal `"plugin.js"` as its `entry`: that file never
  * existed upstream (this converter builds it fresh), so whoever installs the result must write the
@@ -33,16 +54,6 @@ data class NuvioConversionResult(val script: String, val manifestJson: String, v
  * ([NuvioScraperEntry.filename]) is only ever fetched separately, as input to [convert].
  */
 object NuvioPluginConverter {
-    /**
-     * cheerio calls that walk the DOM via a parent/sibling pointer: [PluginHtml]'s flat match list has
-     * no tree to walk, so these have no translation and always throw (see `nuvio-shim.js`).
-     * `.find(sel)` is NOT here: the shim answers it by re-selecting inside each matched element's own
-     * inner HTML, which works for the vast majority of real scraper code (`$(el).find("a[href]")`).
-     * Only checked when the scraper uses cheerio at all: `.next(`/`.children(` alone also match
-     * esbuild's own `generator.next(...)` helper and plain array/object property names.
-     */
-    private val CHEERIO_TRAVERSAL = Regex("""\.(parent|parents|next|prev|siblings|closest|children)\s*\(""")
-
     fun convert(
         scraper: NuvioScraperEntry,
         scraperSource: String,
@@ -70,15 +81,14 @@ object NuvioPluginConverter {
         val hosts = candidates.take(ManifestParser.MAX_HOSTS)
 
         val warnings = buildList {
-            if ("cheerio" in scraperSource && CHEERIO_TRAVERSAL.containsMatchIn(scraperSource)) {
-                add("Aviso: usa funciones de cheerio (.parent/.next/.siblings…) que podrían no funcionar del todo.")
-            }
             if (candidates.size > ManifestParser.MAX_HOSTS) {
                 add("Aviso: se detectaron más de ${ManifestParser.MAX_HOSTS} dominios; algunos quedaron fuera.")
             }
         }
 
         val shim = PluginPrelude.nuvioShim.replace("__NUVIO_TMDB_API_KEY__", tmdbApiKey)
+        val libraries = NuvioLibrary.entries.filter { it.needs(scraperSource) }
+            .joinToString("") { PluginPrelude.nuvioVendor(it.file) + "\n" + it.binding + "\n" }
         // The scraper's own top-level code runs inside an IIFE, never spliced in at the same top
         // level as the shim: see this object's KDoc for why (QuickJS module-scope collisions).
         val wrapped = "var __nuvioModuleExports = (function () {\n" +
@@ -86,7 +96,7 @@ object NuvioPluginConverter {
             "var exports = module.exports;\n" +
             scraperSource +
             "\nreturn module.exports;\n})();\n"
-        val script = shim + "\n\n" + wrapped + "\n" + ADAPTER
+        val script = shim + "\n\n" + libraries + wrapped + "\n" + ADAPTER
 
         val manifestJson = JSONObject()
             // Clipped to ManifestParser's own name limit: a longer Nuvio scraper name would otherwise make the whole manifest invalid.
@@ -106,8 +116,8 @@ object NuvioPluginConverter {
      * seen BEFORE installing, and this way the sheet itself needs no change. Built to fit
      * [ManifestParser.MAX_DESCRIPTION_CHARS] (the parser silently truncates past it): origin +
      * license first, then every warning, and only then the generic "hosts were auto-detected" caveat
-     * -- the one part dropped when it doesn't fit. [name]/[repoSlug] are clipped so the head plus both
-     * warnings always fit (≤ 137 + 1 + 88 + 1 + 65 chars).
+     * -- the one part dropped when it doesn't fit. [name]/[repoSlug] are clipped so the head plus the
+     * one warning there can be (too many hosts) always fit (≤ 137 + 1 + 65 chars).
      */
     private fun description(name: String, repoSlug: String, warnings: List<String>): String {
         val max = ManifestParser.MAX_DESCRIPTION_CHARS

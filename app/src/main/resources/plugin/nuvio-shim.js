@@ -1,14 +1,30 @@
-// Nuvio compatibility shim (spec §5.2). Defines enough of Nuvio's own plugin runtime -- CommonJS
-// `module`/`require`, `fetch`, a `cheerio`/`crypto-js` subset, `TMDB_API_KEY` -- in terms of the
-// `kino` global, so an unmodified Nuvio scraper's top-level code and `getStreams` export run as-is.
+// Nuvio compatibility shim (spec §5.2). Rebuilds, in terms of the `kino` global, the runtime a
+// Nuvio scraper expects: CommonJS `module`/`require`, a browser-shaped `fetch`, `axios`, the REAL
+// `cheerio-without-node-native`, `crypto-js` and `Buffer` (vendored under `nuvio-vendor/`, and
+// concatenated by NuvioPluginConverter after this file only when the scraper can need them), and
+// `TMDB_API_KEY`, so an unmodified scraper's top-level code and `getStreams` export run as-is.
+// Everything here is plugin.js's own module scope: nothing is added to globalThis except
+// TMDB_API_KEY, and prelude.js/web.js/kino.fetch stay exactly what native Kino plugins get.
 // `__NUVIO_TMDB_API_KEY__` is replaced by NuvioPluginConverter before this ships in a plugin.
 
 var module = { exports: {} };
 var exports = module.exports;
 
+// The vendored libraries are module-scope variables defined AFTER this file (see
+// NuvioPluginConverter), so they are looked up when a scraper calls require(), never here; a
+// library the converter left out (the scraper never named it) is a clear error, not a ReferenceError.
+function __nuvioVendored(name, lib) {
+  if (lib === undefined) throw new Error("Nuvio compat: require('" + name + "') was not bundled with this scraper");
+  return lib;
+}
+
 function require(name) {
-  if (name === "crypto-js") return __nuvioCryptoJs;
-  if (name === "cheerio" || name === "cheerio-without-node-native" || name === "react-native-cheerio") return __nuvioCheerio;
+  if (name === "cheerio" || name === "cheerio-without-node-native" || name === "react-native-cheerio") {
+    return __nuvioVendored(name, typeof __nuvioLibCheerio === "undefined" ? undefined : __nuvioLibCheerio);
+  }
+  if (name === "crypto-js") return __nuvioVendored(name, typeof __nuvioLibCryptoJs === "undefined" ? undefined : __nuvioLibCryptoJs);
+  if (name === "buffer") return __nuvioVendored(name, typeof __nuvioLibBuffer === "undefined" ? undefined : __nuvioLibBuffer);
+  if (name === "axios") return __nuvioAxios;
   throw new Error("Nuvio compat: unsupported require('" + name + "')");
 }
 
@@ -49,87 +65,173 @@ function fetch(url, opts) {
   });
 }
 
-globalThis.TMDB_API_KEY = "__NUVIO_TMDB_API_KEY__";
+var __NUVIO_TMDB_KEY = "__NUVIO_TMDB_API_KEY__";
+globalThis.TMDB_API_KEY = __NUVIO_TMDB_KEY;
 
-// cheerio subset: `$(selector)` queries the loaded document; `$(el)`/`$(matches)` wraps an existing
-// element or result set instead of re-querying, so `$(this)`/`$(el)` inside `.each` work the way real
-// scrapers use them. `kino.html.select` is flat (no DOM to walk), so `.find(sel)` is answered the only
-// honest way available: re-selecting inside each matched element's own INNER html
-// ([PluginHtml]/`kino.html.select`'s `html` field) and unioning the results. Anything that needs an
-// actual parent/sibling pointer has no translation and throws a clear error instead of silently
-// returning the wrong node (spec §8: "recorrido de HTML complejo").
-var __NUVIO_CHEERIO_NO_TRANSLATION = ["parent", "parents", "next", "prev", "siblings", "closest", "children"];
-var __nuvioCheerio = {
-  load: function (html) {
-    // A "match" is what `kino.html.select` returns per element: `{ text, html (INNER html), attrs }`.
-    function resultSet(matches) {
-      var api = {
-        length: matches.length,
-        attr: function (name) { return matches.length ? matches[0].attrs[name] : undefined; },
-        // cheerio's own `.text()` on a SET concatenates every matched element's text; `.attr()`/
-        // `.html()` only ever look at the first element, matching cheerio too.
-        text: function () { var out = ""; for (var i = 0; i < matches.length; i++) out += matches[i].text; return out; },
-        html: function () { return matches.length ? matches[0].html : null; },
-        each: function (fn) { for (var i = 0; i < matches.length; i++) fn.call(matches[i], i, matches[i]); return api; },
-        map: function (fn) {
-          var out = [];
-          for (var i = 0; i < matches.length; i++) out.push(fn.call(matches[i], i, matches[i]));
-          return { get: function () { return out; }, toArray: function () { return out; } };
-        },
-        eq: function (i) { return resultSet(i >= 0 && i < matches.length ? [matches[i]] : []); },
-        first: function () { return api.eq(0); },
-        last: function () { return api.eq(matches.length - 1); },
-        get: function (i) { return i === undefined ? matches.slice() : matches[i]; },
-        toArray: function () { return matches.slice(); },
-        find: function (selector) {
-          var found = [];
-          for (var i = 0; i < matches.length; i++) {
-            var inner = kino.html.select(matches[i].html, selector);
-            for (var j = 0; j < inner.length; j++) found.push(inner[j]);
-          }
-          return resultSet(found);
-        },
-        __nuvioMatches: matches,
-      };
-      __NUVIO_CHEERIO_NO_TRANSLATION.forEach(function (name) {
-        api[name] = function () { throw new Error("Nuvio compat: cheerio ." + name + "() has no translation"); };
-      });
-      return api;
+// --- What Node/React Native have and QuickJS doesn't, that real scrapers touch. Module scope only. ---
+
+// `process.env.X || fallback` (vidnest) must read "not set", not throw. Nothing else: a scraper
+// that sniffs `process.versions.node` must keep concluding it is not on Node.
+var process = { env: {} };
+
+// Retry back-offs (`await new Promise(r => setTimeout(r, 1000))` in 4khdhub, moviebox,
+// dahmermovies) over kino.sleep, which takes 0..5000 ms per call: longer waits are slept in slices
+// so clearTimeout stops one within a slice. Every wait counts against the call's own time limit,
+// and a timer nobody clears keeps the call open until it fires (quickjs-kt awaits pending jobs).
+var __nuvioTimers = {};
+var __nuvioTimerSeq = 0;
+function setTimeout(fn, ms) {
+  var id = ++__nuvioTimerSeq;
+  var args = Array.prototype.slice.call(arguments, 2);
+  var left = Math.max(0, Math.floor(Number(ms) || 0));
+  __nuvioTimers[id] = true;
+  (async function () {
+    await null;
+    while (left > 0 && __nuvioTimers[id]) {
+      var slice = Math.min(left, 500);
+      left -= slice;
+      await kino.sleep(slice);
     }
-    return function (selectorOrElement) {
-      if (typeof selectorOrElement === "string") return resultSet(kino.html.select(html, selectorOrElement));
-      // `$(this)`/`$(el)` inside `.each`, or re-wrapping an earlier result set/array of raw elements.
-      if (selectorOrElement && Array.isArray(selectorOrElement.__nuvioMatches)) return resultSet(selectorOrElement.__nuvioMatches);
-      if (Array.isArray(selectorOrElement)) return resultSet(selectorOrElement);
-      if (selectorOrElement && typeof selectorOrElement === "object") return resultSet([selectorOrElement]);
-      return resultSet([]);
-    };
+    if (!__nuvioTimers[id]) return;
+    delete __nuvioTimers[id];
+    if (typeof fn === "function") fn.apply(undefined, args);
+  })().catch(function (e) { console.error("Nuvio compat: a setTimeout callback threw", e && e.message ? e.message : String(e)); });
+  return id;
+}
+function clearTimeout(id) { delete __nuvioTimers[id]; }
+
+// crypto-js asks its environment for a secure random source when it needs one (a passphrase
+// encrypt's salt); its vendored build reads this name where it would read Node's `global` (see
+// nuvio-vendor/crypto-js.js's header), so no `crypto` global exists for a scraper to mistake for WebCrypto.
+var __nuvioCryptoRandomSource = {
+  crypto: {
+    getRandomValues: function (array) {
+      var hex = kino.crypto.randomBytes(array.length * array.BYTES_PER_ELEMENT, "hex");
+      var bytes = new Uint8Array(array.buffer, array.byteOffset, array.byteLength);
+      for (var i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+      return array;
+    },
   },
 };
 
-// crypto-js subset: AES/TripleDES with an explicit key+iv, via kino.crypto (same algorithms, spec
-// §5.2). Does NOT implement CryptoJS's own OpenSSL-style passphrase key derivation
-// (EVP_BytesToKey) for a call with no `iv` -- a scraper that decrypts that way needs that derivation
-// added here once a real one needs it; it is not silently approximated.
-var __nuvioCryptoJs = {
-  AES: {
-    decrypt: function (ciphertext, key, opts) {
-      var out = kino.crypto.decrypt("aes-256-cbc", {
-        key: String(key), iv: (opts && opts.iv) ? String(opts.iv) : "", data: String(ciphertext),
-        inputEncoding: "base64", outputEncoding: "utf8",
+// --- axios, on top of the fetch above: what scrapers use of it, not the whole library. ---
+// `axios(config)` / `axios(url, config)`, `.request/.get/.delete/.head/.options/.post/.put/.patch`,
+// `.create(defaults)` (baseURL, headers, timeout, params merged), `params` as the query string, `data`
+// as JSON (or a string/URLSearchParams as is), `responseType: "text"`, `maxRedirects: 0`, and
+// `validateStatus`. A non-2xx answer REJECTS with an Error carrying `.response`, like axios.
+var __nuvioAxios = (function () {
+  function merge(base, extra) {
+    var out = {};
+    var k;
+    for (k in base || {}) out[k] = base[k];
+    for (k in extra || {}) if (extra[k] !== undefined) out[k] = extra[k];
+    out.headers = {};
+    [base && base.headers, extra && extra.headers].forEach(function (h) {
+      for (var name in h || {}) {
+        var v = h[name];
+        if (v !== undefined && v !== null && typeof v !== "object") out.headers[name] = String(v);
+      }
+    });
+    var p1 = base && base.params, p2 = extra && extra.params;
+    if (p1 && p2 && !(p1 instanceof URLSearchParams) && !(p2 instanceof URLSearchParams)) {
+      out.params = {};
+      for (k in p1) out.params[k] = p1[k];
+      for (k in p2) out.params[k] = p2[k];
+    }
+    return out;
+  }
+  function hasHeader(headers, name) {
+    for (var k in headers) if (k.toLowerCase() === name) return true;
+    return false;
+  }
+  function urlOf(config) {
+    var url = String(config.url || "");
+    if (config.baseURL && !/^[a-z][a-z0-9+.-]*:/i.test(url)) {
+      url = String(config.baseURL).replace(/\/+$/, "") + (url ? "/" + url.replace(/^\/+/, "") : "");
+    }
+    var params = config.params;
+    if (params) {
+      var query = params instanceof URLSearchParams ? params : new URLSearchParams();
+      if (!(params instanceof URLSearchParams)) {
+        for (var key in params) {
+          var value = params[key];
+          if (value === undefined || value === null) continue;
+          if (Array.isArray(value)) value.forEach(function (v) { query.append(key + "[]", String(v)); });
+          else query.append(key, value instanceof Date ? value.toISOString() : typeof value === "object" ? JSON.stringify(value) : String(value));
+        }
+      }
+      var text = query.toString();
+      if (text) url += (url.indexOf("?") < 0 ? "?" : "&") + text;
+    }
+    return url;
+  }
+  function axiosError(message, config, response, code) {
+    var e = new Error(message);
+    e.isAxiosError = true;
+    e.config = config;
+    e.code = code;
+    if (response) e.response = response;
+    return e;
+  }
+  function request(config) {
+    return Promise.resolve().then(function () {
+      var method = String(config.method || "get").toUpperCase();
+      var headers = config.headers;
+      var body;
+      var data = config.data;
+      if (data !== undefined && data !== null && method !== "GET" && method !== "HEAD") {
+        if (typeof data === "string") body = data;
+        else if (data instanceof URLSearchParams) {
+          body = data.toString();
+          if (!hasHeader(headers, "content-type")) headers["Content-Type"] = "application/x-www-form-urlencoded";
+        } else {
+          body = JSON.stringify(data);
+          if (!hasHeader(headers, "content-type")) headers["Content-Type"] = "application/json";
+        }
+      }
+      var opts = { method: method, headers: headers, redirect: config.maxRedirects === 0 ? "manual" : "follow" };
+      if (body !== undefined) opts.body = body;
+      var timeout = Math.floor(Number(config.timeout) || 0);
+      if (timeout > 0) opts.timeoutMs = Math.min(timeout, 30000);
+      return kino.fetch(urlOf(config), opts).then(function (r) {
+        var text = r.text();
+        var parsed = text;
+        if (config.responseType !== "text" && typeof text === "string" && text.length) {
+          try { parsed = JSON.parse(text); } catch (e) { parsed = text; }
+        }
+        var plainHeaders = {};
+        for (var name in r.headers || {}) plainHeaders[name] = r.headers[name];
+        var response = { data: parsed, status: r.status, statusText: "", headers: plainHeaders, config: config, request: { responseURL: r.url } };
+        var valid = config.validateStatus === null ? true
+          : typeof config.validateStatus === "function" ? config.validateStatus(r.status)
+          : r.status >= 200 && r.status < 300;
+        if (!valid) {
+          throw axiosError("Request failed with status code " + r.status, config, response, r.status >= 500 ? "ERR_BAD_RESPONSE" : "ERR_BAD_REQUEST");
+        }
+        return response;
+      }, function (e) {
+        throw axiosError(e && e.message ? e.message : String(e), config, null, e && e.code === "timeout" ? "ECONNABORTED" : (e && e.code) || "ERR_NETWORK");
       });
-      return { toString: function () { return out; } };
-    },
-    encrypt: function (plaintext, key, opts) {
-      var out = kino.crypto.encrypt("aes-256-cbc", { key: String(key), iv: (opts && opts.iv) ? String(opts.iv) : "", data: String(plaintext) });
-      return { toString: function () { return out; } };
-    },
-  },
-  TripleDES: {
-    decrypt: function (ciphertext, key) {
-      var out = kino.crypto.decrypt("des-ede3-cbc", { key: String(key), data: String(ciphertext), inputEncoding: "base64", outputEncoding: "utf8" });
-      return { toString: function () { return out; } };
-    },
-  },
-  enc: { Utf8: "utf8", Base64: "base64", Hex: "hex" },
-};
+    });
+  }
+  function create(defaults) {
+    var instance = function (urlOrConfig, config) {
+      return typeof urlOrConfig === "string"
+        ? instance.request(merge(config, { url: urlOrConfig }))
+        : instance.request(urlOrConfig);
+    };
+    instance.defaults = merge({ headers: {} }, defaults);
+    instance.request = function (config) { return request(merge(instance.defaults, config)); };
+    ["get", "delete", "head", "options"].forEach(function (m) {
+      instance[m] = function (url, config) { return instance.request(merge(config, { method: m, url: url })); };
+    });
+    ["post", "put", "patch"].forEach(function (m) {
+      instance[m] = function (url, data, config) { return instance.request(merge(config, { method: m, url: url, data: data })); };
+    });
+    instance.create = function (more) { return create(merge(instance.defaults, more)); };
+    instance.isAxiosError = function (e) { return !!(e && e.isAxiosError); };
+    instance.default = instance;
+    return instance;
+  }
+  return create({});
+})();
