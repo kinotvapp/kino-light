@@ -181,14 +181,32 @@ class StreamHostApprovalTest {
         assertEquals("never shown a dialog", 0, center.shownCount)
     }
 
-    @Test fun `with 20 hosts already approved the stream fails with a clear message and no question`() = runTest {
+    // With the 20 slots taken this one host can't be allowed, but the broad video permission takes
+    // no slot: the dialog offers only that (and Rechazar). Declining it is not a "no" to the host --
+    // nothing is remembered -- and the stream fails with the clear cap sentence, as before.
+    @Test fun `with 20 hosts already approved only the broad permission is offered, and declining fails clearly`() = runTest {
         val full = (1..ManifestParser.MAX_HOSTS).map { "h$it.example.com" }
         reinstall(full)
-        val e = runCatching { play(source("""{"url":"https://cdn.other.example/v.mp4"}""")).await() }.exceptionOrNull()
+        val playing = play(source("""{"url":"https://cdn.other.example/v.mp4"}"""))
+        val req = nextPrompt()
+        assertFalse(req.allowsThisHost)
+        assertTrue(req.offersAnyVideoHost)
+        req.respond(false)
+        val e = runCatching { playing.await() }.exceptionOrNull()
         assertTrue(e is GatewayException)
         assertEquals("$NAME: El video está en cdn.other.example, pero $NAME ya tiene el máximo de 20 servidores aprobados", e!!.message)
-        assertNull(center.pending.value)
         assertEquals(full, record.hosts)
+        assertEquals(emptyList<String>(), record.rejectedHosts)
+    }
+
+    @Test fun `with 20 hosts approved a license host still fails with no question`() = runTest {
+        val full = (1 until ManifestParser.MAX_HOSTS).map { "h$it.example.com" }
+        reinstall(full + "cdn.other.example")
+        val e = runCatching {
+            play(source("""{"url":"https://cdn.other.example/1.mpd","drm":{"type":"widevine","licenseUrl":"https://lic.other.example/wv"}}""")).await()
+        }.exceptionOrNull()
+        assertEquals("$NAME: La licencia del video está en lic.other.example, pero $NAME ya tiene el máximo de 20 servidores aprobados", e?.message)
+        assertEquals(0, center.shownCount)
     }
 
     // A fetch-time approval of ANOTHER host can fill the last slot while this dialog is up.

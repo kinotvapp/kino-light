@@ -24,11 +24,21 @@ enum class StreamHostDecision {
 
     /** The plugin already has [ManifestParser.MAX_HOSTS] approved hosts: nothing more can be added. */
     LIMIT_REACHED,
+
+    /**
+     * The person granted the broad video permission ([InstalledRecord.anyVideoHost]), now or
+     * before: this plugin's VOD video may come from any public server. No host was added.
+     */
+    APPROVED_ANY_VIDEO_HOST,
 }
 
-/** Decides whether a Stream URL's undeclared [host] may be added to [pluginId]'s hosts; see [StreamHostApproval]. */
+/**
+ * Decides whether a Stream URL's undeclared [host] may be added to [pluginId]'s hosts; see
+ * [StreamHostApproval]. `offerAnyVideoHost`: the dialog may also offer the broad video permission
+ * (a VOD stream's video, subtitle or audio host; never a license or a live channel).
+ */
 fun interface StreamHostDecider {
-    suspend fun decide(pluginId: String, pluginName: String, host: String, reason: HostApprovalReason): StreamHostDecision
+    suspend fun decide(pluginId: String, pluginName: String, host: String, reason: HostApprovalReason, offerAnyVideoHost: Boolean): StreamHostDecision
 }
 
 /** What the player does after [PlaybackHostPrompts.onRefused]. */
@@ -58,10 +68,11 @@ class PlaybackHostPrompts(private val decider: StreamHostDecider) {
     /** A new playback attempt (a fresh resolve): every host may be asked about once more. */
     fun newAttempt() = asked.clear()
 
-    suspend fun onRefused(pluginId: String, pluginName: String, host: String): PlaybackHostOutcome {
+    /** [offerAnyVideoHost]: a VOD stream (the dialog may offer the broad video permission); false for a live channel. */
+    suspend fun onRefused(pluginId: String, pluginName: String, host: String, offerAnyVideoHost: Boolean = false): PlaybackHostOutcome {
         if (!asked.add(host)) return PlaybackHostOutcome.Fail("$pluginName: el video no se pudo cargar desde $host")
-        return when (decider.decide(pluginId, pluginName, host, HostApprovalReason.VIDEO)) {
-            StreamHostDecision.APPROVED -> PlaybackHostOutcome.Retry
+        return when (decider.decide(pluginId, pluginName, host, HostApprovalReason.VIDEO, offerAnyVideoHost)) {
+            StreamHostDecision.APPROVED, StreamHostDecision.APPROVED_ANY_VIDEO_HOST -> PlaybackHostOutcome.Retry
             StreamHostDecision.REJECTED -> PlaybackHostOutcome.Fail("$pluginName: el video usa otro servidor ($host) que no permitiste")
             StreamHostDecision.LIMIT_REACHED -> PlaybackHostOutcome.Fail(
                 "$pluginName: el video usa otro servidor ($host), pero $pluginName ya tiene el máximo de ${ManifestParser.MAX_HOSTS} servidores aprobados",
@@ -96,20 +107,37 @@ class StreamHostApproval(
     private val openRuntimeHttp: (pluginId: String) -> PluginHttp? = { null },
     private val log: (String) -> Unit = { android.util.Log.w("KinoPlugin", it) },
 ) : StreamHostDecider {
-    override suspend fun decide(pluginId: String, pluginName: String, host: String, reason: HostApprovalReason): StreamHostDecision {
+    override suspend fun decide(pluginId: String, pluginName: String, host: String, reason: HostApprovalReason, offerAnyVideoHost: Boolean): StreamHostDecision {
         val record = registry.find(pluginId)?.record ?: return StreamHostDecision.REJECTED
+        // Never for a fetch or a license, whatever the caller asks.
+        val offer = offerAnyVideoHost && reason != HostApprovalReason.FETCH && reason != HostApprovalReason.LICENSE
+        // Granted meanwhile (an earlier question of this same Stream, another title): nothing to ask.
+        if (offer && record.anyVideoHost) return StreamHostDecision.APPROVED_ANY_VIDEO_HOST
         if (host in record.rejectedHosts) {
             log("[$pluginId] $reason host $host: refused before, not asked again")
             return StreamHostDecision.REJECTED
         }
         // An earlier question in the same Stream (or a fetch meanwhile) may already have added it.
         if (HostRules.matches(host, record.hosts)) return StreamHostDecision.APPROVED
-        if (record.hosts.size >= ManifestParser.MAX_HOSTS) {
+        val full = record.hosts.size >= ManifestParser.MAX_HOSTS
+        if (full && !offer) {
             log("[$pluginId] $reason host $host: not asked, already at the ${ManifestParser.MAX_HOSTS}-host limit")
             return StreamHostDecision.LIMIT_REACHED
         }
-        val approved = center.requestUntilAnswered(pluginId, pluginName, host, reason)
+        // With the 20 hosts taken, the broad permission is still offered: it takes no slot.
+        val answer = center.askStreamHost(pluginId, pluginName, host, reason, offer, allowsThisHost = !full)
         // No suspension from here on (see the class KDoc).
+        if (answer == HostApprovalAnswer.ALLOW_ANY_VIDEO_HOST) {
+            registry.setAnyVideoHost(pluginId, true)
+            log("[$pluginId] $reason host $host: broad video permission granted")
+            return StreamHostDecision.APPROVED_ANY_VIDEO_HOST
+        }
+        val approved = answer == HostApprovalAnswer.ALLOW_HOST
+        if (!approved && full) {
+            // Only the broad permission (or no) was on offer: a "no" to it is not a "no" to this host.
+            log("[$pluginId] $reason host $host: broad video permission declined, at the ${ManifestParser.MAX_HOSTS}-host limit")
+            return StreamHostDecision.LIMIT_REACHED
+        }
         if (!approved) {
             registry.rejectHost(pluginId, host)
             openRuntimeHttp(pluginId)?.recordDecision(host, approved = false)

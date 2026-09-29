@@ -424,7 +424,8 @@ class PlayerViewModel internal constructor(
         val live = com.arkiv.player.data.plugin.PluginIds.isLiveEpisode(item.episodeId)
         Log.w(PLAY, "plugin playback: $host refused for $pluginId at ${positionMs}ms -> asking")
         hostPromptJob = viewModelScope.launch {
-            val outcome = prompts.onRefused(pluginId, name, host)
+            // A movie or episode may be offered the broad video permission; a live channel never.
+            val outcome = prompts.onRefused(pluginId, name, host, offerAnyVideoHost = !live)
             // Something else took the screen meanwhile (a new title, a re-resolve): this answer is stale.
             if (_magisItem.value !== item) return@launch
             when (outcome) {
@@ -435,7 +436,8 @@ class PlayerViewModel internal constructor(
                         return@launch
                     }
                     Log.w(PLAY, "plugin playback: $host approved -> rebuilding at ${positionMs}ms")
-                    _magisItem.value = item.afterHostApproved(ready.hosts.declared, positionMs, live)
+                    // The broad video permission, if the person just granted it, rides in videoHosts.
+                    _magisItem.value = item.afterHostApproved(ready.hosts.declared, positionMs, live, anyVideoHost = ready.videoHosts.anyPublicVideoHost)
                 }
                 is com.arkiv.player.data.plugin.PlaybackHostOutcome.Fail -> {
                     Log.w(PLAY, "plugin playback: $host -> ${outcome.message}")

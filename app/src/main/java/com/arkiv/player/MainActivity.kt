@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -131,7 +132,8 @@ class MainActivity : AppCompatActivity() {
                 // declared, or the Stream its resolve returned is on one (StreamHostApproval), and the
                 // coroutine behind it (see HostApprovalCenter) is suspended waiting for a verdict;
                 // `req.question` says which. Dismissing (back button, tap outside) counts as a reject
-                // -- respond(false) -- so the wait can never hang open forever unanswered.
+                // -- REJECT -- so the wait can never hang open forever unanswered. A VOD stream's
+                // dialog adds a third choice, the broad video permission (req.offersAnyVideoHost).
                 val pendingHostApproval by graph.hostApprovalCenter.pending.collectAsState()
                 pendingHostApproval?.let { req ->
                     // key(req): a queued request can replace the answered one in the SAME frame (the
@@ -157,29 +159,62 @@ class MainActivity : AppCompatActivity() {
                             delay(req.armDelayMs)
                             armed = true
                         }
-                        val answer: (Boolean) -> Unit = { approved -> if (armed) req.respond(approved) }
-                        Dialog(onDismissRequest = { answer(false) }) {
+                        val answer: (com.arkiv.player.data.plugin.HostApprovalAnswer) -> Unit = { a -> if (armed) req.answer(a) }
+                        val reject = { answer(com.arkiv.player.data.plugin.HostApprovalAnswer.REJECT) }
+                        val allowHost = { answer(com.arkiv.player.data.plugin.HostApprovalAnswer.ALLOW_HOST) }
+                        Dialog(onDismissRequest = reject) {
                             Surface(
                                 shape = RoundedCornerShape(16.dp),
                                 color = ArkivSurface,
                                 modifier = Modifier.widthIn(max = 480.dp),
                             ) {
-                                Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                // Scrolls: with the broad video note and three buttons, a large font on a
+                                // small phone or a TV could push "Rechazar" off screen.
+                                Column(
+                                    Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(24.dp),
+                                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                                ) {
                                     Text(req.pluginName, style = MaterialTheme.typography.titleLarge, color = Color.White)
                                     Text(
                                         req.question,
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = Color.White,
                                     )
-                                    Row(
-                                        Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),
-                                    ) {
-                                        TextButton(
-                                            onClick = { answer(false) },
-                                            modifier = Modifier.focusRequester(rejectFocus).focusRing(),
-                                        ) { Text("Rechazar") }
-                                        Button(onClick = { answer(true) }, modifier = Modifier.focusRing()) { Text("Permitir") }
+                                    if (req.offersAnyVideoHost) {
+                                        Text(
+                                            req.anyVideoHostNote,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = Color.White.copy(alpha = 0.7f),
+                                        )
+                                        // Three choices, stacked full width: side by side they don't fit a
+                                        // phone, and a column is one straight D-pad path. "Rechazar" first,
+                                        // where the focus starts (see above).
+                                        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            TextButton(
+                                                onClick = reject,
+                                                modifier = Modifier.fillMaxWidth().focusRequester(rejectFocus).focusRing(),
+                                            ) { Text("Rechazar") }
+                                            if (req.allowsThisHost) {
+                                                Button(onClick = allowHost, modifier = Modifier.fillMaxWidth().focusRing()) { Text(req.allowHostLabel) }
+                                            }
+                                            Button(
+                                                onClick = { answer(com.arkiv.player.data.plugin.HostApprovalAnswer.ALLOW_ANY_VIDEO_HOST) },
+                                                modifier = Modifier.fillMaxWidth().focusRing(),
+                                            ) { Text(com.arkiv.player.data.plugin.HostApprovalRequest.ANY_VIDEO_HOST_LABEL) }
+                                        }
+                                    } else {
+                                        Row(
+                                            Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),
+                                        ) {
+                                            TextButton(
+                                                onClick = reject,
+                                                modifier = Modifier.focusRequester(rejectFocus).focusRing(),
+                                            ) { Text("Rechazar") }
+                                            if (req.allowsThisHost) {
+                                                Button(onClick = allowHost, modifier = Modifier.focusRing()) { Text(req.allowHostLabel) }
+                                            }
+                                        }
                                     }
                                 }
                             }

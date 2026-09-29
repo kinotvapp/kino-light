@@ -232,9 +232,15 @@ class PluginContentSource(
         if (misses.isEmpty()) return
         val allGranted = hosts.copy(declared = hosts.declared + misses.map { it.host })
         if (runCatching { PluginOutput.stream(out, allGranted, xuper, allowDrm) }.isFailure) return
+        // The broad video permission may be offered for a movie's or an episode's video, subtitle or
+        // audio host -- never a license's, never a live channel's. Once granted, those need no question.
+        var anyVideoHost = false
         for (miss in misses) {
-            val decision = decider.decide(id, name, miss.host, miss.reason)
+            val offer = own.kind != PluginRef.LIVE && miss.reason != HostApprovalReason.LICENSE
+            if (anyVideoHost && offer) continue
+            val decision = decider.decide(id, name, miss.host, miss.reason, offer)
             log("[$id] resolve: ${miss.reason} on undeclared host ${miss.host} -> $decision")
+            if (decision == StreamHostDecision.APPROVED_ANY_VIDEO_HOST) { anyVideoHost = true; continue }
             if (!miss.required || decision == StreamHostDecision.APPROVED) continue
             if (decision == StreamHostDecision.LIMIT_REACHED) {
                 val what = if (miss.reason == HostApprovalReason.LICENSE) "La licencia del video" else "El video"

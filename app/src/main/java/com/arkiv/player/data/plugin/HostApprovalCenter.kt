@@ -29,7 +29,14 @@ object NoHostApprovalRequester : HostApprovalRequester {
  */
 enum class HostApprovalReason { FETCH, VIDEO, LICENSE, SUBTITLE, AUDIO }
 
-/** One pending dialog. [respond] resumes the coroutine that's waiting inside [HostApprovalCenter.request]. */
+/**
+ * What the person chose in a host dialog. [ALLOW_ANY_VIDEO_HOST] is the broad video permission
+ * ([InstalledRecord.anyVideoHost]): only ever an answer to a dialog that offered it
+ * ([HostApprovalRequest.offersAnyVideoHost]).
+ */
+enum class HostApprovalAnswer { REJECT, ALLOW_HOST, ALLOW_ANY_VIDEO_HOST }
+
+/** One pending dialog. [answer] resumes the coroutine that's waiting inside [HostApprovalCenter]. */
 data class HostApprovalRequest(
     val pluginId: String,
     val pluginName: String,
@@ -37,19 +44,62 @@ data class HostApprovalRequest(
     val reason: HostApprovalReason = HostApprovalReason.FETCH,
     /** How long the dialog ignores every answer after it appears (see [HostApprovalCenter.SUCCESSOR_ARM_DELAY_MS]). */
     val armDelayMs: Long = HostApprovalCenter.ARM_DELAY_MS,
-    val respond: (Boolean) -> Unit,
+    /**
+     * The dialog also offers the broad video permission ("Permitir video de cualquier servidor"):
+     * only for a VOD stream's video, subtitle or audio host, at resolve or playback time -- never a
+     * `kino.fetch`, a DRM license or a live channel (see [StreamHostApproval]).
+     */
+    val offersAnyVideoHost: Boolean = false,
+    /** "Permitir este servidor" is possible: false when the plugin's 20 approved hosts are all taken. */
+    val allowsThisHost: Boolean = true,
+    private val onAnswer: (HostApprovalAnswer) -> Unit,
 ) {
+    /**
+     * The person's choice. One the dialog does not offer ([ALLOW_ANY_VIDEO_HOST][HostApprovalAnswer.ALLOW_ANY_VIDEO_HOST]
+     * without [offersAnyVideoHost], [ALLOW_HOST][HostApprovalAnswer.ALLOW_HOST] without [allowsThisHost])
+     * is ignored: the question stays up.
+     */
+    fun answer(answer: HostApprovalAnswer) {
+        if (answer == HostApprovalAnswer.ALLOW_ANY_VIDEO_HOST && !offersAnyVideoHost) return
+        if (answer == HostApprovalAnswer.ALLOW_HOST && !allowsThisHost) return
+        onAnswer(answer)
+    }
+
+    /** "Permitir" (this host) or "Rechazar"; BACK and a tap outside are `respond(false)`. */
+    fun respond(approved: Boolean) = answer(if (approved) HostApprovalAnswer.ALLOW_HOST else HostApprovalAnswer.REJECT)
+
+    /** What is on [host]: the head of [question]. */
+    private val what: String get() = when (reason) {
+        HostApprovalReason.FETCH -> "Quiere conectarse a $host"
+        HostApprovalReason.VIDEO -> "El video está en $host"
+        HostApprovalReason.LICENSE -> "La licencia del video está en $host"
+        HostApprovalReason.SUBTITLE -> "Los subtítulos están en $host"
+        HostApprovalReason.AUDIO -> "Un audio del video está en $host"
+    }
+
     /**
      * The sentence under the plugin's name in the dialog. A fetch keeps the sentence it always had;
      * a Stream's URL says what is on that host, since by then the plugin already answered and it is
-     * the video (or its subtitles, audio or license) that would come from there.
+     * the video (or its subtitles, audio or license) that would come from there. With no room for
+     * one more host it says so, and only the broad permission (or "Rechazar") is offered.
      */
-    val question: String get() = when (reason) {
-        HostApprovalReason.FETCH -> "Quiere conectarse por primera vez a $host. ¿Permitir?"
-        HostApprovalReason.VIDEO -> "El video está en $host, un servidor nuevo para este plugin. ¿Permitir?"
-        HostApprovalReason.LICENSE -> "La licencia del video está en $host, un servidor nuevo para este plugin. ¿Permitir?"
-        HostApprovalReason.SUBTITLE -> "Los subtítulos están en $host, un servidor nuevo para este plugin. ¿Permitir?"
-        HostApprovalReason.AUDIO -> "Un audio del video está en $host, un servidor nuevo para este plugin. ¿Permitir?"
+    val question: String get() = when {
+        reason == HostApprovalReason.FETCH -> "Quiere conectarse por primera vez a $host. ¿Permitir?"
+        !allowsThisHost -> "$what, pero $pluginName ya tiene el máximo de ${ManifestParser.MAX_HOSTS} servidores aprobados."
+        else -> "$what, un servidor nuevo para este plugin. ¿Permitir?"
+    }
+
+    /** The "allow this host" button's label: plain "Permitir" unless the broad choice sits next to it. */
+    val allowHostLabel: String get() = if (offersAnyVideoHost) "Permitir este servidor" else "Permitir"
+
+    /** Under [question] when [offersAnyVideoHost]: what the third button does, and what it never does. */
+    val anyVideoHostNote: String get() =
+        "Con \u201cvideo de cualquier servidor\u201d no te volveremos a preguntar por el video de $pluginName. " +
+            "Nunca incluye tu red local, y puedes quitarlo en Plugins."
+
+    companion object {
+        /** The third button (see [offersAnyVideoHost]). */
+        const val ANY_VIDEO_HOST_LABEL = "Permitir video de cualquier servidor"
     }
 }
 
@@ -88,7 +138,7 @@ class HostApprovalCenter(
 
     /** A `kino.fetch` of the plugin's own reached a host it never declared; never null (see [HostApprovalRequester]). */
     override suspend fun request(pluginId: String, pluginName: String, host: String): Boolean =
-        ask(pluginId, pluginName, host, HostApprovalReason.FETCH)
+        ask(pluginId, pluginName, host, HostApprovalReason.FETCH) == HostApprovalAnswer.ALLOW_HOST
 
     /**
      * A URL of the Stream a `resolve` returned, or a host the player met mid-playback, is on a host
@@ -97,20 +147,42 @@ class HostApprovalCenter(
      * leaving the player clears its ViewModel -- takes the dialog down and returns nothing.
      */
     suspend fun requestUntilAnswered(pluginId: String, pluginName: String, host: String, reason: HostApprovalReason): Boolean =
-        ask(pluginId, pluginName, host, reason)
+        ask(pluginId, pluginName, host, reason) == HostApprovalAnswer.ALLOW_HOST
 
-    private suspend fun ask(pluginId: String, pluginName: String, host: String, reason: HostApprovalReason): Boolean =
+    /**
+     * [requestUntilAnswered] for a VOD stream's host, whose dialog may also offer the broad video
+     * permission ([offerAnyVideoHost]) and may have no room left for this one host ([allowsThisHost]
+     * false: then only "Rechazar" and the broad permission are offered). The whole answer.
+     */
+    suspend fun askStreamHost(
+        pluginId: String,
+        pluginName: String,
+        host: String,
+        reason: HostApprovalReason,
+        offerAnyVideoHost: Boolean,
+        allowsThisHost: Boolean = true,
+    ): HostApprovalAnswer = ask(pluginId, pluginName, host, reason, offerAnyVideoHost, allowsThisHost)
+
+    private suspend fun ask(
+        pluginId: String,
+        pluginName: String,
+        host: String,
+        reason: HostApprovalReason,
+        offerAnyVideoHost: Boolean = false,
+        allowsThisHost: Boolean = true,
+    ): HostApprovalAnswer =
         mutex.withLock {
             val shownAt = clock()
-            var answer: Boolean? = null
+            var answer: HostApprovalAnswer? = null
             try {
-                awaitAnswer(pluginId, pluginName, host, reason).also { answer = it }
+                awaitAnswer(pluginId, pluginName, host, reason, offerAnyVideoHost, allowsThisHost).also { answer = it }
             } finally {
                 lastClosedAt = clock()
                 val ms = (lastClosedAt!! - shownAt) / 1_000_000
                 log("[$pluginId] host dialog $reason $host " + when (answer) {
-                    true -> "answered Permitir after $ms ms"
-                    false -> "answered Rechazar (or Back) after $ms ms"
+                    HostApprovalAnswer.ALLOW_HOST -> "answered Permitir after $ms ms"
+                    HostApprovalAnswer.ALLOW_ANY_VIDEO_HOST -> "answered Permitir video de cualquier servidor after $ms ms"
+                    HostApprovalAnswer.REJECT -> "answered Rechazar (or Back) after $ms ms"
                     null -> "taken down unanswered after $ms ms (nobody waits for it any more)"
                 })
             }
@@ -121,17 +193,25 @@ class HostApprovalCenter(
         return if ((clock() - closed) / 1_000_000 < SUCCESSOR_WINDOW_MS) SUCCESSOR_ARM_DELAY_MS else ARM_DELAY_MS
     }
 
-    private suspend fun awaitAnswer(pluginId: String, pluginName: String, host: String, reason: HostApprovalReason): Boolean =
+    private suspend fun awaitAnswer(
+        pluginId: String,
+        pluginName: String,
+        host: String,
+        reason: HostApprovalReason,
+        offerAnyVideoHost: Boolean,
+        allowsThisHost: Boolean,
+    ): HostApprovalAnswer =
         suspendCancellableCoroutine { cont ->
             var req: HostApprovalRequest? = null
-            req = HostApprovalRequest(pluginId, pluginName, host, reason, armDelayMs()) { approved ->
+            req = HostApprovalRequest(pluginId, pluginName, host, reason, armDelayMs(), offerAnyVideoHost, allowsThisHost) { answer ->
                 _pending.compareAndSet(req, null)
-                if (cont.isActive) cont.resume(approved) {}
+                if (cont.isActive) cont.resume(answer) {}
             }
             cont.invokeOnCancellation { _pending.compareAndSet(req, null) }
             if (cont.isActive) {
                 shownCount++
-                log("[$pluginId] host dialog $reason $host shown, arms in ${req!!.armDelayMs} ms")
+                val extra = (if (offerAnyVideoHost) ", offers the broad video permission" else "") + (if (!allowsThisHost) ", no room for this host" else "")
+                log("[$pluginId] host dialog $reason $host shown$extra, arms in ${req!!.armDelayMs} ms")
                 _pending.value = req
                 // A cancellation landing between the check above and the publish ran
                 // its handler BEFORE `req` was published, so that handler's CAS found

@@ -6,6 +6,8 @@ import com.arkiv.player.data.plugin.HostNotAllowedException
 import com.arkiv.player.data.plugin.UndeclaredPlaybackHostException
 import com.arkiv.player.playback.SourceKind
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -49,5 +51,12 @@ class PlaybackHostRebuildTest {
     @Test fun `the gated client knows which plugin a miss is asked for`() {
         assertEquals(StreamHttp.PluginGated(item.pluginHosts, xuper = false, pluginId = "demo"), streamHttpFor(SourceKind.PLUGIN, item.pluginHosts, pluginId = "demo"))
         assertEquals(StreamHttp.Default, streamHttpFor(SourceKind.MAGIS, item.pluginHosts, pluginId = "demo"))
+    }
+
+    @Test fun `a rebuild after the broad video permission carries it, a live channel's never does`() {
+        val vod = item.afterHostApproved(listOf("example.com"), positionMs = 5_000L, live = false, anyVideoHost = true)
+        assertTrue(vod.pluginHosts.anyPublicVideoHost)
+        assertNotEquals(item.pluginHosts, vod.pluginHosts)
+        assertFalse(item.afterHostApproved(listOf("example.com"), positionMs = 0L, live = true, anyVideoHost = true).pluginHosts.anyPublicVideoHost)
     }
 }
