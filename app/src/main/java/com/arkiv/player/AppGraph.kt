@@ -1019,6 +1019,21 @@ class AppGraph(context: Context) {
         )
     }
 
+    /** "Probar" for the add dialog: the same gated client the own provider downloads with. */
+    val ownProbe: suspend (com.arkiv.player.data.live.OwnSourceForm) -> com.arkiv.player.data.live.OwnProbe by lazy {
+        val fetcher = com.arkiv.player.data.live.PluginPlaylistFetcher(
+            com.arkiv.player.data.plugin.PluginStreamHttp.client(pluginBaseHttp, com.arkiv.player.data.live.OwnLive.hosts),
+        )
+        val probe: suspend (com.arkiv.player.data.live.OwnSourceForm) -> com.arkiv.player.data.live.OwnProbe = { f ->
+            val headers = buildMap {
+                if (f.userAgent.isNotEmpty()) put("User-Agent", f.userAgent)
+                if (f.referer.isNotEmpty()) put("Referer", f.referer)
+            }
+            com.arkiv.player.data.live.OwnSourceProbe.run(f.kind, f.url.trim(), headers, fetcher)
+        }
+        probe
+    }
+
     /** The person's own live sources ("Mis canales"). */
     val ownLiveStore: com.arkiv.player.data.live.OwnLiveStore by lazy {
         com.arkiv.player.data.live.OwnLiveStore(database.ownLiveSourceDao())
