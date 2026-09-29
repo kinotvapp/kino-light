@@ -314,7 +314,53 @@ class PluginHttp(
         .followSslRedirects(false)
         .cookieJar(cookies ?: CookieJar.NO_COOKIES)
         .dns(PluginDns(allowLoopback = allowInsecureLocalhost, delegate = delegateDns, userHostNames = hosts.userHostNames))
+        .eventListenerFactory { SlowCallPhases(pluginId, log) }
         .build()
+
+    /**
+     * Where a slow or failed request spent its time: DNS, TCP connect, TLS, or waiting for the
+     * answer on a pooled (reused) or fresh connection. Logged only for a request that failed or took
+     * more than [SLOW_MS]. Measured need: on the TV a plugin's first request after a few minutes idle
+     * could hang its whole 15 s while the retry answered at once, and nothing said which phase hung.
+     */
+    private class SlowCallPhases(private val pluginId: String, private val log: (String) -> Unit) : okhttp3.EventListener() {
+        private val t0 = System.nanoTime()
+        private val marks = StringBuilder()
+        private fun mark(what: String) {
+            if (marks.length < 400) marks.append(what).append('@').append((System.nanoTime() - t0) / 1_000_000).append("ms ")
+        }
+
+        override fun dnsStart(call: okhttp3.Call, domainName: String) = mark("dns")
+        override fun dnsEnd(call: okhttp3.Call, domainName: String, inetAddressList: List<InetAddress>) =
+            mark("dns-ok(${inetAddressList.size}${if (inetAddressList.any { it is Inet6Address }) ",v6" else ""})")
+        override fun connectStart(call: okhttp3.Call, inetSocketAddress: java.net.InetSocketAddress, proxy: java.net.Proxy) =
+            mark("connect(${if (inetSocketAddress.address is Inet6Address) "v6" else "v4"})")
+        override fun secureConnectEnd(call: okhttp3.Call, handshake: okhttp3.Handshake?) = mark("tls-ok")
+        override fun connectFailed(call: okhttp3.Call, inetSocketAddress: java.net.InetSocketAddress, proxy: java.net.Proxy, protocol: okhttp3.Protocol?, ioe: IOException) =
+            mark("connect-failed")
+        override fun connectionAcquired(call: okhttp3.Call, connection: okhttp3.Connection) =
+            mark("conn(${connection.protocol()})")
+        override fun requestHeadersEnd(call: okhttp3.Call, request: okhttp3.Request) = mark("sent")
+        override fun responseHeadersStart(call: okhttp3.Call) = mark("answer")
+
+        override fun callEnd(call: okhttp3.Call) = report(call, null)
+        override fun callFailed(call: okhttp3.Call, ioe: IOException) = report(call, ioe)
+
+        private fun report(call: okhttp3.Call, failure: IOException?) {
+            val ms = (System.nanoTime() - t0) / 1_000_000
+            if (failure == null && ms < SLOW_MS) return
+            // A connection that shows up with no dns/connect mark before it was reused from the pool.
+            val pooled = "dns" !in marks && "connect(" !in marks
+            log(
+                "[$pluginId] slow ${call.request().url.host} ${ms} ms" + (if (pooled) " on a pooled connection" else "") +
+                    (failure?.let { " failed ${it.javaClass.simpleName}" } ?: "") + ": $marks",
+            )
+        }
+
+        companion object {
+            const val SLOW_MS = 5_000L
+        }
+    }
 
     /** Starts a new plugin call: the 60-request budget is per call. */
     fun beginCall() = requests.set(0)

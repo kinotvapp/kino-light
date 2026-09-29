@@ -28,6 +28,7 @@ internal object PluginCalls {
         val failure: RuntimeException = try {
             return caller.call(pluginId, function, argJson, timeoutMs).also { log("[$pluginId] $function ok after ${elapsed()} ms") }
         } catch (e: CancellationException) {
+            log("[$pluginId] $function cancelled after ${elapsed()} ms: nobody waits for it any more")
             throw e
         } catch (e: Exception) {
             failureOf(e, pluginId, name)
