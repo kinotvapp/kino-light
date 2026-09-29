@@ -343,7 +343,19 @@ class LiveViewModel(
         // CATEGORIES themselves (a new list brings its groups), and the section may have had none at
         // all, so it re-opens the provider instead of reloading one category.
         if (s.activeProvider == com.arkiv.player.data.live.OwnLive.PROVIDER) {
-            openProvider(module.provider(com.arkiv.player.data.live.OwnLive.PROVIDER) ?: return, keepFavorites = s.activeCategory == CATEGORY_FAVORITES)
+            val provider = module.provider(com.arkiv.player.data.live.OwnLive.PROVIDER) ?: return
+            val keepFavorites = s.activeCategory == CATEGORY_FAVORITES
+            viewModelScope.launch {
+                // "Recargar" also downloads the lists again (a forced build); what fails is reported by the re-open below.
+                try {
+                    provider.channels(s.activeCategory.orEmpty(), force = true)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // Not fatal here.
+                }
+                openProvider(provider, keepFavorites)
+            }
             return
         }
         val category = s.activeCategory ?: return

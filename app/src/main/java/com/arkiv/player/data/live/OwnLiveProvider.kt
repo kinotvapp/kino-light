@@ -49,6 +49,7 @@ internal class OwnLiveProvider(
     override val color: Long = OwnLive.COLOR
 
     private class Snapshot(
+        val builtAt: Long,
         val signature: List<Pair<String, Long>>,
         val categories: List<ProviderCategory>,
         val byCategory: Map<String, List<LiveChannel>>,
@@ -56,6 +57,9 @@ internal class OwnLiveProvider(
         val entries: Map<String, M3uEntry>,
         val playlistOf: Map<String, OwnLiveSourceEntity>,
     )
+
+    /** Nothing that reaches the log may carry an address: a list's URL holds its account and password. */
+    private val safeLog: (String) -> Unit = { log(redactUrls(it)) }
 
     private val lock = Mutex()
     private val playlistSources = HashMap<String, PlaylistSource>()
@@ -140,7 +144,7 @@ internal class OwnLiveProvider(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            log("guide of $sourceId failed: ${e.message}")
+            safeLog("guide of $sourceId failed: ${e.message}")
             null
         }
         lock.withLock { guides[sourceId] = (now + GUIDE_TTL_MS) to guide }
@@ -157,7 +161,7 @@ internal class OwnLiveProvider(
     private suspend fun build(force: Boolean): Snapshot = lock.withLock {
         val list = sources()
         val signature = list.map { it.id to it.updatedAt }
-        snapshot?.takeIf { !force && it.signature == signature }?.let { return@withLock it }
+        snapshot?.takeIf { !force && it.signature == signature && clock() - it.builtAt < SNAPSHOT_TTL_MS }?.let { return@withLock it }
 
         val singles = list.filter { it.kind == "CHANNEL" }
         val lists = list.filter { it.kind == "PLAYLIST" }
@@ -185,16 +189,21 @@ internal class OwnLiveProvider(
                 epgUrl = src.epgUrl.orEmpty(),
                 refreshHours = src.refreshHours.takeIf { it > 0 } ?: PluginLiveContract.DEFAULT_REFRESH_HOURS,
             )
-            val source = playlistSources.getOrPut(src.id) {
-                PlaylistSource(declared, fetcher, cacheDir, clock, log, entryAllowed = ::entryAllowed, allCachesRoot = allCachesRoot)
-            }.also { it.adopt(declared) }
+            // `adopt` says false when the address moved to another list key: that is a different list, so a fresh
+            // source (and no guide of the old one), not the old one under a new declaration.
+            val source = playlistSources[src.id]?.takeIf { it.adopt(declared) } ?: PlaylistSource(
+                declared, fetcher, cacheDir, clock, safeLog, entryAllowed = ::entryAllowed, allCachesRoot = allCachesRoot,
+            ).also {
+                playlistSources[src.id] = it
+                guides.remove(src.id)
+            }
             if (categoriesLeft <= 0 || channelsLeft <= 0) break
             val result = try {
                 source.entries(force, maxEntries = channelsLeft)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                log("playlist ${src.id} failed: ${e.message}")
+                safeLog("playlist ${src.id} failed: ${e.message}")
                 null
             } ?: continue
             val g = groupPlaylist(
@@ -213,7 +222,7 @@ internal class OwnLiveProvider(
         }
         guideAvailable = lists.any { !it.epgUrl.isNullOrBlank() }
         _notice.value = trimNotice(built)
-        val snap = Snapshot(signature, categories, byCategory, singles.associateBy { it.id }, entries, playlistOf)
+        val snap = Snapshot(clock(), signature, categories, byCategory, singles.associateBy { it.id }, entries, playlistOf)
         snapshot = snap
         mirrorIntoSearchCache(built)
         snap
@@ -232,12 +241,17 @@ internal class OwnLiveProvider(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            log("search cache not updated: ${e.message}")
+            safeLog("search cache not updated: ${e.message}")
         }
     }
 
     private companion object {
+        /** How long a listing is trusted before asking [PlaylistSource] again (it re-downloads only past the list's own refresh time). */
+        const val SNAPSHOT_TTL_MS = 5 * 60 * 1000L
         const val GUIDE_TTL_MS = 10 * 60 * 1000L
         const val GUIDE_BEHIND_MS = 2 * 60 * 60 * 1000L
     }
 }
+
+/** Every address in [message] replaced: a log line about a list must never carry its credentials. */
+internal fun redactUrls(message: String): String = message.replace(Regex("""https?://\S+"""), "<url>")

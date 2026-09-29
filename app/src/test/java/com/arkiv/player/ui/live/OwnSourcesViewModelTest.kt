@@ -40,7 +40,7 @@ class OwnSourcesViewModelTest {
 
     private var saved = 0
     private fun vm(dao: FakeDao = FakeDao(), probe: suspend (OwnSourceForm) -> OwnProbe = { OwnProbe.Ok("bien") }): Pair<OwnSourcesViewModel, FakeDao> =
-        OwnSourcesViewModel(OwnLiveStore(dao) { "id-${dao.rows.size}" }, probe) { saved++ } to dao
+        OwnSourcesViewModel(OwnLiveStore(dao, newId = { "id-${dao.rows.size}" }), probe) { saved++ } to dao
 
     @Test fun `starting a new source opens an empty form of that kind`() {
         val (v, _) = vm()
@@ -124,5 +124,30 @@ class OwnSourcesViewModelTest {
         v.delete(dao.rows.keys.single())
         assertTrue(dao.rows.values.single().deleted)
         assertEquals(1, saved)
+    }
+
+    @Test fun `a probe that answers after the address changed is dropped, it describes another address`() {
+        var release: (() -> Unit)? = null
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val (v, _) = vm(probe = { gate.await(); OwnProbe.Ok("Se ve bien") })
+        v.startNew(OwnKind.CHANNEL)
+        v.change(v.ui.value.form.copy(name = "Uno", url = "https://tv.example.com/1.m3u8"))
+        v.probeNow()
+        v.change(v.ui.value.form.copy(url = "https://tv.example.com/2.m3u8"))
+        gate.complete(Unit)
+        assertNull(v.ui.value.probe)
+        assertFalse(v.ui.value.busy)
+    }
+
+    @Test fun `a failing store does not leave the dialog busy forever`() {
+        val failing = object : com.arkiv.player.data.db.OwnLiveSourceDao by FakeDao() {
+            override suspend fun all(): List<OwnLiveSourceEntity> = throw java.io.IOException("disco lleno")
+        }
+        val v = OwnSourcesViewModel(OwnLiveStore(failing), { OwnProbe.Ok("x") })
+        v.startNew(OwnKind.CHANNEL)
+        v.change(v.ui.value.form.copy(name = "Uno", url = "https://tv.example.com/1.m3u8"))
+        v.save()
+        assertFalse(v.ui.value.busy)
+        assertEquals(OwnSourcesCopy.SAVE_FAILED, v.ui.value.notice)
     }
 }

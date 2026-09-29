@@ -220,7 +220,9 @@ private class FakeProvider(
     }
     override suspend fun knownChannels() = known
     override fun hasUnloadedCategories() = unloaded
+    val forced = mutableListOf<Boolean>()
     override suspend fun channels(categoryId: String, force: Boolean): List<LiveChannel> {
+        forced += force
         channelsGate?.await()
         return channelsByCategory[categoryId].orEmpty()
     }
@@ -622,6 +624,19 @@ class LiveViewModelAsyncTest {
         vm.reload()
         advanceUntilIdle()
         assertEquals(listOf("own:1", "~ab.g"), vm.state.value.categories.map { it.id })
+    }
+
+    @Test
+    fun `reload on the own channels forces the provider to download its lists again`() = runTest(dispatcher) {
+        val own = FakeProvider(com.arkiv.player.data.live.OwnLive.PROVIDER, "Mis canales", categoriesResult = listOf(ProviderCategory("own:1", "Canales sueltos")))
+        own.channelsByCategory["own:1"] = listOf(ch("s1", own.id))
+        val vm = LiveViewModel(FakeModule(own), FakeFavoriteDao(), FakeCacheDao())
+        advanceUntilIdle()
+        own.forced.clear()
+        vm.reload()
+        advanceUntilIdle()
+        assertTrue("Recargar must force a fresh download", own.forced.contains(true))
+        assertEquals(listOf("s1"), vm.state.value.channels.map { it.code })
     }
 
     @Test

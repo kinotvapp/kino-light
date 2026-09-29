@@ -142,14 +142,22 @@ class CompanionSyncEngine(
         peerJob = null
     }
 
-    /** The tables the peer's last hello listed; null until it has sent one. Overwritten by every hello, never reset on disconnect (a reset racing that hello would lose it). */
-    @Volatile private var peerTables: Set<String>? = null
+    /**
+     * The tables the connected peer's last hello listed, with the id of THAT peer; null until one hello. A TV can
+     * accept a different controller, so tables announced by one peer never count for another: an older build
+     * that connects later has not said what it knows, and its SyncApply throws on a table it has never heard of.
+     */
+    @Volatile private var peerTables: Pair<String?, Set<String>>? = null
 
-    private fun peerKnows(table: String): Boolean = table !in OPTIONAL_TABLES || peerTables?.contains(table) == true
+    private fun peerKnows(table: String): Boolean {
+        if (table !in OPTIONAL_TABLES) return true
+        val known = peerTables ?: return false
+        return known.first == peer.value && table in known.second
+    }
 
     private suspend fun handleHello(env: Envelope) {
         val hello = SyncHello.fromPayload(env.payload)
-        peerTables = hello.since.keys.toSet()
+        peerTables = peer.value to hello.since.keys.toSet()
         var overallHwm = 0L
         for (table in TABLES) {
             if (!peerKnows(table)) continue

@@ -141,4 +141,41 @@ class OwnLiveProviderTest {
         p.categories(false)
         assertEquals(2, rows)
     }
+
+    @Test fun `editing a list to another address lists the new one, not the old one`() = runTest {
+        val bodies = mapOf(
+            "http://old.example.com/l.m3u" to "#EXTM3U\n#EXTINF:-1 group-title=\"Viejo\",Canal Viejo\nhttp://s.example.com/v.m3u8\n",
+            "http://new.example.com/other/l.m3u" to "#EXTM3U\n#EXTINF:-1 group-title=\"Nuevo\",Canal Nuevo\nhttp://s.example.com/n.m3u8\n",
+        )
+        val fetched = mutableListOf<String>()
+        var current = listOf(playlist("p1", "L", "http://old.example.com/l.m3u"))
+        val p = OwnLiveProvider(
+            { current }, LivePlaylistFetcher { url, _, _ -> fetched += url; bodies.getValue(url).toByteArray() },
+            tmp.newFolder(), null, clock = { 1_000L }, log = {},
+        )
+        assertEquals(setOf("Canal Viejo"), channelsOf(p).map { it.name }.toSet())
+        current = listOf(playlist("p1", "L", "http://new.example.com/other/l.m3u").copy(updatedAt = 5))
+        assertEquals(setOf("Canal Nuevo"), channelsOf(p).map { it.name }.toSet())
+        assertTrue("http://new.example.com/other/l.m3u" in fetched)
+    }
+
+    @Test fun `a list is downloaded again once its refresh time has passed, with the sources unchanged`() = runTest {
+        var now = 1_000L
+        var body = "#EXTM3U\n#EXTINF:-1 group-title=\"G\",Uno\nhttp://s.example.com/1.m3u8\n"
+        val src = playlist("p1", "L", "http://tv.example.com/l.m3u").copy(refreshHours = 1)
+        val p = OwnLiveProvider({ listOf(src) }, LivePlaylistFetcher { _, _, _ -> body.toByteArray() }, tmp.newFolder(), null, clock = { now }, log = {})
+        assertEquals(setOf("Uno"), channelsOf(p).map { it.name }.toSet())
+        body = "#EXTM3U\n#EXTINF:-1 group-title=\"G\",Uno\nhttp://s.example.com/1.m3u8\n#EXTINF:-1 group-title=\"G\",Dos\nhttp://s.example.com/2.m3u8\n"
+        assertEquals("not yet: the copy is fresh", setOf("Uno"), channelsOf(p).map { it.name }.toSet())
+        now += 2 * 60 * 60 * 1000L
+        assertEquals(setOf("Uno", "Dos"), channelsOf(p).map { it.name }.toSet())
+    }
+
+    @Test fun `what reaches the log never carries an address, so a list's credentials stay out of it`() {
+        val line = "playlist http://tv.example.com/get.php?username=ana&password=secreto&type=m3u not downloaded (Unable to resolve host \"tv.example.com\"); no saved copy"
+        val redacted = redactUrls(line)
+        assertFalse(redacted.contains("secreto"))
+        assertFalse(redacted.contains("get.php"))
+        assertTrue(redacted.contains("not downloaded"))
+    }
 }

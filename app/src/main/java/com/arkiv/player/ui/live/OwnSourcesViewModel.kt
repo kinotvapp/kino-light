@@ -73,7 +73,9 @@ class OwnSourcesViewModel(
         _ui.value = _ui.value.copy(busy = true, probe = null)
         viewModelScope.launch {
             val r = probe(form)
-            _ui.value = _ui.value.copy(busy = false, probe = r)
+            // The address may have been edited while it was being checked: that answer is about another one.
+            val stale = _ui.value.form.url != form.url
+            _ui.value = _ui.value.copy(busy = false, probe = if (stale) null else r)
         }
     }
 
@@ -82,13 +84,21 @@ class OwnSourcesViewModel(
         if (state.busy) return
         _ui.value = state.copy(busy = true)
         viewModelScope.launch {
-            when (val r = store.save(state.editingId, state.form)) {
+            val result = try {
+                store.save(state.editingId, state.form)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                null
+            }
+            when (result) {
                 OwnSaveResult.Saved -> {
                     _ui.value = OwnFormUi()
                     onSaved()
                 }
-                is OwnSaveResult.Invalid -> _ui.value = _ui.value.copy(busy = false, errors = r.errors)
+                is OwnSaveResult.Invalid -> _ui.value = _ui.value.copy(busy = false, errors = result.errors)
                 OwnSaveResult.TooMany -> _ui.value = _ui.value.copy(busy = false, notice = OwnSourcesCopy.TOO_MANY)
+                null -> _ui.value = _ui.value.copy(busy = false, notice = OwnSourcesCopy.SAVE_FAILED)
             }
         }
     }

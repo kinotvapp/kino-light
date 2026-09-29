@@ -285,6 +285,38 @@ class CompanionSyncEngineTest {
         engine.stop()
         testScheduler.advanceUntilIdle()
     }
+
+    /**
+     * One TV can accept a different controller: the tables a peer announced belong to THAT peer. A second
+     * (older) controller connecting must not inherit them, or its SyncApply throws on the table it never heard of.
+     */
+    @Test fun `a peer that did not announce the table never gets it, even after another peer did`() = runTest {
+        val incoming = MutableSharedFlow<Envelope>(extraBufferCapacity = 8)
+        val changes = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
+        val sent = mutableListOf<Envelope>()
+        val source = FakeSyncSource()
+        source.addRow("own_live_sources", JSONObject().put("id", "s1").put("updatedAt", 10L))
+        val (apply, _) = fakeSyncApply()
+        val peer = MutableStateFlow<String?>("phoneA")
+        val engine = CompanionSyncEngine(this, incoming, { sent += it }, source, apply, SyncCursorStore(FakeContext()), changes)
+        engine.start(peer)
+        testScheduler.advanceUntilIdle()
+        fun tablesSent(): List<String> = sent.filter { it.type == TYPE_SYNC_ROWS }.map { SyncRows.fromPayload(it.payload).table }
+
+        incoming.emit(newEnvelope(TYPE_SYNC_HELLO, SyncHello(mapOf("playback" to 0L, "own_live_sources" to 0L)).toPayload()))
+        testScheduler.advanceUntilIdle()
+        assertTrue("own_live_sources" in tablesSent())
+
+        sent.clear()
+        peer.value = "phoneB" // an older build connects; its hello has not arrived yet
+        source.addRow("own_live_sources", JSONObject().put("id", "s2").put("updatedAt", 20L))
+        changes.emit(Unit)
+        testScheduler.advanceUntilIdle()
+        assertTrue("not before phoneB says it knows the table", "own_live_sources" !in tablesSent())
+
+        engine.stop()
+        testScheduler.advanceUntilIdle()
+    }
 }
 
 // ---- fakes ----

@@ -16,7 +16,7 @@ class PluginOutputTest {
 
     @Test fun `valid items keep their fields, invalid ones are dropped with a log line`() {
         val json = """[
-          {"id":"a1","ref":"r1","title":" Metrópolis ","kind":"movie","year":1927,"poster":"https://x/p.jpg","backdrop":"http://x/b.jpg"},
+          {"id":"a1","ref":"r1","title":" Metrópolis ","kind":"movie","year":1927,"poster":"https://x/p.jpg","backdrop":"http://cdn.x.com/b.jpg"},
           {"id":"bad id","ref":"r","title":"t","kind":"movie"},
           {"id":"a2","ref":"","title":"t","kind":"movie"},
           {"id":"a3","ref":"r","title":"   ","kind":"movie"},
@@ -30,7 +30,7 @@ class PluginOutputTest {
             assertEquals("Metrópolis", title)
             assertEquals("1927", year)
             assertEquals("https://x/p.jpg", poster)
-            assertEquals("http://x/b.jpg", backdrop) // http images are kept: art is display only
+            assertEquals("http://cdn.x.com/b.jpg", backdrop) // http images are kept: art is display only
         }
         assertTrue(logs.isNotEmpty())
     }
@@ -510,6 +510,16 @@ class PluginOutputTest {
         )
         assertEquals(listOf("", "", "", ""), items.map { it.poster })
         assertEquals(listOf("", "", "", ""), items.map { it.backdrop })
+    }
+
+    @Test fun `a single-label name over http is dropped, it is a home router or a NAS by another name`() {
+        val items = items(
+            """[{"id":"a","ref":"r","title":"A","kind":"movie","poster":"http://router/logo.png","backdrop":"http://nas/b.png"},
+                {"id":"b","ref":"r","title":"B","kind":"movie","poster":"http://cdn.example.com/p.png","backdrop":"http://8.8.8.8/b.png"}]""",
+            allowSeries = false,
+        )
+        assertEquals(listOf("", "http://cdn.example.com/p.png"), items.map { it.poster })
+        assertEquals(listOf("", "http://8.8.8.8/b.png"), items.map { it.backdrop })
     }
 
     @Test fun `an image on a server the person typed is kept, exactly that server only`() {

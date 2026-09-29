@@ -1034,6 +1034,19 @@ class AppGraph(context: Context) {
         probe
     }
 
+    /**
+     * Whether the person has ANY live source: a provider from Xuper or a plugin, or at least one channel or list
+     * of their own. Home's empty state (and its "Agregar plugin" onboarding) depends on this and not on
+     * `liveModule.available`, which "Mis canales" keeps true for everyone.
+     */
+    val hasLiveSources: kotlinx.coroutines.flow.StateFlow<Boolean> by lazy {
+        kotlinx.coroutines.flow.combine(
+            liveModule.hasSourceProviders,
+            database.ownLiveSourceDao().flowAll().map { it.isNotEmpty() },
+        ) { providers, own -> providers || own }
+            .stateIn(applicationScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, liveModule.hasSourceProviders.value)
+    }
+
     /** The person's own live sources ("Mis canales"). */
     val ownLiveStore: com.arkiv.player.data.live.OwnLiveStore by lazy {
         com.arkiv.player.data.live.OwnLiveStore(database.ownLiveSourceDao())

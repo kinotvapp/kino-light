@@ -22,7 +22,7 @@ class OwnLiveStoreTest {
     }
 
     private var n = 0
-    private fun store(dao: FakeDao = FakeDao()) = OwnLiveStore(dao) { "id${++n}" } to dao
+    private fun store(dao: FakeDao = FakeDao(), now: Long = 1_000L) = OwnLiveStore(dao, { "id${++n}" }, { now }) to dao
     private fun ch(name: String, url: String) = OwnSourceForm(OwnKind.CHANNEL, name, url)
 
     @Test fun `a valid source is saved with a fresh id`() = runTest {
@@ -79,5 +79,38 @@ class OwnLiveStoreTest {
         val key = PlaylistSource.cacheKey(list.url)
         assertEquals(list.id, s.sourceFor("~$key.c1")?.id)
         assertNull(s.sourceFor("~00000000.c1"))
+    }
+
+    @Test fun `two lists on the same server path are refused, they would share one cache file and the same channel codes`() = runTest {
+        val (s, dao) = store()
+        val a = OwnSourceForm(OwnKind.PLAYLIST, "Cuenta A", "http://tv.example.com/get.php?username=A&password=x&type=m3u")
+        val b = OwnSourceForm(OwnKind.PLAYLIST, "Cuenta B", "http://tv.example.com/get.php?username=B&password=y&type=m3u")
+        assertEquals(OwnSaveResult.Saved, s.save(null, a))
+        val r = s.save(null, b) as OwnSaveResult.Invalid
+        assertTrue(OwnField.URL in r.errors)
+        assertEquals(1, dao.rows.size)
+        // Editing the first one keeps its own key.
+        assertEquals(OwnSaveResult.Saved, s.save(dao.rows.keys.single(), a.copy(name = "Cuenta A2")))
+    }
+
+    @Test fun `a channel on that same path is fine, only lists share a cache`() = runTest {
+        val (s, _) = store()
+        s.save(null, OwnSourceForm(OwnKind.PLAYLIST, "L", "http://tv.example.com/get.php?u=A"))
+        assertEquals(OwnSaveResult.Saved, s.save(null, ch("C", "http://tv.example.com/get.php?u=B")))
+    }
+
+    @Test fun `an edit always gets a clock newer than the row it replaces, even when a peer's clock is ahead`() = runTest {
+        val dao = FakeDao()
+        val future = 9_999_999_999_999L
+        dao.rows["s1"] = OwnLiveSourceEntity("s1", "CHANNEL", "Uno", "https://a.example.com/1.m3u8", updatedAt = future)
+        val (s, _) = store(dao, now = 1_000L)
+        assertEquals(OwnSaveResult.Saved, s.save("s1", ch("Uno editado", "https://a.example.com/1.m3u8")))
+        assertTrue(dao.rows.getValue("s1").updatedAt > future)
+    }
+
+    @Test fun `a new source is saved with no clock, so the trigger seals it`() = runTest {
+        val (s, dao) = store()
+        s.save(null, ch("Uno", "https://a.example.com/1.m3u8"))
+        assertEquals(0L, dao.rows.values.single().updatedAt)
     }
 }

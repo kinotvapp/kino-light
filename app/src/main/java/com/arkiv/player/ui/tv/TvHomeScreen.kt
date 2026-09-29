@@ -504,8 +504,9 @@ fun TvHomeScreen(
     }
     // The module's providers right now: a switched-off plugin's recents leave the row (they are kept, not deleted).
     val liveOn by graph.liveModule.available.collectAsStateWithLifecycle()
+    val liveSources by graph.hasLiveSources.collectAsStateWithLifecycle()
     val installedPlugins by graph.pluginAdmin.plugins.collectAsStateWithLifecycle()
-    val homeEmpty = homeShowsEmptyState(installedPlugins, pluginRows.size, liveOn)
+    val homeEmpty = homeShowsEmptyState(installedPlugins, pluginRows.size, liveSources)
     val emptyCopy = homeEmptyCopy(installedPlugins, isTv = true)
     val homeEmptyNow by rememberUpdatedState(homeEmpty)
     val emptySourcesFocus = remember { FocusRequester() }

@@ -45,4 +45,18 @@ class OwnSourceProbeTest {
         val r = OwnSourceProbe.run(OwnKind.CHANNEL, "http://a.example.com/1.m3u8", emptyMap()) { _, _, _ -> "#EXTM3U\n".toByteArray() }
         assertTrue(r is OwnProbe.Ok)
     }
+
+    @Test fun `a direct stream that never ends is a working channel, not an error`() = runTest {
+        val r = OwnSourceProbe.run(OwnKind.CHANNEL, "http://a.example.com/live.ts", emptyMap()) { _, _, _ ->
+            throw com.arkiv.player.data.live.PlaylistTooLargeException(0)
+        }
+        assertTrue(r is OwnProbe.Ok)
+    }
+
+    @Test fun `a playlist that is too big says so`() = runTest {
+        val r = OwnSourceProbe.run(OwnKind.PLAYLIST, "http://a.example.com/l.m3u", emptyMap()) { _, _, _ ->
+            throw com.arkiv.player.data.live.PlaylistTooLargeException(20)
+        }
+        assertTrue((r as OwnProbe.Failed).message.contains("demasiado grande"))
+    }
 }

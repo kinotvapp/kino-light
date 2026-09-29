@@ -152,4 +152,16 @@ class SyncMappersTest {
         assertNull(jsonToOwnLiveSource(row { put("url", "file:///sdcard/x.m3u8") }))
         assertNull(jsonToOwnLiveSource(row { put("name", "") }))
     }
+
+    @Test fun `every field of a synced row goes through the same rules as the form`() {
+        fun row(mutate: JSONObject.() -> Unit): JSONObject = ownLiveSourceToJson(ownSource).apply(mutate)
+        assertNull(jsonToOwnLiveSource(row { put("epgUrl", "http://192.168.1.5/e.xml") }))
+        assertNull(jsonToOwnLiveSource(row { put("userAgent", "a\r\nX-Injected: 1") }))
+        assertNull(jsonToOwnLiveSource(row { put("referer", "ñandú") }))
+        assertNull(jsonToOwnLiveSource(row { put("id", "~x") }))
+        assertNull(jsonToOwnLiveSource(row { put("id", "x".repeat(65)) }))
+        assertNull(jsonToOwnLiveSource(row { put("name", "x".repeat(81)) }))
+        val leakyLogo = OwnLiveSourceEntity("s2", "CHANNEL", "Uno", "https://a.example.com/x.m3u8", logo = "http://192.168.1.9/l.png")
+        assertNull(jsonToOwnLiveSource(ownLiveSourceToJson(leakyLogo)))
+    }
 }

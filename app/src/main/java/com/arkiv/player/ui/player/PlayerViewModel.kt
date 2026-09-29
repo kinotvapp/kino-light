@@ -1113,7 +1113,8 @@ class PlayerViewModel internal constructor(
             return
         }
         val label = if (item?.kind == SourceKind.PLUGIN) {
-            plugins?.nameOf(com.arkiv.player.data.plugin.PluginIds.pluginIdOfEpisode(item.episodeId)) ?: "Plugin"
+            pluginAccessFor(com.arkiv.player.data.plugin.PluginIds.pluginIdOfEpisode(item.episodeId), plugins).takeIf { it is com.arkiv.player.data.plugin.PluginAccess.Ready }?.name
+                ?: plugins?.nameOf(com.arkiv.player.data.plugin.PluginIds.pluginIdOfEpisode(item.episodeId)) ?: "Plugin"
         } else {
             "Xuper"
         }

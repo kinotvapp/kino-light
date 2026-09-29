@@ -676,7 +676,7 @@ object PluginOutput {
 
     /**
      * http or https, ≤ [MAX_IMAGE_URL_CHARS] chars, on a public name or a public IPv4 address, and
-     * never the home network or a local name: a poster must not be a LAN probe. Plain http is fine
+     * never the home network or a local name (over http, not even a name without a dot): a poster must not be a LAN probe. Plain http is fine
      * because a picture is display only (Coil sends none of the person's headers or cookies with it)
      * and many catalogs and IPTV lists host their art that way; https-only left their images blank.
      * The exception is a URL on a server the person typed (scheme, host and port exactly): their own
@@ -691,6 +691,9 @@ object PluginOutput {
         val url = v.toHttpUrlOrNull() ?: return ""
         if (hosts.userHostFor(url) != null) return v
         if (!v.startsWith("https://") && !v.startsWith("http://")) return ""
-        return if (HostRules.isPublicIpv4Literal(url.host) || !HostRules.isLocalAddress(url.host)) v else ""
+        if (HostRules.isPublicIpv4Literal(url.host)) return v
+        if (HostRules.isLocalAddress(url.host)) return ""
+        // Cleartext to a single-label name (`router`, `nas`) is a device on the home network by another name.
+        return if (url.scheme == "http" && '.' !in url.host) "" else v
     }
 }

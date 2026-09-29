@@ -125,6 +125,15 @@ class LiveCatalog(
         .map(::tabsOf)
         .stateIn(scope, SharingStarted.Eagerly, tabsOf(providers.value))
 
+    /**
+     * Whether some provider OTHER than the person's own channels exists (Xuper or a plugin with channels).
+     * "Mis canales" is always there, so [available] no longer says whether the person has any source at
+     * all: Home's onboarding empty state depends on this instead.
+     */
+    val hasSourceProviders: StateFlow<Boolean> = providers
+        .map { list -> list.any { it.id != OwnLive.PROVIDER } }
+        .stateIn(scope, SharingStarted.Eagerly, providers.value.any { it.id != OwnLive.PROVIDER })
+
     /** Whether the module has anything at all: the tab, the TV nav button and the Home row follow it. */
     val available: StateFlow<Boolean> = providers
         .map { it.isNotEmpty() }

@@ -1,8 +1,10 @@
 package com.arkiv.player.data.sync
 
 import com.arkiv.player.data.db.OwnLiveSourceEntity
-import com.arkiv.player.data.live.OwnSourceValidator
-import com.arkiv.player.data.live.OwnUrlCheck
+import com.arkiv.player.data.live.OwnFormResult
+import com.arkiv.player.data.live.OwnKind
+import com.arkiv.player.data.live.OwnSourceForm
+import com.arkiv.player.data.live.validate
 import com.arkiv.player.data.ChapterMarker
 import com.arkiv.player.data.db.EpisodeEntity
 import com.arkiv.player.data.db.ItemEntity
@@ -251,21 +253,25 @@ fun ownLiveSourceToJson(e: OwnLiveSourceEntity): JSONObject = JSONObject().apply
 }
 
 /**
- * Null for a row this build must not store: a peer's garbled or hostile data (unknown kind, an id
- * that isn't one path segment, a URL that fails [OwnSourceValidator] -- private host, `file:`...).
- * The url is re-canonicalised so both devices hold the same text.
+ * Null for a row this build must not store: a peer's garbled or hostile data. Every field goes through
+ * the same rules as the form ([OwnSourceForm.validate]: private hosts, header injection, logo, EPG,
+ * lengths), plus an id that is one plain path segment and never a playlist code (`~...`). The urls come
+ * back canonical so both devices hold the same text.
  */
 fun jsonToOwnLiveSource(json: JSONObject): OwnLiveSourceEntity? {
-    val id = json.optString("id").takeIf { it.isNotEmpty() && ':' !in it } ?: return null
-    val kind = json.optString("kind").takeIf { it == "CHANNEL" || it == "PLAYLIST" } ?: return null
-    val name = json.optString("name").takeIf { it.isNotBlank() } ?: return null
-    val url = (OwnSourceValidator.checkUrl(json.optString("url")) as? OwnUrlCheck.Ok)?.url ?: return null
-    return OwnLiveSourceEntity(
-        id = id, kind = kind, name = name, url = url,
-        groupName = json.optStringOrNull("groupName"), logo = json.optStringOrNull("logo"),
-        epgUrl = json.optStringOrNull("epgUrl"), userAgent = json.optStringOrNull("userAgent"),
-        referer = json.optStringOrNull("referer"),
-        refreshHours = json.optInt("refreshHours").coerceIn(0, 168),
-        updatedAt = json.optLong("updatedAt"), deleted = json.optBoolean("deleted"),
+    val id = json.optString("id").takeIf { it.isNotEmpty() && it.length <= 64 && ':' !in it && !it.startsWith("~") } ?: return null
+    val kind = json.optString("kind").let { k -> OwnKind.entries.firstOrNull { it.name == k } } ?: return null
+    val form = OwnSourceForm(
+        kind = kind,
+        name = json.optString("name"),
+        url = json.optString("url"),
+        groupName = json.optString("groupName"),
+        logo = json.optString("logo"),
+        epgUrl = json.optString("epgUrl"),
+        userAgent = json.optString("userAgent"),
+        referer = json.optString("referer"),
+        refreshHours = json.optInt("refreshHours"),
     )
+    val valid = form.validate(id, emptyList()) as? OwnFormResult.Valid ?: return null
+    return valid.source.copy(updatedAt = json.optLong("updatedAt"), deleted = json.optBoolean("deleted"))
 }

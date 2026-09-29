@@ -194,4 +194,14 @@ class LiveCatalogTest {
         assertSame(first, catalog.providers.value.last())
         assertEquals(1, built)
     }
+
+    @Test fun `the own channels alone are not a source provider, they must not hide Home's onboarding`() = runTest {
+        val registry = MutableStateFlow<List<InstalledPlugin>>(emptyList())
+        val catalog = LiveCatalog(registry, backgroundScope, xuperProvider = { Fake("xuper") }, pluginProvider = { p -> Fake("plugin:${p.id}") }, ownProvider = { Fake(OwnLive.PROVIDER) })
+        assertTrue(catalog.available.value)
+        assertFalse(catalog.hasSourceProviders.value)
+        registry.value = listOf(plugin("tv1"))
+        runCurrent()
+        assertTrue(catalog.hasSourceProviders.value)
+    }
 }

@@ -42,6 +42,10 @@ object OwnSourceProbe {
             classify(kind, fetcher.fetch(url, headers, max))
         } catch (e: CancellationException) {
             throw e
+        } catch (e: PlaylistTooLargeException) {
+            // A live stream (.ts, .mp4) never ends: it answered, and that is all a channel needs to prove.
+            if (kind == OwnKind.CHANNEL) OwnProbe.Ok("La dirección responde (parece un stream directo)")
+            else OwnProbe.Failed("La lista es demasiado grande")
         } catch (e: Exception) {
             OwnProbe.Failed("No se pudo leer la dirección: ${friendly(e)}")
         }
