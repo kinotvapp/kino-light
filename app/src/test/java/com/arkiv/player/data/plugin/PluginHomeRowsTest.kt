@@ -24,11 +24,17 @@ class PluginHomeRowsTest {
 
     private val rowJson = """[{"id":"top","title":"Lo más visto","items":[{"id":"m1","ref":"R1","title":"Uno","kind":"movie"}]}]"""
 
-    @Test fun `a live row reaches Home only from an apiVersion 2 plugin`() = runTest {
-        val liveRow = """[{"id":"vivo","title":"En vivo","items":[{"id":"c1","ref":"ch-1","title":"Canal Uno","kind":"live"},{"id":"m1","ref":"R1","title":"Uno","kind":"movie"}]}]"""
-        val rows = home(listOf(plugin("v1"), plugin("v2", apiVersion = 2)), CountingCaller { liveRow }).rows().toList().last()
-        assertEquals(listOf("v1" to listOf("movie"), "v2" to listOf("live", "movie")), rows.map { r -> r.pluginId to r.items.map { it.kind } })
-        assertEquals(PluginRef.LIVE, PluginRef.decode(rows[1].items[0].ref)!!.kind)
+    @Test fun `live items never become Home cards, only movies and series do`() = runTest {
+        val mixed = """[{"id":"vivo","title":"Novedades","items":[{"id":"c1","ref":"ch-1","title":"Canal Uno","kind":"live"},{"id":"m1","ref":"R1","title":"Uno","kind":"movie"}]}]"""
+        val rows = home(listOf(plugin("v1"), plugin("v2", apiVersion = 2)), CountingCaller { mixed }).rows().toList().last()
+        assertEquals(listOf("v1" to listOf("movie"), "v2" to listOf("movie")), rows.map { r -> r.pluginId to r.items.map { it.kind } })
+    }
+
+    @Test fun `a row that is only channels is not a Home row at all`() = runTest {
+        val onlyLive = """[{"id":"en-vivo","title":"En vivo","items":[{"id":"c1","ref":"ch-1","title":"Canal Uno","kind":"live"}]},""" +
+            """{"id":"top","title":"Lo más visto","items":[{"id":"m1","ref":"R1","title":"Uno","kind":"movie"}]}]"""
+        val rows = home(listOf(plugin("v2", apiVersion = 2)), CountingCaller { onlyLive }).rows().toList().last()
+        assertEquals(listOf("top"), rows.map { it.id })
     }
 
     private class CountingCaller(val answer: (String) -> String) : PluginCaller {

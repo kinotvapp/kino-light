@@ -178,10 +178,14 @@ class PluginHomeRows(
 
     private fun assemble(targets: List<InstalledPlugin>, rowsOf: (InstalledPlugin) -> List<PluginRow>): List<PluginHomeRow> =
         targets.flatMap { p ->
-            rowsOf(p).map { r ->
+            // Channels are not cards: they live in En vivo and its "Canales en vivo" circles. A row left with no
+            // movie or series is not a Home row.
+            rowsOf(p).mapNotNull { r ->
+                val cards = r.items.filter { it.kind != PluginOutput.KIND_LIVE }
+                if (cards.isEmpty()) return@mapNotNull null
                 PluginHomeRow(
                     pluginId = p.id, pluginName = p.manifest.name, color = PluginColors.parse(p.manifest.color),
-                    id = r.id, title = r.title, items = r.items.map { PluginContentSource.resultFrom(p, it) }, ref = r.ref, genre = r.genre,
+                    id = r.id, title = r.title, items = cards.map { PluginContentSource.resultFrom(p, it) }, ref = r.ref, genre = r.genre,
                 )
             }
         }
