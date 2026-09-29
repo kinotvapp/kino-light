@@ -17,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -668,11 +669,20 @@ internal fun StreamExoPlayer(
         Modifier.fillMaxSize().background(Color.Black),
         contentAlignment = Alignment.Center,
     ) {
-        AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = { textureView },
-            update = { it.fitAspect(videoAspectRatio, zoom) },
-        )
+        // key(textureView): an AndroidView runs its factory ONCE, so when this composable builds a
+        // new player in place (a host approved mid-playback changes [http], see
+        // `PlayerViewModel.onPluginHostRefused`) the screen kept showing the OLD TextureView while
+        // the new player drew into its own, never attached: sound and no picture, the decoder
+        // configured fine (csd 41 bytes) and zero frames, and every "re-hooking the surface" rescue
+        // re-hooked the same detached view. Measured on the KALLEY R3 with Castle: frames=0 after
+        // the rebuild, picture at once without it. Keyed, a new player gets a new view on screen.
+        key(textureView) {
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { textureView },
+                update = { it.fitAspect(videoAspectRatio, zoom) },
+            )
+        }
 
         // BLACK BARS ON TOP, covering what's left over from the video.
         //
@@ -710,8 +720,11 @@ internal fun StreamExoPlayer(
             }
         }
 
-        // Overlaid SubtitleView: renders VTT/SRT cues loaded via SubtitleConfiguration.
-        AndroidView(modifier = Modifier.matchParentSize(), factory = { subtitleView })
+        // Overlaid SubtitleView: renders VTT/SRT cues loaded via SubtitleConfiguration. Keyed for
+        // the same reason as the TextureView: a rebuilt player's cues go to its own view.
+        key(subtitleView) {
+            AndroidView(modifier = Modifier.matchParentSize(), factory = { subtitleView })
+        }
     }
 }
 
