@@ -134,7 +134,7 @@ fun TvActivationScreen(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TvActivationButton("Activar", onClick = ::activate)
+            TvActivationButton("Continuar", onClick = ::activate)
             TvActivationButton("Cerrar", onClick = { activity?.finishAndRemoveTask() })
             if (state is TvActivationUiState.Loading) CircularProgressIndicator(Modifier.size(32.dp))
         }
@@ -184,7 +184,7 @@ private fun TvActivationPrefilled(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TvActivationButton("Activar", onClick = onActivate, modifier = Modifier.focusRequester(activateFocus))
+            TvActivationButton("Continuar", onClick = onActivate, modifier = Modifier.focusRequester(activateFocus))
             TvActivationButton("Cerrar", onClick = onClose)
             if (state is TvActivationUiState.Loading) CircularProgressIndicator(Modifier.size(32.dp))
         }

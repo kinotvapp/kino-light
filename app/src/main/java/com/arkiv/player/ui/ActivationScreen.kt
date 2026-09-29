@@ -56,7 +56,7 @@ fun ActivationScreen(
 ) {
     var state by remember { mutableStateOf<ActivationUiState>(ActivationUiState.Idle) }
     // A non-blank BuildConfig.ACTIVATION_CODE means this build ships with the code baked in: pre-fill
-    // it and hide the entry field below, so the person only presses "Activar". Blank keeps the
+    // it and hide the entry field below, so the person only presses "Continuar". Blank keeps the
     // classic type-the-code screen. See app/build.gradle.kts (ACTIVATION_CODE).
     var code by remember { mutableStateOf(BuildConfig.ACTIVATION_CODE) }
     val prefilled = BuildConfig.ACTIVATION_CODE.isNotBlank()
@@ -99,7 +99,7 @@ fun ActivationScreen(
             )
             return@Column
         }
-        // Hidden when the code is baked in (prefilled): nothing to type, only "Activar" below.
+        // Hidden when the code is baked in (prefilled): nothing to type, only "Continuar" below.
         if (!prefilled) {
             OutlinedTextField(
                 code,
@@ -124,7 +124,7 @@ fun ActivationScreen(
             modifier = Modifier.padding(top = 16.dp).fillMaxWidth(0.8f),
         ) {
             Button(onClick = ::activate, enabled = codeValid, modifier = Modifier.weight(1f)) {
-                Text("Activar")
+                Text("Continuar")
             }
             OutlinedButton(
                 onClick = { activity?.finishAndRemoveTask() },
