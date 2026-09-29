@@ -3224,7 +3224,16 @@ private fun PlayerContent(
             ) {
                 CircularProgressIndicator(color = Color.White, strokeWidth = 3.dp)
                 if (resolving) {
-                    Text("Resolviendo fuente $resolvingSourceName…", color = Color.White.copy(alpha = 0.9f), style = MaterialTheme.typography.labelMedium)
+                    // Counts while it lasts: a converted Nuvio scraper may take up to 45 s.
+                    var elapsedMs by remember { mutableStateOf(0L) }
+                    LaunchedEffect(Unit) {
+                        val start = android.os.SystemClock.elapsedRealtime()
+                        while (true) {
+                            elapsedMs = android.os.SystemClock.elapsedRealtime() - start
+                            delay(1_000)
+                        }
+                    }
+                    Text(resolvingText(resolvingSourceName, elapsedMs), color = Color.White.copy(alpha = 0.9f), style = MaterialTheme.typography.labelMedium)
                 }
                 // Magis live (Task 14): resolving a channel takes about 3s (two calls to the
                 // portal, see LiveController's KDoc) -- with no text, this same spinner looks
@@ -4562,3 +4571,17 @@ private fun SkipButton(
         if (icon) Icon(Icons.Default.SkipNext, contentDescription = null)
     }
 }
+
+/**
+ * The spinner's line while a source resolves. A converted Nuvio scraper may take up to 45 s
+ * (`PluginContentSource.NUVIO_RESOLVE_TIMEOUT_MS`): after the first few seconds the line also says
+ * it is still looking and for how long, so a long wait never reads as a freeze.
+ */
+internal fun resolvingText(sourceName: String, elapsedMs: Long): String {
+    val head = "Resolviendo fuente $sourceName…"
+    val seconds = elapsedMs / 1_000
+    return if (seconds < RESOLVING_QUIET_SECONDS) head else "$head buscando enlaces ($seconds s)"
+}
+
+/** How long [resolvingText] stays the plain sentence before it starts counting. */
+private const val RESOLVING_QUIET_SECONDS = 5L

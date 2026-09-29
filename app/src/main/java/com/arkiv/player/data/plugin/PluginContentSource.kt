@@ -89,6 +89,14 @@ class PluginContentSource(
      */
     private val allowDrm = "drm" in caps
 
+    /**
+     * A converted Nuvio scraper ([InstalledRecord.nuvioScraperId]) chains several page fetches and
+     * hoster extractions in one `getStreams` (PelisPlusHD tries ~20 titles one by one): it gets
+     * [NUVIO_RESOLVE_TIMEOUT_MS]. Every other plugin keeps [RESOLVE_TIMEOUT_MS]. Like every call
+     * limit, its clock stops while the person answers a host question ([PluginCallClock]).
+     */
+    private val resolveTimeoutMs = if (plugin.record.nuvioScraperId != null) NUVIO_RESOLVE_TIMEOUT_MS else RESOLVE_TIMEOUT_MS
+
     /** [XuperStreams], only for the one plugin [XuperPrivilege.grants]: null for every other one. */
     private val xuper: XuperStreams? = xuperStreams?.takeIf { XuperPrivilege.grants(plugin.record) }
 
@@ -112,7 +120,7 @@ class PluginContentSource(
      * "no responde" strike), which is right: the call being answered keeps running.
      */
     override val searchTimeoutMs: Long? =
-        SEARCH_TIMEOUT_MS + maxOf(HOME_TIMEOUT_MS, BROWSE_TIMEOUT_MS, EPISODES_TIMEOUT_MS, RESOLVE_TIMEOUT_MS) + SEARCH_BACKSTOP_GRACE_MS
+        SEARCH_TIMEOUT_MS + maxOf(HOME_TIMEOUT_MS, BROWSE_TIMEOUT_MS, EPISODES_TIMEOUT_MS, resolveTimeoutMs) + SEARCH_BACKSTOP_GRACE_MS
 
     override fun recognizes(ref: String): Boolean = ref.startsWith(PluginRef.prefixFor(id))
 
@@ -167,8 +175,8 @@ class PluginContentSource(
     override suspend fun resolve(ref: String): GatewayPlayable {
         val own = decodeOwn(ref)
         if (own.kind == PluginRef.SERIES) throw GatewayException("Elige un capítulo primero")
-        val out = callOrThrow("resolve", JSONObject.quote(own.ref), RESOLVE_TIMEOUT_MS)
-        // Outside the call on purpose: its 20 s limit and the pool's per-plugin lock are both over
+        val out = callOrThrow("resolve", JSONObject.quote(own.ref), resolveTimeoutMs)
+        // Outside the call on purpose: its limit (20 s, 45 s for a Nuvio scraper) and the pool's per-plugin lock are both over
         // by now, so a person taking their time to answer holds up neither.
         askAboutUndeclaredHosts(out, own)
         val hosts = streamHostsFor(own)
@@ -308,6 +316,9 @@ class PluginContentSource(
         const val BROWSE_TIMEOUT_MS = 20_000L
         const val EPISODES_TIMEOUT_MS = 20_000L
         const val RESOLVE_TIMEOUT_MS = 20_000L
+
+        /** `resolve` of a converted Nuvio scraper (see `resolveTimeoutMs`). */
+        const val NUVIO_RESOLVE_TIMEOUT_MS = 45_000L
 
         const val MAX_ALT_TITLES = 5
         const val MAX_ALT_TITLE_CHARS = 200
