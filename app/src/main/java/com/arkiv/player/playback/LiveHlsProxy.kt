@@ -52,6 +52,9 @@ class LiveHlsProxy(
 
     private val origin = OriginConnections(dns, CONNECT_TIMEOUT_MS, READ_TIMEOUT_MS)
 
+    /** Keeps a channel stuck on the same failure from filling the log; see [RepeatedFailureLog]. */
+    private val repeated = RepeatedFailureLog()
+
     @Volatile private var server: ServerSocket? = null
     @Volatile private var running = false
     @Volatile private var session: LiveSession? = null
@@ -362,7 +365,15 @@ class LiveHlsProxy(
             // considered good, the backup never switching, and the channel dead with a 502. See
             // [isSignatureRejection].
             if (!isSignatureRejection(code)) {
-                LiveLog.w("$kind → $code in ${ms}ms" + (if (attempt > 0) " (2nd attempt)" else "") +
+                // A run of the same failure is logged at its start and every 10th; the success that ends it says how
+                // long it was. See [RepeatedFailureLog].
+                val runKey = "$kind:${s.channel}"
+                val failuresBefore = if (code == 200) repeated.onSuccess(runKey) else 0
+                val failureNumber = if (code != 200) repeated.onFailure(runKey) else null
+                if (failuresBefore > 0) {
+                    LiveLog.i("$kind served again after $failuresBefore failures in a row (channel=${s.channel}, cdn=${cdn.cflHost})")
+                }
+                if (code == 200 || failureNumber != null) LiveLog.w("$kind → $code in ${ms}ms" + (if (attempt > 0) " (2nd attempt)" else "") +
                         // The WHY of the rejection, which used to get thrown away. A bare "→ 409"
                         // doesn't tell apart "the signal doesn't exist" from "this session is no
                         // longer valid", and without that there's nothing to do but guess: on
@@ -372,7 +383,8 @@ class LiveHlsProxy(
                         // Nobody else reads the body of a non-200 (the playlist cuts with
                         // error502 and [requestOk] discards the connection), so consuming it here
                         // doesn't take anything away from anyone.
-                        (if (code != 200) " · ${originReason(c)}" else ""),
+                        (if (code != 200) " · ${originReason(c)}" else "") +
+                        (if (failureNumber != null && failureNumber > 1) " · #$failureNumber in a row" else ""),
                 )
                 // Reports that the signature used in THIS request was accepted: it's the signal
                 // FirmaConRespaldo needs to reset its consecutive-rejections counter.
@@ -497,9 +509,11 @@ class LiveHlsProxy(
             // dead session.
             if (!answeredThisRound) break@loop
             if (round < PLAYLIST_ATTEMPTS - 1) {
-                LiveLog.w("playlist for ${s.channel} not served (last $lastCode) → " +
-                        "retry ${round + 2}/$PLAYLIST_ATTEMPTS in ${SEGMENT_WAIT_MS}ms",
-                )
+                if (repeated.onFailure("retry:${s.channel}") != null) {
+                    LiveLog.w("playlist for ${s.channel} not served (last $lastCode) → " +
+                            "retry ${round + 2}/$PLAYLIST_ATTEMPTS in ${SEGMENT_WAIT_MS}ms",
+                    )
+                }
                 Thread.sleep(SEGMENT_WAIT_MS)
             }
         }
@@ -540,6 +554,7 @@ class LiveHlsProxy(
             .firstOrNull { it.startsWith("#EXT-X-MEDIA-SEQUENCE") }?.substringAfter(':') ?: "?"
         val servedMs = System.currentTimeMillis() - t0
         LiveLog.i("playlist served segments=$segmentCount seq=$sequence ${bytes.size}B in ${servedMs}ms cdn=${chosen.cflHost}")
+        repeated.onSuccess("retry:${s.channel}")
         // What makes a live channel look "interfered with" while nothing errors out: the live edge skipping ahead,
         // a playlist that stops advancing or arrives late, a cushion too thin. See [LiveStreamHealth].
         val h = health

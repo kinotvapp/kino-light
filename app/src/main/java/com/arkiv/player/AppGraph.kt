@@ -866,12 +866,17 @@ class AppGraph(context: Context) {
         }
         val before = liveSeedRotation.activeSeed(channel)?.sn
         val current = before ?: magisSession.currentSn()
-        val moved = liveSeedRotation.onRefused(channel, current, magisSession.seedPool(), refusedKey = license)
+        val pool = magisSession.seedPool()
+        val moved = liveSeedRotation.onRefused(channel, current, pool, refusedKey = license)
         liveController.invalidate(channel)
         val after = liveSeedRotation.activeSeed(channel)?.sn
+        // How much room is left to rotate: whether the pool is the limit (tiny, or every seed already refused) is what
+        // the reports could not say before.
+        val tried = liveSeedRotation.triedCount(channel)
+        val budget = "pool=${pool.size} tried=$tried/${com.arkiv.player.data.magis.LiveSeedRotation.MAX_ROTATIONS + 1}"
         com.arkiv.player.playback.LiveLog.w(
-            if (moved) "seed rotation: 409 on $channel → the next open uses another seed (${after?.take(6)}…)"
-            else "seed rotation: 409 on $channel and no seed left to try → back to the device's own session",
+            if (moved) "seed rotation: 409 on $channel → the next open uses another seed (${after?.take(6)}…) · $budget"
+            else "seed rotation: 409 on $channel and no seed left to try → back to the device's own session · $budget",
         )
         // Telemetry only on a genuine state change: the player retries a stuck playlist for a while and every one
         // of those retries reaches this same 409 (deduped by license inside LiveSeedRotation), which would report
@@ -880,13 +885,21 @@ class AppGraph(context: Context) {
         com.arkiv.player.crash.Crash.report(
             com.arkiv.player.crash.LiveSeedRotated("live seed rotated after a conflict"),
             "live-seed-rotation",
-            extras = mapOf("channel" to channel, "outcome" to if (moved) "rotated" else "exhausted"),
+            extras = mapOf(
+                "channel" to channel,
+                "outcome" to if (moved) "rotated" else "exhausted",
+                "pool_size" to pool.size.toString(),
+                "tried" to tried.toString(),
+            ),
         )
     }
 
     /** Resolves a live channel with the seed it was rotated to, if any; a seed that cannot even resolve is skipped. */
     private suspend fun resolveLive(code: String): com.arkiv.player.data.gateway.LiveSession {
         var seed = liveSeedRotation.activeSeed(code) ?: return magisLive.resolveOrThrow(code)
+        com.arkiv.player.playback.LiveLog.i(
+            "seed rotation: opening $code with seed ${seed.sn.take(6)}… (tried ${liveSeedRotation.triedCount(code)})",
+        )
         repeat(com.arkiv.player.data.magis.LiveSeedRotation.MAX_ROTATIONS + 1) {
             try {
                 return magisLive.resolveOrThrow(code, seed)
