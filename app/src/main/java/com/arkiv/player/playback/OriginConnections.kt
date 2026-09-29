@@ -17,10 +17,19 @@ import java.util.concurrent.TimeUnit
  * `HttpURLConnection` has no DNS hook. Redirects are never followed here: the request carries the channel's
  * credentials, so [LiveHlsProxy] decides which one, if any, is worth following.
  */
-internal class OriginConnections(val dns: Dns, connectTimeoutMs: Int, readTimeoutMs: Int) {
+internal class OriginConnections(resolver: Dns, connectTimeoutMs: Int, readTimeoutMs: Int) {
+
+    /**
+     * [resolver]'s answer with the IPv4 addresses first. DoH lists IPv6 first, and OkHttp tries them in order; the system
+     * resolver this replaces preferred IPv4, and on the TV this was measured on the IPv6 path to the CDN carried
+     * segments at a fraction of the speed.
+     */
+    val dns: Dns = object : Dns {
+        override fun lookup(hostname: String) = resolver.lookup(hostname).sortedBy { it is java.net.Inet6Address }
+    }
 
     private val client = OkHttpClient.Builder()
-        .dns(dns)
+        .dns(this.dns)
         .followRedirects(false)
         .followSslRedirects(false)
         .connectTimeout(connectTimeoutMs.toLong(), TimeUnit.MILLISECONDS)

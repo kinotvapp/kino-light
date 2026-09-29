@@ -113,4 +113,17 @@ class OriginConnectionsTest {
 
         assertTrue(runCatching { r.inputStream.read() }.isFailure)
     }
+
+    @Test
+    fun `IPv4 addresses are tried before IPv6 ones, order kept inside each family`() {
+        val answer = listOf("2606:4700::1", "104.18.1.1", "2606:4700::2", "104.18.1.2").map { InetAddress.getByName(it) }
+        val dns = object : Dns {
+            override fun lookup(hostname: String) = answer
+        }
+
+        val ordered = connections(dns).dns.lookup("cdn.test").map { it.hostAddress }
+
+        assertEquals(listOf("104.18.1.1", "104.18.1.2"), ordered.take(2))
+        assertEquals(answer.filter { it is java.net.Inet6Address }.map { it.hostAddress }, ordered.drop(2))
+    }
 }
