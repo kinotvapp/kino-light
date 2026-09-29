@@ -670,6 +670,21 @@ class AppGraph(context: Context) {
         )
     }
 
+    /** Nuvio-origin plugins' preview/install/update (Task 5): same fetcher wiring as [pluginInstaller], TMDB key from the same place [tmdbApi] reads it. */
+    val nuvioPluginInstaller: NuvioPluginInstaller by lazy {
+        val github = RawGithubFetcher(pluginBaseHttp)
+        NuvioPluginInstaller(
+            pluginInstaller,
+            PluginFetcher { url, max -> (debugPluginFetcher ?: github).fetch(url, max) },
+            tmdbApiKey = credentialsStore.read()!!.tmdbApiKey,
+        )
+    }
+
+    /** Routes [checkPluginUpdates] and the manual "Buscar actualizaciones" button by each plugin's origin (Task 6). */
+    val pluginUpdateCoordinator: PluginUpdateCoordinator by lazy {
+        PluginUpdateCoordinator(pluginStore, pluginInstaller, nuvioPluginInstaller)
+    }
+
     /**
      * The recommended-plugins catalog. Its own plain client, NOT [pluginBaseHttp]: that one carries plugin
      * traffic; the catalog repository derives from this a redirect-following, time-bounded client of its own.
@@ -726,7 +741,7 @@ class AppGraph(context: Context) {
 
     val pluginAdmin: PluginAdmin by lazy {
         DefaultPluginAdmin(
-            pluginRegistry, pluginInstaller, pluginRuntimes, pluginConfigStore,
+            pluginRegistry, pluginInstaller, pluginUpdateCoordinator, pluginRuntimes, pluginConfigStore,
             forgetHomeCache = ::forgetPluginHomeCache,
             forgetSession = ::forgetPluginSession,
             afterSessionClosed = ::bumpPluginSessionRevision,
@@ -790,14 +805,14 @@ class AppGraph(context: Context) {
             .map { list -> list.filter { it.isUsable }.map { it.id to it.changeKey() } }
             .distinctUntilChanged()
 
-    /** UpdateWorker's plugin step: each plugin at most once per 24 h; see PluginInstaller.checkDueUpdates. */
+    /** UpdateWorker's plugin step: each plugin at most once per 24 h, routed by origin; see PluginUpdateCoordinator.checkDueUpdates. */
     suspend fun checkPluginUpdates() {
         val outcomes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             // Catches a Keystore loss that happened mid-session too. Guarded: a failure here must
             // never cancel every plugin's update check.
             runCatching { reconcilePluginSecrets() }
                 .onFailure { android.util.Log.w("KinoPlugin", "update check: plugin secrets not reconciled: ${it.javaClass.simpleName}") }
-            pluginInstaller.checkDueUpdates()
+            pluginUpdateCoordinator.checkDueUpdates()
         }
         // Reload before closing, as in DefaultPluginAdmin: never a new script with the old hosts.
         pluginRegistry.reload()

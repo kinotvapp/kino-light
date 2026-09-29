@@ -241,12 +241,6 @@ class PluginInstaller(
         }
     }
 
-    /** For `UpdateWorker`: each plugin at most once per [maxAgeMs]. */
-    suspend fun checkDueUpdates(maxAgeMs: Long = DAY_MS): List<Pair<String, UpdateOutcome>> =
-        store.list()
-            .filter { clock() - it.record.lastUpdateCheckAt >= maxAgeMs }
-            .map { it.manifest.id to checkUpdate(it.manifest.id) }
-
     private suspend fun previewFor(address: PluginAddress): InstallPreview {
         val bytes = try {
             fetcher.fetch(address.rawUrl(PluginStore.MANIFEST_FILE), ManifestParser.MAX_BYTES + 1)

@@ -43,6 +43,7 @@ class PluginAdminTest {
     private val liveClosedWithData = mutableListOf<Boolean>()
     private lateinit var config: PluginConfigStore
     private lateinit var installer: PluginInstaller
+    private lateinit var coordinator: PluginUpdateCoordinator
 
     private inner class FakeRuntime : ScriptRuntime {
         override val exports = setOf("search", "resolve")
@@ -64,8 +65,11 @@ class PluginAdminTest {
         registry = PluginRegistry(store) { p -> config.setupState(p.manifest.id, p.manifest.settings) }
         pool = PluginRuntimePool(open = { FakeRuntime() }, onUnresponsive = {}, scope = CoroutineScope(Dispatchers.Unconfined))
         installer = PluginInstaller(store, fetcher, probe = { setOf("search", "resolve") }, clock = { 1_000L })
+        // No test here installs a Nuvio-origin plugin, so `coordinator` always routes to `installer`
+        // (see PluginUpdateCoordinator.checkUpdate) -- this fetcher/tmdbApiKey are never exercised.
+        coordinator = PluginUpdateCoordinator(store, installer, NuvioPluginInstaller(installer, fetcher, tmdbApiKey = "test"), clock = { 1_000L })
         admin = DefaultPluginAdmin(
-            registry, installer, pool, config, forgetSession = { forgotten += it },
+            registry, installer, coordinator, pool, config, forgetSession = { forgotten += it },
             forgetLiveChannels = { liveForgotten += it },
             closeLive = { liveClosedWithData += store.get(it) != null },
             io = Dispatchers.Unconfined,
@@ -145,7 +149,7 @@ class PluginAdminTest {
         assertTrue(cookiesFile.exists())
         val order = mutableListOf<String>()
         val tracking = DefaultPluginAdmin(
-            registry, installer, pool, config,
+            registry, installer, coordinator, pool, config,
             // Wired like AppGraph's forgetPluginHomeCache / forgetPluginSession.
             forgetHomeCache = { id -> order += "home"; File(store.dataDir(id), "home.json").delete() },
             forgetSession = { id -> order += "session"; jars.forget(id); File(store.dataDir(id), PluginCookies.FILE_NAME).delete() },
@@ -204,7 +208,7 @@ class PluginAdminTest {
         admin.install(admin.preview("o/r"))
         var hostsAtForget: EffectiveHosts? = null
         val tracking = DefaultPluginAdmin(
-            registry, installer, pool, config,
+            registry, installer, coordinator, pool, config,
             forgetSession = { id -> hostsAtForget = registry.find(id)!!.hosts; forgotten += id },
             io = Dispatchers.Unconfined,
         )
@@ -237,7 +241,7 @@ class PluginAdminTest {
         }
         trackingRegistry.reload() // initial load of "demo", from the same on-disk store as `admin`
         val tracking = DefaultPluginAdmin(
-            trackingRegistry, installer, pool, config,
+            trackingRegistry, installer, coordinator, pool, config,
             forgetHomeCache = { homeCacheForgotten = true },
             io = Dispatchers.Unconfined,
         )
@@ -265,7 +269,7 @@ class PluginAdminTest {
         registryAtClose.clear()
         val order = mutableListOf<String>()
         val tracking = DefaultPluginAdmin(
-            registry, installer, pool, config,
+            registry, installer, coordinator, pool, config,
             forgetSession = { order += "forget" },
             afterSessionClosed = { order += "afterClose" },
             io = Dispatchers.Unconfined,
@@ -294,7 +298,7 @@ class PluginAdminTest {
                 reloadThread = Thread.currentThread().name
                 config.setupState(p.manifest.id, p.manifest.settings)
             }
-            val trackingAdmin = DefaultPluginAdmin(trackingRegistry, installer, pool, config, io = ioDispatcher)
+            val trackingAdmin = DefaultPluginAdmin(trackingRegistry, installer, coordinator, pool, config, io = ioDispatcher)
             publish("1.0.0")
             trackingAdmin.install(trackingAdmin.preview("o/r"))
             // Coroutine debug mode suffixes the thread name ("plugin-io-test @coroutine#1"): check

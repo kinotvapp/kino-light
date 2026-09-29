@@ -306,14 +306,10 @@ class PluginInstallerTest {
         assertThrows(PluginDamagedException::class.java) { store.readVerifiedScript("demo") }
     }
 
-    @Test fun `due updates are checked at most once per 24 hours`() = runBlocking {
-        publish("1.0.0"); installFresh()
-        publish("1.1.0")
-        now += 23 * 3_600_000L
-        assertEquals(emptyList<Pair<String, UpdateOutcome>>(), installer.checkDueUpdates())
-        now += 2 * 3_600_000L
-        assertEquals(listOf("demo" to UpdateOutcome.Applied("1.1.0")), installer.checkDueUpdates())
-    }
+    // `checkDueUpdates` moved to PluginUpdateCoordinator (Task 6), which routes each plugin by
+    // origin before applying the same "at most once per maxAgeMs" rule this used to test here --
+    // see PluginUpdateCoordinatorTest's "checkDueUpdates checks each plugin, of either origin, at
+    // most once per maxAgeMs".
 
     @Test fun `an update that adds liveStreamHosts any waits for approval, and installing records it`() = runBlocking {
         exports = { setOf("home", "resolve", "liveCategories", "liveChannels") }

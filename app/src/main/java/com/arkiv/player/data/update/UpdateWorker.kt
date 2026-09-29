@@ -18,8 +18,8 @@ class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker
             graph.refreshSeedsIfNeeded()
         }
         // Plugins on their own: a GitHub hiccup for one plugin must not make the APK, credentials
-        // and seeds steps retry. Each plugin is checked at most once per 24 h (see
-        // PluginInstaller.checkDueUpdates), so running this every 3 h costs nothing extra.
+        // and seeds steps retry. Each plugin is checked at most once per 24 h, routed by origin (see
+        // PluginUpdateCoordinator.checkDueUpdates), so running this every 3 h costs nothing extra.
         runCatching { graph.checkPluginUpdates() }
             .onFailure { android.util.Log.w("KinoPlugin", "plugin update check failed", it) }
         return result.fold({ Result.success() }, { Result.retry() })
