@@ -21,7 +21,11 @@ data class PluginItem(
 )
 
 /** [ref] non-null only when the plugin declares `browse`: the row gets "Ver más". */
-data class PluginRow(val id: String, val title: String, val items: List<PluginItem>, val ref: String? = null)
+data class PluginRow(
+    val id: String, val title: String, val items: List<PluginItem>, val ref: String? = null,
+    /** A declared [Genre] id, or null (none given, or not in the vocabulary). */
+    val genre: String? = null,
+)
 
 /** A page of items; [next] is the opaque cursor the app passes back, or null at the end. */
 data class PluginPage(val items: List<PluginItem>, val next: String?)
@@ -85,7 +89,7 @@ data class PluginStream(
 )
 
 /** A section of the En vivo tab (apiVersion 3, `channels`). [country] is ISO 3166 alpha-2 uppercase, or "". */
-data class PluginLiveCategory(val id: String, val title: String, val country: String = "")
+data class PluginLiveCategory(val id: String, val title: String, val country: String = "", val genre: String? = null)
 
 /**
  * One channel of a `liveChannels` page (apiVersion 3). It plays either through `resolve([ref])`
@@ -125,6 +129,8 @@ data class PluginPlaylist(
      * to the list's host, never to the many hosts the channels are on. A header an M3U entry names itself wins.
      */
     val streamHeaders: Map<String, String> = emptyMap(),
+    /** A declared [Genre] for every group this list produces (an inferred one is used when null). */
+    val genre: String? = null,
 )
 
 /** What a `liveCategories()` answer holds: the plugin's own sections and the playlists it declares. */
@@ -275,7 +281,7 @@ object PluginOutput {
                 ref.length > MAX_REF_CHARS -> null.also { log("home: row $id ref too long") }
                 else -> ref
             }
-            out += PluginRow(id, title, items, kept)
+            out += PluginRow(id, title, items, kept, Genre.parse(o.opt("genre")))
         }
         return out
     }
@@ -380,7 +386,7 @@ object PluginOutput {
             if (o.opt("adult") == true) { log("liveCategories: $id adult, dropped"); continue }
             if (!seen.add(id)) { log("liveCategories: duplicate $id dropped"); continue }
             val country = (o.opt("country") as? String)?.trim()?.uppercase()?.takeIf { COUNTRY.matches(it) }.orEmpty()
-            categories += PluginLiveCategory(id, title, country)
+            categories += PluginLiveCategory(id, title, country, Genre.parse(o.opt("genre")))
         }
         return PluginLiveCatalog(categories, playlists)
     }
@@ -403,6 +409,7 @@ object PluginOutput {
         return PluginPlaylist(
             url, headersOf(p.optJSONObject("headers")), epg, hours, hide, p.opt("resolve") == true,
             streamHeaders = headersOf(p.optJSONObject("streamHeaders")),
+            genre = Genre.parse(p.opt("genre")),
         )
     }
 

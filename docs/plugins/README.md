@@ -441,7 +441,8 @@ Item       = { id: string, ref: string, title: string, kind: "movie" | "series" 
                lang?: string, quality?: string, originalTitle?: string,
                genres?: string[], rating?: number, runtimeMinutes?: number,
                ids?: { tmdb?: number, imdb?: string }, badges?: string[], adult?: boolean }
-Row        = { id: string, title: string, items: Item[], ref?: string }
+Row        = { id: string, title: string, items: Item[], ref?: string, genre?: Genre }
+Genre      = "peliculas" | "series" | "anime" | "infantil" | "documentales" | "deportes" | "noticias" | "musica" | "entretenimiento" | "otros"
 Page       = { items: Item[], next?: string }
 SeriesInfo = { title?: string, poster?: string, backdrop?: string, overview?: string,
                ids?: { tmdb?: number, imdb?: string }, genres?: string[], year?: string }
@@ -470,6 +471,16 @@ episodes and list every season of the show in `seasons`, the one you are answeri
 as chips; choosing another one calls `episodes` with that season's `ref` and opens it as that title,
 with its own progress in the library. `seasons` is optional and new in this revision of apiVersion 1:
 a plugin that never returns it keeps working exactly as before.
+
+**Genre (Categorías and the En vivo filter).** A Home `Row`, a live `LiveCategory` and a `playlist` may carry an optional
+`genre` from a closed list of ten ids: `peliculas`, `series`, `anime`, `infantil`, `documentales`, `deportes`, `noticias`,
+`musica`, `entretenimiento`, `otros` (Kino shows their Spanish names). It is what lets Kino line up categories from
+different plugins: the Categorías tab groups the browsable Home rows (those with a `ref`, when you declare `browse`) of
+every plugin by genre, and En vivo can be filtered by genre across all providers. A value outside the list is ignored,
+never an error, and without a `genre` Kino guesses from the row's or group's title ("Deportes", "Noticias Colombia",
+"Kids", "Películas de acción"…), so setting it is worth it when your titles do not say it. On a `playlist` the genre is
+the default for every group of the list (a guess from each group's own title is used when the playlist has none).
+Kino versions before this field ignore it.
 
 **Paging ("Ver más").** If you declare `browse`, a Home row with a `ref` gets a "Ver más" card that
 opens a grid: Kino calls `browse(ref, null)`, then `browse(ref, next)` while the person scrolls and
@@ -590,9 +601,9 @@ more functions. Their arguments:
 They return:
 
 ```ts
-LiveCategory = { id: string, title: string, country?: string, adult?: boolean }
+LiveCategory = { id: string, title: string, country?: string, adult?: boolean, genre?: Genre }
 Playlist     = { playlist: { url: string, format: "m3u", headers?: Record<string, string>,
-                             streamHeaders?: Record<string, string>,
+                             streamHeaders?: Record<string, string>, genre?: Genre,
                              epg?: { url: string, format: "xmltv" }, refreshHours?: number,
                              hideGroups?: string[], resolve?: boolean } }
 LiveChannel  = { id: string, title: string, categoryId?: string, ref?: string, stream?: Stream,

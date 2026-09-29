@@ -115,6 +115,7 @@
     "playlistFormats": ["m3u"],
     "epgFormats": ["xmltv"]
   },
+  "genres": ["peliculas", "series", "anime", "infantil", "documentales", "deportes", "noticias", "musica", "entretenimiento", "otros"],
   "discovery": { "topic": "kino-plugin", "maxResults": 30 },
   "search": {
     "types": ["movie", "series", "any"],

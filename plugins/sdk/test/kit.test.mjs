@@ -769,7 +769,7 @@ test("apiVersion 3: channels validates only on v3, and needs liveCategories + li
 test("checkOutput reads liveCategories, liveChannels and guide as the app does", () => {
   const m = { ...JSON.parse(manifest({ apiVersion: 3 })), capabilities: ["home", "resolve", "channels"] };
   const cats = checkOutput("liveCategories", [{ id: "news", title: "Noticias", country: "co" }, { id: "news", title: "x" }, { id: "a", title: "A", adult: true }], m);
-  assert.deepEqual(cats.value.categories, [{ id: "news", title: "Noticias", country: "CO" }]);
+  assert.deepEqual(cats.value.categories, [{ id: "news", title: "Noticias", country: "CO", genre: null }]);
   const page = checkOutput("liveChannels", { items: [
     { id: "c1", title: "Uno", ref: "r1", number: 7, categoryId: "news" },
     { id: "c2", title: "Dos", ref: "" },
@@ -819,6 +819,26 @@ test("checkOutput reads a playlist's streamHeaders as the app does: filtered lik
   assert.deepEqual(playlist.streamHeaders, { "User-Agent": "VLC/3.0.20", Referer: "https://cdn.example.com/" });
   const without = checkOutput("liveCategories", { playlist: { url: "https://cdn.example.com/l.m3u", format: "m3u" } }, m);
   assert.deepEqual(without.value.playlists[0].streamHeaders, {});
+});
+
+test("checkOutput reads genre on Home rows, live categories and playlists from the closed vocabulary", () => {
+  const m = { ...JSON.parse(manifest({ apiVersion: 3, hosts: ["cdn.example.com"] })), capabilities: ["home", "resolve", "channels"] };
+  const item = { id: "a", ref: "r", title: "A", kind: "movie" };
+  const home = checkOutput("home", [
+    { id: "r1", title: "Fútbol", genre: "Deportes", items: [item] },
+    { id: "r2", title: "Otra", genre: "sports", items: [item] },
+    { id: "r3", title: "Sin género", items: [item] },
+  ], m);
+  assert.deepEqual(home.value.map((r) => r.genre), ["deportes", null, null]);
+  const cats = checkOutput("liveCategories", [
+    { id: "n", title: "Noticias propias", genre: "noticias" },
+    { id: "x", title: "Raro", genre: "nope" },
+    { playlist: { url: "https://cdn.example.com/a.m3u", format: "m3u", genre: "infantil" } },
+    { playlist: { url: "https://cdn.example.com/b.m3u", format: "m3u" } },
+  ], m);
+  assert.deepEqual(cats.value.categories.map((c) => c.genre), ["noticias", null]);
+  assert.deepEqual(cats.value.playlists.map((p) => p.genre), ["infantil", null]);
+  assert.ok(contract.genres.includes("deportes") && !contract.genres.includes("sports"));
 });
 
 test("run.mjs builds the live arguments the app sends", async () => {

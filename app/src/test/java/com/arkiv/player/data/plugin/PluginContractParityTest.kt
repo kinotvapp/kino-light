@@ -36,6 +36,10 @@ class PluginContractParityTest {
         assertEquals(ManifestParser.OPTIONAL_EXPORTS_FOR, optional.keys().asSequence().associateWith { k -> optional.strings(k).toSet() })
     }
 
+    @Test fun `the genre vocabulary`() {
+        assertEquals(Genre.IDS, c.strings("genres"))
+    }
+
     @Test fun `manifest rules`() {
         val m = obj("manifest")
         assertEquals(ManifestParser.MAX_BYTES, m.getInt("maxBytes"))
@@ -198,7 +202,7 @@ class PluginContractParityTest {
 
     @Test fun `every section of the contract is checked here`() {
         assertEquals(
-            setOf("\$comment", "apiVersion", "maxApiVersion", "capabilities", "manifest", "hostRules", "permissions", "settings", "output", "live", "discovery", "search", "timeoutsMs", "runtime", "fetch", "cookies", "storage", "crypto", "sleep", "errors"),
+            setOf("\$comment", "apiVersion", "maxApiVersion", "capabilities", "manifest", "hostRules", "permissions", "settings", "output", "live", "genres", "discovery", "search", "timeoutsMs", "runtime", "fetch", "cookies", "storage", "crypto", "sleep", "errors"),
             c.keys().asSequence().toSet(),
         )
     }

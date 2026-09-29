@@ -714,4 +714,21 @@ class PluginOutputTest {
         val playlist = PluginOutput.liveCategories("""{"playlist":{"url":"https://lists.example.com/a.m3u","format":"m3u"}}""", hosts).playlists.single()
         assertTrue(playlist.streamHeaders.isEmpty())
     }
+
+    @Test fun `a Home row, a live category and a playlist can declare a genre from the vocabulary`() {
+        val rows = """[{"id":"r1","title":"Fútbol","genre":"Deportes","items":[{"id":"a","ref":"r","title":"A","kind":"movie"}]},
+                       {"id":"r2","title":"Otra","genre":"sports","items":[{"id":"b","ref":"r","title":"B","kind":"movie"}]},
+                       {"id":"r3","title":"Sin género","items":[{"id":"c","ref":"r","title":"C","kind":"movie"}]}]"""
+        assertEquals(listOf("deportes", null, null), PluginOutput.rows(rows, allowSeries = true, allowBrowse = false, log = log).map { it.genre })
+
+        val hosts = EffectiveHosts(listOf("lists.example.com"))
+        val catalog = PluginOutput.liveCategories(
+            """[{"id":"n","title":"Noticias propias","genre":"noticias"},{"id":"x","title":"Raro","genre":"nope"},
+                {"playlist":{"url":"https://lists.example.com/a.m3u","format":"m3u","genre":"infantil"}},
+                {"playlist":{"url":"https://lists.example.com/b.m3u","format":"m3u"}}]""",
+            hosts,
+        )
+        assertEquals(listOf("noticias", null), catalog.categories.map { it.genre })
+        assertEquals(listOf("infantil", null), catalog.playlists.map { it.genre })
+    }
 }

@@ -55,11 +55,22 @@ interface KinoItem {
 }
 
 /** A Home row. `ref` needs the `browse` capability: the row gets "Ver más", which calls browse(ref, null). */
+type KinoGenre =
+  | "peliculas" | "series" | "anime" | "infantil" | "documentales"
+  | "deportes" | "noticias" | "musica" | "entretenimiento" | "otros";
+
 interface KinoRow {
   id: string;
   title: string;
   items: KinoItem[];
   ref?: string;
+  /**
+   * What the row (or category, or list) is about, from Kino's closed vocabulary: "peliculas", "series", "anime",
+   * "infantil", "documentales", "deportes", "noticias", "musica", "entretenimiento" or "otros". Kino groups Categorías
+   * by it and filters En vivo by it across plugins. Optional: without it Kino guesses from the title; a value outside
+   * the list is ignored. Kino versions before this field ignore it.
+   */
+  genre?: KinoGenre;
 }
 
 /** `next` (at most 2048 characters, opaque) needs the `browse` capability; the app passes it back as the cursor. */
@@ -164,6 +175,13 @@ interface KinoLiveCategory {
   title: string;
   /** ISO 3166 alpha-2, e.g. "CO". Informational. */
   country?: string;
+  /**
+   * What the row (or category, or list) is about, from Kino's closed vocabulary: "peliculas", "series", "anime",
+   * "infantil", "documentales", "deportes", "noticias", "musica", "entretenimiento" or "otros". Kino groups Categorías
+   * by it and filters En vivo by it across plugins. Optional: without it Kino guesses from the title; a value outside
+   * the list is ignored. Kino versions before this field ignore it.
+   */
+  genre?: KinoGenre;
 }
 
 /**
@@ -185,6 +203,8 @@ interface KinoPlaylist {
      * M3U entry names itself (`#EXTVLCOPT:http-user-agent=...`) wins. Kino versions before this field ignore it.
      */
     streamHeaders?: Record<string, string>;
+    /** The [genre](KinoLiveCategory) of every group this list produces; without it Kino guesses from each group's title. */
+    genre?: KinoGenre;
     epg?: { url: string; format: "xmltv" };
     refreshHours?: number;
     hideGroups?: string[];

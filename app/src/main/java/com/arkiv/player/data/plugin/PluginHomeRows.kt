@@ -20,6 +20,8 @@ data class PluginHomeRow(
     val items: List<GatewayResult>,
     /** The plugin's own ref for "Ver más" (it declares `browse`), or null: no "Ver más" card. */
     val ref: String? = null,
+    /** The row's declared [Genre] id, or null. */
+    val genre: String? = null,
 )
 
 /**
@@ -179,7 +181,7 @@ class PluginHomeRows(
             rowsOf(p).map { r ->
                 PluginHomeRow(
                     pluginId = p.id, pluginName = p.manifest.name, color = PluginColors.parse(p.manifest.color),
-                    id = r.id, title = r.title, items = r.items.map { PluginContentSource.resultFrom(p, it) }, ref = r.ref,
+                    id = r.id, title = r.title, items = r.items.map { PluginContentSource.resultFrom(p, it) }, ref = r.ref, genre = r.genre,
                 )
             }
         }
