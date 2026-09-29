@@ -605,6 +605,26 @@ class LiveViewModelAsyncTest {
     }
 
     @Test
+    fun `reload on the own channels re-lists the categories, even from an empty section`() = runTest(dispatcher) {
+        val own = FakeProvider(com.arkiv.player.data.live.OwnLive.PROVIDER, "Mis canales")
+        val vm = LiveViewModel(FakeModule(own), FakeFavoriteDao(), FakeCacheDao())
+        advanceUntilIdle()
+        assertTrue(vm.state.value.categories.isEmpty())
+        // The person just saved a source: the provider now lists a category it did not have.
+        own.categoriesResult = listOf(ProviderCategory("own:1", "Canales sueltos"))
+        own.channelsByCategory["own:1"] = listOf(ch("s1", own.id))
+        vm.reload()
+        advanceUntilIdle()
+        assertEquals(listOf("own:1"), vm.state.value.categories.map { it.id })
+        assertEquals(listOf("s1"), vm.state.value.channels.map { it.code })
+        // And a source added later shows its category without leaving the screen.
+        own.categoriesResult = own.categoriesResult + ProviderCategory("~ab.g", "Deportes")
+        vm.reload()
+        advanceUntilIdle()
+        assertEquals(listOf("own:1", "~ab.g"), vm.state.value.categories.map { it.id })
+    }
+
+    @Test
     fun `a provider that can have no guide is never asked for one`() = runTest(dispatcher) {
         val (xuper, tv) = twoProviders()
         tv.guide = false

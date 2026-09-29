@@ -34,4 +34,7 @@ object OwnSourcesCopy {
 
     fun confirmDelete(name: String) = "¿Eliminar «$name»? También se quitará del otro aparato vinculado."
     fun kindLabel(playlist: Boolean) = if (playlist) "Lista" else "Canal"
+
+    /** What the manager shows of an address: its server, so a long token never has to fit on one line. */
+    fun hostOf(url: String): String = runCatching { java.net.URI(url).host }.getOrNull() ?: url
 }

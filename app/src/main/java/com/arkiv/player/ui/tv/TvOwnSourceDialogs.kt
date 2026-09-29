@@ -184,8 +184,9 @@ private fun TvOwnSourcesManager(vm: OwnSourcesViewModel, onClose: () -> Unit) {
                         Column(Modifier.weight(1f)) {
                             Text(s.name, style = MaterialTheme.typography.titleMedium, color = Color.White, maxLines = 1)
                             Text(
-                                "${OwnSourcesCopy.kindLabel(s.kind == "PLAYLIST")} · ${s.url}",
+                                "${OwnSourcesCopy.kindLabel(s.kind == "PLAYLIST")}\u00A0·\u00A0${OwnSourcesCopy.hostOf(s.url)}",
                                 style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary, maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                             )
                         }
                         TvCompactAction(label = OwnSourcesCopy.EDIT, onClick = { vm.startEdit(s); onClose() })

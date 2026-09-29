@@ -339,6 +339,13 @@ class LiveViewModel(
      *  in-memory caches, and overwrites the Room cache with what comes back. */
     fun reload() {
         val s = _state.value
+        // The person's own channels ("Mis canales"): saving, editing or deleting a source changes the
+        // CATEGORIES themselves (a new list brings its groups), and the section may have had none at
+        // all, so it re-opens the provider instead of reloading one category.
+        if (s.activeProvider == com.arkiv.player.data.live.OwnLive.PROVIDER) {
+            openProvider(module.provider(com.arkiv.player.data.live.OwnLive.PROVIDER) ?: return, keepFavorites = s.activeCategory == CATEGORY_FAVORITES)
+            return
+        }
         val category = s.activeCategory ?: return
         load(s.activeProvider, category, force = true)
     }

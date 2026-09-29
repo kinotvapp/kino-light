@@ -82,7 +82,7 @@ private fun OwnSourceFormDialog(ui: OwnFormUi, vm: OwnSourcesViewModel) {
                     OwnTextField(OwnSourcesCopy.REFERER, f.referer, ui.errors[OwnField.REFERER], uri = true) { vm.change(f.copy(referer = it)) }
                 }
                 when (val p = ui.probe) {
-                    is OwnProbe.Ok -> Text(p.message, color = MaterialTheme.colorScheme.primary)
+                    is OwnProbe.Ok -> Text(p.message, color = androidx.compose.ui.graphics.Color(0xFF00E676))
                     is OwnProbe.Failed -> Text(p.message, color = MaterialTheme.colorScheme.error)
                     null -> if (ui.busy) Text("Revisando…")
                 }
@@ -137,8 +137,9 @@ private fun OwnSourcesManager(vm: OwnSourcesViewModel, onClose: () -> Unit) {
                             Column(Modifier.weight(1f)) {
                                 Text(s.name, style = MaterialTheme.typography.bodyLarge)
                                 Text(
-                                    "${OwnSourcesCopy.kindLabel(s.kind == "PLAYLIST")} · ${s.url}",
+                                    "${OwnSourcesCopy.kindLabel(s.kind == "PLAYLIST")}\u00A0·\u00A0${OwnSourcesCopy.hostOf(s.url)}",
                                     style = MaterialTheme.typography.bodySmall, maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                                 )
                             }
                             TextButton(onClick = { vm.startEdit(s); onClose() }) { Text(OwnSourcesCopy.EDIT) }
