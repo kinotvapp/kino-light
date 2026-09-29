@@ -374,15 +374,21 @@ class PluginHttp(
     /** One request, on [trace] as waiting while it is out, and as a failed site if it never answers. */
     private fun executeTraced(client: OkHttpClient, request: okhttp3.Request, host: String, trace: PluginCallTrace?): okhttp3.Response {
         trace?.started(host)
+        val t0 = System.nanoTime()
+        // Host and path only: a query can carry tokens or keys (TMDB's api_key), never logged.
+        val what = "${request.method} $host${request.url.encodedPath.take(40)}"
+        fun ms() = (System.nanoTime() - t0) / 1_000_000
         try {
-            return client.newCall(request).execute()
+            return client.newCall(request).execute().also { log("[$pluginId] fetch $what -> ${it.code} in ${ms()} ms") }
         } catch (e: IOException) {
-            when (e) {
-                is PluginFetchException, is PrivateAddressException -> Unit
-                is InterruptedIOException -> trace?.failed(host, PluginCallTrace.Failure.TIMEOUT)
-                is UnknownHostException -> trace?.failed(host, PluginCallTrace.Failure.DNS)
-                else -> trace?.failed(host, PluginCallTrace.Failure.NETWORK)
+            val how = when (e) {
+                is PluginFetchException, is PrivateAddressException -> null
+                is InterruptedIOException -> PluginCallTrace.Failure.TIMEOUT
+                is UnknownHostException -> PluginCallTrace.Failure.DNS
+                else -> PluginCallTrace.Failure.NETWORK
             }
+            how?.let { trace?.failed(host, it) }
+            log("[$pluginId] fetch $what -> ${how ?: "refused"} (${e.javaClass.simpleName}) in ${ms()} ms")
             throw e
         } finally {
             trace?.finished(host)
@@ -487,11 +493,20 @@ class PluginHttp(
             try {
                 // With a call: its clock stopped while the person decides, and the question taken
                 // down (null, nothing recorded) if the call ends first.
+                val askedAt = System.nanoTime()
                 val answer = if (call != null) {
+                    log("[$pluginId] ${call.function}: asking about $host; call clock paused with ${call.clock.remainingMs()} ms of its ${call.clock.budgetMs} ms left")
                     call.askWhileAlive { ra.requester.request(pluginId, ra.pluginName, host) }
                 } else {
                     ra.requester.request(pluginId, ra.pluginName, host)
                 }
+                val waited = (System.nanoTime() - askedAt) / 1_000_000
+                val outcome = when (answer) {
+                    true -> "approved"
+                    false -> "rejected"
+                    null -> if (call != null) "withdrawn unanswered, its call is over" else "no answer"
+                }
+                log("[$pluginId] ${call?.function ?: "fetch"}: $host $outcome after $waited ms" + (call?.clock?.remainingMs()?.let { "; call resumes with $it ms" } ?: ""))
                 synchronized(hostsLock) {
                     when (answer) {
                         true -> {

@@ -73,6 +73,7 @@ data class HostApprovalRequest(
 class HostApprovalCenter(
     /** Monotonic nanoseconds (`System.nanoTime`): when the last dialog closed. */
     private val clock: () -> Long = System::nanoTime,
+    private val log: (String) -> Unit = { android.util.Log.i("KinoPlugin", it) },
 ) : HostApprovalRequester {
     private val mutex = Mutex()
     private val _pending = MutableStateFlow<HostApprovalRequest?>(null)
@@ -100,10 +101,18 @@ class HostApprovalCenter(
 
     private suspend fun ask(pluginId: String, pluginName: String, host: String, reason: HostApprovalReason): Boolean =
         mutex.withLock {
+            val shownAt = clock()
+            var answer: Boolean? = null
             try {
-                awaitAnswer(pluginId, pluginName, host, reason)
+                awaitAnswer(pluginId, pluginName, host, reason).also { answer = it }
             } finally {
                 lastClosedAt = clock()
+                val ms = (lastClosedAt!! - shownAt) / 1_000_000
+                log("[$pluginId] host dialog $reason $host " + when (answer) {
+                    true -> "answered Permitir after $ms ms"
+                    false -> "answered Rechazar (or Back) after $ms ms"
+                    null -> "taken down unanswered after $ms ms (nobody waits for it any more)"
+                })
             }
         }
 
@@ -122,6 +131,7 @@ class HostApprovalCenter(
             cont.invokeOnCancellation { _pending.compareAndSet(req, null) }
             if (cont.isActive) {
                 shownCount++
+                log("[$pluginId] host dialog $reason $host shown, arms in ${req!!.armDelayMs} ms")
                 _pending.value = req
                 // A cancellation landing between the check above and the publish ran
                 // its handler BEFORE `req` was published, so that handler's CAS found

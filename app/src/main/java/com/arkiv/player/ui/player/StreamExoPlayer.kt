@@ -43,8 +43,11 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.common.Format
+import androidx.media3.exoplayer.DecoderReuseEvaluation
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.extractor.DefaultExtractorsFactory
@@ -253,7 +256,9 @@ internal fun StreamExoPlayer(
     val subtitleStyle by graph.subtitlePrefs.prefs.collectAsStateWithLifecycle()
 
     val prepared = remember(mediaUrl, subtitleConfigs, requestHeaders, mimeType, http, audioTracks, drm) {
-        Log.i(TAG, "Creating ExoPlayer · url=${mediaUrl.take(80)} startMs=$startPositionMs subs=${subtitleConfigs.size} audioTracks=${audioTracks.size} drm=${drm != null}")
+        // Host and path only: a signed URL's query (Signature=…, tokens) never reaches the log.
+        val shownUrl = Uri.parse(mediaUrl).let { "${it.scheme}://${it.host}${it.path.orEmpty().take(60)}" }
+        Log.i(TAG, "Creating ExoPlayer · url=$shownUrl startMs=$startPositionMs subs=${subtitleConfigs.size} audioTracks=${audioTracks.size} drm=${drm != null}")
         val pluginFactories: PluginHttpFactories? = (http as? StreamHttp.PluginGated)?.let {
             // Under liveStreamHosts "any", side-loaded subtitles and audio tracks stay strict on every hop.
             val sideUrls = if (it.hosts.anyPublicLiveHost) subtitleConfigs.map { c -> c.uri.toString() } + audioTracks.map { a -> a.url } else emptyList()
@@ -539,10 +544,13 @@ internal fun StreamExoPlayer(
             }
         }
         exoPlayer.addListener(listener)
+        val decoderLog = videoDecoderLog(exoPlayer)
+        exoPlayer.addAnalyticsListener(decoderLog)
 
         onDispose {
             Log.i(TAG, "onDispose · pos=${exoPlayer.currentPosition}ms isPlaying=${exoPlayer.isPlaying}")
             exoPlayer.removeListener(listener)
+            exoPlayer.removeAnalyticsListener(decoderLog)
             exoPlayer.clearVideoTextureView(textureView)
             exoPlayer.release()
             mirror.resetClock()
@@ -573,6 +581,7 @@ internal fun StreamExoPlayer(
         var frozenSinceMs = 0L
         var lastRescueMs = 0L
         var consecutiveRescues = 0
+        var lastMilestoneMs = 0L
 
         while (true) {
             delay(500)
@@ -640,6 +649,13 @@ internal fun StreamExoPlayer(
                 // Only counts as recovered if new frames genuinely came in, not from a BUFFERING
                 // flash between two frozen stretches.
                 if (frames > lastFrames && lastFrames >= 0) consecutiveRescues = 0
+            }
+
+            // A milestone every 30 s of wall time: proof the picture keeps coming, or since when not.
+            if (now - lastMilestoneMs >= 30_000) {
+                lastMilestoneMs = now
+                val c = exoPlayer.videoDecoderCounters
+                Log.i(TAG, "frames rendered=${c?.renderedOutputBufferCount} dropped=${c?.droppedBufferCount} skipped=${c?.skippedOutputBufferCount} at ${pos}ms state=$state")
             }
 
             lastPos = pos
@@ -725,6 +741,44 @@ internal fun StreamExoPlayer(
         key(subtitleView) {
             AndroidView(modifier = Modifier.matchParentSize(), factory = { subtitleView })
         }
+    }
+}
+
+/**
+ * What the video decoder is given and does, for telling "no picture" apart on a device: the decoder
+ * chosen, each input format with its codec-specific data sizes (SPS/PPS for H.264: an empty list
+ * means the decoder gets none), the output surface, first frames, seeks and dropped frames. Measured
+ * need: Castle's "sound, no picture" on the KALLEY R3 could only be told apart from a decoder fault
+ * by these (csd 41 bytes and a detached surface).
+ */
+@androidx.annotation.OptIn(UnstableApi::class)
+private fun videoDecoderLog(player: ExoPlayer) = object : AnalyticsListener {
+    override fun onVideoDecoderInitialized(eventTime: AnalyticsListener.EventTime, decoderName: String, initializedTimestampMs: Long, initializationDurationMs: Long) {
+        Log.i(TAG, "video decoder $decoderName ready in ${initializationDurationMs}ms")
+    }
+
+    override fun onVideoInputFormatChanged(eventTime: AnalyticsListener.EventTime, format: Format, decoderReuseEvaluation: DecoderReuseEvaluation?) {
+        Log.i(
+            TAG,
+            "video format ${format.sampleMimeType} codecs=${format.codecs} ${format.width}x${format.height} " +
+                "csd=${format.initializationData.map { it.size }} reuse=${decoderReuseEvaluation?.result}",
+        )
+    }
+
+    override fun onRenderedFirstFrame(eventTime: AnalyticsListener.EventTime, output: Any, renderTimeMs: Long) {
+        Log.i(TAG, "first frame on ${output.javaClass.simpleName}@${System.identityHashCode(output).toString(16)} at ${player.currentPosition}ms")
+    }
+
+    override fun onSurfaceSizeChanged(eventTime: AnalyticsListener.EventTime, width: Int, height: Int) {
+        Log.i(TAG, "output surface ${width}x$height")
+    }
+
+    override fun onDroppedVideoFrames(eventTime: AnalyticsListener.EventTime, droppedFrames: Int, elapsedMs: Long) {
+        Log.w(TAG, "dropped $droppedFrames video frames in ${elapsedMs}ms at ${player.currentPosition}ms")
+    }
+
+    override fun onPositionDiscontinuity(eventTime: AnalyticsListener.EventTime, oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
+        if (reason == Player.DISCONTINUITY_REASON_SEEK) Log.i(TAG, "seek ${oldPosition.positionMs}ms → ${newPosition.positionMs}ms")
     }
 }
 
