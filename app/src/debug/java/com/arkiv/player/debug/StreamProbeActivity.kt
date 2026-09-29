@@ -41,7 +41,8 @@ import com.arkiv.player.ui.player.STREAM_TS_SEARCH_BYTES
  * ```
  * A `url` without a scheme is a file in the app's files dir, put there with
  * `adb push x /data/local/tmp/ && adb shell run-as com.arkiv.player.light cp /data/local/tmp/x files/`.
- * `soft` puts software decoders first. Lives in `src/debug`: never in a release APK.
+ * `soft` puts software decoders first. `--es rescue prepare|rehook [--ei rescueEvery 15000]` replays
+ * StreamExoPlayer's frozen-video rescues on a playback that paints, every `rescueEvery` ms. Lives in `src/debug`: never in a release APK.
  */
 @OptIn(UnstableApi::class)
 class StreamProbeActivity : Activity() {
@@ -94,6 +95,26 @@ class StreamProbeActivity : Activity() {
         p.setMediaItem(item)
         p.prepare()
         p.playWhenReady = true
+        // Replays StreamExoPlayer's frozen-video rescues on a playback that IS painting, to see
+        // whether a rescue itself can stop the picture: "prepare" (rescue 1: seek + prepare) or
+        // "rehook" (rescue 2+: re-set the TextureView, then seek + prepare), every `rescueEvery` ms.
+        val rescue = intent.getStringExtra("rescue")
+        val rescueEvery = intent.getIntExtra("rescueEvery", 15_000).toLong()
+        if (rescue != null) handler.postDelayed(object : Runnable {
+            override fun run() {
+                val pl = player ?: return
+                val pos = pl.currentPosition
+                Log.w(TAG, "RESCUE $rescue at $pos · rendered=${pl.videoDecoderCounters?.renderedOutputBufferCount}")
+                if (rescue == "rehook") {
+                    pl.clearVideoTextureView(texture)
+                    pl.setVideoTextureView(texture)
+                }
+                pl.seekTo(pos)
+                pl.prepare()
+                pl.playWhenReady = true
+                handler.postDelayed(this, rescueEvery)
+            }
+        }, rescueEvery)
         handler.post(object : Runnable {
             override fun run() {
                 val pl = player ?: return
