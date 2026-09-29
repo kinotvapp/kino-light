@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -103,9 +105,9 @@ fun PluginCard(
     Card(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(CARD_CORNER),
-        colors = CardDefaults.cardColors(containerColor = ArkivSurface),
+        colors = CardDefaults.cardColors(containerColor = Color.Black),
     ) {
-        CardTile(name = entry.name, iconFile = art?.iconFile, tileColorArgb = tileColor(art), pill = cardPill(row))
+        PluginCardSurface(name = entry.name, iconFile = art?.iconFile, tileColorArgb = tileColor(art), pill = cardPill(row)) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 12.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -149,6 +151,7 @@ fun PluginCard(
             Spacer(Modifier.height(4.dp))
             CardAction(name = entry.name, action = action, enabled = enabled, onClick = onAction)
         }
+        }
     }
 }
 
@@ -171,63 +174,64 @@ fun PluginCard(
  * [CatalogArt], so its own icon and colour (not just the catalog's) can win.
  */
 @Composable
-internal fun CardTile(name: String, iconFile: File?, tileColorArgb: Long, pill: String?) {
-    val tile = tileColorArgb
+internal fun PluginCardSurface(name: String, iconFile: File?, tileColorArgb: Long, pill: String?, body: @Composable () -> Unit) {
     var iconFailed by remember(iconFile) { mutableStateOf(false) }
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .aspectRatio(TILE_ASPECT)
-            .clip(RoundedCornerShape(topStart = CARD_CORNER, topEnd = CARD_CORNER))
-            .background(Color(tile)),
-    ) {
-        if (pill != null) {
-            // Solid, not the translucent MetaChip: it sits on a tile of any colour.
-            Text(
-                text = pill,
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.SemiBold,
-                color = Color.White,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .padding(start = 6.dp, top = 6.dp, end = 6.dp)
-                    .clip(RoundedCornerShape(50))
-                    .background(ArkivRed)
-                    .padding(horizontal = 8.dp, vertical = 2.dp),
+    val cover = iconFile != null && !iconFailed
+    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(CARD_CORNER)).background(Color(tileColorArgb))) {
+        if (cover) {
+            // The icon fills the whole card, behind everything.
+            AsyncImage(
+                model = iconFile,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                onError = { iconFailed = true },
+                modifier = Modifier.matchParentSize(),
             )
         }
-        BoxWithConstraints(
-            modifier = Modifier.fillMaxWidth().weight(1f),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (iconFile != null && !iconFailed) {
-                val iconSize = tileArtSize(maxHeight.value, ICON_SIZE.value)
-                if (iconSize > 0f) {
-                    AsyncImage(
-                        model = iconFile,
-                        contentDescription = null,
-                        contentScale = ContentScale.Fit,
-                        onError = { iconFailed = true },
-                        modifier = Modifier.size(iconSize.dp),
-                    )
+        // Dark where the texts are (the bottom), fading away towards the top so the art shows through.
+        Box(
+            Modifier.matchParentSize().background(
+                Brush.verticalGradient(0f to Color.Transparent, 0.3f to Color.Transparent, 0.55f to Color(0x8C000000), 0.78f to Color(0xD0000000), 1f to Color(0xF5000000)),
+            ),
+        )
+        Column {
+            Box(Modifier.fillMaxWidth().aspectRatio(TILE_ASPECT)) {
+                if (!cover) {
+                    BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        // The size is in dp, converted to sp, so the letter does not grow with the font scale and run under the pill.
+                        val letterSize = with(LocalDensity.current) { tileArtSize(maxHeight.value, INITIAL_SIZE.value).dp.toSp() }
+                        if (letterSize.value > 0f) {
+                            // Decoration: the card's name is read right below, so a screen reader must not say the letter first.
+                            Text(
+                                text = cardInitial(name),
+                                style = MaterialTheme.typography.headlineLarge,
+                                fontSize = letterSize,
+                                lineHeight = letterSize,
+                                fontWeight = FontWeight.Black,
+                                color = Color(onTileColor(tileColorArgb)),
+                                modifier = Modifier.clearAndSetSemantics { },
+                            )
+                        }
+                    }
                 }
-            } else {
-                // The size is in dp, converted to sp, so the letter does not grow with the font scale and run under the pill.
-                val letterSize = with(LocalDensity.current) { tileArtSize(maxHeight.value, INITIAL_SIZE.value).dp.toSp() }
-                if (letterSize.value > 0f) {
-                    // Decoration: the card's name is read right below, so a screen reader must not say the letter first.
+                if (pill != null) {
+                    // Solid, not the translucent MetaChip: it sits on art of any colour.
                     Text(
-                        text = cardInitial(name),
-                        style = MaterialTheme.typography.headlineLarge,
-                        fontSize = letterSize,
-                        lineHeight = letterSize,
-                        fontWeight = FontWeight.Black,
-                        color = Color(onTileColor(tile)),
-                        modifier = Modifier.clearAndSetSemantics { },
+                        text = pill,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .padding(start = 6.dp, top = 6.dp, end = 6.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(ArkivRed)
+                            .padding(horizontal = 8.dp, vertical = 2.dp),
                     )
                 }
             }
+            body()
         }
     }
 }

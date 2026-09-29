@@ -2,6 +2,7 @@ package com.arkiv.player.ui.tv
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -67,14 +68,15 @@ internal fun TvInstalledPluginCard(
         // cleared from the accessibility tree so it is not read a second time.
         modifier = modifier.fillMaxWidth().semantics { contentDescription = label },
         scale = cardFocusScale(LocalReducedEffects.current),
-        colors = CardDefaults.colors(containerColor = ArkivSurfaceHigh),
+        colors = CardDefaults.colors(containerColor = Color.Black),
         border = CardDefaults.border(
             focusedBorder = Border(BorderStroke(3.dp, Color.White)),
         ),
     ) {
-        Column(Modifier.clearAndSetSemantics { }.background(cardBodyBrush(model.tileColorArgb))) {
-            CardTile(name = model.name, iconFile = model.iconFile, tileColorArgb = model.tileColorArgb, pill = null)
-            CardTexts(plugin, model, message, reserveMessageLines, liveNotice, reserveNoticeLines)
+        Box(Modifier.clearAndSetSemantics { }) {
+            PluginCardSurface(name = model.name, iconFile = model.iconFile, tileColorArgb = model.tileColorArgb, pill = null) {
+                CardTexts(plugin, model, message, reserveMessageLines, liveNotice, reserveNoticeLines)
+            }
         }
     }
 }
