@@ -43,7 +43,9 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -116,6 +118,8 @@ private enum class LocalView { NONE, RECENT }
 fun LiveScreen(
     onOpenChannel: (String) -> Unit,
     contentPadding: PaddingValues,
+    /** The app bar's side of the screen: its buttons ask through this, the screen answers (see [LiveChromeState]). */
+    chrome: LiveChromeState,
 ) {
     val graph = rememberGraph()
     val vm: LiveViewModel = viewModel(
@@ -136,18 +140,32 @@ fun LiveScreen(
             initializer { OwnSourcesViewModel(graph.ownLiveStore, graph.ownProbe, onSaved = { vm.reload() }) }
         },
     )
-    var addMenu by remember { mutableStateOf(false) }
     var manager by remember { mutableStateOf(false) }
     val state by vm.state.collectAsStateWithLifecycle()
     val cross by vm.crossSearch.collectAsStateWithLifecycle()
     val searchView = remember(state.search, cross) { liveSearchView(state.search, cross) }
     var view by remember { mutableStateOf(LocalView.NONE) }
-    // rememberSaveable: the brief asks for the mode to survive rotation (a configuration change
-    // recomposes the whole screen from scratch, and with `remember` it would always go back to
-    // the grid).
-    var guideMode by rememberSaveable { mutableStateOf(false) }
-    // A provider without a guide (plugin with no EPG) has no toggle: back to the grid.
-    LaunchedEffect(state.hasGuide) { if (!state.hasGuide) guideMode = false }
+    // The guide toggle lives in the app bar now: the bar keeps the mode (saved across a rotation) and this screen
+    // tells it whether the provider on screen has a guide (a plugin with no EPG has no toggle: back to the grid).
+    val guideMode = chrome.guideMode
+    SideEffect { chrome.updateHasGuide(state.hasGuide) }
+    // What the bar asks: a reload (a tick, skipped for the value it had when the screen appeared) and the "+" actions.
+    var reloadSeen by remember { mutableIntStateOf(chrome.reloadTick) }
+    LaunchedEffect(chrome.reloadTick) {
+        if (chrome.reloadTick != reloadSeen) {
+            reloadSeen = chrome.reloadTick
+            vm.reload()
+        }
+    }
+    val asked = chrome.pendingAction
+    LaunchedEffect(asked) {
+        when (chrome.consumeAction()) {
+            LiveChromeAction.ADD_CHANNEL -> ownVm.startNew(OwnKind.CHANNEL)
+            LiveChromeAction.ADD_PLAYLIST -> ownVm.startNew(OwnKind.PLAYLIST)
+            LiveChromeAction.MANAGE -> manager = true
+            null -> Unit
+        }
+    }
 
     // Recent: doesn't go through LiveViewModel.chooseCategory (it isn't a provider category),
     // read directly from Room, only for providers still in the module (see recentsForScreen).
@@ -204,30 +222,8 @@ fun LiveScreen(
                     }
                 },
                 singleLine = true,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.fillMaxWidth(),
             )
-            IconButton(onClick = { vm.reload() }) {
-                Icon(Icons.Default.Refresh, contentDescription = "Recargar canales", tint = ArkivTextSecondary)
-            }
-            Box {
-                IconButton(onClick = { addMenu = true }) {
-                    Icon(Icons.Default.Add, contentDescription = OwnSourcesCopy.ADD_MENU, tint = ArkivTextSecondary)
-                }
-                DropdownMenu(expanded = addMenu, onDismissRequest = { addMenu = false }) {
-                    DropdownMenuItem(text = { Text(OwnSourcesCopy.ADD_CHANNEL) }, onClick = { addMenu = false; ownVm.startNew(OwnKind.CHANNEL) })
-                    DropdownMenuItem(text = { Text(OwnSourcesCopy.ADD_PLAYLIST) }, onClick = { addMenu = false; ownVm.startNew(OwnKind.PLAYLIST) })
-                    DropdownMenuItem(text = { Text(OwnSourcesCopy.MY_SOURCES) }, onClick = { addMenu = false; manager = true })
-                }
-            }
-            if (state.hasGuide) {
-                IconButton(onClick = { guideMode = !guideMode }) {
-                    Icon(
-                        imageVector = if (guideMode) Icons.Default.GridView else Icons.Default.ViewAgenda,
-                        contentDescription = if (guideMode) "Ver como grilla" else "Ver guía de programación",
-                        tint = if (guideMode) ArkivRed else ArkivTextSecondary,
-                    )
-                }
-            }
         }
 
         if (state.moduleEmpty) {

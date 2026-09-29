@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.ViewAgenda
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.VideoLibrary
@@ -42,6 +43,8 @@ import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
@@ -196,6 +199,8 @@ fun ArkivRoot(
     }
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
+    // The En vivo screen's buttons live in the app bar (guide, Recargar, "+"); this is what they share with the screen.
+    val liveChrome = com.arkiv.player.ui.live.rememberLiveChromeState()
     val isTab = currentRoute in TABS.map { it.route }
 
     // A single definition of "go to a tab", so the rail and the bar can't diverge in behavior
@@ -340,6 +345,40 @@ fun ArkivRoot(
                         }
                     },
                     actions = {
+                        if (currentRoute == "live") {
+                            var addMenu by remember { androidx.compose.runtime.mutableStateOf(false) }
+                            if (liveChrome.hasGuide) {
+                                IconButton(onClick = { liveChrome.toggleGuide() }) {
+                                    Icon(
+                                        imageVector = if (liveChrome.guideMode) Icons.Default.GridView else Icons.Default.ViewAgenda,
+                                        contentDescription = if (liveChrome.guideMode) "Ver como grilla" else "Ver guía de programación",
+                                        tint = if (liveChrome.guideMode) ArkivRed else Color.White,
+                                    )
+                                }
+                            }
+                            IconButton(onClick = { liveChrome.requestReload() }) {
+                                Icon(Icons.Default.Refresh, contentDescription = "Recargar canales", tint = Color.White)
+                            }
+                            Box {
+                                IconButton(onClick = { addMenu = true }) {
+                                    Icon(Icons.Default.Add, contentDescription = com.arkiv.player.ui.live.OwnSourcesCopy.ADD_MENU, tint = Color.White)
+                                }
+                                DropdownMenu(expanded = addMenu, onDismissRequest = { addMenu = false }) {
+                                    DropdownMenuItem(
+                                        text = { Text(com.arkiv.player.ui.live.OwnSourcesCopy.ADD_CHANNEL) },
+                                        onClick = { addMenu = false; liveChrome.request(com.arkiv.player.ui.live.LiveChromeAction.ADD_CHANNEL) },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text(com.arkiv.player.ui.live.OwnSourcesCopy.ADD_PLAYLIST) },
+                                        onClick = { addMenu = false; liveChrome.request(com.arkiv.player.ui.live.LiveChromeAction.ADD_PLAYLIST) },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text(com.arkiv.player.ui.live.OwnSourcesCopy.MY_SOURCES) },
+                                        onClick = { addMenu = false; liveChrome.request(com.arkiv.player.ui.live.LiveChromeAction.MANAGE) },
+                                    )
+                                }
+                            }
+                        }
                         if (currentRoute == "home") {
                             IconButton(onClick = { graph.reloadHomeCatalog() }) {
                                 Icon(Icons.Default.Refresh, contentDescription = "Recargar catálogo", tint = Color.White)
@@ -404,6 +443,7 @@ fun ArkivRoot(
                     // account, goToLiveChannel sends the tap to Ajustes instead (see its KDoc).
                     onOpenChannel = { liveCode -> goToLiveChannel(liveCode) },
                     contentPadding = padding,
+                    chrome = liveChrome,
                 )
             }
             composable("caracol") {
