@@ -104,12 +104,14 @@ object NuvioPluginConverter {
             .joinToString("") { PluginPrelude.nuvioVendor(it.file) + "\n" + it.binding + "\n" }
         // The scraper's own top-level code runs inside an IIFE, never spliced in at the same top
         // level as the shim: see this object's KDoc for why (QuickJS module-scope collisions).
-        val wrapped = "var __nuvioModuleExports = (function () {\n" +
+        // Its `console` is the adapter's recording one (see ADAPTER's __nuvioConsole), handed in
+        // through an outer function so the scraper's own scope may still declare a `console` of its own.
+        val wrapped = "var __nuvioModuleExports = (function (console) { return (function () {\n" +
             "var module = { exports: {} };\n" +
             "var exports = module.exports;\n" +
             scraperSource +
-            "\nreturn module.exports;\n})();\n"
-        val script = shim + "\n\n" + libraries + wrapped + "\n" + ADAPTER
+            "\nreturn module.exports;\n})(); })(__nuvioConsole);\n"
+        val script = shim + "\n\n" + libraries + CONSOLE + wrapped + "\n" + ADAPTER
 
         val manifestJson = JSONObject()
             // Clipped to ManifestParser's own name limit: a longer Nuvio scraper name would otherwise make the whole manifest invalid.
@@ -162,8 +164,10 @@ object NuvioPluginConverter {
      *   `/tv/<id>` and `/tv/<id>/season/<n>`, fetched together, dropping episodes that haven't aired.
      * - `resolve` calls the wrapped `getStreams` exactly as Nuvio does: the id as a string, `"tv"`
      *   with the season and episode, or `"movie"` with `null, null` (never `0, 0`). It picks the first
-     *   result that isn't torrent-only (Kino's sandbox has no BitTorrent client, spec §6.2) --
-     *   `kino.error("unavailable", …)` otherwise.
+     *   result that isn't torrent-only (Kino's sandbox has no BitTorrent client, spec §6.2), and logs
+     *   how many streams came back and how many were dropped (torrents, no url). With nothing
+     *   playable it says why, for [PluginFailureText]: `unavailable` [ONLY_TORRENTS], `unavailable`
+     *   [SCRAPER_ERROR_PREFIX] + the scraper's first `console.error`, or `not_found` [NO_STREAMS].
      *
      * TMDB is asked in `es-MX` when Kino's language is Spanish (`kino.lang` is `es-CO`, for which TMDB
      * has almost no translations; the app's own TMDB client uses `es-MX` too), else in `kino.lang`.
@@ -287,11 +291,64 @@ object NuvioPluginConverter {
           if (mediaType === "tv" && !(r.season > 0 && r.episode > 0)) throw kino.error("not_found", "falta elegir temporada y capítulo");
           var season = mediaType === "tv" ? r.season : null;
           var episode = mediaType === "tv" ? r.episode : null;
+          __nuvioConsole.errors.length = 0;
           var streams = (await __nuvioGetStreams(String(r.tmdbId), mediaType, season, episode)) || [];
+          if (!Array.isArray(streams)) streams = [];
+          var torrents = streams.filter(function (s) { return s && s.infoHash; }).length;
+          var noUrl = streams.filter(function (s) { return s && !s.infoHash && !s.url; }).length;
           var playable = streams.filter(function (s) { return s && s.url && !s.infoHash; });
-          if (!playable.length) throw kino.error("unavailable", "solo torrents o sin resultados");
+          var picked = playable.length ? String(playable[0].url).replace(/^[a-z]+:\/\/([^\/?#]*).*$/i, "$1") : "nothing";
+          console.log("[Kino] getStreams returned " + streams.length + " streams; dropped " + torrents +
+            (torrents === 1 ? " torrent, " : " torrents, ") + noUrl + " without url; playing " + picked);
+          if (!playable.length) {
+            if (torrents > 0) throw kino.error("unavailable", "$ONLY_TORRENTS");
+            var said = __nuvioConsole.errors[0];
+            if (said) throw kino.error("unavailable", "$SCRAPER_ERROR_PREFIX" + said);
+            throw kino.error("not_found", "$NO_STREAMS");
+          }
           var best = playable[0];
           return { url: best.url, headers: best.headers, mime: best.mime };
         }
     """.trimIndent()
+
+    /**
+     * The `console` the scraper's code sees: the sandbox's own, plus a record of what it passed to
+     * `console.error` since the adapter last cleared it. Nuvio scrapers catch their own failures,
+     * `console.error` them and return `[]`; that first error is the reason `resolve` reports (cut,
+     * its "[Name] Error in getStreams:" prefix dropped) when nothing is playable.
+     */
+    private val CONSOLE = """
+        var __nuvioConsole = (function () {
+          var errors = [];
+          function text(args) {
+            return Array.prototype.map.call(args, function (a) {
+              try { return (a && a.message) ? String(a.message) : String(a); } catch (e) { return "?"; }
+            }).join(" ");
+          }
+          return {
+            errors: errors,
+            log: function () { return console.log.apply(console, arguments); },
+            info: function () { return console.info.apply(console, arguments); },
+            warn: function () { return console.warn.apply(console, arguments); },
+            debug: function () { return console.log.apply(console, arguments); },
+            error: function () {
+              if (errors.length < 5) {
+                var t = text(arguments).replace(/^\s*\[[^\]]*\]\s*/, "").replace(/^Error in getStreams:\s*/i, "").trim();
+                if (t) errors.push(t.slice(0, 120));
+              }
+              return console.error.apply(console, arguments);
+            },
+          };
+        })();
+
+    """.trimIndent() + "\n"
+
+    /** `resolve`'s `not_found` detail: the scraper answered, with no stream at all. */
+    const val NO_STREAMS = "sin resultados"
+
+    /** `resolve`'s `unavailable` detail: every stream was a torrent, which Kino can't play. */
+    const val ONLY_TORRENTS = "solo torrents"
+
+    /** `resolve`'s `unavailable` detail prefix: nothing playable, and the scraper `console.error`ed why. */
+    const val SCRAPER_ERROR_PREFIX = "error del scraper: "
 }
