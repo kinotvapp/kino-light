@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.History
@@ -29,6 +30,8 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.ViewAgenda
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -67,6 +70,8 @@ import com.arkiv.player.data.gateway.LiveChannelKeys
 import com.arkiv.player.data.gateway.liveCode
 import com.arkiv.player.data.gateway.LiveProgram
 import com.arkiv.player.data.live.LiveProviderTab
+import com.arkiv.player.data.live.OwnKind
+import com.arkiv.player.data.live.OwnLive
 import com.arkiv.player.ui.components.EmptyState
 import com.arkiv.player.ui.rememberGraph
 import com.arkiv.player.ui.theme.ArkivRed
@@ -126,6 +131,13 @@ fun LiveScreen(
             }
         },
     )
+    val ownVm: OwnSourcesViewModel = viewModel(
+        factory = viewModelFactory {
+            initializer { OwnSourcesViewModel(graph.ownLiveStore, graph.ownProbe, onSaved = { vm.reload() }) }
+        },
+    )
+    var addMenu by remember { mutableStateOf(false) }
+    var manager by remember { mutableStateOf(false) }
     val state by vm.state.collectAsStateWithLifecycle()
     val cross by vm.crossSearch.collectAsStateWithLifecycle()
     val searchView = remember(state.search, cross) { liveSearchView(state.search, cross) }
@@ -196,6 +208,16 @@ fun LiveScreen(
             )
             IconButton(onClick = { vm.reload() }) {
                 Icon(Icons.Default.Refresh, contentDescription = "Recargar canales", tint = ArkivTextSecondary)
+            }
+            Box {
+                IconButton(onClick = { addMenu = true }) {
+                    Icon(Icons.Default.Add, contentDescription = OwnSourcesCopy.ADD_MENU, tint = ArkivTextSecondary)
+                }
+                DropdownMenu(expanded = addMenu, onDismissRequest = { addMenu = false }) {
+                    DropdownMenuItem(text = { Text(OwnSourcesCopy.ADD_CHANNEL) }, onClick = { addMenu = false; ownVm.startNew(OwnKind.CHANNEL) })
+                    DropdownMenuItem(text = { Text(OwnSourcesCopy.ADD_PLAYLIST) }, onClick = { addMenu = false; ownVm.startNew(OwnKind.PLAYLIST) })
+                    DropdownMenuItem(text = { Text(OwnSourcesCopy.MY_SOURCES) }, onClick = { addMenu = false; manager = true })
+                }
             }
             if (state.hasGuide) {
                 IconButton(onClick = { guideMode = !guideMode }) {
@@ -312,6 +334,8 @@ fun LiveScreen(
                 val (title, subtitle) = when {
                     state.activeCategory == CATEGORY_FAVORITES -> "Sin favoritos todavía" to
                         "Mantén pulsado un canal para agregarlo."
+                    state.activeProvider == OwnLive.PROVIDER && state.categories.isEmpty() ->
+                        OwnSourcesCopy.EMPTY_TITLE to OwnSourcesCopy.EMPTY_BODY
                     else -> "Sin canales" to "No encontramos canales en esta categoría."
                 }
                 EmptyState(title, subtitle, modifier = Modifier.fillMaxSize())
@@ -320,6 +344,8 @@ fun LiveScreen(
             else -> ChannelGrid(visible, state.current, state.favorites, gridPadding, ::open, ::favorite, state::tabOf)
         }
     }
+
+    OwnSourceDialogs(ownVm, showManager = manager, onCloseManager = { manager = false })
 }
 
 /**
