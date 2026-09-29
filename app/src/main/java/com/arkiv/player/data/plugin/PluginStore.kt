@@ -45,6 +45,9 @@ data class InstalledRecord(
     val pendingLiveStreamHostsAny: Boolean = false,
     /** Hosts the person explicitly said "no" to via reactive approval; never prompted again for this plugin. */
     val rejectedHosts: List<String> = emptyList(),
+    /** Set together, both null for a normal (hand-written-repo) plugin: which Nuvio repo and scraper this was converted from. */
+    val nuvioRepo: String? = null,
+    val nuvioScraperId: String? = null,
 ) {
     fun toJson(): String = JSONObject()
         .put("address", address).put("version", version).put("sha256", sha256)
@@ -63,6 +66,8 @@ data class InstalledRecord(
         .put("liveStreamHostsAny", liveStreamHostsAny)
         .put("pendingLiveStreamHostsAny", pendingLiveStreamHostsAny)
         .put("rejectedHosts", JSONArray(rejectedHosts))
+        .put("nuvioRepo", nuvioRepo ?: JSONObject.NULL)
+        .put("nuvioScraperId", nuvioScraperId ?: JSONObject.NULL)
         .toString()
 
     companion object {
@@ -87,6 +92,8 @@ data class InstalledRecord(
                 liveStreamHostsAny = o.optBoolean("liveStreamHostsAny"),
                 pendingLiveStreamHostsAny = o.optBoolean("pendingLiveStreamHostsAny"),
                 rejectedHosts = list("rejectedHosts"),
+                nuvioRepo = if (o.isNull("nuvioRepo")) null else o.optString("nuvioRepo").ifEmpty { null },
+                nuvioScraperId = if (o.isNull("nuvioScraperId")) null else o.optString("nuvioScraperId").ifEmpty { null },
             )
         }.getOrNull()
     }

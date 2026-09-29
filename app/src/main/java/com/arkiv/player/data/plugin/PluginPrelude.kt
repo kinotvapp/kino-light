@@ -12,6 +12,13 @@ object PluginPrelude {
     val web: String by lazy { read("plugin/web.js") }
     val prelude: String by lazy { read("plugin/prelude.js") }
 
+    /**
+     * The Nuvio compatibility shim (spec §5.2). Unlike [web]/[prelude], `PluginRuntime` never loads
+     * this on its own -- it isn't part of every plugin's runtime, only of a Nuvio-converted one, so
+     * [NuvioPluginConverter] reads it here and concatenates it into that ONE plugin's own script.
+     */
+    val nuvioShim: String by lazy { read("plugin/nuvio-shim.js") }
+
     private fun read(path: String): String =
         (PluginPrelude::class.java.classLoader ?: throw IllegalStateException("no class loader"))
             .getResourceAsStream(path)?.use { it.readBytes().toString(Charsets.UTF_8) }

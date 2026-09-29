@@ -28,6 +28,10 @@ class PluginsScreenStateTest {
         assertFalse(addModalVisible(requested = true, state = PluginsUiState(consent = preview)))
     }
 
+    @Test fun `the Agregar modal closes as soon as the Nuvio scraper picker opens`() {
+        assertFalse(addModalVisible(requested = true, state = PluginsUiState(nuvioPicker = NuvioPickerState("o/r", emptyList()))))
+    }
+
     @Test fun `the Agregar modal never shows over Configurar`() {
         assertFalse(addModalVisible(requested = true, state = PluginsUiState(configuring = draft)))
     }

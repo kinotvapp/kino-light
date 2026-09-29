@@ -39,6 +39,8 @@ interface PluginAdmin {
 class DefaultPluginAdmin(
     private val registry: PluginRegistry,
     private val installer: PluginInstaller,
+    /** Routes [checkUpdate] by the plugin's origin (Task 6): normal plugins through [installer] itself, Nuvio-origin ones through [NuvioPluginInstaller]. */
+    private val coordinator: PluginUpdateCoordinator,
     private val runtimes: PluginRuntimePool,
     private val config: PluginConfigStore,
     private val forgetHomeCache: (pluginId: String) -> Unit = {},
@@ -68,7 +70,7 @@ class DefaultPluginAdmin(
     }
 
     override suspend fun checkUpdate(id: String): UpdateOutcome = withContext(io) {
-        val outcome = installer.checkUpdate(id)
+        val outcome = coordinator.checkUpdate(id)
         registry.reload()
         if (outcome is UpdateOutcome.Applied) runtimes.close(id)
         outcome

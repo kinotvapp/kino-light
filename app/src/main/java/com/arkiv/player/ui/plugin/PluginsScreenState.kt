@@ -12,10 +12,11 @@ enum class PluginsTab { RECOMMENDED, INSTALLED }
 /**
  * Whether the "Agregar" modal must be shown. It needs the person's request ([requested]) and it yields to
  * anything that takes over the screen: the consent sheet (a preview succeeded, so the modal has done its
- * job and closes by itself), Configurar and the uninstall confirmation, which must never stack under it.
+ * job and closes by itself), the Nuvio scraper picker (the typed address turned out to be a Nuvio provider
+ * repo, Task 7), Configurar and the uninstall confirmation, which must never stack under it.
  */
 internal fun addModalVisible(requested: Boolean, state: PluginsUiState): Boolean =
-    requested && state.consent == null && state.configuring == null && state.confirmUninstall == null
+    requested && state.consent == null && state.nuvioPicker == null && state.configuring == null && state.confirmUninstall == null
 
 /**
  * Whether the person's "Agregar" request ([requested]) outlives their answer to the consent sheet. Cancelling

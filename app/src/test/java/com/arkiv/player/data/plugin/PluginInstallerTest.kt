@@ -306,14 +306,10 @@ class PluginInstallerTest {
         assertThrows(PluginDamagedException::class.java) { store.readVerifiedScript("demo") }
     }
 
-    @Test fun `due updates are checked at most once per 24 hours`() = runBlocking {
-        publish("1.0.0"); installFresh()
-        publish("1.1.0")
-        now += 23 * 3_600_000L
-        assertEquals(emptyList<Pair<String, UpdateOutcome>>(), installer.checkDueUpdates())
-        now += 2 * 3_600_000L
-        assertEquals(listOf("demo" to UpdateOutcome.Applied("1.1.0")), installer.checkDueUpdates())
-    }
+    // `checkDueUpdates` moved to PluginUpdateCoordinator (Task 6), which routes each plugin by
+    // origin before applying the same "at most once per maxAgeMs" rule this used to test here --
+    // see PluginUpdateCoordinatorTest's "checkDueUpdates checks each plugin, of either origin, at
+    // most once per maxAgeMs".
 
     @Test fun `an update that adds liveStreamHosts any waits for approval, and installing records it`() = runBlocking {
         exports = { setOf("home", "resolve", "liveCategories", "liveChannels") }
@@ -340,5 +336,59 @@ class PluginInstallerTest {
         val preview = installer.preview("o/r")
         assertTrue(preview.newLiveStreamHostsAny)
         assertTrue(installer.install(preview).liveStreamHostsAny)
+    }
+
+    // manifestJson must be the SAME json the manifest was parsed from (not a stand-in like "{}"):
+    // PluginStore.read() re-parses whatever ends up on disk and drops the record if that fails.
+    private fun nuvioManifest(icon: String? = null): Pair<PluginManifest, String> {
+        val json = JSONObject()
+            .put("id", "nuvio-x-abc123").put("name", "X").put("version", "1.0.0").put("apiVersion", 1)
+            .put("entry", "plugin.js").put("hosts", JSONArray(listOf("x.example")))
+            .put("capabilities", JSONArray(listOf("search", "resolve")))
+            .apply { if (icon != null) put("icon", icon) }
+            .toString()
+        return (ManifestParser.parse(json) as ManifestResult.Valid).manifest to json
+    }
+
+    @Test fun `commit writes a record with the given script, bypassing the fetcher`() = runBlocking {
+        val (manifest, json) = nuvioManifest()
+        val preview = InstallPreview(PluginAddress.parse("owner/nuvio-repo")!!, manifest, json, isUpdate = false, newHosts = listOf("x.example"))
+        val script = "export async function search(){return [];} export async function resolve(){return {url:\"https://x.example/a\"};}".toByteArray()
+        val record = installer.commit(preview, script, icon = null)
+        assertEquals("nuvio-x-abc123", store.get("nuvio-x-abc123")!!.manifest.id)
+        assertEquals(sha256Hex(script), record.sha256)
+    }
+
+    @Test fun `commit records the Nuvio origin when the preview carries one, and leaves it null otherwise`() = runBlocking {
+        val (manifest, json) = nuvioManifest()
+        val script = "export async function search(){return [];} export async function resolve(){return {url:\"https://x.example/a\"};}".toByteArray()
+        val origin = NuvioOrigin(repo = "nuvio-repo-owner/nuvio-repo", scraperId = "abc123", script = script)
+        val preview = InstallPreview(
+            PluginAddress.parse("owner/nuvio-repo")!!, manifest, json, isUpdate = false,
+            newHosts = listOf("x.example"), nuvioOrigin = origin,
+        )
+        val record = installer.commit(preview, script, icon = null)
+        assertEquals("nuvio-repo-owner/nuvio-repo", record.nuvioRepo)
+        assertEquals("abc123", record.nuvioScraperId)
+
+        // A normal, hand-written-repo install has neither field set.
+        publish()
+        val normal = installer.install(installer.preview("o/r"))
+        assertNull(normal.nuvioRepo)
+        assertNull(normal.nuvioScraperId)
+    }
+
+    @Test fun `install skips the script fetch and icon fetch when the preview carries a Nuvio origin`() = runBlocking {
+        val (manifest, json) = nuvioManifest(icon = "icon.png")
+        val script = "export async function search(){return [];} export async function resolve(){return {url:\"https://x.example/a\"};}".toByteArray()
+        val origin = NuvioOrigin(repo = "nuvio-repo-owner/nuvio-repo", scraperId = "abc123", script = script)
+        // No files registered in the fake fetcher for this address at all: fetching anything throws.
+        val preview = InstallPreview(
+            PluginAddress.parse("owner/nuvio-repo")!!, manifest, json, isUpdate = false,
+            newHosts = listOf("x.example"), nuvioOrigin = origin,
+        )
+        val record = installer.install(preview)
+        assertEquals(sha256Hex(script), record.sha256)
+        assertNull(store.get("nuvio-x-abc123")!!.iconFile)
     }
 }

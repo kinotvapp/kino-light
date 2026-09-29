@@ -12,6 +12,14 @@ import java.io.IOException
 
 class InstallException(message: String) : Exception(message)
 
+/**
+ * Set only on a preview a [NuvioPluginInstaller] (Task 5) builds: the already-converted script, so
+ * [PluginInstaller.commit] can write it directly instead of fetching `manifest.entry` from
+ * [InstallPreview.address] -- for a Nuvio-origin preview, that address serves the ORIGINAL scraper
+ * file, not the wrapped one Kino actually runs (see `NuvioPluginConverter`'s note on `entry`).
+ */
+data class NuvioOrigin(val repo: String, val scraperId: String, val script: ByteArray)
+
 /** What the consent sheet shows before anything is downloaded beyond the manifest. */
 data class InstallPreview(
     val address: PluginAddress,
@@ -28,6 +36,8 @@ data class InstallPreview(
     val newInsecureHosts: List<String> = emptyList(),
     /** The manifest asks for `liveStreamHosts: "any"` and the person has not approved it yet (always, on a first install that asks). */
     val newLiveStreamHostsAny: Boolean = false,
+    /** Set for a Nuvio-origin install/update: the converted script to write, skipping the fetch. */
+    val nuvioOrigin: NuvioOrigin? = null,
 )
 
 sealed interface UpdateOutcome {
@@ -110,7 +120,7 @@ object ProbePluginHost : PluginHost {
  * atomically. A failure at any step leaves the installed version untouched.
  */
 class PluginInstaller(
-    private val store: PluginStore,
+    internal val store: PluginStore,
     private val fetcher: PluginFetcher,
     private val probe: suspend (script: String) -> Set<String>,
     private val clock: () -> Long = System::currentTimeMillis,
@@ -125,14 +135,30 @@ class PluginInstaller(
 
     suspend fun install(preview: InstallPreview): InstalledRecord {
         val m = preview.manifest
-        val script = try {
+        val script = preview.nuvioOrigin?.script ?: try {
             fetcher.fetch(preview.address.rawUrl(m.entry), MAX_SCRIPT_BYTES)
         } catch (e: FileNotFoundException) {
             throw InstallException("No encontré ${m.entry} en ${preview.address.canonical}")
         } catch (e: IOException) {
             throw InstallException("No se pudo descargar el plugin: ${e.message}")
         }
-        val icon = m.icon?.let { runCatching { fetcher.fetch(preview.address.rawUrl(it), MAX_ICON_BYTES) }.getOrNull() }
+        // A Nuvio-origin preview has no icon of its own to fetch (yet): NuvioPluginConverter
+        // doesn't produce one, and preview.address serves the original scraper repo, not one
+        // that carries a matching icon file for m.icon's path.
+        val icon = if (preview.nuvioOrigin != null) null
+            else m.icon?.let { runCatching { fetcher.fetch(preview.address.rawUrl(it), MAX_ICON_BYTES) }.getOrNull() }
+        return commit(preview, script, icon)
+    }
+
+    /**
+     * The tail [install] and [NuvioPluginInstaller]'s own install (Task 5) share once each has
+     * [script] in hand: probe it, check its exports match the declared capabilities, hash it,
+     * stage it, commit atomically -- carrying forward reactively-approved hosts, remembered
+     * rejections, and `enabled` from whatever was previously installed (see [hostsCarriedOver]).
+     * Never fetches anything itself.
+     */
+    internal suspend fun commit(preview: InstallPreview, script: ByteArray, icon: ByteArray?): InstalledRecord {
+        val m = preview.manifest
         val exports = try {
             probe(script.toString(Charsets.UTF_8))
         } catch (e: PluginException) {
@@ -152,6 +178,7 @@ class PluginInstaller(
             exports = exports.sorted(), liveStreamHostsAny = m.liveStreamHostsAny,
             // A "no" is remembered until the person forgets it (Ajustes ▸ Plugins), not until the next version.
             rejectedHosts = previous?.record?.rejectedHosts.orEmpty(),
+            nuvioRepo = preview.nuvioOrigin?.repo, nuvioScraperId = preview.nuvioOrigin?.scraperId,
         )
         val staging = store.newStaging(m.id)
         try {
@@ -214,12 +241,6 @@ class PluginInstaller(
         }
     }
 
-    /** For `UpdateWorker`: each plugin at most once per [maxAgeMs]. */
-    suspend fun checkDueUpdates(maxAgeMs: Long = DAY_MS): List<Pair<String, UpdateOutcome>> =
-        store.list()
-            .filter { clock() - it.record.lastUpdateCheckAt >= maxAgeMs }
-            .map { it.manifest.id to checkUpdate(it.manifest.id) }
-
     private suspend fun previewFor(address: PluginAddress): InstallPreview {
         val bytes = try {
             fetcher.fetch(address.rawUrl(PluginStore.MANIFEST_FILE), ManifestParser.MAX_BYTES + 1)
@@ -233,6 +254,14 @@ class PluginInstaller(
             is ManifestResult.Valid -> r.manifest
             is ManifestResult.Invalid -> throw InstallException(r.message)
         }
+        return diffAgainstInstalled(address, manifest, json)
+    }
+
+    /**
+     * Diffs a freshly built [manifest] against whatever [manifest.id] already has installed (if
+     * anything): shared by [previewFor] and [NuvioPluginInstaller]'s own preview step (Task 5).
+     */
+    internal fun diffAgainstInstalled(address: PluginAddress, manifest: PluginManifest, json: String, nuvioOrigin: NuvioOrigin? = null): InstallPreview {
         val existing = store.get(manifest.id)
         if (existing != null && existing.record.address != address.canonical) {
             throw InstallException("Ya hay un plugin con ese id (${manifest.id}), instalado desde ${existing.record.address}")
@@ -248,6 +277,7 @@ class PluginInstaller(
             newCapabilities = manifest.capabilities.filter { it in ManifestParser.APPROVAL_CAPABILITIES }.filterNot { it in approvedCapabilities },
             newInsecureHosts = manifest.insecureHosts.filterNot { it in approvedInsecureHosts },
             newLiveStreamHostsAny = manifest.liveStreamHostsAny && existing?.record?.liveStreamHostsAny != true,
+            nuvioOrigin = nuvioOrigin,
         )
     }
 
