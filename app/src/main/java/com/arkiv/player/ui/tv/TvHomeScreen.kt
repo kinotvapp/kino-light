@@ -238,13 +238,16 @@ internal enum class TvHomeBack {
     /** Scroll the rows back to the top and put focus on the default landing, staying on Home. */
     SCROLL_TO_TOP,
 
+    /** Put focus on the menu rail, opening it. From there the next Back is [EXIT_FLOW]. */
+    OPEN_MENU,
+
     /** Today's behaviour, handled by the nav host: press Back twice to leave the app. */
     EXIT_FLOW,
 }
 
 /**
- * Back on the TV Home: someone deep in the rows goes back to the top first, and only from there does
- * Back start the exit flow. "Deep" is a scrolled rows list, or focus on a row below the first one.
+ * Back on the TV Home: someone deep in the rows goes back to the top first, from the top of the content Back
+ * opens the menu rail, and only from the rail does Back start the exit flow. "Deep" is a scrolled rows list, or focus on a row below the first one.
  * Focus already on the default landing (`tvHomeDefaultLanding`'s target) counts as the top even if
  * the list is scrolled (the empty state's button can sit below other rows), and the Back right after
  * a scroll to the top never scrolls again, so a landing that fails can't trap the person on Home.
@@ -256,6 +259,9 @@ internal fun tvHomeBackAction(
     focusOnLanding: Boolean,
     justScrolledToTop: Boolean,
 ): TvHomeBack = when {
+    // Content that has focus at the top of Home (the first row, or the default landing wherever it sits) hands Back
+    // to the rail before anything else, even right after a scroll to the top: the menu is the way out of the content.
+    focusInRows && (focusOnLanding || (listAtTop && focusedRowIsFirst)) -> TvHomeBack.OPEN_MENU
     justScrolledToTop || focusOnLanding -> TvHomeBack.EXIT_FLOW
     !listAtTop -> TvHomeBack.SCROLL_TO_TOP
     focusInRows && !focusedRowIsFirst -> TvHomeBack.SCROLL_TO_TOP
@@ -736,13 +742,20 @@ fun TvHomeScreen(
     val firstFocusKey = continueWatching.firstOrNull()?.episodeId
     // Real focus on the first "Continuar viendo" card (the FIRST_CARD landing), for Back's rule below.
     var firstCardFocused by remember { mutableStateOf(false) }
+    // True while focus is anywhere inside the rows zone (its LazyColumn); also how a landing on the content is confirmed.
+    var rowsHaveFocus by remember { mutableStateOf(false) }
+    // Attached to the rows LazyColumn: requesting it puts focus on the first focusable card in there.
+    val rowsEnter = remember { FocusRequester() }
 
     /**
      * Puts focus on the default landing (`tvHomeDefaultLanding`): the first "Continuar viendo" card, the
      * empty state's button, or the top bar. Used on opening and by Back's scroll to the top.
      */
-    suspend fun landOnDefault() {
+    suspend fun landOnDefault(contentFirst: Boolean = false) {
         var landed = false
+        // With no card to land on the default is the rail, which opens as soon as it holds focus. On opening, the
+        // person should see the content, so [contentFirst] aims at the first card and only falls back to the rail.
+        var aimedAtContent = false
         repeat(20) {
             if (landed) return@repeat
             val landing = tvHomeDefaultLanding(homeEmptyNow, hasContinueCard = firstFocusKey != null)
@@ -765,12 +778,20 @@ fun TvHomeScreen(
                     )
                     emptySourcesFocus
                 }
-                TvHomeLanding.TOP_BAR -> barFocus
+                TvHomeLanding.TOP_BAR -> if (contentFirst) {
+                    aimedAtContent = true
+                    runCatching { rowsListState.scrollToItem(0) }
+                    rowsEnter
+                } else {
+                    barFocus
+                }
             }
             val requested = runCatching { target.requestFocus() }.isSuccess
-            landed = tvHomeLandingHeld(landing, requested, emptySourcesFocused)
+            landed = if (aimedAtContent) rowsHaveFocus else tvHomeLandingHeld(landing, requested, emptySourcesFocused)
             if (!landed) delay(50)
         }
+        // The rows never took focus (still skeletons, say): the rail is a landing that always works.
+        if (aimedAtContent && !landed) runCatching { barFocus.requestFocus() }
     }
 
     // True once focus is back on the card `cardToRestore` names: from then on the default landing
@@ -803,7 +824,7 @@ fun TvHomeScreen(
             }
         }
         if (cardRestored) return@LaunchedEffect
-        landOnDefault()
+        landOnDefault(contentFirst = true)
     }
 
     // Fixed-size cards and rows: the rows zone measures EXACTLY 2 rows (label + landscape card),
@@ -828,7 +849,6 @@ fun TvHomeScreen(
     // Back deep in the rows goes back to the top first ([tvHomeBackAction]); from the top, the nav
     // host's double-Back-to-exit runs as before. This handler is registered after the nav host's, so
     // it wins while enabled; dialogs (the OTA update) have their own window and keep Back first.
-    var rowsHaveFocus by remember { mutableStateOf(false) }
     // The rows list item (by key) holding focus, null while focus is outside the rows.
     var focusedRowKey by remember { mutableStateOf<Any?>(null) }
     var justScrolledToTop by remember { mutableStateOf(false) }
@@ -855,6 +875,9 @@ fun TvHomeScreen(
                 justScrolledToTop = justScrolledToTop,
             )
         }
+    }
+    BackHandler(enabled = backAction == TvHomeBack.OPEN_MENU) {
+        runCatching { barFocus.requestFocus() }
     }
     BackHandler(enabled = backAction == TvHomeBack.SCROLL_TO_TOP) {
         justScrolledToTop = true
@@ -1005,6 +1028,7 @@ fun TvHomeScreen(
                         .fillMaxWidth()
                         .height(rowsRegionHeight)
                         .padding(top = rowsTopPad)
+                        .focusRequester(rowsEnter)
                         .onFocusChanged {
                             rowsHaveFocus = it.hasFocus
                             if (!it.hasFocus) focusedRowKey = null
