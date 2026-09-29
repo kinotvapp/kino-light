@@ -120,7 +120,7 @@ object ProbePluginHost : PluginHost {
  * atomically. A failure at any step leaves the installed version untouched.
  */
 class PluginInstaller(
-    private val store: PluginStore,
+    internal val store: PluginStore,
     private val fetcher: PluginFetcher,
     private val probe: suspend (script: String) -> Set<String>,
     private val clock: () -> Long = System::currentTimeMillis,
