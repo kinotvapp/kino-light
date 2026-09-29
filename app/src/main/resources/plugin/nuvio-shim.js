@@ -51,29 +51,58 @@ function fetch(url, opts) {
 
 globalThis.TMDB_API_KEY = "__NUVIO_TMDB_API_KEY__";
 
-// cheerio subset: `$(sel).attr()/.text()/.html()/.each()/.eq()` only. `kino.html.select` is flat (no
-// DOM to walk), so anything that traverses the tree throws a clear error instead of silently
+// cheerio subset: `$(selector)` queries the loaded document; `$(el)`/`$(matches)` wraps an existing
+// element or result set instead of re-querying, so `$(this)`/`$(el)` inside `.each` work the way real
+// scrapers use them. `kino.html.select` is flat (no DOM to walk), so `.find(sel)` is answered the only
+// honest way available: re-selecting inside each matched element's own INNER html
+// ([PluginHtml]/`kino.html.select`'s `html` field) and unioning the results. Anything that needs an
+// actual parent/sibling pointer has no translation and throws a clear error instead of silently
 // returning the wrong node (spec §8: "recorrido de HTML complejo").
+var __NUVIO_CHEERIO_NO_TRANSLATION = ["parent", "parents", "next", "prev", "siblings", "closest", "children"];
 var __nuvioCheerio = {
   load: function (html) {
-    return function (selector) {
-      var matches = kino.html.select(html, selector);
+    // A "match" is what `kino.html.select` returns per element: `{ text, html (INNER html), attrs }`.
+    function resultSet(matches) {
       var api = {
         length: matches.length,
         attr: function (name) { return matches.length ? matches[0].attrs[name] : undefined; },
-        text: function () { return matches.length ? matches[0].text : ""; },
+        // cheerio's own `.text()` on a SET concatenates every matched element's text; `.attr()`/
+        // `.html()` only ever look at the first element, matching cheerio too.
+        text: function () { var out = ""; for (var i = 0; i < matches.length; i++) out += matches[i].text; return out; },
         html: function () { return matches.length ? matches[0].html : null; },
-        each: function (fn) { matches.forEach(function (m, i) { fn.call(m, i, m); }); return api; },
-        eq: function (i) {
-          var m = matches[i];
-          return { attr: function (n) { return m ? m.attrs[n] : undefined; }, text: function () { return m ? m.text : ""; } };
+        each: function (fn) { for (var i = 0; i < matches.length; i++) fn.call(matches[i], i, matches[i]); return api; },
+        map: function (fn) {
+          var out = [];
+          for (var i = 0; i < matches.length; i++) out.push(fn.call(matches[i], i, matches[i]));
+          return { get: function () { return out; }, toArray: function () { return out; } };
         },
-        parent: function () { throw new Error("Nuvio compat: cheerio .parent() has no translation"); },
-        next: function () { throw new Error("Nuvio compat: cheerio .next() has no translation"); },
-        siblings: function () { throw new Error("Nuvio compat: cheerio .siblings() has no translation"); },
-        find: function () { throw new Error("Nuvio compat: cheerio .find() on a result set has no translation"); },
+        eq: function (i) { return resultSet(i >= 0 && i < matches.length ? [matches[i]] : []); },
+        first: function () { return api.eq(0); },
+        last: function () { return api.eq(matches.length - 1); },
+        get: function (i) { return i === undefined ? matches.slice() : matches[i]; },
+        toArray: function () { return matches.slice(); },
+        find: function (selector) {
+          var found = [];
+          for (var i = 0; i < matches.length; i++) {
+            var inner = kino.html.select(matches[i].html, selector);
+            for (var j = 0; j < inner.length; j++) found.push(inner[j]);
+          }
+          return resultSet(found);
+        },
+        __nuvioMatches: matches,
       };
+      __NUVIO_CHEERIO_NO_TRANSLATION.forEach(function (name) {
+        api[name] = function () { throw new Error("Nuvio compat: cheerio ." + name + "() has no translation"); };
+      });
       return api;
+    }
+    return function (selectorOrElement) {
+      if (typeof selectorOrElement === "string") return resultSet(kino.html.select(html, selectorOrElement));
+      // `$(this)`/`$(el)` inside `.each`, or re-wrapping an earlier result set/array of raw elements.
+      if (selectorOrElement && Array.isArray(selectorOrElement.__nuvioMatches)) return resultSet(selectorOrElement.__nuvioMatches);
+      if (Array.isArray(selectorOrElement)) return resultSet(selectorOrElement);
+      if (selectorOrElement && typeof selectorOrElement === "object") return resultSet([selectorOrElement]);
+      return resultSet([]);
     };
   },
 };

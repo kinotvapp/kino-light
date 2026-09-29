@@ -3,14 +3,17 @@ package com.arkiv.player.data.plugin
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * A real-device gap found in a phone test of the Nuvio importer (spec §5.2 follow-up): the shim's
- * `fetch` didn't give scraper code the browser Fetch API's PROMISE-returning
- * `response.json()`/`.text()` -- MoviesDrive silently fell back to a stale domain instead of
- * crashing, because `response.json().then(...)` threw "not a function". Runs the generated
- * `plugin.js` through the REAL QuickJS sandbox, same pattern as [NuvioPluginConverterTest].
+ * The two real-device gaps found in a phone test of the Nuvio importer (spec §5.2 follow-up): the
+ * shim's `fetch` didn't give scraper code the browser Fetch API's PROMISE-returning
+ * `response.json()`/`.text()` (MoviesDrive silently fell back to a stale domain instead of crashing:
+ * `response.json().then(...)` threw "not a function"), and its flat cheerio subset had no `.find()`
+ * or `$(el)` at all (AllWish: "cheerio .find() on a result set has no translation"). Both run the
+ * generated `plugin.js` through the REAL QuickJS sandbox, same pattern as [NuvioPluginConverterTest].
  */
 class NuvioShimCompatTest {
     private val scraper = NuvioScraperEntry(
@@ -110,5 +113,61 @@ class NuvioShimCompatTest {
         """.trimIndent()
         val url = resolvedUrl(source, FakeFetchHost("{}", headers = mapOf("content-type" to "application/json")))
         assertEquals("https://cdn.example/application/json/null", url)
+    }
+
+    // ---- Fix 2: cheerio's $(el) inside .each, .find() over a result set, .text()/.first()/.eq() ----
+
+    private val listHtml = """<div class="item"><a href="/movie/1">One</a></div><div class="item"><a href="/movie/2">Two</a></div>"""
+
+    @Test fun `dollar of el inside each, find, attr, text on a set, and first-eq all work over a real result set`() {
+        val source = """
+            var cheerio = require("cheerio");
+            function getStreams() {
+              return fetch("https://cheeriocheck.example/list").then(function (r) { return r.text(); }).then(function (html) {
+                var ${'$'} = cheerio.load(html);
+                var hrefs = [];
+                ${'$'}(".item").each(function (i, el) { hrefs.push(${'$'}(el).find("a").attr("href")); });
+                var text = ${'$'}(".item").text();
+                var firstClass = ${'$'}(".item").first().attr("class");
+                var secondHref = ${'$'}(".item").eq(1).find("a").attr("href");
+                var findLen = ${'$'}(".item").find("a").length;
+                return [{ name: "x", title: "t", url: [hrefs.join(","), text, firstClass, secondHref, findLen].join("|") }];
+              });
+            }
+            module.exports = { getStreams: getStreams };
+        """.trimIndent()
+        val url = resolvedUrl(source, FakeFetchHost(listHtml))
+        assertEquals("/movie/1,/movie/2|OneTwo|item|/movie/2|2", url)
+    }
+
+    @Test fun `find over a set where only one element matches still unions what does match, length reflects the union`() {
+        val html = """<div class="item">no link here</div><div class="item"><a href="/movie/9">Nine</a></div>"""
+        val source = """
+            var cheerio = require("cheerio");
+            function getStreams() {
+              return fetch("https://cheeriocheck.example/sparse").then(function (r) { return r.text(); }).then(function (html) {
+                var ${'$'} = cheerio.load(html);
+                var found = ${'$'}(".item").find("a");
+                return [{ name: "x", title: "t", url: "https://cdn.example/" + found.length + "/" + found.attr("href") }];
+              });
+            }
+            module.exports = { getStreams: getStreams };
+        """.trimIndent()
+        val url = resolvedUrl(source, FakeFetchHost(html))
+        assertEquals("https://cdn.example/1//movie/9", url)
+    }
+
+    @Test fun `a still-unsupported cheerio traversal method keeps throwing a clear error`() {
+        val source = """
+            var cheerio = require("cheerio");
+            function getStreams() {
+              var ${'$'} = cheerio.load("<div class=\"item\"><a href=\"/x\">x</a></div>");
+              ${'$'}(".item").parent();
+              return [];
+            }
+            module.exports = { getStreams: getStreams };
+        """.trimIndent()
+        val e = assertThrows(PluginScriptException::class.java) { resolvedUrl(source, FakeFetchHost("")) }
+        assertTrue("expected the clear no-translation message, got: ${e.message}", e.message.orEmpty().contains("has no translation"))
     }
 }

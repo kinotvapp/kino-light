@@ -101,7 +101,7 @@ class NuvioPluginConverterTest {
     }
 
     @Test fun `warnings reach the manifest description the consent sheet shows`() {
-        val cheerioSource = realisticSource.replace(".each(", ".find(\"a\").each(")
+        val cheerioSource = realisticSource.replace(".each(", ".parent().each(")
         val remote = NuvioRemoteHosts(emptyList(), (1..30).map { "mirror$it.example" })
         val longName = scraper.copy(name = "N".repeat(80))
         val result = NuvioPluginConverter.convert(longName, cheerioSource, repoSlug = "an-owner-with-a-long-name/a-very-long-repository-name", tmdbApiKey = "k", remoteHosts = remote)
@@ -111,15 +111,20 @@ class NuvioPluginConverterTest {
         assertTrue(description.length <= ManifestParser.MAX_DESCRIPTION_CHARS)
     }
 
-    @Test fun `the cheerio warning catches find, and stays quiet for a scraper without cheerio`() {
-        val withFind = """
+    @Test fun `the cheerio warning no longer fires for find alone, but still fires for parent`() {
+        // .find(sel) IS supported now (Fix 2: unions kino.html.select over each match's inner html),
+        // so a scraper using only that gets no warning, even though it uses cheerio.
+        val withFindOnly = """
             var cheerio = require("cheerio-without-node-native");
             function getStreams() { var ${'$'} = cheerio.load(""); return ${'$'}("h5").find("a[href]"); }
             module.exports = { getStreams: getStreams };
             var u = "https://a.example";
         """.trimIndent()
-        assertEquals(1, NuvioPluginConverter.convert(scraper, withFind, repoSlug = "o/r", tmdbApiKey = "k").warnings.size)
-        // Array.prototype.find in a scraper that never touches cheerio is not a warning.
+        assertTrue(NuvioPluginConverter.convert(scraper, withFindOnly, repoSlug = "o/r", tmdbApiKey = "k").warnings.isEmpty())
+        // .parent() still has no translation and still warns.
+        val withParent = withFindOnly.replace(".find(\"a[href]\")", ".parent()")
+        assertEquals(1, NuvioPluginConverter.convert(scraper, withParent, repoSlug = "o/r", tmdbApiKey = "k").warnings.size)
+        // Array.prototype.find in a scraper that never touches cheerio is not a warning either way.
         val noCheerio = """var u = "https://a.example"; var x = [1].find(function (v) { return v; });"""
         assertTrue(NuvioPluginConverter.convert(scraper, noCheerio, repoSlug = "o/r", tmdbApiKey = "k").warnings.isEmpty())
     }

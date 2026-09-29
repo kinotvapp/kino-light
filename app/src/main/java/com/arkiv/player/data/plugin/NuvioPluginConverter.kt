@@ -34,12 +34,14 @@ data class NuvioConversionResult(val script: String, val manifestJson: String, v
  */
 object NuvioPluginConverter {
     /**
-     * cheerio calls that walk the DOM: [PluginHtml]'s flat match list has no tree to walk, so these
-     * have no translation (see `nuvio-shim.js`). `.find(` is the most common of them in real scrapers
-     * (`$(el).find("a[href]")`). Only checked when the scraper uses cheerio at all: `.find(`/`.next(`
-     * alone also match `Array.prototype.find` and esbuild's own `generator.next(...)` helper.
+     * cheerio calls that walk the DOM via a parent/sibling pointer: [PluginHtml]'s flat match list has
+     * no tree to walk, so these have no translation and always throw (see `nuvio-shim.js`).
+     * `.find(sel)` is NOT here: the shim answers it by re-selecting inside each matched element's own
+     * inner HTML, which works for the vast majority of real scraper code (`$(el).find("a[href]")`).
+     * Only checked when the scraper uses cheerio at all: `.next(`/`.children(` alone also match
+     * esbuild's own `generator.next(...)` helper and plain array/object property names.
      */
-    private val CHEERIO_TRAVERSAL = Regex("""\.(find|parent|parents|next|prev|siblings|closest|children)\s*\(""")
+    private val CHEERIO_TRAVERSAL = Regex("""\.(parent|parents|next|prev|siblings|closest|children)\s*\(""")
 
     fun convert(
         scraper: NuvioScraperEntry,
@@ -69,7 +71,7 @@ object NuvioPluginConverter {
 
         val warnings = buildList {
             if ("cheerio" in scraperSource && CHEERIO_TRAVERSAL.containsMatchIn(scraperSource)) {
-                add("Aviso: usa funciones de cheerio (.find/.parent/.next…) que podrían no funcionar del todo.")
+                add("Aviso: usa funciones de cheerio (.parent/.next/.siblings…) que podrían no funcionar del todo.")
             }
             if (candidates.size > ManifestParser.MAX_HOSTS) {
                 add("Aviso: se detectaron más de ${ManifestParser.MAX_HOSTS} dominios; algunos quedaron fuera.")
