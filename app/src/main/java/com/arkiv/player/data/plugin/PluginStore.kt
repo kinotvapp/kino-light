@@ -145,9 +145,11 @@ class PluginStore(private val root: File, private val dataRoot: File) {
         staging: File,
         id: String,
         isUpdate: Boolean,
-        build: (InstalledRecord?) -> InstalledRecord,
+        build: (StoredPlugin?) -> InstalledRecord,
     ): InstalledRecord {
-        val previous = get(id)?.record
+        // The whole previous install, not only its record: its manifest is what tells a host the
+        // person approved reactively apart from one the old version declared (see PluginInstaller).
+        val previous = get(id)
         if (isUpdate && previous == null) throw InstallException("El plugin se desinstaló mientras se actualizaba")
         val record = build(previous)
         File(staging, RECORD_FILE).writeText(record.toJson())
