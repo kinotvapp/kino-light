@@ -436,13 +436,17 @@ class PluginHttp(
                         null -> Unit
                     }
                 }
+                // Removed BEFORE completing, on both paths: a loser resumed by the completion (on a
+                // dispatcher that resumes it inline, or on another thread before this one gets further)
+                // and looping back to computeIfAbsent must never find this already-completed entry again
+                // -- it would await it, get the same cancellation at once, and spin until the removal ran.
+                pendingApprovals.remove(host, winning)
                 winning.complete(answer)
                 return answer
             } catch (e: Throwable) {
+                pendingApprovals.remove(host, winning)
                 winning.completeExceptionally(e)
                 throw e
-            } finally {
-                pendingApprovals.remove(host, winning)
             }
         }
     }
