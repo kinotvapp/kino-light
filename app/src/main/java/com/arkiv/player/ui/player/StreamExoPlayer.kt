@@ -48,6 +48,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.ui.SubtitleView
+import com.arkiv.player.playback.withAudioFocus
 import com.arkiv.player.playback.LiveErrorKind
 import com.arkiv.player.playback.MpegTs
 import com.arkiv.player.playback.SourceKind
@@ -324,6 +325,7 @@ internal fun StreamExoPlayer(
         val player = ExoPlayer.Builder(context, fallbackRenderers(context))
             .setMediaSourceFactory(mediaSourceFactory)
             .setLoadControl(loadControl)
+            .withAudioFocus()
             .build()
         val built = PreparedSource(player, mediaItem, mediaSourceFactory, drmSoftwareLevelRefused)
         // Unchanged from before audio tracks existed when [audioTracks] is empty: same mediaItem,

@@ -41,6 +41,7 @@ import androidx.media3.exoplayer.source.BehindLiveWindowException
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.arkiv.player.crash.Crash
 import com.arkiv.player.crash.LiveDecoderSwitched
+import com.arkiv.player.playback.withAudioFocus
 import com.arkiv.player.playback.DecoderWatchdog
 import com.arkiv.player.playback.InPlaceRecoveryBudget
 import com.arkiv.player.playback.LiveDecoderMemory
@@ -149,6 +150,7 @@ internal fun LiveExoPlayer(
 
         ExoPlayer.Builder(context, liveRenderers(context, preferSoftware = software))
             .setMediaSourceFactory(DefaultMediaSourceFactory(httpFactory))
+            .withAudioFocus()
             .build()
             .also { player ->
                 player.setMediaItem(mediaItem)
