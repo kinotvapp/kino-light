@@ -45,7 +45,7 @@ class LiveHlsProxyTest {
         ))
         upstream.start()
 
-        val proxy = LiveHlsProxy(FakeSignatures())
+        val proxy = LiveHlsProxy(FakeSignatures(), dns = okhttp3.Dns.SYSTEM)
         val port = proxy.start()
         val session = LiveSession(
             cflHost = "${upstream.hostName}:${upstream.port}",
@@ -67,7 +67,7 @@ class LiveHlsProxyTest {
         upstream.enqueue(MockResponse().setBody("#EXTM3U\n"))
         upstream.start()
 
-        val proxy = LiveHlsProxy(FakeSignatures())
+        val proxy = LiveHlsProxy(FakeSignatures(), dns = okhttp3.Dns.SYSTEM)
         proxy.start()
         val session = LiveSession("${upstream.hostName}:${upstream.port}",
             "http://x/?a=1&token=${"A".repeat(32)}", "LIC", "c", 0)
@@ -97,7 +97,7 @@ class LiveHlsProxyTest {
         upstream.start()
 
         val signatures = FakeSignatures()
-        val proxy = LiveHlsProxy(signatures)
+        val proxy = LiveHlsProxy(signatures, dns = okhttp3.Dns.SYSTEM)
         proxy.start()
         val session = LiveSession("${upstream.hostName}:${upstream.port}",
             "http://x/?a=1&token=${"A".repeat(32)}", "LIC", "c", 0)
@@ -127,7 +127,7 @@ class LiveHlsProxyTest {
         upstream.start()
 
         val signatures = FakeSignatures()
-        val proxy = LiveHlsProxy(signatures)
+        val proxy = LiveHlsProxy(signatures, dns = okhttp3.Dns.SYSTEM)
         proxy.start()
         val session = LiveSession("${upstream.hostName}:${upstream.port}",
             "http://x/?a=1&token=${"A".repeat(32)}", "LIC", "c", 0)
@@ -153,7 +153,7 @@ class LiveHlsProxyTest {
         upstream.start()
 
         val deadChannels = CopyOnWriteArrayList<String>()
-        val proxy = LiveHlsProxy(FakeSignatures(), onSessionDead = { deadChannels.add(it) })
+        val proxy = LiveHlsProxy(FakeSignatures(), onSessionDead = { deadChannels.add(it) }, dns = okhttp3.Dns.SYSTEM)
         proxy.start()
         val session = LiveSession("${upstream.hostName}:${upstream.port}",
             "http://x/?a=1&token=${"A".repeat(32)}", "LIC", "canal-x", 0)
@@ -171,7 +171,7 @@ class LiveHlsProxyTest {
         upstream.start()
 
         val deadChannels = CopyOnWriteArrayList<String>()
-        val proxy = LiveHlsProxy(FakeSignatures(), onSessionDead = { deadChannels.add(it) })
+        val proxy = LiveHlsProxy(FakeSignatures(), onSessionDead = { deadChannels.add(it) }, dns = okhttp3.Dns.SYSTEM)
         proxy.start()
         val session = LiveSession("${upstream.hostName}:${upstream.port}",
             "http://x/?a=1&token=${"A".repeat(32)}", "LIC", "c", 0)
@@ -206,7 +206,7 @@ class LiveHlsProxyTest {
                 return LiveSignature(1000L, "evil-sig")
             }
         }
-        proxy = LiveHlsProxy(signatureThatKillsTheSession)
+        proxy = LiveHlsProxy(signatureThatKillsTheSession, dns = okhttp3.Dns.SYSTEM)
         proxy.start()
         val session = LiveSession("${upstream.hostName}:${upstream.port}",
             "http://x/?a=1&token=${"A".repeat(32)}", "LIC", "c", 0)
@@ -248,7 +248,7 @@ class LiveHlsProxyTest {
         ))
         upstream.start()
 
-        val proxy = LiveHlsProxy(FakeSignatures())
+        val proxy = LiveHlsProxy(FakeSignatures(), dns = okhttp3.Dns.SYSTEM)
         proxy.start()
         val session = LiveSession(
             cflHost = "${upstream.hostName}:${upstream.port}",
@@ -285,7 +285,7 @@ class LiveHlsProxyTest {
         ))
         upstream.start()
 
-        val proxy = LiveHlsProxy(FakeSignatures())
+        val proxy = LiveHlsProxy(FakeSignatures(), dns = okhttp3.Dns.SYSTEM)
         proxy.start()
         val session = LiveSession(
             cflHost = "${upstream.hostName}:${upstream.port}",
@@ -316,7 +316,7 @@ class LiveHlsProxyTest {
      */
     @Test
     fun `stop closes the ServerSocket and releases the port`() {
-        val proxy = LiveHlsProxy(FakeSignatures())
+        val proxy = LiveHlsProxy(FakeSignatures(), dns = okhttp3.Dns.SYSTEM)
         val port = proxy.start()
         assertEquals(port, proxy.port)
 
@@ -342,7 +342,7 @@ class LiveHlsProxyTest {
     /** `stop()` without ever calling `start()`, and calling it twice in a row, must not throw. */
     @Test
     fun `stop is idempotent`() {
-        val proxy = LiveHlsProxy(FakeSignatures())
+        val proxy = LiveHlsProxy(FakeSignatures(), dns = okhttp3.Dns.SYSTEM)
         proxy.stop() // never started: must not blow up
         assertEquals(-1, proxy.port)
 
@@ -359,7 +359,7 @@ class LiveHlsProxyTest {
      */
     @Test
     fun `lanUrl with no channel open returns null`() {
-        val proxy = LiveHlsProxy(FakeSignatures())
+        val proxy = LiveHlsProxy(FakeSignatures(), dns = okhttp3.Dns.SYSTEM)
         assertEquals(null, proxy.lanUrl("192.168.1.50"))
     }
 
@@ -375,7 +375,7 @@ class LiveHlsProxyTest {
         upstream.enqueue(MockResponse().setBody("#EXTM3U\n"))
         upstream.start()
 
-        val proxy = LiveHlsProxy(FakeSignatures())
+        val proxy = LiveHlsProxy(FakeSignatures(), dns = okhttp3.Dns.SYSTEM)
         val session = LiveSession("${upstream.hostName}:${upstream.port}",
             "http://x/?a=1&token=${"A".repeat(32)}", "LIC", "c", 0)
         val local = proxy.urlFor(session)
@@ -403,7 +403,7 @@ class LiveHlsProxyTest {
         upstream.enqueue(MockResponse().setBody("#EXTM3U\n"))
         upstream.start()
 
-        val proxy = LiveHlsProxy(FakeSignatures())
+        val proxy = LiveHlsProxy(FakeSignatures(), dns = okhttp3.Dns.SYSTEM)
         val session = LiveSession("${upstream.hostName}:${upstream.port}",
             "http://x/?a=1&token=${"A".repeat(32)}", "LIC", "c", 0)
         val (code, _) = read(proxy.urlFor(session))
@@ -427,7 +427,7 @@ class LiveHlsProxyTest {
         upstream.enqueue(MockResponse().setBody("#EXTM3U\n"))
         upstream.start()
 
-        val proxy = LiveHlsProxy(FakeSignatures())
+        val proxy = LiveHlsProxy(FakeSignatures(), dns = okhttp3.Dns.SYSTEM)
         val session = LiveSession("${upstream.hostName}:${upstream.port}",
             "http://x/?a=1&token=${"A".repeat(32)}", "LIC", "c", 0)
         proxy.urlFor(session) // starts the server and sets the session; the URL with the token is ignored
@@ -446,7 +446,7 @@ class LiveHlsProxyTest {
         upstream.enqueue(MockResponse().setBody("#EXTM3U\n"))
         upstream.start()
 
-        val proxy = LiveHlsProxy(FakeSignatures())
+        val proxy = LiveHlsProxy(FakeSignatures(), dns = okhttp3.Dns.SYSTEM)
         val session = LiveSession("${upstream.hostName}:${upstream.port}",
             "http://x/?a=1&token=${"A".repeat(32)}", "LIC", "c", 0)
         proxy.urlFor(session)
@@ -466,7 +466,7 @@ class LiveHlsProxyTest {
         ))
         upstream.start()
 
-        val proxy = LiveHlsProxy(FakeSignatures())
+        val proxy = LiveHlsProxy(FakeSignatures(), dns = okhttp3.Dns.SYSTEM)
         val session = LiveSession("${upstream.hostName}:${upstream.port}",
             "http://x/?a=1&token=${"A".repeat(32)}", "LIC", "c", 0)
         val (_, body) = read(proxy.urlFor(session))
@@ -496,7 +496,7 @@ class LiveHlsProxyTest {
         ))
         upstream.enqueue(MockResponse().setBody("segment-content"))
 
-        val proxy = LiveHlsProxy(FakeSignatures())
+        val proxy = LiveHlsProxy(FakeSignatures(), dns = okhttp3.Dns.SYSTEM)
         val session = LiveSession("${upstream.hostName}:${upstream.port}",
             "http://x/?a=1&token=${"A".repeat(32)}", "LIC", "c", 0)
         val (playlistCode, body) = read(proxy.urlFor(session))
@@ -539,7 +539,7 @@ class LiveHlsProxyTest {
         upstream.enqueue(MockResponse().setBody("#EXTM3U\n"))
         upstream.start()
 
-        val proxy = LiveHlsProxy(FakeSignatures())
+        val proxy = LiveHlsProxy(FakeSignatures(), dns = okhttp3.Dns.SYSTEM)
         val session = LiveSession("${upstream.hostName}:${upstream.port}",
             "http://x/?a=1&token=${"A".repeat(32)}", "LIC", "c", 0)
         val local = proxy.urlFor(session) // bindLan=true inside, see its KDoc
@@ -581,7 +581,7 @@ class LiveHlsProxyTest {
         ))
         upstream.start()
 
-        val proxy = LiveHlsProxy(FakeSignatures())
+        val proxy = LiveHlsProxy(FakeSignatures(), dns = okhttp3.Dns.SYSTEM)
         val session = LiveSession("${upstream.hostName}:${upstream.port}",
             "http://x/?a=1&token=${"A".repeat(32)}", "LIC", "c", 0)
         val local = proxy.urlFor(session) // bindLan=true inside, see its KDoc
@@ -650,7 +650,7 @@ class LiveHlsProxyTest {
         upstream.enqueue(MockResponse().setBody("#EXTM3U\n#EXTINF:6,\nseg1.ts\n"))
         upstream.start()
 
-        val proxy = LiveHlsProxy(FakeSignatures())
+        val proxy = LiveHlsProxy(FakeSignatures(), dns = okhttp3.Dns.SYSTEM)
         proxy.start()
         val session = LiveSession(
             cflHost = "${upstream.hostName}:${upstream.port}",
@@ -685,7 +685,7 @@ class LiveHlsProxyTest {
         good.enqueue(MockResponse().setBody("#EXTM3U\n#EXTINF:6,\nseg1.ts\n"))
         good.start()
 
-        val proxy = LiveHlsProxy(FakeSignatures())
+        val proxy = LiveHlsProxy(FakeSignatures(), dns = okhttp3.Dns.SYSTEM)
         proxy.start()
         val session = LiveSession(
             cflHost = "${bad.hostName}:${bad.port}",
@@ -711,7 +711,7 @@ class LiveHlsProxyTest {
         repeat(4) { bad.enqueue(MockResponse().setResponseCode(401)) }
         bad.start()
 
-        val proxy = LiveHlsProxy(FakeSignatures())
+        val proxy = LiveHlsProxy(FakeSignatures(), dns = okhttp3.Dns.SYSTEM)
         proxy.start()
         val session = LiveSession(
             cflHost = "${bad.hostName}:${bad.port}",
@@ -764,7 +764,7 @@ class LiveHlsProxyTest {
         }
         upstream.start()
 
-        val proxy = LiveHlsProxy(FakeSignatures())
+        val proxy = LiveHlsProxy(FakeSignatures(), dns = okhttp3.Dns.SYSTEM)
         proxy.start()
         val session = LiveSession("${upstream.hostName}:${upstream.port}",
             "http://x/?a=1&token=${"A".repeat(32)}", "LIC", "c", 0)
@@ -796,7 +796,7 @@ class LiveHlsProxyTest {
         }
         upstream.start()
 
-        val proxy = LiveHlsProxy(FakeSignatures())
+        val proxy = LiveHlsProxy(FakeSignatures(), dns = okhttp3.Dns.SYSTEM)
         proxy.start()
         val session = LiveSession("${upstream.hostName}:${upstream.port}",
             "http://x/?a=1&token=${"A".repeat(32)}", "LIC", "c", 0)
@@ -832,7 +832,7 @@ class LiveHlsProxyTest {
         }
         second.start()
 
-        val proxy = LiveHlsProxy(FakeSignatures())
+        val proxy = LiveHlsProxy(FakeSignatures(), dns = okhttp3.Dns.SYSTEM)
         proxy.start()
         val auth = "http://x/?a=1&token=${"A".repeat(32)}"
         val session = LiveSession(
@@ -869,7 +869,7 @@ class LiveHlsProxyTest {
         }
         upstream.start()
 
-        val proxy = LiveHlsProxy(FakeSignatures())
+        val proxy = LiveHlsProxy(FakeSignatures(), dns = okhttp3.Dns.SYSTEM)
         proxy.start()
         val session = LiveSession("${upstream.hostName}:${upstream.port}",
             "http://x/?a=1&token=${"A".repeat(32)}", "LIC", "c", 0)
@@ -891,7 +891,7 @@ class LiveHlsProxyTest {
         upstream.start()
 
         val dead = CopyOnWriteArrayList<String>()
-        val proxy = LiveHlsProxy(FakeSignatures(), onSessionDead = { dead.add(it) })
+        val proxy = LiveHlsProxy(FakeSignatures(), onSessionDead = { dead.add(it) }, dns = okhttp3.Dns.SYSTEM)
         proxy.start()
         val session = LiveSession("${upstream.hostName}:${upstream.port}",
             "http://x/?a=1&token=${"A".repeat(32)}", "LIC", "canal-x", 0)
@@ -918,7 +918,7 @@ class LiveHlsProxyTest {
         good.start()
 
         val auth = "http://x/?a=1&token=${"A".repeat(32)}"
-        val proxy = LiveHlsProxy(FakeSignatures())
+        val proxy = LiveHlsProxy(FakeSignatures(), dns = okhttp3.Dns.SYSTEM)
         proxy.start()
         val session = LiveSession(
             cflHost = "${bad.hostName}:${bad.port}", authBase = auth,
