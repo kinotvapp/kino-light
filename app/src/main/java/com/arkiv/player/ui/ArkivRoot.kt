@@ -118,14 +118,23 @@ private val TABS = listOf(
  * live module has at least one provider ([liveModule], see `AppGraph.liveModule.available`):
  * Xuper while its plugin is on, plus any installed plugin with `channels`. Pure for the test.
  */
-internal fun visibleTabRoutes(isColombia: Boolean, liveModule: Boolean): List<String> =
+internal fun visibleTabRoutes(isColombia: Boolean, liveModule: Boolean, categoriesModule: Boolean = true): List<String> =
     TABS.map { it.route }.filter { route ->
         when (route) {
             "caracol" -> isColombia
             "live" -> liveModule
+            "categorias_home" -> categoriesModule
             else -> true
         }
     }
+
+/**
+ * "Categorías" is the Xuper catalog's genres and featured rows (`CategoriesViewModel`): with no usable Xuper
+ * plugin there is nothing to list, and other plugins' home rows never appear there. The tab (and the TV
+ * rail's entry) exists only while that plugin is usable.
+ */
+internal fun categoriesTabAvailable(plugins: List<com.arkiv.player.data.plugin.InstalledPlugin>): Boolean =
+    com.arkiv.player.ui.home.CategoriesViewModel.xuperPluginId(plugins) != null
 
 /** Whether tapping the top bar's logo goes to Inicio: on every section but Inicio itself. */
 internal fun logoGoesHome(currentRoute: String?): Boolean = currentRoute != null && currentRoute != "home"
@@ -147,8 +156,10 @@ fun ArkivRoot(
     val isColombia = remember { com.arkiv.player.ui.live.deviceCountry(context) == "CO" }
     // "En vivo" follows the live module (Xuper or any plugin with channels), without a restart.
     val liveOn by graph.liveModule.available.collectAsStateWithLifecycle()
-    val tabs = remember(isColombia, liveOn) {
-        val routes = visibleTabRoutes(isColombia, liveOn)
+    val installedForTabs by graph.pluginRegistry.plugins.collectAsStateWithLifecycle()
+    val categoriesOn = categoriesTabAvailable(installedForTabs)
+    val tabs = remember(isColombia, liveOn, categoriesOn) {
+        val routes = visibleTabRoutes(isColombia, liveOn, categoriesOn)
         TABS.filter { it.route in routes }
     }
 
@@ -477,7 +488,11 @@ fun ArkivRoot(
                 com.arkiv.player.ui.plugin.PluginsDrawerScreen(contentPadding = padding)
             }
             composable("categorias_home") {
-                com.arkiv.player.ui.home.CategoriesScreen(
+                // Guard, like "live": a route reached while Xuper is off (it was on screen when Xuper went, or restored
+                // state) goes back to Inicio instead of showing an empty screen.
+                if (!categoriesOn) {
+                    LaunchedEffect(Unit) { TABS.firstOrNull { it.route == "home" }?.let(::goToTab) }
+                } else com.arkiv.player.ui.home.CategoriesScreen(
                     contentPadding = padding,
                     onBrowse = { navController.navigate(com.arkiv.player.ui.plugin.PluginMoreTarget.route(it)) },
                 )
