@@ -142,10 +142,17 @@ class CompanionSyncEngine(
         peerJob = null
     }
 
+    /** The tables the peer's last hello listed; null until it has sent one. Overwritten by every hello, never reset on disconnect (a reset racing that hello would lose it). */
+    @Volatile private var peerTables: Set<String>? = null
+
+    private fun peerKnows(table: String): Boolean = table !in OPTIONAL_TABLES || peerTables?.contains(table) == true
+
     private suspend fun handleHello(env: Envelope) {
         val hello = SyncHello.fromPayload(env.payload)
+        peerTables = hello.since.keys.toSet()
         var overallHwm = 0L
         for (table in TABLES) {
+            if (!peerKnows(table)) continue
             val sentHwm = pushTable(table, hello.since[table] ?: 0L)
             if (sentHwm > overallHwm) overallHwm = sentHwm
         }
@@ -165,7 +172,7 @@ class CompanionSyncEngine(
 
     private suspend fun pushIncremental() {
         for (table in TABLES) {
-            pushIncrementalTable(table)
+            if (peerKnows(table)) pushIncrementalTable(table)
         }
     }
 
@@ -212,11 +219,17 @@ class CompanionSyncEngine(
 
     private companion object {
         /**
-         * The six tables that travel through companion sync -- pinned to match [SyncApply]'s
+         * The seven tables that travel through companion sync -- pinned to match [SyncApply]'s
          * `when(table)` cases. Mirrors (doesn't share: that one is `private`)
          * `com.arkiv.player.data.db.SyncTriggers.TABLES`.
          */
-        val TABLES = listOf("items", "episodes", "playback", "skip_markers", "live_favorites", "live_recents")
+        val TABLES = listOf("items", "episodes", "playback", "skip_markers", "live_favorites", "live_recents", "own_live_sources")
+
+        /**
+         * Tables added after the first six. An older peer's SyncApply throws on a table it does not
+         * know, so these are pushed only to a peer whose hello lists them (see [peerKnows]).
+         */
+        val OPTIONAL_TABLES = setOf("own_live_sources")
 
         const val PUSH_DEBOUNCE_MS = 3000L
     }

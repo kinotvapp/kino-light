@@ -237,6 +237,54 @@ class CompanionSyncEngineTest {
         engine.stop()
         testScheduler.advanceUntilIdle()
     }
+
+    /**
+     * An older build's `SyncApply` throws on a table it doesn't know, and the engine pushes a table
+     * to a peer unless told otherwise. A table added after the first six therefore only goes to a
+     * peer whose hello lists it.
+     */
+    @Test fun `a table added later is pushed only to a peer whose hello lists it`() = runTest {
+        val incoming = MutableSharedFlow<Envelope>(extraBufferCapacity = 8)
+        val changes = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
+        val sent = mutableListOf<Envelope>()
+        val source = FakeSyncSource()
+        source.addRow("own_live_sources", JSONObject().put("id", "s1").put("updatedAt", 10L))
+        source.addRow("playback", playbackRow(episodeId = "e1", updatedAt = 10))
+        val (apply, _) = fakeSyncApply()
+        val engine = CompanionSyncEngine(this, incoming, { sent += it }, source, apply, SyncCursorStore(FakeContext()), changes)
+        engine.start(MutableStateFlow<String?>(null))
+        testScheduler.advanceUntilIdle()
+
+        // An older build: its hello lists only the six tables it knows.
+        incoming.emit(newEnvelope(TYPE_SYNC_HELLO, SyncHello(mapOf("playback" to 0L)).toPayload()))
+        testScheduler.advanceUntilIdle()
+        fun tablesSent(): List<String> = sent.filter { it.type == TYPE_SYNC_ROWS }.map { SyncRows.fromPayload(it.payload).table }
+        assertEquals(listOf("playback"), tablesSent())
+
+        // The same peer after updating: its hello now lists the new table.
+        incoming.emit(newEnvelope(TYPE_SYNC_HELLO, SyncHello(mapOf("playback" to 0L, "own_live_sources" to 0L)).toPayload()))
+        testScheduler.advanceUntilIdle()
+        assertTrue("own_live_sources" in tablesSent())
+
+        engine.stop()
+        testScheduler.advanceUntilIdle()
+    }
+
+    @Test fun `our hello lists every table, the new one included`() = runTest {
+        val incoming = MutableSharedFlow<Envelope>(extraBufferCapacity = 8)
+        val sent = mutableListOf<Envelope>()
+        val (apply, _) = fakeSyncApply()
+        val engine = CompanionSyncEngine(
+            this, incoming, { sent += it }, FakeSyncSource(), apply, SyncCursorStore(FakeContext()),
+            MutableSharedFlow(extraBufferCapacity = 8),
+        )
+        engine.start(MutableStateFlow<String?>("peerA"))
+        testScheduler.advanceUntilIdle()
+        val hello = SyncHello.fromPayload(sent.first { it.type == TYPE_SYNC_HELLO }.payload)
+        assertTrue("own_live_sources" in hello.since.keys)
+        engine.stop()
+        testScheduler.advanceUntilIdle()
+    }
 }
 
 // ---- fakes ----
@@ -246,7 +294,7 @@ private fun playbackRow(
     updatedAt: Long,
     positionMs: Long = 1000,
     deleted: Boolean = false,
-) = JSONObject().apply {
+): JSONObject = JSONObject().apply {
     put("episodeId", episodeId)
     put("positionMs", positionMs)
     put("durationMs", 9000L)

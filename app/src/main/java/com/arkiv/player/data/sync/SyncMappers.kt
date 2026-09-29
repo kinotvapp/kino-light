@@ -1,5 +1,8 @@
 package com.arkiv.player.data.sync
 
+import com.arkiv.player.data.db.OwnLiveSourceEntity
+import com.arkiv.player.data.live.OwnSourceValidator
+import com.arkiv.player.data.live.OwnUrlCheck
 import com.arkiv.player.data.ChapterMarker
 import com.arkiv.player.data.db.EpisodeEntity
 import com.arkiv.player.data.db.ItemEntity
@@ -229,5 +232,40 @@ fun jsonToLiveRecent(json: JSONObject): LiveRecentEntity? {
         vistoAt = json.optLong("vistoAt"),
         updatedAt = json.optLong("updatedAt"),
         provider = provider,
+    )
+}
+
+fun ownLiveSourceToJson(e: OwnLiveSourceEntity): JSONObject = JSONObject().apply {
+    put("id", e.id)
+    put("kind", e.kind)
+    put("name", e.name)
+    put("url", e.url)
+    put("groupName", e.groupName)
+    put("logo", e.logo)
+    put("epgUrl", e.epgUrl)
+    put("userAgent", e.userAgent)
+    put("referer", e.referer)
+    put("refreshHours", e.refreshHours)
+    put("updatedAt", e.updatedAt)
+    put("deleted", e.deleted)
+}
+
+/**
+ * Null for a row this build must not store: a peer's garbled or hostile data (unknown kind, an id
+ * that isn't one path segment, a URL that fails [OwnSourceValidator] -- private host, `file:`...).
+ * The url is re-canonicalised so both devices hold the same text.
+ */
+fun jsonToOwnLiveSource(json: JSONObject): OwnLiveSourceEntity? {
+    val id = json.optString("id").takeIf { it.isNotEmpty() && ':' !in it } ?: return null
+    val kind = json.optString("kind").takeIf { it == "CHANNEL" || it == "PLAYLIST" } ?: return null
+    val name = json.optString("name").takeIf { it.isNotBlank() } ?: return null
+    val url = (OwnSourceValidator.checkUrl(json.optString("url")) as? OwnUrlCheck.Ok)?.url ?: return null
+    return OwnLiveSourceEntity(
+        id = id, kind = kind, name = name, url = url,
+        groupName = json.optStringOrNull("groupName"), logo = json.optStringOrNull("logo"),
+        epgUrl = json.optStringOrNull("epgUrl"), userAgent = json.optStringOrNull("userAgent"),
+        referer = json.optStringOrNull("referer"),
+        refreshHours = json.optInt("refreshHours").coerceIn(0, 168),
+        updatedAt = json.optLong("updatedAt"), deleted = json.optBoolean("deleted"),
     )
 }
