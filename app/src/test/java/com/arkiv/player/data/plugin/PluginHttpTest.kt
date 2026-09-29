@@ -189,6 +189,19 @@ class PluginHttpTest {
         assertEquals("sin tipo", http().fetch(PluginHttp.Request(url("/none"))).text)
     }
 
+    // Nuvio scrapers copy a browser's headers, "Accept-Encoding: gzip, deflate, br" included. Sent
+    // as is, OkHttp stops decompressing and the plugin got the gzip bytes as "text": PelisPlusHD's
+    // JSON.parse of TMDB's answer failed with "unexpected token" on the TV. The plugin can't
+    // decompress anything itself, so Kino keeps that header to itself and hands over plain text.
+    @Test fun `a plugin's own Accept-Encoding is not sent, and the answer arrives decompressed`() = runBlocking {
+        val json = "{\"title\":\"IntensaMente 2\"}"
+        val gz = Buffer().also { b -> okio.GzipSink(b).use { okio.Buffer().writeUtf8(json).let { src -> it.write(src, src.size) } } }
+        server.enqueue(MockResponse().setHeader("Content-Encoding", "gzip").setHeader("Content-Type", "application/json").setBody(gz))
+        val r = http().fetch(PluginHttp.Request(url("/m"), headers = mapOf("Accept-Encoding" to "gzip, deflate, br")))
+        assertEquals(json, r.text)
+        assertEquals("gzip", server.takeRequest().getHeader("Accept-Encoding"))
+    }
+
     @Test fun `each body kind is sent as the plugin asked`() = runBlocking {
         repeat(4) { server.enqueue(MockResponse().setBody("ok")) }
         val h = http()

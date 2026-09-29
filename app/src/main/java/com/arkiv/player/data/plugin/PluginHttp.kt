@@ -664,7 +664,13 @@ class PluginHttp(
         val REDIRECT_MODES = listOf("follow", "manual")
         private val BODY_METHODS = setOf("POST", "PUT", "PATCH")
         private val REDIRECTS = setOf(301, 302, 303, 307, 308)
-        private val FORBIDDEN_HEADERS = setOf("host", "content-length", "transfer-encoding", "connection", "cookie2")
+        /**
+         * Headers a plugin may not set. `accept-encoding`: Nuvio scrapers copy a browser's
+         * "gzip, deflate, br", and a request that sets it makes OkHttp stop decompressing, so the
+         * plugin got compressed bytes as text (PelisPlusHD: "unexpected token" parsing TMDB's JSON on
+         * the TV). OkHttp asks for gzip itself and hands the plugin plain text.
+         */
+        private val FORBIDDEN_HEADERS = setOf("host", "content-length", "transfer-encoding", "connection", "cookie2", "accept-encoding")
 
         /** The jar handles these; `kino.cookies.get` reads it. */
         private val HIDDEN_RESPONSE_HEADERS = setOf("set-cookie", "set-cookie2")

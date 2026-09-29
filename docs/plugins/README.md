@@ -753,7 +753,8 @@ seconds of your call's time. Ask for the form the content is.
   charset of its `Content-Type`, UTF-8 by default), and at most 60 requests in one call to your
   plugin, redirect hops included.
 - **Headers you set** are sent as given, except `Host`, `Content-Length`, `Transfer-Encoding`,
-  `Connection` and `Cookie2`. Unless you set `User-Agent`, Kino sends `Kino/<version> (plugin <id>)`.
+  `Connection`, `Cookie2` and `Accept-Encoding` (Kino asks for gzip itself and always hands you the
+  body decompressed; a copied browser `Accept-Encoding` would get you compressed bytes instead). Unless you set `User-Agent`, Kino sends `Kino/<version> (plugin <id>)`.
   A `Content-Type` header sets the type of the body.
 - **Cookies:** each plugin has its own cookie jar. Kino stores what your hosts set (`Set-Cookie`
   never reaches your code) and sends it back on later requests, following the usual rules (domain,
