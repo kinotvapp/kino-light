@@ -384,7 +384,8 @@ What it never allows:
   still be on your `hosts` (or the person's server);
 - subtitles, audio tracks and a `drm` block's `licenseUrl`: still your `hosts` only, and every
   redirect they make is judged the same way;
-- movies and episodes: a non-live `Stream` is checked exactly as before;
+- movies and episodes: a non-live `Stream` is checked exactly as before (unless the person granted
+  your plugin the broad video permission, see [The `Stream` rules](#what-you-return));
 - images: the poster rule (https, never local) does not change.
 
 The consent sheet shows it in red, "Puede reproducir canales desde cualquier servidor que indique su
@@ -543,6 +544,23 @@ It does **not** add a poster, a backdrop or seasons from TMDB -- those stay exac
   name, plain `http` or a stream broken in any other way is never asked about, and nothing is
   asked when nobody is watching (a download resolves exactly as before). Don't rely on it: declare
   the hosts your streams use.
+- **The person may let your video come from any server** (the *broad video permission*). The
+  video, subtitle and audio dialogs of a movie or an episode (at resolve time, and when the player
+  meets a new host mid-playback) have a third choice, "Permitir video de cualquier servidor". It is
+  the person's alone: no manifest field asks for it, and it is shown and revocable in Ajustes ▸
+  Plugins ("Puede reproducir video desde cualquier servidor", "Quitar permiso de video amplio").
+  An update or a reinstall keeps it; uninstalling drops it. While it is on, **in the player only**,
+  your movie or episode `Stream` is checked the way a live channel's is under
+  [`liveStreamHosts: "any"`](#channels-from-any-server-livestreamhosts-apiversion-3) -- the same
+  single rule: its `url`, everything its manifest names, every redirect hop, **and** its
+  `subtitles` and `audioTracks` may be on any public host, over `http` or `https`, a public IPv4
+  address included -- and no video host is ever asked about again for your plugin. It never
+  covers: the home network (private, loopback, link-local and CGNAT addresses, IPv6 literals,
+  local names, a public name that resolves into the LAN); a `drm` block's `licenseUrl` (still your
+  hosts only, asked about as above); `kino.fetch` (your own code still reaches only your hosts and
+  the ones approved one by one); live channels (their own rule); and downloads (a download resolves
+  and fetches exactly as without it). It exists for sources whose hosters change domain per video
+  or mid-playback; a plugin with a fixed CDN should still declare it.
 - `mime` is optional, of the form `video/mp4` (anything else refuses the stream). When it is missing
   Kino's player detects HLS, DASH or a plain file from the URL and the content.
 - **Everything the player fetches for the stream follows the `kino.fetch` host rules.** That covers the
@@ -934,7 +952,7 @@ does anything with season numbers or ordering: how a backend spells "season 2" i
 | --- | --- |
 | Manifest / entry file / icon | 16 KB / 1 MB / 128 KB |
 | Memory / stack, per plugin | 64 MB / 1 MB |
-| Time per call | `search` 15 s; `home`, `browse`, `episodes`, `resolve` 20 s each; `liveCategories`, `liveChannels`, `guide` 20 s each; counting all your fetches and sleeps together, but not the time the person spends answering a host question for that call |
+| Time per call | `search` 15 s; `home`, `browse`, `episodes`, `resolve` 20 s each (`resolve` of a plugin converted from a Nuvio scraper: 45 s); `liveCategories`, `liveChannels`, `guide` 20 s each; counting all your fetches and sleeps together, but not the time the person spends answering a host question for that call |
 | Loading the module (its top level) | 10 s |
 | Idle sandbox | closed after 5 minutes without calls |
 | Consecutive timeouts | 3 in a row and Kino disables the plugin ("No responde") |
@@ -1218,6 +1236,16 @@ To stay out of the search while keeping the topic, set `"discoverable": false`;
   adds "Puede descargar videos para verlos sin conexión", `drm` adds "Reproduce video protegido (DRM)",
   `channels` adds "Agrega canales en vivo a la pestaña En vivo", each `insecureHttp` host adds, in red, "Conexión sin cifrar con <host>", and `liveStreamHosts: "any"` adds, in red, "Puede reproducir canales desde cualquier servidor que indique su lista". Nothing of yours runs
   before they accept.
+- **Host dialogs.** A `kino.fetch` to an undeclared host during `resolve`/`episodes`, and an
+  undeclared host of the video the player opens or meets mid-playback, ask the person ("Rechazar" /
+  "Permitir"; the focus starts on "Rechazar"). For a movie's or episode's video, subtitles or audio
+  the dialog also offers "Permitir video de cualquier servidor" (see [The `Stream` rules](#what-you-return));
+  once chosen, the plugin's details say "Puede reproducir video desde cualquier servidor" next to
+  "Quitar permiso de video amplio".
+- **When a stream can't play**, the player says why in Spanish, never the player's own English: for
+  example "Este aparato no puede reproducir este formato de video (4K/HEVC)", "El servidor del video
+  respondió con un error" or "No se pudo reproducir este video". While `resolve` runs it shows
+  "Resolviendo fuente <name>…", and after 5 s "… buscando enlaces (N s)".
 - **Configurar.** A plugin with `settings` has a "Configurar" button in Ajustes ▸ Plugins. Until
   every required setting has a value its status is "Falta configurar" and nothing of it runs.
 - **Ver más.** A Home row with a `ref` ends in a "Ver más" card, and a search page with a `next`
