@@ -17,9 +17,9 @@ class PluginUpdateCoordinator(
         val record = store.get(id)?.record ?: return UpdateOutcome.Failed("El plugin no está instalado")
         if (record.nuvioScraperId == null) return kino.checkUpdate(id)
         // Unlike PluginInstaller.checkUpdate's own touch() helper -- which patches lastUpdateCheckAt
-        // on EVERY outcome -- NuvioPluginInstaller.checkUpdate (Task 5) only ever writes the record
-        // on Applied (through install()/commit()); UpToDate, NeedsApproval and Failed all leave it
-        // untouched (Task 5 review note). Patched here instead, unconditionally and after the fact
+        // on EVERY outcome -- NuvioPluginInstaller.checkUpdate never writes lastUpdateCheckAt itself
+        // (it only patches the pending-update fields, on UpToDate/NeedsApproval, or commits a fresh
+        // record on Applied; Failed writes nothing). Patched here instead, unconditionally and after the fact
         // (a fresh read/write via store.updateRecord, never a snapshot taken before the network call
         // above), so checkDueUpdates' "each plugin at most once per maxAgeMs" rule holds the same way
         // for a Nuvio-origin plugin as for any other -- without this, an already-current or

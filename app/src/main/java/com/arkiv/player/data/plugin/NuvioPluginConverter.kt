@@ -10,7 +10,7 @@ data class NuvioConversionResult(val script: String, val manifestJson: String, v
 /**
  * Turns one Nuvio scraper into a Kino plugin (spec §5): the compat shim ([PluginPrelude.nuvioShim])
  * + the scraper's own source, byte for byte, + a small adapter mapping Nuvio's
- * `getStreams(tmdbId, type, season, episode)` onto Kino's `search`/`resolve` (spec §6). Pure and
+ * `getStreams(tmdbId, mediaType, season, episode)` onto Kino's `search`/`resolve` (spec §6). Pure and
  * offline -- every network call (fetching the scraper's raw `.js`, the optional `domains.json`)
  * happens in `NuvioPluginInstaller`, before this runs.
  *
@@ -21,15 +21,20 @@ data class NuvioConversionResult(val script: String, val manifestJson: String, v
  * ([NuvioScraperEntry.filename]) is only ever fetched separately, as input to [convert].
  */
 object NuvioPluginConverter {
-    /** cheerio calls that walk the DOM: [PluginHtml]'s flat match list has no tree to walk, so these have no translation (see `nuvio-shim.js`). */
-    private val CHEERIO_TRAVERSAL = Regex("""\.(parent|next|siblings|closest)\s*\(""")
+    /**
+     * cheerio calls that walk the DOM: [PluginHtml]'s flat match list has no tree to walk, so these
+     * have no translation (see `nuvio-shim.js`). `.find(` is the most common of them in real scrapers
+     * (`$(el).find("a[href]")`). Only checked when the scraper uses cheerio at all: `.find(`/`.next(`
+     * alone also match `Array.prototype.find` and esbuild's own `generator.next(...)` helper.
+     */
+    private val CHEERIO_TRAVERSAL = Regex("""\.(find|parent|parents|next|prev|siblings|closest|children)\s*\(""")
 
     fun convert(
         scraper: NuvioScraperEntry,
         scraperSource: String,
         repoSlug: String,
-        extraHosts: List<String>,
         tmdbApiKey: String,
+        remoteHosts: NuvioRemoteHosts = NuvioRemoteHosts.NONE,
     ): NuvioConversionResult {
         val slug = scraper.id.lowercase().replace(Regex("[^a-z0-9-]"), "-").trim('-').ifEmpty { "scraper" }
         val hash = sha256Hex(repoSlug.toByteArray(Charsets.UTF_8)).take(6)
@@ -42,16 +47,20 @@ object NuvioPluginConverter {
         val maxSlugLen = (40 - idPrefix.length - idSuffix.length).coerceAtLeast(1)
         val id = idPrefix + slug.take(maxSlugLen).trimEnd('-').ifEmpty { "s" } + idSuffix
 
-        val hosts = (NuvioHostExtractor.extractHosts(scraperSource) + extraHosts)
+        // Priority order BEFORE the cap: the remote list's entries this scraper names (its current,
+        // rotated domain), then its own literals, then the rest of a shared remote list. Every
+        // candidate is validated first, so no garbage ever occupies one of the MAX_HOSTS slots.
+        val candidates = (remoteHosts.preferred + NuvioHostExtractor.extractHosts(scraperSource) + remoteHosts.others)
+            .filter(NuvioHostExtractor::isPlausibleHost)
             .distinct()
-            .take(ManifestParser.MAX_HOSTS)
+        val hosts = candidates.take(ManifestParser.MAX_HOSTS)
 
         val warnings = buildList {
-            if (CHEERIO_TRAVERSAL.containsMatchIn(scraperSource)) {
-                add("Este scraper usa funciones de cheerio que podrían no traducirse del todo (.parent()/.next()/.siblings()/.closest()).")
+            if ("cheerio" in scraperSource && CHEERIO_TRAVERSAL.containsMatchIn(scraperSource)) {
+                add("Aviso: usa funciones de cheerio (.find/.parent/.next…) que podrían no funcionar del todo.")
             }
-            if (hosts.size >= ManifestParser.MAX_HOSTS) {
-                add("Se detectaron 20 o más dominios; algunos podrían faltar (tope de hosts de Kino).")
+            if (candidates.size > ManifestParser.MAX_HOSTS) {
+                add("Aviso: se detectaron más de ${ManifestParser.MAX_HOSTS} dominios; algunos quedaron fuera.")
             }
         }
 
@@ -59,18 +68,32 @@ object NuvioPluginConverter {
         val script = shim + "\n\n" + scraperSource + "\n\n" + ADAPTER
 
         val manifestJson = JSONObject()
-            .put("id", id).put("name", scraper.name).put("version", "1.0.0").put("apiVersion", 1)
+            // Clipped to ManifestParser's own name limit: a longer Nuvio scraper name would otherwise make the whole manifest invalid.
+            .put("id", id).put("name", scraper.name.trim().take(ManifestParser.MAX_NAME_CHARS).trim().ifEmpty { scraper.id.take(ManifestParser.MAX_NAME_CHARS) })
+            .put("version", "1.0.0").put("apiVersion", 1)
             .put("entry", "plugin.js")
-            .put(
-                "description",
-                "Convertido automáticamente desde el plugin de Nuvio \"${scraper.name}\" ($repoSlug). " +
-                    "Licencia GPL-3.0 del código original. Los hosts se detectaron automáticamente y podrían estar incompletos.",
-            )
+            .put("description", description(scraper.name, repoSlug, warnings))
             .put("hosts", JSONArray(hosts))
             .put("capabilities", JSONArray(listOf("search", "resolve")))
             .toString()
 
         return NuvioConversionResult(script, manifestJson, hosts, warnings)
+    }
+
+    /**
+     * The consent sheet shows `description` as is, so the [warnings] ride in it: the spec wants them
+     * seen BEFORE installing, and this way the sheet itself needs no change. Built to fit
+     * [ManifestParser.MAX_DESCRIPTION_CHARS] (the parser silently truncates past it): origin +
+     * license first, then every warning, and only then the generic "hosts were auto-detected" caveat
+     * -- the one part dropped when it doesn't fit. [name]/[repoSlug] are clipped so the head plus both
+     * warnings always fit (≤ 137 + 1 + 88 + 1 + 65 chars).
+     */
+    private fun description(name: String, repoSlug: String, warnings: List<String>): String {
+        val max = ManifestParser.MAX_DESCRIPTION_CHARS
+        val head = "Convertido desde el plugin de Nuvio \"${name.take(30)}\" (${repoSlug.take(40)}); código original GPL-3.0."
+        val tail = "Los hosts se detectaron automáticamente y podrían estar incompletos."
+        val body = (listOf(head) + warnings).joinToString(" ")
+        return if (body.length + 1 + tail.length <= max) "$body $tail" else body.take(max)
     }
 
     private fun sha256Hex(bytes: ByteArray): String =
@@ -87,10 +110,22 @@ object NuvioPluginConverter {
      * calling `resolve` with it -- see `PluginContentSource.resolve`), but a plain object is accepted
      * too: nothing about this adapter's own contract requires the string encoding, only Kino's
      * particular caller does.
+     *
+     * The media type is TRANSLATED, never passed through: Kino's `query.type` is
+     * `"movie"`/`"series"`/`"any"` (`PluginContentSource.queryJson`), Nuvio's `getStreams` expects
+     * `"movie"`/`"tv"` (its manifests' own `supportedTypes`). `"any"` does reach `resolve` -- `search`
+     * encodes whatever type it was given into the ref -- so it's decided there from the episode
+     * fields: a season AND an episode mean a TV episode, anything else a movie.
      */
     private val ADAPTER = """
 
         var __nuvioGetStreams = module.exports.getStreams;
+
+        function __nuvioMediaType(type, season, episode) {
+          if (type === "series" || type === "tv") return "tv";
+          if (type === "movie") return "movie";
+          return (season > 0 && episode > 0) ? "tv" : "movie";
+        }
 
         export async function search(query) {
           if (!query.tmdbId) return [];
@@ -104,7 +139,7 @@ object NuvioPluginConverter {
 
         export async function resolve(ref) {
           var r = (typeof ref === "string") ? JSON.parse(ref) : ref;
-          var streams = (await __nuvioGetStreams(r.tmdbId, r.type, r.season, r.episode)) || [];
+          var streams = (await __nuvioGetStreams(r.tmdbId, __nuvioMediaType(r.type, r.season, r.episode), r.season, r.episode)) || [];
           var playable = streams.filter(function (s) { return s && s.url && !s.infoHash; });
           if (!playable.length) throw kino.error("unavailable", "solo torrents o sin resultados");
           var best = playable[0];

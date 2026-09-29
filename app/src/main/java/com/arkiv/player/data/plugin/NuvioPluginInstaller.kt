@@ -47,12 +47,15 @@ class NuvioPluginInstaller(
         }
 
         val domainsUrl = NuvioHostExtractor.findDomainsJsonUrl(scraperSource)
-        val extraHosts = domainsUrl?.let { url ->
+        val remoteHosts = domainsUrl?.let { url ->
             runCatching { fetcher.fetch(url, MAX_MANIFEST_BYTES).toString(Charsets.UTF_8) }
-                .getOrNull()?.let(::parseDomainsJson)
-        }.orEmpty()
+                .getOrNull()?.let { NuvioHostExtractor.parseDomainsJson(it, scraperSource) }
+        } ?: NuvioRemoteHosts.NONE
 
-        val conversion = NuvioPluginConverter.convert(scraper, scraperSource, repoSlug = address.canonical, extraHosts = extraHosts, tmdbApiKey = tmdbApiKey)
+        val conversion = NuvioPluginConverter.convert(scraper, scraperSource, repoSlug = address.canonical, tmdbApiKey = tmdbApiKey, remoteHosts = remoteHosts)
+        if (conversion.hosts.isEmpty()) {
+            throw InstallException("No encontré ningún dominio en el código de \"${scraper.name}\": no se puede convertir a un plugin de Kino")
+        }
         val manifestResult = ManifestParser.parse(conversion.manifestJson)
         val parsedManifest = (manifestResult as? ManifestResult.Valid)?.manifest
             ?: throw InstallException("El plugin generado no es válido: ${(manifestResult as ManifestResult.Invalid).message}")
@@ -74,6 +77,18 @@ class NuvioPluginInstaller(
      * generic `checkUpdate`/`previewFor` path, which defaults `nuvioOrigin` to null in
      * [PluginInstaller.diffAgainstInstalled] and would silently clear `nuvioRepo`/`nuvioScraperId`
      * off this record on commit (Task 4's review note).
+     *
+     * "Did anything change" is NOT a version comparison: the converter always writes `"1.0.0"`, so
+     * that would never see a scraper whose upstream code changed without adding a host. Instead the
+     * freshly converted script's sha256 is compared against the installed `record.sha256` (the same
+     * [sha256Hex] of the same bytes [PluginInstaller.commit] stored), together with the generated
+     * manifest itself (a `domains.json` rotation changes only the host list, not the script).
+     *
+     * The pending-update fields are written onto the record exactly like [PluginInstaller.checkUpdate]
+     * does -- set on `NeedsApproval`, cleared on `UpToDate` (and by the fresh record [install] commits
+     * on `Applied`) -- so `PluginRegistry` shows a background check's pending update as
+     * `UPDATE_PENDING` in Ajustes, not only when the person taps "Buscar actualizaciones".
+     * `lastUpdateCheckAt` stays [PluginUpdateCoordinator]'s job, on every outcome.
      */
     suspend fun checkUpdate(id: String): UpdateOutcome {
         val current = installer.store.get(id) ?: return UpdateOutcome.Failed("El plugin no está instalado")
@@ -84,8 +99,30 @@ class NuvioPluginInstaller(
         } catch (e: InstallException) {
             return UpdateOutcome.Failed(e.message.orEmpty())
         }
-        if (SemVer.compare(preview.manifest.version, current.record.version) <= 0 && preview.newHosts.isEmpty()) return UpdateOutcome.UpToDate
-        if (preview.newHosts.isNotEmpty() || preview.newPermissions.isNotEmpty() || preview.newCapabilities.isNotEmpty()) {
+        val script = preview.nuvioOrigin?.script ?: return UpdateOutcome.Failed("No es un plugin convertido de Nuvio")
+        val changed = sha256Hex(script) != current.record.sha256 || preview.manifest != current.manifest
+        // Patches onto whatever is on disk NOW (store.updateRecord's own fresh read), never onto
+        // `current`, read before previewScraper's network round trips -- same reason as PluginInstaller's touch().
+        fun patch(block: (InstalledRecord) -> InstalledRecord) { installer.store.updateRecord(id, block) }
+        if (!changed) {
+            patch {
+                it.copy(
+                    pendingVersion = null, pendingHosts = emptyList(), pendingPermissions = emptyList(),
+                    pendingCapabilities = emptyList(), pendingInsecureHosts = emptyList(), pendingLiveStreamHostsAny = false,
+                )
+            }
+            return UpdateOutcome.UpToDate
+        }
+        if (preview.newHosts.isNotEmpty() || preview.newPermissions.isNotEmpty() ||
+            preview.newCapabilities.isNotEmpty() || preview.newInsecureHosts.isNotEmpty() || preview.newLiveStreamHostsAny
+        ) {
+            patch {
+                it.copy(
+                    pendingVersion = preview.manifest.version, pendingHosts = preview.newHosts, pendingPermissions = preview.newPermissions,
+                    pendingCapabilities = preview.newCapabilities, pendingInsecureHosts = preview.newInsecureHosts,
+                    pendingLiveStreamHostsAny = preview.newLiveStreamHostsAny,
+                )
+            }
             return UpdateOutcome.NeedsApproval(preview)
         }
         return try {
@@ -95,15 +132,6 @@ class NuvioPluginInstaller(
             UpdateOutcome.Failed(e.message.orEmpty())
         }
     }
-
-    /** Nuvio's own `domains.json` files are plain arrays of domain strings; anything else parses to nothing. */
-    private fun parseDomainsJson(text: String): List<String> = runCatching {
-        val v = org.json.JSONTokener(text).nextValue()
-        when (v) {
-            is org.json.JSONArray -> (0 until v.length()).mapNotNull { v.optString(it).takeIf { s -> '.' in s } }
-            else -> emptyList()
-        }
-    }.getOrDefault(emptyList())
 
     companion object {
         const val MANIFEST_FILE = "manifest.json"

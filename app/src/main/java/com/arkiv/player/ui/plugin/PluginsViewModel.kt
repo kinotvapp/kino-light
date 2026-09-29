@@ -2,6 +2,7 @@ package com.arkiv.player.ui.plugin
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.arkiv.player.data.plugin.InstallException
 import com.arkiv.player.data.plugin.InstallPreview
 import com.arkiv.player.data.plugin.InstalledPlugin
 import com.arkiv.player.data.plugin.NuvioPluginInstaller
@@ -473,9 +474,24 @@ class PluginsViewModel(
     /**
      * Installs [plugin] again from the exact address it was installed from (a damaged one's way back):
      * the same preview and consent as any install, which the installer treats as an update of that plugin.
+     * Routed by origin, like `PluginUpdateCoordinator`: a Nuvio-converted plugin's address is the Nuvio
+     * repo, which has no `kino-plugin.json` for [admin]'s generic preview to read, so it is re-converted
+     * from its scraper through [nuvioPluginInstaller] instead.
      */
     fun reinstall(plugin: InstalledPlugin) {
-        busy(pluginId = null) { _state.update { it.copy(consent = admin.preview(plugin.record.address)) } }
+        busy(pluginId = null) {
+            val record = plugin.record
+            val repo = record.nuvioRepo
+            val scraperId = record.nuvioScraperId
+            val preview = if (repo != null && scraperId != null) {
+                val installer = nuvioPluginInstaller
+                    ?: throw InstallException("Reinstala este plugin de Nuvio desde Ajustes ▸ Plugins")
+                withContext(io) { installer.previewScraper(repo, scraperId) }
+            } else {
+                admin.preview(record.address)
+            }
+            _state.update { it.copy(consent = preview) }
+        }
     }
 
     /**

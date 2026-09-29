@@ -381,6 +381,36 @@ class PluginsViewModelTest {
         assertTrue(admin.installed.isEmpty())
     }
 
+    @Test fun `reinstalling a damaged Nuvio-origin plugin re-converts its scraper instead of the generic preview`() {
+        val admin = FakeAdmin()
+        val nuvio = nuvioInstaller(mapOf(
+            "https://raw.githubusercontent.com/owner/nuvio-repo/HEAD/manifest.json" to nuvioManifestJson,
+            "https://raw.githubusercontent.com/owner/nuvio-repo/HEAD/providers/fakesrc.js" to nuvioScraperJs,
+        ))
+        val vm = PluginsViewModel(admin, io = dispatcher, nuvioPluginInstaller = nuvio)
+        val damaged = InstalledPlugin(
+            manifest.copy(id = "nuvio-fakesrc-abc123"),
+            InstalledRecord("owner/nuvio-repo", "1.0.0", "x", listOf("fakesrc.example"), 0L, damaged = true,
+                nuvioRepo = "owner/nuvio-repo", nuvioScraperId = "fakesrc"),
+            null,
+        )
+        vm.reinstall(damaged)
+        // Never the generic path: the Nuvio repo has no kino-plugin.json for it to read.
+        assertTrue(admin.previewed.isEmpty())
+        val consent = vm.state.value.consent
+        assertNotNull(consent)
+        assertEquals("fakesrc", consent!!.nuvioOrigin?.scraperId)
+        assertEquals(listOf("fakesrc.example"), consent.manifest.hosts)
+    }
+
+    @Test fun `reinstalling a normal plugin still goes through the generic preview`() {
+        val admin = FakeAdmin().apply { previewResult = { preview } }
+        val vm = PluginsViewModel(admin, io = dispatcher, nuvioPluginInstaller = nuvioInstaller(emptyMap()))
+        vm.reinstall(installedPlugin)
+        assertEquals(listOf("o/r"), admin.previewed)
+        assertEquals(preview, vm.state.value.consent)
+    }
+
     @Test fun `cancelling the scraper picker clears it without previewing anything`() {
         val admin = FakeAdmin()
         val nuvio = nuvioInstaller(mapOf("https://raw.githubusercontent.com/owner/nuvio-repo/HEAD/manifest.json" to nuvioManifestJson))
