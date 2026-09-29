@@ -169,6 +169,20 @@ class NuvioSeriesAdapterTest {
         assertFalse(items.getJSONObject(0).has("poster"))
     }
 
+    /**
+     * Measured on a Redmi Note 9 Pro: now and then one Nuvio plugin's search sat the whole 15 s and was
+     * dropped as "no respondió" (a strike toward "No responde"), while ten others answered in ~1 s --
+     * its only I/O was this artwork request, which had kino.fetch's default 15 s, the search's whole
+     * budget. Artwork is optional: it gets a few seconds, and the item comes back without it.
+     */
+    @Test fun `search's optional TMDB artwork request has a short timeout, far inside the search limit`() {
+        val host = tmdbHost()
+        withRuntime(host) { it.call("search", query("movie", 603, q = "Matrix"), 5_000) }
+        val artwork = host.requests.single()
+        assertTrue(artwork.url, artwork.url.startsWith("https://api.themoviedb.org/3/movie/603?"))
+        assertTrue("timeoutMs=${artwork.timeoutMs}", artwork.timeoutMs in 1..5_000)
+    }
+
     @Test fun `api themoviedb org is always declared, even when the scraper's own hosts fill the cap`() {
         val many = (1..30).joinToString("\n") { "var u$it = \"https://mirror$it.example/x\";" }
         val source = many + "\n" + echoSource

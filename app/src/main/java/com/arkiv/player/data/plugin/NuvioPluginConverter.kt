@@ -152,7 +152,8 @@ object NuvioPluginConverter {
      * (with the TMDB key the shim already carries):
      *
      * - `search` answers ONE item for the TMDB id Kino asks about, with TMDB's poster, backdrop, year
-     *   and synopsis when TMDB answers (one call; without it the item still comes back, bare). A series
+     *   and synopsis when TMDB answers (one call, given 4 s of the search's 15: without it the item
+     *   still comes back, bare, instead of the whole search timing out on optional artwork). A series
      *   with no episode chosen is a `series` item, so Kino opens its season/episode list like any
      *   other source's. A query that already names the episode (Kino's refine flow) or a movie is a
      *   `movie` item that plays straight away; only a real movie carries `ids.tmdb`, because Kino
@@ -184,6 +185,7 @@ object NuvioPluginConverter {
         var __nuvioGetStreams = __nuvioModuleExports.getStreams;
         var __NUVIO_TMDB_API = "https://api.themoviedb.org/3";
         var __NUVIO_TMDB_IMAGES = "https://image.tmdb.org/t/p/";
+        var __NUVIO_ARTWORK_TIMEOUT_MS = 4000;
 
         function __nuvioMediaType(type, season, episode) {
           if (type === "series" || type === "tv") return "tv";
@@ -198,9 +200,11 @@ object NuvioPluginConverter {
           return lang.toLowerCase().indexOf("es") === 0 ? "es-MX" : (lang || "en-US");
         }
 
-        async function __nuvioTmdb(path) {
+        async function __nuvioTmdb(path, timeoutMs) {
+          var opts = { headers: { Accept: "application/json" } };
+          if (timeoutMs) opts.timeoutMs = timeoutMs;
           var r = await kino.fetch(__NUVIO_TMDB_API + path + "?api_key=" + encodeURIComponent(__NUVIO_TMDB_KEY) +
-            "&language=" + encodeURIComponent(__nuvioTmdbLanguage()), { headers: { Accept: "application/json" } });
+            "&language=" + encodeURIComponent(__nuvioTmdbLanguage()), opts);
           if (!r.ok) throw kino.error(r.status === 404 ? "not_found" : "unavailable", "TMDB respondió " + r.status);
           return r.json();
         }
@@ -215,7 +219,7 @@ object NuvioPluginConverter {
           var season = query.season || 0, episode = query.episode || 0;
           var mediaType = __nuvioMediaType(query.type, season, episode);
           var meta = null;
-          try { meta = await __nuvioTmdb("/" + mediaType + "/" + query.tmdbId); } catch (e) { meta = null; }
+          try { meta = await __nuvioTmdb("/" + mediaType + "/" + query.tmdbId, __NUVIO_ARTWORK_TIMEOUT_MS); } catch (e) { meta = null; }
           var m = meta || {};
           var title = query.q || query.originalTitle || m.title || m.name || "";
           var art = {

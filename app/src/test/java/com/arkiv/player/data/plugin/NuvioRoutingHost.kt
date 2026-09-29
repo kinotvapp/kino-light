@@ -10,7 +10,7 @@ import org.json.JSONObject
  */
 internal class NuvioRoutingHost(private val routes: Map<String, Reply>) : PluginHost {
     data class Reply(val status: Int = 200, val body: String = "", val headers: Map<String, String> = emptyMap())
-    data class Request(val url: String, val method: String, val headers: Map<String, String>, val body: JSONObject?)
+    data class Request(val url: String, val method: String, val headers: Map<String, String>, val body: JSONObject?, val timeoutMs: Int = 0)
 
     val requests = mutableListOf<Request>()
     val logs = mutableListOf<String>()
@@ -20,7 +20,7 @@ internal class NuvioRoutingHost(private val routes: Map<String, Reply>) : Plugin
         val url = req.getString("url")
         val h = req.optJSONObject("headers") ?: JSONObject()
         synchronized(requests) {
-            requests += Request(url, req.optString("method"), h.keys().asSequence().associateWith { h.getString(it) }, req.optJSONObject("body"))
+            requests += Request(url, req.optString("method"), h.keys().asSequence().associateWith { h.getString(it) }, req.optJSONObject("body"), req.optInt("timeoutMs"))
         }
         val reply = routes.entries.firstOrNull { it.key in url }?.value ?: Reply(404, "not found")
         val headers = JSONObject()
