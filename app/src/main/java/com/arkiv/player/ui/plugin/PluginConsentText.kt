@@ -9,6 +9,13 @@ import com.arkiv.player.data.plugin.XuperPrivilege
  * inside privileged native functions the sandbox's host gate never sees -- so a host list would be
  * meaningless for it; every other plugin gets the honest list of hosts it declared/was approved for.
  */
+/**
+ * An installed plugin's broad video permission, said plainly on its details (phone sheet, TV actions
+ * dialog) next to "Quitar permiso de video amplio"; null when the person never granted it.
+ */
+fun installedAnyVideoHostLine(record: com.arkiv.player.data.plugin.InstalledRecord): String? =
+    if (record.anyVideoHost) "Puede reproducir video desde cualquier servidor" else null
+
 fun pluginConsentHostLine(address: String, hostsLabel: String): String =
     pluginConsentProtectedLine(address)
         // No declared host (apiVersion 2 with a `url` setting) and no server typed yet: never an empty list.

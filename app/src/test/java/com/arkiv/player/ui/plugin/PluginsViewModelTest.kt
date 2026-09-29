@@ -82,6 +82,7 @@ class PluginsViewModelTest {
         val enabled = mutableMapOf<String, Boolean>()
         val uninstalled = mutableListOf<String>()
         val forgottenRejections = mutableListOf<String>()
+        val revokedAnyVideoHost = mutableListOf<String>()
         val previewed = mutableListOf<String>()
         override suspend fun preview(input: String): InstallPreview { previewed += input; previewGate?.await(); return previewResult() }
         override suspend fun install(preview: InstallPreview) { installResult(); installed += preview }
@@ -89,6 +90,7 @@ class PluginsViewModelTest {
         override fun setEnabled(id: String, enabled: Boolean) { this.enabled[id] = enabled }
         override fun uninstall(id: String) { uninstalled += id }
         override fun forgetHostRejections(id: String) { forgottenRejections += id }
+        override fun revokeAnyVideoHost(id: String) { revokedAnyVideoHost += id }
         var form: PluginSettingsForm? = null
         var settingsFailure: Exception? = null
         /**
@@ -129,6 +131,15 @@ class PluginsViewModelTest {
 
     private fun vm(admin: PluginAdmin, catalog: CatalogProvider = FakeCatalog()) =
         PluginsViewModel(admin, io = dispatcher, catalogProvider = catalog)
+
+    @Test fun `Quitar permiso de video amplio revokes it and says so on the plugin's card`() {
+        val admin = FakeAdmin()
+        val vm = vm(admin)
+        vm.revokeAnyVideoHost("demo")
+        assertEquals(listOf("demo"), admin.revokedAnyVideoHost)
+        assertEquals("Se quitó el permiso de video amplio", vm.state.value.message)
+        assertEquals("demo", vm.state.value.messagePluginId)
+    }
 
     @Test fun `adding shows the consent sheet and nothing is installed until confirmed`() {
         val admin = FakeAdmin().apply { previewResult = { preview } }

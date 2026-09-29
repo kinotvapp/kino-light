@@ -20,6 +20,9 @@ interface PluginAdmin {
     /** "Olvidar rechazos de host": clears every remembered "no" for [id] ([PluginRegistry.forgetRejections]). */
     fun forgetHostRejections(id: String)
 
+    /** "Quitar permiso de video amplio": revokes [id]'s broad video permission ([PluginRegistry.setAnyVideoHost]). */
+    fun revokeAnyVideoHost(id: String)
+
     /** Null when the plugin isn't installed any more. */
     suspend fun settingsOf(id: String): PluginSettingsForm?
 
@@ -91,6 +94,13 @@ class DefaultPluginAdmin(
         registry.forgetRejections(id)
         runtimes.close(id)
     }
+
+    /**
+     * The next resolve and the next player built read the record afresh, so nothing else needs
+     * closing: `kino.fetch` never had the permission. A title already playing keeps its client
+     * until it is rebuilt (a new title, a re-resolve, a host approval).
+     */
+    override fun revokeAnyVideoHost(id: String) = registry.setAnyVideoHost(id, false)
 
     /**
      * Also forgets its settings, passwords included: a reinstall starts from "Falta configurar".

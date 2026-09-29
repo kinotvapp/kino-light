@@ -181,7 +181,8 @@ internal fun InstalledPluginCard(
  * "Gestionar"'s sheet: the plugin's full host list (the card's own line is capped to
  * [installedHostsLines] and may cut it), then Configurar (only when [InstalledCardModel.hasSettings]), Buscar
  * actualización (its label switches to "Revisar actualización" the same way the row's did, once an update is
- * pending consent), Olvidar rechazos de host (only when `plugin.record.rejectedHosts` isn't empty) and
+ * pending consent), Olvidar rechazos de host (only when `plugin.record.rejectedHosts` isn't empty), Quitar
+ * permiso de video amplio (only when `plugin.record.anyVideoHost`, under the line saying so) and
  * Desinstalar, each calling the same [PluginsViewModel] function the row's own button
  * did and then closing the sheet, so whatever dialog that call opens (the consent sheet, "¿Desinstalar…?",
  * Configurar) shows over the tab, not stacked under this one.
@@ -212,6 +213,15 @@ private fun InstalledActionsSheet(
                 color = ArkivTextSecondary,
                 modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 12.dp),
             )
+            // The broad video permission, when granted: what it lets the plugin do; its revoke action is below.
+            installedAnyVideoHostLine(plugin.record)?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White,
+                    modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 12.dp),
+                )
+            }
             if (model.hasSettings) {
                 SheetAction("Configurar", enabled = !busy) { vm.openSettings(plugin.id); onDismiss() }
             }
@@ -221,6 +231,9 @@ private fun InstalledActionsSheet(
             ) { vm.checkUpdate(plugin.id); onDismiss() }
             if (plugin.record.rejectedHosts.isNotEmpty()) {
                 SheetAction("Olvidar rechazos de host", enabled = !busy) { vm.forgetHostRejections(plugin.id); onDismiss() }
+            }
+            if (plugin.record.anyVideoHost) {
+                SheetAction("Quitar permiso de video amplio", enabled = !busy) { vm.revokeAnyVideoHost(plugin.id); onDismiss() }
             }
             SheetAction("Desinstalar", color = ArkivRed, enabled = !busy) { vm.askUninstall(plugin); onDismiss() }
         }

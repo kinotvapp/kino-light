@@ -9,6 +9,16 @@ class TvInstalledActionsDialogTest {
         listOf(true, false).flatMap { settings -> listOf(true, false).map { rejections -> Triple(switch, settings, rejections) } }
     }
 
+    @Test fun `the broad video permission shows its revoke action, before Desinstalar, only when granted`() {
+        assertEquals(
+            listOf(TvInstalledAction.UPDATE, TvInstalledAction.REVOKE_ANY_VIDEO_HOST, TvInstalledAction.UNINSTALL, TvInstalledAction.CLOSE),
+            tvInstalledActions(hasSwitch = false, hasSettings = false, hasRejections = false, hasAnyVideoHost = true),
+        )
+        assertTrue(TvInstalledAction.REVOKE_ANY_VIDEO_HOST !in tvInstalledActions(hasSwitch = true, hasSettings = true, hasRejections = true))
+        // Still opens on Cerrar.
+        assertEquals(TvInstalledAction.CLOSE, tvInstalledActionsInitialFocus(tvInstalledActions(true, true, true, hasAnyVideoHost = true)))
+    }
+
     @Test fun `the actions keep their order, each only when it applies`() {
         assertEquals(
             listOf(TvInstalledAction.TOGGLE, TvInstalledAction.CONFIGURE, TvInstalledAction.UPDATE, TvInstalledAction.FORGET_REJECTIONS, TvInstalledAction.UNINSTALL, TvInstalledAction.CLOSE),

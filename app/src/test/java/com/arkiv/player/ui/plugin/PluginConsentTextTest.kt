@@ -7,6 +7,12 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class PluginConsentTextTest {
+    @Test fun `an installed plugin says it may play video from any server only when the person granted it`() {
+        val record = com.arkiv.player.data.plugin.InstalledRecord("o/r", "1.0.0", "x", listOf("example.com"), 0L)
+        assertEquals(null, installedAnyVideoHostLine(record))
+        assertEquals("Puede reproducir video desde cualquier servidor", installedAnyVideoHostLine(record.copy(anyVideoHost = true)))
+    }
+
     @Test fun `the recognized Xuper repo gets the protected-connection line, not a host list`() {
         val line = pluginConsentHostLine(address = XuperPrivilege.SOURCE_REPO, hostsLabel = "example.org")
         assertEquals("Este plugin usa la conexión protegida de Xuper dentro de la app; no se conecta a internet por su cuenta.", line)

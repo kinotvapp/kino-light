@@ -26,6 +26,7 @@ import com.arkiv.player.data.plugin.catalog.CatalogArt
 import com.arkiv.player.ui.plugin.FocusWhenReady
 import com.arkiv.player.ui.plugin.InstalledCardModel
 import com.arkiv.player.ui.plugin.PluginsViewModel
+import com.arkiv.player.ui.plugin.installedAnyVideoHostLine
 import com.arkiv.player.ui.plugin.installedCardModel
 import com.arkiv.player.ui.plugin.pluginConsentHostLine
 import com.arkiv.player.ui.plugin.pluginStatusText
@@ -42,7 +43,9 @@ import com.arkiv.player.ui.theme.ArkivTextSecondary
  * damaged plugin, which cannot be toggled -- [InstalledCardModel.switchEnabled]), "Configurar {name}" (only
  * with settings -- [InstalledCardModel.hasSettings]), "Buscar actualización de {name}" (or "Revisar
  * actualización de {name}" once one is pending consent), "Olvidar rechazos de host de {name}" (only when
- * `plugin.record.rejectedHosts` isn't empty), "Desinstalar {name}" and "Cerrar". Every action
+ * `plugin.record.rejectedHosts` isn't empty), "Quitar permiso de video amplio" (only when the person
+ * granted it, `plugin.record.anyVideoHost`; the header then also says "Puede reproducir video desde
+ * cualquier servidor"), "Desinstalar {name}" and "Cerrar". Every action
  * closes the dialog after it runs, so whatever it opens (the consent sheet, "¿Desinstalar…?", Configurar)
  * shows alone, not stacked under this one; [onDismiss] is also Back and "Cerrar" -- the caller sends focus
  * back to the card that opened it.
@@ -55,7 +58,7 @@ internal fun TvInstalledActionsDialog(plugin: InstalledPlugin, art: CatalogArt?,
     // The same model the card built (art only feeds the tile/icon, which this dialog never draws, so it
     // changes nothing here): one rule for "can the switch move" / "does Configurar belong", not a second copy.
     val model = installedCardModel(plugin, art)
-    val actions = tvInstalledActions(model.switchEnabled, model.hasSettings, plugin.record.rejectedHosts.isNotEmpty())
+    val actions = tvInstalledActions(model.switchEnabled, model.hasSettings, plugin.record.rejectedHosts.isNotEmpty(), plugin.record.anyVideoHost)
     val focused = tvInstalledActionsInitialFocus(actions)
     // TvCompactAction, not TvActionOption: the latter is sized to 60% of a wide Ajustes pane, which inside
     // this narrow dialog would leave a long label ("Buscar actualización de …") cramped; TvCompactAction
@@ -84,6 +87,10 @@ internal fun TvInstalledActionsDialog(plugin: InstalledPlugin, art: CatalogArt?,
                 style = MaterialTheme.typography.bodyMedium,
                 color = ArkivTextSecondary,
             )
+            // The broad video permission, when granted: what it lets the plugin do, right above its revoke action.
+            installedAnyVideoHostLine(plugin.record)?.let {
+                Text(it, style = MaterialTheme.typography.bodyMedium, color = Color.White)
+            }
             for (action in actions) {
                 when (action) {
                     TvInstalledAction.TOGGLE -> TvCompactAction(
@@ -100,6 +107,9 @@ internal fun TvInstalledActionsDialog(plugin: InstalledPlugin, art: CatalogArt?,
                     TvInstalledAction.FORGET_REJECTIONS -> TvCompactAction(label = "Olvidar rechazos de host de $name", modifier = modifierFor(action)) {
                         vm.forgetHostRejections(plugin.id); onDismiss()
                     }
+                    TvInstalledAction.REVOKE_ANY_VIDEO_HOST -> TvCompactAction(label = "Quitar permiso de video amplio", modifier = modifierFor(action)) {
+                        vm.revokeAnyVideoHost(plugin.id); onDismiss()
+                    }
                     TvInstalledAction.UNINSTALL -> TvCompactAction(label = "Desinstalar $name", modifier = modifierFor(action)) {
                         vm.askUninstall(plugin); onDismiss()
                     }
@@ -111,18 +121,19 @@ internal fun TvInstalledActionsDialog(plugin: InstalledPlugin, art: CatalogArt?,
 }
 
 /** One row of [TvInstalledActionsDialog], in the order they are shown. */
-internal enum class TvInstalledAction { TOGGLE, CONFIGURE, UPDATE, FORGET_REJECTIONS, UNINSTALL, CLOSE }
+internal enum class TvInstalledAction { TOGGLE, CONFIGURE, UPDATE, FORGET_REJECTIONS, REVOKE_ANY_VIDEO_HOST, UNINSTALL, CLOSE }
 
 /**
  * The rows [TvInstalledActionsDialog] shows: the switch's own action only when the switch can move
  * ([InstalledCardModel.switchEnabled]), Configurar only with settings, "Olvidar rechazos de host" only
  * when there are some; "Buscar actualización", "Desinstalar" and "Cerrar" always.
  */
-internal fun tvInstalledActions(hasSwitch: Boolean, hasSettings: Boolean, hasRejections: Boolean): List<TvInstalledAction> = buildList {
+internal fun tvInstalledActions(hasSwitch: Boolean, hasSettings: Boolean, hasRejections: Boolean, hasAnyVideoHost: Boolean = false): List<TvInstalledAction> = buildList {
     if (hasSwitch) add(TvInstalledAction.TOGGLE)
     if (hasSettings) add(TvInstalledAction.CONFIGURE)
     add(TvInstalledAction.UPDATE)
     if (hasRejections) add(TvInstalledAction.FORGET_REJECTIONS)
+    if (hasAnyVideoHost) add(TvInstalledAction.REVOKE_ANY_VIDEO_HOST)
     add(TvInstalledAction.UNINSTALL)
     add(TvInstalledAction.CLOSE)
 }

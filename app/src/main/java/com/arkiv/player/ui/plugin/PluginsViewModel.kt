@@ -606,6 +606,12 @@ class PluginsViewModel(
         _state.update { it.copy(message = "Se olvidaron los rechazos de host") }
     }
 
+    /** "Quitar permiso de video amplio": from now on each new video server of [id] is asked about again. */
+    fun revokeAnyVideoHost(id: String) = busy(pluginId = id) {
+        withContext(io) { admin.revokeAnyVideoHost(id) }
+        _state.update { it.copy(message = "Se quitó el permiso de video amplio") }
+    }
+
     fun askUninstall(plugin: InstalledPlugin) {
         // The TV's actions can't be disabled while busy; confirming would then be dropped by busy().
         if (_state.value.busy) return
