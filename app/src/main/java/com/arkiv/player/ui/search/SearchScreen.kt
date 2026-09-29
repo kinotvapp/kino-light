@@ -238,7 +238,8 @@ fun SearchScreen(
 
             when (phase) {
                 SearchPhase.REFINE -> selected?.let { card ->
-                    RefineContent(card = card, onContinue = { season, episode -> vm.runSourceSearch(season, episode) })
+                    val refine = rememberRefineData(card, detail, animeShow, graph.tmdbApi, graph.aniListApi, seasonDebounceMs = 0)
+                    RefineContent(card = card, data = refine, onContinue = { season, episode -> vm.runSourceSearch(season, episode) })
                 }
                 SearchPhase.RESULTS -> ResultsContent(
                     title = resultTitle,
@@ -576,79 +577,6 @@ private fun kindColor(kind: String): Color = when (kind) {
     "movie" -> Color(0xFF64B5F6)
     "series" -> Color(0xFF4CAF50)
     else -> Color(0xFFBA68C8)
-}
-
-/** REFINE phase: optional season/chapter (series) or optional episode (anime) before RESULTS. */
-@Composable
-private fun RefineContent(card: TitleCard, onContinue: (season: Int?, episode: Int?) -> Unit) {
-    var seasonText by remember(card) { mutableStateOf("") }
-    var episodeText by remember(card) { mutableStateOf("") }
-
-    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-        Row(modifier = Modifier.padding(top = 8.dp)) {
-            Box(
-                modifier = Modifier.height(180.dp).aspectRatio(2f / 3f)
-                    .clip(RoundedCornerShape(8.dp)).background(ArkivSurfaceHigh),
-            ) {
-                AsyncImage(
-                    model = card.posterUrl,
-                    contentDescription = card.title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
-            Column(Modifier.padding(start = 16.dp)) {
-                Text(card.title, style = MaterialTheme.typography.titleLarge, color = Color.White)
-                if (card.year.isNotBlank()) {
-                    Text(card.year, style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary)
-                }
-            }
-        }
-
-        Spacer(Modifier.size(24.dp))
-
-        when (card.kind) {
-            "series" -> {
-                OutlinedTextField(
-                    value = seasonText,
-                    onValueChange = { seasonText = it.filter(Char::isDigit) },
-                    label = { Text("Temporada (opcional)") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                )
-                OutlinedTextField(
-                    value = episodeText,
-                    onValueChange = { episodeText = it.filter(Char::isDigit) },
-                    label = { Text("Capítulo (opcional)") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
-                )
-                Button(
-                    onClick = { onContinue(seasonText.toIntOrNull(), episodeText.toIntOrNull()) },
-                    colors = ButtonDefaults.buttonColors(containerColor = ArkivRed),
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text("Continuar") }
-            }
-            "anime" -> {
-                OutlinedTextField(
-                    value = episodeText,
-                    onValueChange = { episodeText = it.filter(Char::isDigit) },
-                    label = { Text("Episodio (opcional)") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
-                )
-                Button(
-                    onClick = { onContinue(null, episodeText.toIntOrNull()) },
-                    colors = ButtonDefaults.buttonColors(containerColor = ArkivRed),
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text("Continuar") }
-            }
-            else -> Unit // "movie" doesn't reach REFINE: pickTitle() sends it straight to RESULTS.
-        }
-    }
 }
 
 /**
