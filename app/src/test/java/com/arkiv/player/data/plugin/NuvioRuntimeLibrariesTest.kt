@@ -174,6 +174,15 @@ class NuvioRuntimeLibrariesTest {
         assertEquals("""[[true,404,"nope",true],404]""", answer(resolvedUrl(source, host)))
     }
 
+    /** dvdplay and mallumv (yoruix/nuvio-providers) start with `global.URL_VALIDATION_ENABLED = true;`: React Native's `global`. */
+    @Test fun `React Native's global is the global object, so a scraper can write to it at its top level`() {
+        val source = scraperReturning(
+            "global.URL_VALIDATION_ENABLED = true;",
+            "[global === globalThis, URL_VALIDATION_ENABLED]",
+        )
+        assertEquals("[true,true]", answer(resolvedUrl(source)))
+    }
+
     @Test fun `an unknown module still throws the clear unsupported-require error`() {
         val source = scraperReturning(
             """var out; try { require("ws"); out = "loaded"; } catch (e) { out = e.message; }""",

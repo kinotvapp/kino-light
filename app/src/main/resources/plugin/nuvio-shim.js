@@ -4,7 +4,8 @@
 // concatenated by NuvioPluginConverter after this file only when the scraper can need them), and
 // `TMDB_API_KEY`, so an unmodified scraper's top-level code and `getStreams` export run as-is.
 // Everything here is plugin.js's own module scope: nothing is added to globalThis except
-// TMDB_API_KEY, and prelude.js/web.js/kino.fetch stay exactly what native Kino plugins get.
+// TMDB_API_KEY (and whatever a scraper itself writes through `global`), and
+// prelude.js/web.js/kino.fetch stay exactly what native Kino plugins get.
 // `__NUVIO_TMDB_API_KEY__` is replaced by NuvioPluginConverter before this ships in a plugin.
 
 var module = { exports: {} };
@@ -73,6 +74,11 @@ globalThis.TMDB_API_KEY = __NUVIO_TMDB_KEY;
 // `process.env.X || fallback` (vidnest) must read "not set", not throw. Nothing else: a scraper
 // that sniffs `process.versions.node` must keep concluding it is not on Node.
 var process = { env: {} };
+
+// React Native's name for the global object, which scrapers write to at their top level
+// (`global.URL_VALIDATION_ENABLED = true;` in dvdplay and mallumv). It IS globalThis there too: this
+// plugin's own sandbox, shared with no other plugin.
+var global = globalThis;
 
 // Retry back-offs (`await new Promise(r => setTimeout(r, 1000))` in 4khdhub, moviebox,
 // dahmermovies) over kino.sleep, which takes 0..5000 ms per call: longer waits are slept in slices
