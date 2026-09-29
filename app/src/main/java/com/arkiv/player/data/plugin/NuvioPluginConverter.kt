@@ -9,10 +9,22 @@ data class NuvioConversionResult(val script: String, val manifestJson: String, v
 
 /**
  * Turns one Nuvio scraper into a Kino plugin (spec §5): the compat shim ([PluginPrelude.nuvioShim])
- * + the scraper's own source, byte for byte, + a small adapter mapping Nuvio's
- * `getStreams(tmdbId, mediaType, season, episode)` onto Kino's `search`/`resolve` (spec §6). Pure and
- * offline -- every network call (fetching the scraper's raw `.js`, the optional `domains.json`)
- * happens in `NuvioPluginInstaller`, before this runs.
+ * + the scraper's own source, byte for byte but wrapped in its own IIFE, + a small adapter mapping
+ * Nuvio's `getStreams(tmdbId, mediaType, season, episode)` onto Kino's `search`/`resolve` (spec §6).
+ * Pure and offline -- every network call (fetching the scraper's raw `.js`, the optional
+ * `domains.json`) happens in `NuvioPluginInstaller`, before this runs.
+ *
+ * The whole result loads as ONE ES module (`PluginRuntime.open`'s `js.addModule`), so the shim's own
+ * top-level `module`/`exports`/`require`/`fetch` and the scraper's own top-level code can't just be
+ * concatenated at the same top level: two top-level declarations of the same name in one module
+ * scope make QuickJS reject the WHOLE script with `SyntaxError: invalid redefinition of global
+ * identifier` -- and a bundled/minified scraper redeclaring one of those four names is common. The
+ * scraper's source instead runs inside an isolating IIFE with its own private `module`/`exports`
+ * (exposed to the adapter as `__nuvioModuleExports`), so its own top-level declarations only ever
+ * SHADOW the shim's in a nested scope -- never a redefinition, never an error. A scraper that
+ * declares its own top-level `require` does lose access to the shim's `require('cheerio')`/
+ * `require('crypto-js')` from inside its own body (shadowed), but that's rare in practice and far
+ * better than the hard syntax error this replaces.
  *
  * The generated manifest always names the literal `"plugin.js"` as its `entry`: that file never
  * existed upstream (this converter builds it fresh), so whoever installs the result must write the
@@ -65,7 +77,14 @@ object NuvioPluginConverter {
         }
 
         val shim = PluginPrelude.nuvioShim.replace("__NUVIO_TMDB_API_KEY__", tmdbApiKey)
-        val script = shim + "\n\n" + scraperSource + "\n\n" + ADAPTER
+        // The scraper's own top-level code runs inside an IIFE, never spliced in at the same top
+        // level as the shim: see this object's KDoc for why (QuickJS module-scope collisions).
+        val wrapped = "var __nuvioModuleExports = (function () {\n" +
+            "var module = { exports: {} };\n" +
+            "var exports = module.exports;\n" +
+            scraperSource +
+            "\nreturn module.exports;\n})();\n"
+        val script = shim + "\n\n" + wrapped + "\n" + ADAPTER
 
         val manifestJson = JSONObject()
             // Clipped to ManifestParser's own name limit: a longer Nuvio scraper name would otherwise make the whole manifest invalid.
@@ -119,7 +138,7 @@ object NuvioPluginConverter {
      */
     private val ADAPTER = """
 
-        var __nuvioGetStreams = module.exports.getStreams;
+        var __nuvioGetStreams = __nuvioModuleExports.getStreams;
 
         function __nuvioMediaType(type, season, episode) {
           if (type === "series" || type === "tv") return "tv";

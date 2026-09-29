@@ -245,6 +245,36 @@ class NuvioPluginConverterTest {
         }
     }
 
+    /**
+     * Mirrors the real MoviesDrive bug (`phisher98/phisher-nuvio-providers`): a bundled/minified
+     * scraper that redeclares `module`, `exports`, `require` AND `fetch` at its own top level. Before
+     * the IIFE-scoping fix, concatenating this straight after the shim (which ALSO declares those
+     * four names at ITS top level) made the whole `plugin.js` ES module fail to load with
+     * `SyntaxError: invalid redefinition of global identifier`, since two top-level declarations of
+     * the same name in one module scope collide -- see [NuvioPluginConverter]'s KDoc.
+     */
+    private val selfShadowingSource = """
+        var module = { exports: {} };
+        var exports = module.exports;
+        function require(name) { throw new Error("should never be called: " + name); }
+        function fetch() { throw new Error("should never be called"); }
+        function getStreams(tmdbId, mediaType, season, episode) {
+          return [{ name: "x", title: "t", url: "https://cdn.example/self-shadow" }];
+        }
+        module.exports = { getStreams: getStreams };
+    """.trimIndent()
+
+    @Test fun `a scraper that redeclares module, exports, require and fetch at its own top level still converts and runs`() = runBlocking {
+        val result = NuvioPluginConverter.convert(scraper, selfShadowingSource, repoSlug = "owner/repo", tmdbApiKey = "k")
+        val runtime = PluginRuntime.open("probe", result.script, ProbePluginHost, PluginEnv(appVersion = "1.0"))
+        try {
+            val out = JSONObject(runtime.call("resolve", """{"tmdbId":1,"type":"movie","season":0,"episode":0}""", 5_000))
+            assertEquals("https://cdn.example/self-shadow", out.getString("url"))
+        } finally {
+            runtime.close()
+        }
+    }
+
     @Test fun `a long scraper id never lets the slug truncate away the anti-collision hash`() {
         val longScraper = scraper.copy(id = "a".repeat(60))
         val result = NuvioPluginConverter.convert(longScraper, source, repoSlug = "owner/repo", tmdbApiKey = "k")
