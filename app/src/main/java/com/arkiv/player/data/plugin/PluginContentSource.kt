@@ -15,6 +15,7 @@ import com.arkiv.player.data.gateway.SearchEvent
 import com.arkiv.player.data.gateway.SeasonRef
 import com.arkiv.player.data.gateway.SeriesListing
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flow
@@ -59,6 +60,12 @@ class PluginContentSource(
      * `kino.fetch` goes out; [hosts] (a fixed set) otherwise.
      */
     private val currentHosts: () -> EffectiveHosts = { hosts },
+    /**
+     * Asks the person about a returned Stream URL's undeclared host (see [askAboutUndeclaredHosts]);
+     * `AppGraph` wires its [StreamHostApproval]. Null (tests, and every caller that never heard of
+     * it) refuses such a Stream exactly as before.
+     */
+    private val streamHostApproval: StreamHostDecider? = null,
 ) : ContentSource {
     private val id = plugin.manifest.id
     private val name = plugin.manifest.name
@@ -142,13 +149,11 @@ class PluginContentSource(
         val own = decodeOwn(ref)
         if (own.kind == PluginRef.SERIES) throw GatewayException("Elige un capítulo primero")
         val out = callOrThrow("resolve", JSONObject.quote(own.ref), RESOLVE_TIMEOUT_MS)
-        // A channel's stream may be on any public host only if the INSTALLED record approved
-        // liveStreamHosts "any"; `hosts` keeps any typed servers either way. Read now, after the
-        // call: a host approved during it counts.
-        val hosts = currentHosts()
-        val streamHosts = if (own.kind == PluginRef.LIVE) hosts.copy(anyPublicLiveHost = plugin.record.liveStreamHostsAny) else hosts
+        // Outside the call on purpose: its 20 s limit and the pool's per-plugin lock are both over
+        // by now, so a person taking their time to answer holds up neither.
+        askAboutUndeclaredHosts(out, own)
         val stream = try {
-            PluginOutput.stream(out, streamHosts, xuper, allowDrm)
+            PluginOutput.stream(out, streamHostsFor(own), xuper, allowDrm)
         } catch (e: PluginContractException) {
             throw GatewayException("$name: ${e.message}", e)
         }
@@ -157,6 +162,49 @@ class PluginContentSource(
             durationMs = stream.durationMs,
             audioTracks = stream.audioTracks.map { GatewayAudioTrack(it.lang, it.url, it.label) },
         )
+    }
+
+    /**
+     * The hosts a resolved Stream of [own] is checked against, read NOW (see [currentHosts]): a host
+     * approved during the call, or by [askAboutUndeclaredHosts] right after it, counts. A channel's
+     * stream may be on any public host only if the INSTALLED record approved liveStreamHosts "any";
+     * typed servers are kept either way.
+     */
+    private fun streamHostsFor(own: PluginRef): EffectiveHosts {
+        val hosts = currentHosts()
+        return if (own.kind == PluginRef.LIVE) hosts.copy(anyPublicLiveHost = plugin.record.liveStreamHostsAny) else hosts
+    }
+
+    /**
+     * Reactive host approval for the URLs [out] (a `resolve` answer) is on -- asked only when a
+     * person is waiting for it ([InteractivePluginCall], never under [BackgroundPluginCall]) and
+     * [streamHostApproval] is wired. Each host [PluginOutput.undeclaredHosts] finds is put to
+     * [streamHostApproval] once, the video's first; and only when the Stream would be valid with all
+     * of them granted, so a "yes" never leads to a different refusal. Returns having changed nothing
+     * but the approved/rejected hosts: the caller's own [PluginOutput.stream] check then decides, with
+     * the hosts read afresh, exactly as it always has -- a rejected video host fails with the same
+     * sentence as before, a rejected subtitle or audio host just drops that track. The one new failure
+     * is a video (or license) host the 20-host cap leaves no room for, said plainly.
+     */
+    private suspend fun askAboutUndeclaredHosts(out: String, own: PluginRef) {
+        val decider = streamHostApproval ?: return
+        val context = currentCoroutineContext()
+        if (context[InteractivePluginCall] == null || context[BackgroundPluginCall] != null) return
+        val hosts = streamHostsFor(own)
+        val misses = PluginOutput.undeclaredHosts(out, hosts, xuper, allowDrm)
+        if (misses.isEmpty()) return
+        val allGranted = hosts.copy(declared = hosts.declared + misses.map { it.host })
+        if (runCatching { PluginOutput.stream(out, allGranted, xuper, allowDrm) }.isFailure) return
+        for (miss in misses) {
+            val decision = decider.decide(id, name, miss.host, miss.reason)
+            log("[$id] resolve: ${miss.reason} on undeclared host ${miss.host} -> $decision")
+            if (!miss.required || decision == StreamHostDecision.APPROVED) continue
+            if (decision == StreamHostDecision.LIMIT_REACHED) {
+                val what = if (miss.reason == HostApprovalReason.LICENSE) "La licencia del video" else "El video"
+                throw GatewayException("$name: $what está en ${miss.host}, pero $name ya tiene el máximo de ${ManifestParser.MAX_HOSTS} servidores aprobados")
+            }
+            return // rejected: the check that follows refuses the Stream with the sentence it always had
+        }
     }
 
     override suspend fun episodesWithSeries(ref: String): Pair<List<GatewayEpisode>, GatewaySeries?> =

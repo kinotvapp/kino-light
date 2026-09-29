@@ -571,7 +571,20 @@ class AppGraph(context: Context) {
     private fun currentPluginHosts(plugin: InstalledPlugin): EffectiveHosts = pluginRegistry.find(plugin.id)?.hosts ?: plugin.hosts
 
     private fun pluginContentSource(plugin: InstalledPlugin) =
-        PluginContentSource(plugin, pluginCaller, plugin.hosts, xuperStreams, currentHosts = { currentPluginHosts(plugin) })
+        PluginContentSource(
+            plugin, pluginCaller, plugin.hosts, xuperStreams,
+            currentHosts = { currentPluginHosts(plugin) },
+            streamHostApproval = streamHostApproval,
+        )
+
+    /**
+     * Reactive host approval for a returned Stream's URLs (the player's resolve only, see
+     * `InteractivePluginCall`): the same dialog, registry writes and 20-host cap as [openPluginRuntime]'s
+     * fetch-time approval, and the plugin's open runtime, if any, learns the answer too.
+     */
+    private val streamHostApproval: StreamHostApproval by lazy {
+        StreamHostApproval(hostApprovalCenter, pluginRegistry, openRuntimeHttp = { id -> pluginHttps[id] })
+    }
 
     val pluginRuntimes: PluginRuntimePool by lazy {
         PluginRuntimePool(

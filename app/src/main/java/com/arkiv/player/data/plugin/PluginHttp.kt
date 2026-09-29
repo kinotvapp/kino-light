@@ -451,6 +451,25 @@ class PluginHttp(
         }
     }
 
+    /**
+     * Mirrors a decision about [host] taken OUTSIDE this instance's own `kino.fetch` -- a URL of the
+     * Stream the plugin's `resolve` returned ([StreamHostApproval]), already persisted there -- into
+     * this open runtime, the way [askOnce] applies its own: an approved host joins [liveHosts] (same
+     * cap, never twice), a refused one joins [ReactiveApproval.rejectedHosts]. Without it the
+     * plugin's next `kino.fetch` to that host in this runtime would ask the person again about a
+     * host they just answered. Persisting is the caller's job, so no callback fires here.
+     */
+    fun recordDecision(host: String, approved: Boolean) = synchronized(hostsLock) {
+        if (approved) {
+            val current = liveHosts.value
+            if (!HostRules.matches(host, current.declared) && current.declared.size < ManifestParser.MAX_HOSTS) {
+                liveHosts.value = current.copy(declared = current.declared + host)
+            }
+        } else {
+            reactiveApproval?.let { it.rejectedHosts = it.rejectedHosts + host }
+        }
+    }
+
     private fun response(resp: okhttp3.Response, url: HttpUrl): Response {
         val headers = resp.headers.names()
             .filter { it.lowercase() !in HIDDEN_RESPONSE_HEADERS }

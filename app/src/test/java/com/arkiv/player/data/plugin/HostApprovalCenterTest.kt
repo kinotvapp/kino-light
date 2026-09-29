@@ -95,6 +95,50 @@ class HostApprovalCenterTest {
         queued.cancel()
     }
 
+    // A Stream URL on an undeclared host is asked about AFTER the plugin's call returned, with the
+    // person looking at the screen waiting for the video: nothing may take the dialog down but them.
+    @Test fun `a stream prompt outlives the fetch window and waits for the person`() = runTest {
+        val center = HostApprovalCenter()
+        val result = async { center.requestUntilAnswered("plug1", "Uno", "cdn.example", HostApprovalReason.VIDEO) }
+        var req = center.pending.value
+        while (req == null) { kotlinx.coroutines.yield(); req = center.pending.value }
+        kotlinx.coroutines.delay(HostApprovalCenter.TIMEOUT_MS * 10)
+        assertTrue("still waiting after ten fetch windows", result.isActive)
+        assertEquals(req, center.pending.value)
+        req.respond(true)
+        assertEquals(true, result.await())
+        assertNull(center.pending.value)
+    }
+
+    @Test fun `leaving while a stream prompt waits takes the dialog down`() = runTest {
+        val center = HostApprovalCenter()
+        val result = async { center.requestUntilAnswered("plug1", "Uno", "cdn.example", HostApprovalReason.VIDEO) }
+        while (center.pending.value == null) kotlinx.coroutines.yield()
+        result.cancel()
+        kotlinx.coroutines.yield()
+        assertNull(center.pending.value)
+        // The queue is free again for the next question.
+        val next = async { center.request("plug2", "Dos", "b.example") }
+        var req = center.pending.value
+        while (req == null) { kotlinx.coroutines.yield(); req = center.pending.value }
+        req.respond(false)
+        assertEquals(false, next.await())
+    }
+
+    @Test fun `each prompt says what the host is for, naming it`() = runTest {
+        fun question(reason: HostApprovalReason) = HostApprovalRequest("p", "P", "cdn.example", reason) {}.question
+        assertEquals("Quiere conectarse por primera vez a cdn.example. ¿Permitir?", question(HostApprovalReason.FETCH))
+        for (reason in HostApprovalReason.entries) assertTrue(question(reason), "cdn.example" in question(reason))
+        assertTrue(question(HostApprovalReason.VIDEO).startsWith("El video está en cdn.example"))
+        assertTrue(question(HostApprovalReason.SUBTITLE).startsWith("Los subtítulos están en cdn.example"))
+        // The fetch path keeps asking exactly what it always asked.
+        val center = HostApprovalCenter()
+        val fetch = async { center.request("p", "P", "x.example") }
+        while (center.pending.value == null) kotlinx.coroutines.yield()
+        assertEquals(HostApprovalReason.FETCH, center.pending.value!!.reason)
+        fetch.cancel()
+    }
+
     @Test fun `NoHostApprovalRequester always denies`() = runTest {
         assertEquals(false, NoHostApprovalRequester.request("p", "P", "x.example"))
     }

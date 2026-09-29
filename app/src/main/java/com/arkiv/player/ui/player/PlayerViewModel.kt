@@ -1571,7 +1571,12 @@ class PlayerViewModel internal constructor(
         val resolved = if (plan is PluginLivePlay.Direct) {
             Result.success(plan.playable)
         } else {
-            withContext(Dispatchers.IO) { runCatching { source.resolve(ref) } }
+            // InteractivePluginCall: the person is here waiting, so a Stream URL on a host the plugin
+            // never declared is asked about (the host-approval dialog) instead of refused outright.
+            // Nothing on this path times that wait out: the plugin's own 20 s limit ended when its
+            // `resolve` returned, and there is no limit here. Leaving the player clears this
+            // ViewModel, which cancels this coroutine and takes the dialog down (see StreamHostApproval).
+            withContext(Dispatchers.IO + com.arkiv.player.data.plugin.InteractivePluginCall) { runCatching { source.resolve(ref) } }
         }
         _resolving.value = false
         val play = resolved.getOrNull()

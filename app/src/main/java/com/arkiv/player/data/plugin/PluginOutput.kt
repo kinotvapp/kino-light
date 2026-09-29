@@ -124,6 +124,15 @@ data class PluginPlaylist(
 /** What a `liveCategories()` answer holds: the plugin's own sections and the playlists it declares. */
 data class PluginLiveCatalog(val categories: List<PluginLiveCategory>, val playlists: List<PluginPlaylist>)
 
+/**
+ * One host a `resolve` answer's URL is on that its plugin never declared, and that reactive approval
+ * could add ([PluginOutput.undeclaredHosts]). [reason] is what the first URL naming it is for.
+ */
+data class UndeclaredStreamHost(val host: String, val reason: HostApprovalReason) {
+    /** A refused video or license refuses the whole Stream; a refused subtitle or audio track only drops that track. */
+    val required: Boolean get() = reason == HostApprovalReason.VIDEO || reason == HostApprovalReason.LICENSE
+}
+
 /** A plugin answered something the contract doesn't allow; [message] is Spanish, shown to the person. */
 class PluginContractException(message: String) : Exception(message)
 
@@ -543,6 +552,40 @@ object PluginOutput {
         }
         val expires = o.optInt("expiresInSeconds", 0).takeIf { it in MIN_EXPIRES_IN_SECONDS..MAX_EXPIRES_IN_SECONDS } ?: 0
         return PluginStream(url, mime, headers, subtitles, o.optLong("durationMs", 0L).coerceAtLeast(0L), expires, audioTracks, drm)
+    }
+
+    /**
+     * The hosts of a `resolve` answer's URLs that [stream] would refuse ONLY because the plugin never
+     * declared them, and that reactive approval may add: exactly what [PluginHostGate.isPromptableMiss]
+     * (the `kino.fetch` rule) calls a promptable miss -- https, a public name a manifest could itself
+     * declare, not a server the person typed, not under `liveStreamHosts: "any"`. An IP literal, a
+     * local name or plain http never appears here: those stay hard refusals.
+     *
+     * In the order they'd be asked about, each host once (the first URL that named it says what it is
+     * for): the video, then its license, then subtitles and audio tracks, looked at exactly as
+     * [streamOf] looks at them (the same caps, the same [xuper] carve-out, subtitles/audio/license
+     * against [EffectiveHosts.strict]). Says nothing about the rest of the answer: a caller that asks
+     * checks first that the Stream is otherwise valid.
+     */
+    internal fun undeclaredHosts(json: String, hosts: EffectiveHosts, xuper: XuperStreams? = null, allowDrm: Boolean = false): List<UndeclaredStreamHost> {
+        val o = runCatching { JSONObject(json) }.getOrNull() ?: return emptyList()
+        val strict = hosts.strict
+        val found = LinkedHashMap<String, HostApprovalReason>()
+        fun consider(url: String, against: EffectiveHosts, reason: HostApprovalReason, carveOut: Boolean = true) {
+            if (carveOut && xuper?.headersFor(url) != null) return
+            val u = url.toHttpUrlOrNull() ?: return
+            if (PluginHostGate.isPromptableMiss(u, against)) found.putIfAbsent(u.host, reason)
+        }
+        consider(o.optString("url"), hosts, HostApprovalReason.VIDEO)
+        // drmOf has no Xuper carve-out: the bridge never resolves a license.
+        if (allowDrm) o.optJSONObject(DRM_FIELD)?.let { consider(it.optString("licenseUrl"), strict, HostApprovalReason.LICENSE, carveOut = false) }
+        o.optJSONArray("subtitles")?.let { arr ->
+            for (i in 0 until minOf(arr.length(), MAX_SUBTITLES)) arr.optJSONObject(i)?.let { consider(it.optString("url"), strict, HostApprovalReason.SUBTITLE) }
+        }
+        o.optJSONArray("audioTracks")?.let { arr ->
+            for (i in 0 until minOf(arr.length(), MAX_AUDIO_TRACKS)) arr.optJSONObject(i)?.let { consider(it.optString("url"), strict, HostApprovalReason.AUDIO) }
+        }
+        return found.map { (host, reason) -> UndeclaredStreamHost(host, reason) }
     }
 
     /**

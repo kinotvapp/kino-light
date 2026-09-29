@@ -532,6 +532,17 @@ It does **not** add a poster, a backdrop or seasons from TMDB -- those stay exac
   that host, exactly, accepts `http` for the stream, its subtitles, its audio tracks and its
   license. A stream that breaks this is refused as a whole; a bad subtitle is dropped and the
   stream still plays.
+- **A host you forgot may be asked about, once.** When the person opens a title in the player and
+  the only thing wrong with your `Stream` is that a URL (the video, its license, a subtitle or an
+  audio track) is on an `https` host you did not declare, Kino asks them in the moment ("El video
+  está en `<host>`, un servidor nuevo para este plugin. ¿Permitir?"), the same dialog a `kino.fetch`
+  to an undeclared host gets. "Permitir" adds that host to your plugin's approved hosts (within the
+  20-host limit) and the video plays; "Rechazar" (or Back) is remembered for your plugin -- the
+  video fails as described above, a subtitle or audio track is dropped -- and that host is never
+  asked about again until the person chooses "Olvidar rechazos de host". An IP address, a local
+  name, plain `http` or a stream broken in any other way is never asked about, and nothing is
+  asked when nobody is watching (a download resolves exactly as before). Don't rely on it: declare
+  the hosts your streams use.
 - `mime` is optional, of the form `video/mp4` (anything else refuses the stream). When it is missing
   Kino's player detects HLS, DASH or a plain file from the URL and the content.
 - **Everything the player fetches for the stream follows the `kino.fetch` host rules.** That covers the

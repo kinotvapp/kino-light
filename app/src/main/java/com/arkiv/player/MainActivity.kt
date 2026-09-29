@@ -131,9 +131,10 @@ class MainActivity : AppCompatActivity() {
                 val graph = (application as ArkivApp).graph
 
                 // Reactive host approval: a plugin's kino.fetch hit a host its manifest never
-                // declared, and the coroutine behind that call (see HostApprovalCenter) is
-                // suspended waiting for a verdict. Dismissing (back button, tap outside) counts as
-                // a reject -- respond(false) -- so the wait can never hang open forever unanswered.
+                // declared, or the Stream its resolve returned is on one (StreamHostApproval), and the
+                // coroutine behind it (see HostApprovalCenter) is suspended waiting for a verdict;
+                // `req.question` says which. Dismissing (back button, tap outside) counts as a reject
+                // -- respond(false) -- so the wait can never hang open forever unanswered.
                 val pendingHostApproval by graph.hostApprovalCenter.pending.collectAsState()
                 pendingHostApproval?.let { req ->
                     // key(req): a queued request can replace the answered one in the SAME frame (the
@@ -168,7 +169,7 @@ class MainActivity : AppCompatActivity() {
                                 Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                     Text(req.pluginName, style = MaterialTheme.typography.titleLarge, color = Color.White)
                                     Text(
-                                        "Quiere conectarse por primera vez a ${req.host}. ¿Permitir?",
+                                        req.question,
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = Color.White,
                                     )
