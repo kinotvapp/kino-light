@@ -35,7 +35,7 @@ import com.arkiv.player.ui.tv.gridLinesWithStatus
 /**
  * "Elige tus fuentes" on the phone: title and one line, what an action answers, then one grid with the
  * person's own switched-off or damaged plugins ([pickerInstalledRows], so there is always a card to act on),
- * the recommended cards and "De la comunidad" ([communityItems]), and at the bottom "Listo", enabled once a
+ * the recommended cards and "De la comunidad" ([communityItems]), and at the bottom "Continuar", enabled once a
  * plugin is installed and switched on ([pickerCanFinish]); it calls [onFinish]. The picker is mandatory:
  * there is no skip. System Back calls [onBack] ([onSourcePickerBack]: leaves the app when the picker was
  * opened at start).

@@ -68,7 +68,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 
-/** How long the first card has to show up for the initial focus before "Listo" takes it instead. */
+/** How long the first card has to show up for the initial focus before "Continuar" takes it instead. */
 private const val PICKER_FOCUS_GRACE_MS = 1_500L
 
 /** Attempts per focus target, [WAIT_BETWEEN_FOCUS_ATTEMPTS_MS] apart: about a second each. */
@@ -83,7 +83,7 @@ internal fun pickerRecommendedKey(id: String) = "card-$id"
 /**
  * The D-pad order of the picker's grid ([GridBlock]): "Tus plugins" ([installedIds]), Recomendados
  * ([recommendedIds]), then "De la comunidad" ("Actualizar", then its cards). Down from the last line
- * goes to "Listo".
+ * goes to "Continuar".
  */
 internal fun pickerFocusBlocks(installedIds: List<String>, recommendedIds: List<String>, community: CommunityUiState): List<GridBlock> =
     listOf(
@@ -96,7 +96,7 @@ internal sealed interface PickerFocus {
     /** The card with this grid key. */
     data class Card(val key: String) : PickerFocus
 
-    /** "Listo": there is no card to land on. */
+    /** "Continuar": there is no card to land on. */
     data object Done : PickerFocus
 
     /** Nowhere: the person is already walking the screen, and focus is never taken from under them. */
@@ -105,7 +105,7 @@ internal sealed interface PickerFocus {
 
 /**
  * Where the picker's automatic focus goes: the first "De la comunidad" card ([communityFirstKey]) when
- * there is one, else the first recommended card ([recommendedFirstKey]), else "Listo". "Tus plugins" still
+ * there is one, else the first recommended card ([recommendedFirstKey]), else "Continuar". "Tus plugins" still
  * comes first in the layout, but a new person is pointed at the community (the official Xuper plugin lives
  * there). Once the person has pressed a key ([userHasMoved]) nothing moves by itself: a community list that
  * shows up late only takes focus while the screen is untouched.
@@ -122,21 +122,21 @@ internal fun pickerInitialFocus(communityFirstKey: String?, recommendedFirstKey:
  * the person's switched-off or damaged ones first), for the D-pad:
  * - Initial focus is the first "De la comunidad" card, scrolled into view, else the first recommended card
  *   ([pickerInitialFocus]); if there is no card within [PICKER_FOCUS_GRACE_MS], or it will not take focus,
- *   "Listo" does. A community list that arrives after the landing takes focus only if no key has been
- *   pressed since the screen opened. "Listo" and not the community
+ *   "Continuar" does. A community list that arrives after the landing takes focus only if no key has been
+ *   pressed since the screen opened. "Continuar" and not the community
  *   "Actualizar": it sits outside the lazy grid, so it is always composed and on screen whatever the
  *   community list is doing (loading, empty offline, scrolled away), and it stays focusable while disabled.
  * - Success is each target's OWN focus state, never `requestFocus()`'s return (it reports nothing; see
  *   [retryFocus]).
- * - The cards stay focusable in every state (an installed one reads "Instalado"), and "Listo" is a
+ * - The cards stay focusable in every state (an installed one reads "Instalado"), and "Continuar" is a
  *   [TvCompactAction] that stays focusable while disabled, so a state change never throws focus out.
  * - If the rows change under the focused card, or a dialog closes, and nothing here holds focus, it goes
- *   back to the first card (or "Listo") ([pickerNeedsRefocus]).
+ *   back to the first card (or "Continuar") ([pickerNeedsRefocus]).
  * - Up/Down are routed explicitly ([TvGridFocus], [pickerFocusBlocks]): "Tus plugins", Recomendados,
- *   "Actualizar", the community cards, then "Listo"; Up from "Listo" returns to the card Down left. The
+ *   "Actualizar", the community cards, then "Continuar"; Up from "Continuar" returns to the card Down left. The
  *   cards are compact ([tvPickerColumns]: 5 on a ~960 dp box, 6 on a 1280 dp TV) so a new person sees "De la comunidad" on
  *   the first screen.
- * - The picker is mandatory: "Listo" ([pickerCanFinish]) calls [onFinish]; there is no skip. Back calls
+ * - The picker is mandatory: "Continuar" ([pickerCanFinish]) calls [onFinish]; there is no skip. Back calls
  *   [onBack] ([com.arkiv.player.ui.plugin.onSourcePickerBack]: leaves the app when opened at start).
  */
 @OptIn(ExperimentalFoundationApi::class)
@@ -182,7 +182,7 @@ fun TvSourcePickerScreen(onFinish: () -> Unit, onBack: () -> Unit) {
     }
 
     // The first community card on the first landing ([initial]); then the first recommended card when there is one
-    // and it takes focus, "Listo" otherwise.
+    // and it takes focus, "Continuar" otherwise.
     suspend fun landFocus(initial: Boolean) {
         val community = currentCommunityFirstKey.takeIf { initial }
         if (community != null && focusCommunityCard(community, yieldToKeys = false)) return

@@ -22,7 +22,7 @@ class SourcePickerTest {
         assertEquals("Elige tus fuentes", SOURCE_PICKER_TITLE)
         assertEquals("Instala las fuentes que quieras usar. Puedes cambiarlas cuando quieras en Menú ▸ Plugins.", sourcePickerLine(isTv = false))
         assertEquals("Instala las fuentes que quieras usar. Puedes cambiarlas cuando quieras en Ajustes ▸ Plugins.", sourcePickerLine(isTv = true))
-        assertEquals("Listo", SOURCE_PICKER_DONE)
+        assertEquals("Continuar", SOURCE_PICKER_DONE)
         assertEquals("Recomendados", RECOMMENDED_TITLE)
     }
 

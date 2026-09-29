@@ -32,7 +32,7 @@ import com.arkiv.player.ui.rememberGraph
 /*
  * "Elige tus fuentes" (spec 2026-09-28 §3): the recommended catalog and the community list, with the same
  * cards, consent, install and Configurar as the Plugins screen's Recomendados. Phone and TV share this file.
- * Mandatory since the 2026-09-28 amendment: there is no way past it but "Listo" with a source installed;
+ * Mandatory since the 2026-09-28 amendment: there is no way past it but "Continuar" with a source installed;
  * Back on the picker opened at start leaves the app ([onSourcePickerBack]).
  */
 
@@ -43,11 +43,11 @@ internal const val SOURCE_PICKER_TITLE = "Elige tus fuentes"
 /** The line under the title: where the sources can be changed later, the drawer's Plugins on the phone, Ajustes ▸ Plugins on the TV. */
 internal fun sourcePickerLine(isTv: Boolean): String =
     "Instala las fuentes que quieras usar. Puedes cambiarlas cuando quieras en ${com.arkiv.player.data.plugin.PluginsPlace.of(isTv)}."
-internal const val SOURCE_PICKER_DONE = "Listo"
+internal const val SOURCE_PICKER_DONE = "Continuar"
 internal const val RECOMMENDED_TITLE = "Recomendados"
 
 /**
- * "Listo" does something once at least one plugin is installed and switched on ([Onboarding.hasSource]):
+ * "Continuar" does something once at least one plugin is installed and switched on ([Onboarding.hasSource]):
  * the same rule that reopens the picker at start, so leaving it never leads to it again next time.
  */
 internal fun pickerCanFinish(plugins: List<InstalledPlugin>): Boolean = Onboarding.hasSource(plugins)
@@ -61,12 +61,12 @@ internal fun pickerNeedsRefocus(initialFocusPlaced: Boolean, screenHasFocus: Boo
     initialFocusPlaced && !screenHasFocus && !dialogOpen
 
 /**
- * "Listo": pops back to what was under the picker, or goes Home when nothing was ([goHome]). Nothing is
+ * "Continuar": pops back to what was under the picker, or goes Home when nothing was ([goHome]). Nothing is
  * written: whether the picker opens at the next start depends only on the installed plugins
  * ([Onboarding.opensPickerOnStart]).
  *
  * Navigation runs only while the picker is still the current destination ([isShowing]): during the
- * NavHost's exit fade the picker stays composed and clickable, and a second tap on "Listo" would otherwise
+ * NavHost's exit fade the picker stays composed and clickable, and a second tap on "Continuar" would otherwise
  * pop Home itself and leave a blank NavHost.
  */
 internal fun leaveSourcePicker(isShowing: () -> Boolean, popBack: () -> Boolean, goHome: () -> Unit) {
@@ -121,7 +121,7 @@ internal fun startCoverShows(gate: StartGate, currentRoute: String?): Boolean =
 
 /**
  * Re-checked right before the start picker is navigated to: the decision may be old (it waited for a
- * deep-linked player, or a restored back stack already went through "Listo"), and a source installed
+ * deep-linked player, or a restored back stack already went through "Continuar"), and a source installed
  * meanwhile means it must not open.
  */
 internal fun startPickerStillNeeded(plugins: List<InstalledPlugin>): Boolean = !Onboarding.hasSource(plugins)

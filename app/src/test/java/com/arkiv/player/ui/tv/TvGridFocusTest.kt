@@ -27,7 +27,7 @@ class TvGridFocusTest {
         assertEquals(listOf(listOf("act")), gridFocusLines(listOf(GridBlock.Cards(emptyList()), GridBlock.Action("act")), 4))
     }
 
-    // Found on the KALLEY TV: Down from the LEFT card of the last recommended line jumped to "Listo".
+    // Found on the KALLEY TV: Down from the LEFT card of the last recommended line jumped to "Continuar".
     @Test fun `Down from every card of the last recommended line reaches Actualizar`() {
         val lines = gridFocusLines(picker, 4)
         assertEquals("community-header", gridFocusNeighbour(lines, "card-archive", down = true))
