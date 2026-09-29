@@ -3,6 +3,10 @@ package com.arkiv.player.ui.tv
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -118,7 +122,7 @@ fun TvPluginCard(
             focusedBorder = Border(BorderStroke(3.dp, Color.White)),
         ),
     ) {
-        Column(Modifier.clearAndSetSemantics { }) {
+        Column(Modifier.clearAndSetSemantics { }.background(cardBodyBrush(tileColor(art)))) {
             if (compact) {
                 CompactCardTile(name = entry.name, iconFile = art?.iconFile, tileColorArgb = tileColor(art), pill = cardPill(row))
             } else {
@@ -154,13 +158,36 @@ fun TvPluginCard(
 @Composable
 internal fun CardTile(name: String, iconFile: File?, tileColorArgb: Long, pill: String?) {
     val tile = tileColorArgb
-    Column(
+    var iconFailed by remember(iconFile) { mutableStateOf(false) }
+    val cover = iconFile != null && !iconFailed
+    Box(
         modifier = Modifier
             .fillMaxWidth()
             .aspectRatio(TILE_RATIO)
             .clip(RoundedCornerShape(topStart = CARD_CORNER, topEnd = CARD_CORNER))
             .background(Color(tile)),
     ) {
+        if (cover) {
+            // The icon fills the whole tile, and a scrim fades its bottom into the body of the card.
+            AsyncImage(
+                model = iconFile,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                onError = { iconFailed = true },
+                modifier = Modifier.fillMaxSize(),
+            )
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.55f to Color.Transparent, 1f to cardBodyTop(tile))))
+        } else {
+            BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                TileArt(
+                    name = name,
+                    iconFile = null,
+                    tileColorArgb = tile,
+                    iconSize = 0f,
+                    letterSize = tileArtSize(maxHeight.value, INITIAL_SIZE.value),
+                )
+            }
+        }
         if (pill != null) {
             Text(
                 text = pill,
@@ -175,20 +202,15 @@ internal fun CardTile(name: String, iconFile: File?, tileColorArgb: Long, pill: 
                     .padding(horizontal = 10.dp, vertical = 2.dp),
             )
         }
-        BoxWithConstraints(
-            modifier = Modifier.fillMaxWidth().weight(1f),
-            contentAlignment = Alignment.Center,
-        ) {
-            TileArt(
-                name = name,
-                iconFile = iconFile,
-                tileColorArgb = tile,
-                iconSize = tileArtSize(maxHeight.value, ICON_SIZE.value),
-                letterSize = tileArtSize(maxHeight.value, INITIAL_SIZE.value),
-            )
-        }
     }
 }
+
+/** The colour the body of a card starts with under its tile: the tile's colour, darkened. */
+private fun cardBodyTop(tileColorArgb: Long): Color = lerp(Color(tileColorArgb), Color.Black, 0.65f)
+
+/** The modern body of a plugin card (under and around its texts): the tile's colour fading into near-black instead of a flat grey. */
+internal fun cardBodyBrush(tileColorArgb: Long): Brush =
+    Brush.verticalGradient(listOf(cardBodyTop(tileColorArgb), Color(0xFF0B0B0B)))
 
 /**
  * The tile of a [compact][TvPluginCard] card: a strip [COMPACT_TILE_RATIO] wide, too low for the pill to take
