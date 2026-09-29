@@ -16,8 +16,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.GridView
@@ -395,9 +395,10 @@ fun ArkivRoot(
                                 Icon(Icons.Default.Refresh, contentDescription = "Recargar catálogo", tint = Color.White)
                             }
                             IconButton(onClick = { navController.navigate("kinobot") }) {
+                                // The sparkles are the generic "AI assistant" icon; a speech bubble did not say it was an AI.
                                 Icon(
-                                    Icons.AutoMirrored.Filled.Chat,
-                                    contentDescription = "Kinobot",
+                                    Icons.Default.AutoAwesome,
+                                    contentDescription = "Kinobot, el asistente de IA",
                                     tint = Color.White,
                                 )
                             }
