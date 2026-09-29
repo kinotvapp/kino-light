@@ -37,9 +37,8 @@ import com.arkiv.player.ui.theme.ArkivTextSecondary
  * instead of walking four rows, as the deleted `TvInstalledPluginRows` used to. Its header restores what
  * that row's own heading always showed inline -- the name, version and full status sentence, then the
  * complete host list, wrapping freely (the card's own lines are capped and may cut either) -- since the
- * dialog covers the card while it is up. Same content otherwise, same [PluginsViewModel] calls, same order
- * the old rows picked their first focusable action in (the switch's own action first, else Configurar, else
- * "Buscar actualización", which is always there): "Activar {name}" or "Desactivar {name}" (absent for a
+ * dialog covers the card while it is up. Same content otherwise, same [PluginsViewModel] calls, in this order
+ * ([tvInstalledActions]), with the first focus on "Cerrar" ([tvInstalledActionsInitialFocus]): "Activar {name}" or "Desactivar {name}" (absent for a
  * damaged plugin, which cannot be toggled -- [InstalledCardModel.switchEnabled]), "Configurar {name}" (only
  * with settings -- [InstalledCardModel.hasSettings]), "Buscar actualización de {name}" (or "Revisar
  * actualización de {name}" once one is pending consent), "Olvidar rechazos de host de {name}" (only when
@@ -52,16 +51,17 @@ import com.arkiv.player.ui.theme.ArkivTextSecondary
 internal fun TvInstalledActionsDialog(plugin: InstalledPlugin, art: CatalogArt?, vm: PluginsViewModel, onDismiss: () -> Unit) {
     val firstFocus = remember { FocusRequester() }
     FocusWhenReady(firstFocus)
-    // TvCompactAction, not TvActionOption: the latter is sized to 60% of a wide Ajustes pane, which inside
-    // this narrow dialog would leave a long label ("Buscar actualización de …") cramped; TvCompactAction
-    // takes exactly the width it's given (fillMaxWidth here) and keeps its label to one line.
-    fun firstModifier() = Modifier.focusRequester(firstFocus).fillMaxWidth()
     val name = plugin.manifest.name
     // The same model the card built (art only feeds the tile/icon, which this dialog never draws, so it
     // changes nothing here): one rule for "can the switch move" / "does Configurar belong", not a second copy.
     val model = installedCardModel(plugin, art)
-    val hasSwitch = model.switchEnabled
-    val hasSettings = model.hasSettings
+    val actions = tvInstalledActions(model.switchEnabled, model.hasSettings, plugin.record.rejectedHosts.isNotEmpty())
+    val focused = tvInstalledActionsInitialFocus(actions)
+    // TvCompactAction, not TvActionOption: the latter is sized to 60% of a wide Ajustes pane, which inside
+    // this narrow dialog would leave a long label ("Buscar actualización de …") cramped; TvCompactAction
+    // takes exactly the width it's given (fillMaxWidth here) and keeps its label to one line.
+    fun modifierFor(action: TvInstalledAction) =
+        if (action == focused) Modifier.focusRequester(firstFocus).fillMaxWidth() else Modifier.fillMaxWidth()
 
     Dialog(onDismissRequest = onDismiss) {
         Column(
@@ -84,29 +84,54 @@ internal fun TvInstalledActionsDialog(plugin: InstalledPlugin, art: CatalogArt?,
                 style = MaterialTheme.typography.bodyMedium,
                 color = ArkivTextSecondary,
             )
-            if (hasSwitch) {
-                TvCompactAction(
-                    label = if (plugin.isUsable) "Desactivar $name" else "Activar $name",
-                    modifier = firstModifier(),
-                ) { vm.setEnabled(plugin.id, !plugin.isUsable); onDismiss() }
-            }
-            if (hasSettings) {
-                TvCompactAction(
-                    label = "Configurar $name",
-                    modifier = if (hasSwitch) Modifier.fillMaxWidth() else firstModifier(),
-                ) { vm.openSettings(plugin.id); onDismiss() }
-            }
-            TvCompactAction(
-                label = if (plugin.status == PluginStatus.UPDATE_PENDING) "Revisar actualización de $name" else "Buscar actualización de $name",
-                modifier = if (hasSwitch || hasSettings) Modifier.fillMaxWidth() else firstModifier(),
-            ) { vm.checkUpdate(plugin.id); onDismiss() }
-            if (plugin.record.rejectedHosts.isNotEmpty()) {
-                TvCompactAction(label = "Olvidar rechazos de host de $name", modifier = Modifier.fillMaxWidth()) {
-                    vm.forgetHostRejections(plugin.id); onDismiss()
+            for (action in actions) {
+                when (action) {
+                    TvInstalledAction.TOGGLE -> TvCompactAction(
+                        label = if (plugin.isUsable) "Desactivar $name" else "Activar $name",
+                        modifier = modifierFor(action),
+                    ) { vm.setEnabled(plugin.id, !plugin.isUsable); onDismiss() }
+                    TvInstalledAction.CONFIGURE -> TvCompactAction(label = "Configurar $name", modifier = modifierFor(action)) {
+                        vm.openSettings(plugin.id); onDismiss()
+                    }
+                    TvInstalledAction.UPDATE -> TvCompactAction(
+                        label = if (plugin.status == PluginStatus.UPDATE_PENDING) "Revisar actualización de $name" else "Buscar actualización de $name",
+                        modifier = modifierFor(action),
+                    ) { vm.checkUpdate(plugin.id); onDismiss() }
+                    TvInstalledAction.FORGET_REJECTIONS -> TvCompactAction(label = "Olvidar rechazos de host de $name", modifier = modifierFor(action)) {
+                        vm.forgetHostRejections(plugin.id); onDismiss()
+                    }
+                    TvInstalledAction.UNINSTALL -> TvCompactAction(label = "Desinstalar $name", modifier = modifierFor(action)) {
+                        vm.askUninstall(plugin); onDismiss()
+                    }
+                    TvInstalledAction.CLOSE -> TvCompactAction(label = "Cerrar", modifier = modifierFor(action), onClick = onDismiss)
                 }
             }
-            TvCompactAction(label = "Desinstalar $name", modifier = Modifier.fillMaxWidth()) { vm.askUninstall(plugin); onDismiss() }
-            TvCompactAction(label = "Cerrar", modifier = Modifier.fillMaxWidth(), onClick = onDismiss)
         }
     }
 }
+
+/** One row of [TvInstalledActionsDialog], in the order they are shown. */
+internal enum class TvInstalledAction { TOGGLE, CONFIGURE, UPDATE, FORGET_REJECTIONS, UNINSTALL, CLOSE }
+
+/**
+ * The rows [TvInstalledActionsDialog] shows: the switch's own action only when the switch can move
+ * ([InstalledCardModel.switchEnabled]), Configurar only with settings, "Olvidar rechazos de host" only
+ * when there are some; "Buscar actualización", "Desinstalar" and "Cerrar" always.
+ */
+internal fun tvInstalledActions(hasSwitch: Boolean, hasSettings: Boolean, hasRejections: Boolean): List<TvInstalledAction> = buildList {
+    if (hasSwitch) add(TvInstalledAction.TOGGLE)
+    if (hasSettings) add(TvInstalledAction.CONFIGURE)
+    add(TvInstalledAction.UPDATE)
+    if (hasRejections) add(TvInstalledAction.FORGET_REJECTIONS)
+    add(TvInstalledAction.UNINSTALL)
+    add(TvInstalledAction.CLOSE)
+}
+
+/**
+ * Where the D-pad focus starts when the dialog opens: "Cerrar", the one row that changes nothing --
+ * the same rule as the consent and uninstall sheets, which open on "Cancelar". It used to be the
+ * first row, "Desactivar {name}": one more OK after the one that opened the menu
+ * switched the plugin off.
+ */
+internal fun tvInstalledActionsInitialFocus(actions: List<TvInstalledAction>): TvInstalledAction =
+    TvInstalledAction.CLOSE.takeIf { it in actions } ?: actions.first()
