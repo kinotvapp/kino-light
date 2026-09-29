@@ -29,8 +29,8 @@ class TvHomeBackTest {
     }
 
     @Test
-    fun `on the first row at the top, Back keeps the usual exit flow`() {
-        assertEquals(TvHomeBack.EXIT_FLOW, back())
+    fun `on the first row at the top, Back opens the menu rail instead of leaving`() {
+        assertEquals(TvHomeBack.OPEN_MENU, back())
     }
 
     @Test
@@ -39,9 +39,21 @@ class TvHomeBackTest {
     }
 
     @Test
-    fun `on the default landing Back keeps the usual exit flow, even if the landing left the list scrolled`() {
+    fun `on a default landing inside the rows Back opens the menu, even if the landing left the list scrolled`() {
         // The empty state's button can sit below other rows, so landing on it scrolls the list.
-        assertEquals(TvHomeBack.EXIT_FLOW, back(listAtTop = false, focusedRowIsFirst = false, focusOnLanding = true))
+        assertEquals(TvHomeBack.OPEN_MENU, back(listAtTop = false, focusedRowIsFirst = false, focusOnLanding = true))
+    }
+
+    @Test
+    fun `with the rail itself focused, Back keeps the usual exit flow`() {
+        // The rail is the landing when there is no card to land on: Back there is the second Back, which leaves.
+        assertEquals(TvHomeBack.EXIT_FLOW, back(focusInRows = false, focusedRowIsFirst = false, focusOnLanding = true))
+    }
+
+    @Test
+    fun `Back on the first row right after a scroll to the top still opens the menu`() {
+        // The scroll-to-top flag only stops a second scroll; it must not skip the menu on the way out.
+        assertEquals(TvHomeBack.OPEN_MENU, back(justScrolledToTop = true))
     }
 
     @Test
