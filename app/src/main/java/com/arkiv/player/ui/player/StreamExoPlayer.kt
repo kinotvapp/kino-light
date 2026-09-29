@@ -536,11 +536,21 @@ internal fun StreamExoPlayer(
                         applyAudioTracks(prepared, next, exoPlayer.currentPosition.coerceAtLeast(0L), playWhenReady = exoPlayer.playWhenReady)
                     }
                     PlayerErrorRoute.FINAL -> {
-                        Log.e(TAG, "onPlayerError errorCode=${error.errorCode} msg=$msg", error)
+                        // The person reads a short Spanish sentence; ExoPlayer's English and the
+                        // technical detail stay here and in the crash report.
+                        val video = (error as? androidx.media3.exoplayer.ExoPlaybackException)?.rendererFormat
+                            ?.takeIf { MimeTypes.isVideo(it.sampleMimeType) } ?: exoPlayer.videoFormat
+                        val shown = playerErrorMessage(error, video?.height ?: 0, video?.sampleMimeType)
+                        Log.e(
+                            TAG,
+                            "onPlayerError errorCode=${error.errorCode} (${androidx.media3.common.PlaybackException.getErrorCodeName(error.errorCode)}) " +
+                                "msg=$msg video=${video?.height ?: 0}p ${video?.sampleMimeType} -> shown \"$shown\"",
+                            error,
+                        )
                         // Also to Sentry: VOD playback failures (codec init, source, decoder) used to vanish
                         // into Logcat -- this is proactive signal on which content/devices can't play.
                         com.arkiv.player.crash.Crash.report(error, "$crashTag-playback-${androidx.media3.common.PlaybackException.getErrorCodeName(error.errorCode)}")
-                        onError(msg)
+                        onError(shown)
                     }
                 }
             }
