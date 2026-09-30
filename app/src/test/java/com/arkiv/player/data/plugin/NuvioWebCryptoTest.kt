@@ -21,7 +21,7 @@ class NuvioWebCryptoTest {
         contentLanguage = listOf("es"), supportedTypes = listOf("movie"), logo = null, disabledPlatforms = emptyList(),
     )
 
-    private fun convert(source: String) = NuvioPluginConverter.convert(scraper, source, repoSlug = "owner/repo", tmdbApiKey = "k")
+    private fun convert(source: String) = NuvioPluginConverter.convert(scraper, source, repoSlug = "owner/repo")
 
     /**
      * Runs [body] (the inside of an async function that `return`s a JSON-serializable value) as the

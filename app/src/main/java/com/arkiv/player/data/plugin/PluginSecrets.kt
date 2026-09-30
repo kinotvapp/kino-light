@@ -25,15 +25,26 @@ import java.util.PriorityQueue
  *
  * Nothing here logs; a plain value never leaves this class except through [substitute].
  */
-class PluginSecrets(
-    private val sealed: Map<String, String>,
-    private val binding: String,
-    private val agreement: X25519Agreement,
+class PluginSecrets private constructor(
+    /** Name -> this runtime's marker for it. */
+    private val markers: Map<String, String>,
+    /** The plain value of a name in [markers]; may throw [SealException]. */
+    private val open: (String) -> String,
     val sealedHosts: List<String>,
-    private val recipient: ByteArray = SealedSecrets.KINO_PUBLIC_KEY_V1,
-    private val nonce: String = randomNonce(),
 ) {
-    private val markers: Map<String, String> = sealed.keys.associateWith { "__kinoSecret_${it}_${nonce}__" }
+    constructor(
+        sealed: Map<String, String>,
+        binding: String,
+        agreement: X25519Agreement,
+        sealedHosts: List<String>,
+        recipient: ByteArray = SealedSecrets.KINO_PUBLIC_KEY_V1,
+        nonce: String = randomNonce(),
+    ) : this(
+        sealed.keys.associateWith { "__kinoSecret_${it}_${nonce}__" },
+        { name -> SealedSecrets.open(sealed.getValue(name), binding, name, agreement, recipient) },
+        sealedHosts,
+    )
+
     private val opened = HashMap<String, String>()
     /** Seals [openAll] couldn't open (no native X25519 on this build): not tried again for redaction. Guarded by [opened]. */
     private val unopenable = HashSet<String>()
@@ -99,10 +110,10 @@ class PluginSecrets(
         if (allOpened) return
         synchronized(opened) {
             if (allOpened) return
-            for ((name, seal) in sealed) {
+            for (name in markers.keys) {
                 if (name in opened || name in unopenable) continue
                 try {
-                    opened[name] = SealedSecrets.open(seal, binding, name, agreement, recipient)
+                    opened[name] = open(name)
                 } catch (e: SealException) {
                     unopenable += name
                 }
@@ -168,10 +179,20 @@ class PluginSecrets(
     }
 
     private fun plainOf(name: String): String = synchronized(opened) {
-        opened.getOrPut(name) { SealedSecrets.open(sealed.getValue(name), binding, name, agreement, recipient) }
+        opened.getOrPut(name) { open(name) }
     }
 
     companion object {
+        /**
+         * A value Kino itself holds in plain (never sealed, never in the plugin's files): the plugin
+         * carries the fixed [marker] instead, and this runtime substitutes [value] for it only in a
+         * request to [hosts] (https only, [PluginHttp.Request.sealedTo]), redacting it from everything
+         * that comes back -- exactly as for a sealed secret. [marker] must be URL-safe (letters,
+         * digits, `_`), so it survives `encodeURIComponent` and JSON unchanged.
+         */
+        fun plain(name: String, marker: String, value: String, hosts: List<String>): PluginSecrets =
+            PluginSecrets(mapOf(name to marker), { value }, hosts)
+
         private val random = SecureRandom()
         private const val HEX = "0123456789ABCDEF"
 
@@ -249,7 +270,8 @@ class PluginSecrets(
 }
 
 /**
- * The secrets a runtime of [plugin] opens with: its manifest's seals, bound to the INSTALLED
+ * The secrets a runtime of [plugin] opens with -- for a plugin converted from Nuvio, only Kino's TMDB
+ * key ([NuvioPluginConverter.tmdbKeySecrets]); otherwise its manifest's seals, bound to the INSTALLED
  * record's address (the same binding the installer verified them against), allowed toward the
  * manifest's own `hosts` only. Null when it declares none, when its recorded address no longer
  * parses (then `kino.secret` answers "not declared" rather than opening against a wrong binding),
@@ -260,7 +282,11 @@ internal fun pluginSecretsFor(
     plugin: InstalledPlugin,
     agreement: X25519Agreement,
     recipient: ByteArray = SealedSecrets.KINO_PUBLIC_KEY_V1,
+    /** Kino's TMDB key; read only for a plugin converted from Nuvio. */
+    tmdbApiKey: () -> String? = { null },
 ): PluginSecrets? {
+    // A converted Nuvio plugin: Kino's TMDB key behind its fixed marker (the converter never writes `secrets`).
+    if (plugin.record.nuvioScraperId != null) return NuvioPluginConverter.tmdbKeySecrets(tmdbApiKey())
     if (plugin.manifest.secrets.isEmpty()) return null
     val address = PluginAddress.parse(plugin.record.address) ?: return null
     if (!SealedSecrets.opensAt(address)) return null

@@ -74,7 +74,6 @@ object NuvioPluginConverter {
         scraper: NuvioScraperEntry,
         scraperSource: String,
         repoSlug: String,
-        tmdbApiKey: String,
         remoteHosts: NuvioRemoteHosts = NuvioRemoteHosts.NONE,
     ): NuvioConversionResult {
         val slug = scraper.id.lowercase().replace(Regex("[^a-z0-9-]"), "-").trim('-').ifEmpty { "scraper" }
@@ -119,7 +118,9 @@ object NuvioPluginConverter {
             }
         }
 
-        val shim = PluginPrelude.nuvioShim.replace("__NUVIO_TMDB_API_KEY__", tmdbApiKey)
+        // Never Kino's own TMDB key in plain: the script carries a marker the runtime swaps for it only
+        // on requests to TMDB (see TMDB_KEY_MARKER), so a third-party scraper can't read or send it anywhere.
+        val shim = PluginPrelude.nuvioShim.replace("__NUVIO_TMDB_API_KEY__", TMDB_KEY_MARKER)
         val libraries = NuvioLibrary.entries.filter { it.needs(scraperSource) }
             .joinToString("") { PluginPrelude.nuvioVendor(it.file) + "\n" + it.binding + "\n" }
         // The scraper's own top-level code runs inside an IIFE, never spliced in at the same top
@@ -160,6 +161,22 @@ object NuvioPluginConverter {
 
     /** The one host the adapter itself calls (`search` artwork, `episodes`); see [convert]. */
     const val TMDB_HOST = "api.themoviedb.org"
+
+    /** The name [tmdbKeySecrets]' marker answers to in `kino.secret` (the shim never asks for it). */
+    const val TMDB_KEY_SECRET = "tmdbApiKey"
+
+    /**
+     * What a converted plugin carries as `TMDB_API_KEY` instead of Kino's own key. URL-safe, so it
+     * survives `encodeURIComponent` and JSON unchanged. A runtime of a converted plugin
+     * ([tmdbKeySecrets]) substitutes the real key for it only in a request to [TMDB_HOST] (https),
+     * refuses a request carrying it anywhere else, and redacts the key from everything that comes
+     * back -- the sealed-secret mechanism ([PluginSecrets.plain]).
+     */
+    const val TMDB_KEY_MARKER = "__kinoSecret_tmdbApiKey_nuvio__"
+
+    /** The secrets a runtime of a plugin converted from Nuvio opens with: Kino's TMDB key, toward TMDB only. Null without a key. */
+    fun tmdbKeySecrets(tmdbApiKey: String?): PluginSecrets? =
+        tmdbApiKey?.takeIf { it.isNotEmpty() }?.let { PluginSecrets.plain(TMDB_KEY_SECRET, TMDB_KEY_MARKER, it, listOf(TMDB_HOST)) }
 
     /**
      * The consent sheet shows `description` as is, so the [warnings] ride in it: the spec wants them

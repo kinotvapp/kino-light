@@ -717,7 +717,8 @@ class AppGraph(context: Context) {
         // Sealed secrets (a manifest's `secrets`): markers for kino.secret, opened in this runtime
         // when a request first carries one or the first text is redacted, sent only toward the
         // manifest's own hosts (PluginSecrets); none at all for an address with an explicit @ref.
-        val secrets = pluginSecretsFor(plugin, sealAgreement)
+        // A plugin converted from Nuvio gets Kino's TMDB key the same way, toward TMDB only.
+        val secrets = pluginSecretsFor(plugin, sealAgreement, tmdbApiKey = { credentialsStore.read()?.tmdbApiKey })
         val host = pluginHostFor(plugin, http, storage, config, cookies, magisPluginBridge, secrets)
         val runtime = PluginRuntime.open(id, script, host, PluginEnv(appVersion = BuildConfig.VERSION_NAME), calls)
         // F5: drop this plugin's PluginHttp the moment its runtime is closed -- idle timeout, or an
@@ -759,13 +760,12 @@ class AppGraph(context: Context) {
         )
     }
 
-    /** Nuvio-origin plugins' preview/install/update (Task 5): same fetcher wiring as [pluginInstaller], TMDB key from the same place [tmdbApi] reads it. */
+    /** Nuvio-origin plugins' preview/install/update (Task 5): same fetcher wiring as [pluginInstaller]. Kino's TMDB key never goes into a converted script (see [NuvioPluginConverter.TMDB_KEY_MARKER]). */
     val nuvioPluginInstaller: NuvioPluginInstaller by lazy {
         val github = RawGithubFetcher(pluginBaseHttp)
         NuvioPluginInstaller(
             pluginInstaller,
             PluginFetcher { url, max -> (debugPluginFetcher ?: github).fetch(url, max) },
-            tmdbApiKey = credentialsStore.read()!!.tmdbApiKey,
         )
     }
 

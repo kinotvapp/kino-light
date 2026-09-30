@@ -66,8 +66,8 @@ class PluginAdminTest {
         pool = PluginRuntimePool(open = { FakeRuntime() }, onUnresponsive = {}, scope = CoroutineScope(Dispatchers.Unconfined))
         installer = PluginInstaller(store, fetcher, probe = { _, _ -> setOf("search", "resolve") }, clock = { 1_000L })
         // No test here installs a Nuvio-origin plugin, so `coordinator` always routes to `installer`
-        // (see PluginUpdateCoordinator.checkUpdate) -- this fetcher/tmdbApiKey are never exercised.
-        coordinator = PluginUpdateCoordinator(store, installer, NuvioPluginInstaller(installer, fetcher, tmdbApiKey = "test"), clock = { 1_000L })
+        // (see PluginUpdateCoordinator.checkUpdate) -- this fetcher is never exercised.
+        coordinator = PluginUpdateCoordinator(store, installer, NuvioPluginInstaller(installer, fetcher), clock = { 1_000L })
         admin = DefaultPluginAdmin(
             registry, installer, coordinator, pool, config, forgetSession = { forgotten += it },
             forgetLiveChannels = { liveForgotten += it },

@@ -20,7 +20,7 @@ class NuvioResolveOutcomeTest {
 
     private fun resolve(getStreamsBody: String): Pair<Result<String>, List<String>> {
         val source = "async function getStreams(tmdbId, mediaType, season, episode) {\n$getStreamsBody\n}\nmodule.exports = { getStreams: getStreams };"
-        val script = NuvioPluginConverter.convert(scraper, source, repoSlug = "owner/repo", tmdbApiKey = "k").script
+        val script = NuvioPluginConverter.convert(scraper, source, repoSlug = "owner/repo").script
         val host = NuvioRoutingHost(emptyMap())
         val result = runBlocking {
             val rt = PluginRuntime.open("outcome", script, host, PluginEnv(appVersion = "1.0"))

@@ -58,7 +58,7 @@ class NuvioSeriesAdapterTest {
         ),
     )
 
-    private val conversion by lazy { NuvioPluginConverter.convert(scraper, echoSource, repoSlug = "owner/repo", tmdbApiKey = "tmdb-key") }
+    private val conversion by lazy { NuvioPluginConverter.convert(scraper, echoSource, repoSlug = "owner/repo") }
 
     private fun <T> withRuntime(host: PluginHost, block: suspend (PluginRuntime) -> T): T = runBlocking {
         val runtime = PluginRuntime.open("series", conversion.script, host, PluginEnv(appVersion = "1.0"))
@@ -89,7 +89,7 @@ class NuvioSeriesAdapterTest {
         assertEquals(listOf("series"), page.items.map { it.kind })
         val tmdb = host.urls().single()
         assertTrue(tmdb, tmdb.startsWith("https://api.themoviedb.org/3/tv/1396?"))
-        assertTrue(tmdb, "api_key=tmdb-key" in tmdb && "language=es-MX" in tmdb)
+        assertTrue(tmdb, "api_key=${NuvioPluginConverter.TMDB_KEY_MARKER}" in tmdb && "language=es-MX" in tmdb)
     }
 
     @Test fun `episodes lists every real season from TMDB, skipping specials and unaired episodes, in Kino's shape`() {
@@ -154,7 +154,7 @@ class NuvioSeriesAdapterTest {
 
     @Test fun `a movie getStreams really receives null, not 0, for season and episode`() {
         val strict = echoSource.replace("[typeof tmdbId, tmdbId, mediaType, season, episode]", "[mediaType, season === null, episode === null]")
-        val result = NuvioPluginConverter.convert(scraper, strict, repoSlug = "owner/repo", tmdbApiKey = "k")
+        val result = NuvioPluginConverter.convert(scraper, strict, repoSlug = "owner/repo")
         val url = runBlocking {
             val rt = PluginRuntime.open("strict", result.script, tmdbHost(), PluginEnv(appVersion = "1.0"))
             try { JSONObject(rt.call("resolve", JSONObject.quote("""{"tmdbId":603,"type":"movie","season":0,"episode":0}"""), 5_000)).getString("url") } finally { rt.close() }
@@ -186,7 +186,7 @@ class NuvioSeriesAdapterTest {
     @Test fun `api themoviedb org is always declared, even when the scraper's own hosts fill the cap`() {
         val many = (1..30).joinToString("\n") { "var u$it = \"https://mirror$it.example/x\";" }
         val source = many + "\n" + echoSource
-        val result = NuvioPluginConverter.convert(scraper, source, repoSlug = "owner/repo", tmdbApiKey = "k",
+        val result = NuvioPluginConverter.convert(scraper, source, repoSlug = "owner/repo",
             remoteHosts = NuvioRemoteHosts(preferred = listOf("preferred.example"), others = (1..30).map { "remote$it.example" }))
         val manifest = (ManifestParser.parse(result.manifestJson) as ManifestResult.Valid).manifest
         assertEquals(ManifestParser.MAX_HOSTS, manifest.hosts.size)

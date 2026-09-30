@@ -7,7 +7,9 @@
 // Everything here is plugin.js's own module scope: nothing is added to globalThis except
 // TMDB_API_KEY and `crypto` (and whatever a scraper itself writes through `global`), and
 // prelude.js/web.js/kino.fetch stay exactly what native Kino plugins get.
-// `__NUVIO_TMDB_API_KEY__` is replaced by NuvioPluginConverter before this ships in a plugin.
+// `__NUVIO_TMDB_API_KEY__` is replaced by NuvioPluginConverter before this ships in a plugin -- with
+// a marker, never Kino's key: the runtime swaps the key in only on requests to api.themoviedb.org
+// and redacts it from everything the plugin gets back (NuvioPluginConverter.TMDB_KEY_MARKER).
 
 var module = { exports: {} };
 var exports = module.exports;

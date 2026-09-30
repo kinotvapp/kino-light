@@ -20,7 +20,7 @@ class NuvioRuntimeLibrariesTest {
         contentLanguage = listOf("en"), supportedTypes = listOf("movie"), logo = null, disabledPlatforms = emptyList(),
     )
 
-    private fun convert(source: String) = NuvioPluginConverter.convert(scraper, source, repoSlug = "owner/repo", tmdbApiKey = "k")
+    private fun convert(source: String) = NuvioPluginConverter.convert(scraper, source, repoSlug = "owner/repo")
 
     private fun resolvedUrl(source: String, host: PluginHost = NuvioRoutingHost(emptyMap())): String = runBlocking {
         val runtime = PluginRuntime.open("libs", convert(source).script, host, PluginEnv(appVersion = "1.0"))

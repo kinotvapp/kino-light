@@ -22,7 +22,6 @@ data class NuvioRepoPreview(val address: String, val scrapers: List<NuvioScraper
 class NuvioPluginInstaller(
     private val installer: PluginInstaller,
     private val fetcher: PluginFetcher,
-    private val tmdbApiKey: String,
 ) {
     /** Null when [input] doesn't parse as a plugin address, or no candidate branch has a Nuvio-shaped manifest: the caller falls back to [PluginInstaller.preview]. */
     suspend fun previewRepo(input: String): NuvioRepoPreview? {
@@ -116,7 +115,7 @@ class NuvioPluginInstaller(
         } ?: NuvioRemoteHosts.NONE
 
         val conversion = try {
-            NuvioPluginConverter.convert(scraper, scraperSource, repoSlug = address.canonical, tmdbApiKey = tmdbApiKey, remoteHosts = remoteHosts)
+            NuvioPluginConverter.convert(scraper, scraperSource, repoSlug = address.canonical, remoteHosts = remoteHosts)
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {

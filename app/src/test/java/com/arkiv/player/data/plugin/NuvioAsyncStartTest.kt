@@ -43,7 +43,7 @@ class NuvioAsyncStartTest {
         }
     }
 
-    private fun convert(source: String) = NuvioPluginConverter.convert(scraper, source, repoSlug = "owner/repo", tmdbApiKey = "k").script
+    private fun convert(source: String) = NuvioPluginConverter.convert(scraper, source, repoSlug = "owner/repo").script
 
     /** `inner(null)` throws before its first await; `inner("ok")` answers "ok!" after one. */
     private val innerBody = """if (!x) throw new Error("bad"); return (yield Promise.resolve(x)) + "!";"""

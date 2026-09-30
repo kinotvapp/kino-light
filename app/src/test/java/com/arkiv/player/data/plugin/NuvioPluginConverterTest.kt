@@ -31,7 +31,7 @@ class NuvioPluginConverterTest {
     """.trimIndent()
 
     @Test fun `the generated manifest validates and declares the extracted hosts`() {
-        val result = NuvioPluginConverter.convert(scraper, source, repoSlug = "owner/repo", tmdbApiKey = "test-key")
+        val result = NuvioPluginConverter.convert(scraper, source, repoSlug = "owner/repo")
         val parsed = ManifestParser.parse(result.manifestJson)
         assertTrue(parsed is ManifestResult.Valid)
         val manifest = (parsed as ManifestResult.Valid).manifest
@@ -71,7 +71,7 @@ class NuvioPluginConverterTest {
     """.trimIndent()
 
     @Test fun `a realistic scraper declares exactly its real domains, no version numbers or identifiers`() {
-        val result = NuvioPluginConverter.convert(scraper, realisticSource, repoSlug = "owner/repo", tmdbApiKey = "k")
+        val result = NuvioPluginConverter.convert(scraper, realisticSource, repoSlug = "owner/repo")
         val parsed = ManifestParser.parse(result.manifestJson)
         assertTrue("generated manifest must validate, got $parsed", parsed is ManifestResult.Valid)
         assertEquals(
@@ -88,7 +88,7 @@ class NuvioPluginConverterTest {
             preferred = listOf("new4.moviesdrive.christmas"),
             others = (1..30).map { "mirror$it.example" },
         )
-        val result = NuvioPluginConverter.convert(scraper, realisticSource, repoSlug = "owner/repo", tmdbApiKey = "k", remoteHosts = remote)
+        val result = NuvioPluginConverter.convert(scraper, realisticSource, repoSlug = "owner/repo", remoteHosts = remote)
         val manifest = (ManifestParser.parse(result.manifestJson) as ManifestResult.Valid).manifest
         assertEquals(ManifestParser.MAX_HOSTS, manifest.hosts.size)
         assertEquals(
@@ -123,7 +123,7 @@ class NuvioPluginConverterTest {
 
     @Test fun `over the cap the scraper's own site outranks the hosts its resolvers name first`() {
         assertTrue(NuvioHostExtractor.extractHosts(bundledManyHostsSource).indexOf("cuevana.unbuendato.com") >= ManifestParser.MAX_HOSTS)
-        val result = NuvioPluginConverter.convert(scraper, bundledManyHostsSource, repoSlug = "owner/repo", tmdbApiKey = "k")
+        val result = NuvioPluginConverter.convert(scraper, bundledManyHostsSource, repoSlug = "owner/repo")
         val manifest = (ManifestParser.parse(result.manifestJson) as ManifestResult.Valid).manifest
         assertEquals(ManifestParser.MAX_HOSTS, manifest.hosts.size)
         assertEquals(listOf("api.themoviedb.org", "cuevana.unbuendato.com", "hoster1.example"), manifest.hosts.take(3))
@@ -135,7 +135,7 @@ class NuvioPluginConverterTest {
     @Test fun `under the cap the source order is kept as is`() {
         val small = bundledManyHostsSource.lines().filterNot { Regex("hoster(\\d+)").find(it)?.groupValues?.get(1)?.toInt()?.let { n -> n > 3 } == true }
             .joinToString("\n")
-        val result = NuvioPluginConverter.convert(scraper, small, repoSlug = "owner/repo", tmdbApiKey = "k")
+        val result = NuvioPluginConverter.convert(scraper, small, repoSlug = "owner/repo")
         assertEquals(
             listOf(
                 "api.themoviedb.org", "hoster1.example", "hoster2.example", "hoster3.example",
@@ -148,7 +148,7 @@ class NuvioPluginConverterTest {
     @Test fun `the host-cap warning reaches the manifest description the consent sheet shows`() {
         val remote = NuvioRemoteHosts(emptyList(), (1..30).map { "mirror$it.example" })
         val longName = scraper.copy(name = "N".repeat(80))
-        val result = NuvioPluginConverter.convert(longName, realisticSource, repoSlug = "an-owner-with-a-long-name/a-very-long-repository-name", tmdbApiKey = "k", remoteHosts = remote)
+        val result = NuvioPluginConverter.convert(longName, realisticSource, repoSlug = "an-owner-with-a-long-name/a-very-long-repository-name", remoteHosts = remote)
         assertEquals(1, result.warnings.size)
         val description = (ManifestParser.parse(result.manifestJson) as ManifestResult.Valid).manifest.description
         result.warnings.forEach { assertTrue("missing \"$it\" in \"$description\"", it in description) }
@@ -157,7 +157,7 @@ class NuvioPluginConverterTest {
 
     @Test fun `cheerio tree walking is no longer a warning - the real library runs it`() {
         val withParent = realisticSource.replace(".each(", ".parent().nextAll(\"h5\").each(")
-        assertTrue(NuvioPluginConverter.convert(scraper, withParent, repoSlug = "o/r", tmdbApiKey = "k").warnings.isEmpty())
+        assertTrue(NuvioPluginConverter.convert(scraper, withParent, repoSlug = "o/r").warnings.isEmpty())
     }
 
     /** Records exactly what the adapter hands the wrapped scraper's getStreams. */
@@ -169,7 +169,7 @@ class NuvioPluginConverterTest {
     """.trimIndent()
 
     private fun resolvedUrl(refJson: String): String = runBlocking {
-        val result = NuvioPluginConverter.convert(scraper, echoTypeSource, repoSlug = "o/r", tmdbApiKey = "k")
+        val result = NuvioPluginConverter.convert(scraper, echoTypeSource, repoSlug = "o/r")
         val runtime = PluginRuntime.open("probe", result.script, ProbePluginHost, PluginEnv(appVersion = "1.0"))
         try {
             JSONObject(runtime.call("resolve", JSONObject.quote(refJson), 5_000)).getString("url")
@@ -189,7 +189,7 @@ class NuvioPluginConverterTest {
     }
 
     @Test fun `search then resolve for a TV episode calls getStreams with tv end to end`() = runBlocking {
-        val result = NuvioPluginConverter.convert(scraper, echoTypeSource, repoSlug = "o/r", tmdbApiKey = "k")
+        val result = NuvioPluginConverter.convert(scraper, echoTypeSource, repoSlug = "o/r")
         val runtime = PluginRuntime.open("probe", result.script, ProbePluginHost, PluginEnv(appVersion = "1.0"))
         try {
             val query = PluginContentSource.queryJson(com.arkiv.player.data.gateway.GatewaySearchQuery(q = "GoT", type = "tv", season = 2, episode = 5, tmdbId = 1399))
@@ -202,7 +202,7 @@ class NuvioPluginConverterTest {
     }
 
     @Test fun `the generated script exports search and resolve and runs the wrapped scraper`() = runBlocking {
-        val result = NuvioPluginConverter.convert(scraper, source, repoSlug = "owner/repo", tmdbApiKey = "test-key")
+        val result = NuvioPluginConverter.convert(scraper, source, repoSlug = "owner/repo")
         val runtime = PluginRuntime.open("probe", result.script, ProbePluginHost, PluginEnv(appVersion = "1.0"))
         try {
             assertEquals(setOf("search", "episodes", "resolve"), runtime.exports)
@@ -222,7 +222,7 @@ class NuvioPluginConverterTest {
 
     private suspend fun runtimeFor(types: List<String>): PluginRuntime {
         val entry = scraper.copy(name = "CineCalidad", supportedTypes = types)
-        val result = NuvioPluginConverter.convert(entry, source, repoSlug = "o/r", tmdbApiKey = "k")
+        val result = NuvioPluginConverter.convert(entry, source, repoSlug = "o/r")
         return PluginRuntime.open("probe", result.script, ProbePluginHost, PluginEnv(appVersion = "1.0"))
     }
 
@@ -284,7 +284,7 @@ class NuvioPluginConverterTest {
             function getStreams() { return [{ name: "x", title: "t", infoHash: "abc123", quality: "1080p" }]; }
             module.exports = { getStreams: getStreams };
         """.trimIndent()
-        val result = NuvioPluginConverter.convert(scraper, torrentSource, repoSlug = "owner/repo", tmdbApiKey = "k")
+        val result = NuvioPluginConverter.convert(scraper, torrentSource, repoSlug = "owner/repo")
         val runtime = PluginRuntime.open("probe", result.script, ProbePluginHost, PluginEnv(appVersion = "1.0"))
         try {
             val e = assertThrows(PluginErrorException::class.java) {
@@ -322,7 +322,7 @@ class NuvioPluginConverterTest {
     }
 
     @Test fun `resolve actually parses kino fetch's JSON response by calling r_json(), not reading it as data`() = runBlocking {
-        val result = NuvioPluginConverter.convert(scraper, source, repoSlug = "owner/repo", tmdbApiKey = "test-key")
+        val result = NuvioPluginConverter.convert(scraper, source, repoSlug = "owner/repo")
         val host = FakeJsonHost(
             """{"streams":[{"title":"The Matrix","url":"https://cdn.fakesrc.example/matrix.mp4","quality":"1080p"}]}""",
         )
@@ -360,7 +360,7 @@ class NuvioPluginConverterTest {
     """.trimIndent()
 
     @Test fun `a scraper that redeclares module, exports, require and fetch at its own top level still converts and runs`() = runBlocking {
-        val result = NuvioPluginConverter.convert(scraper, selfShadowingSource, repoSlug = "owner/repo", tmdbApiKey = "k")
+        val result = NuvioPluginConverter.convert(scraper, selfShadowingSource, repoSlug = "owner/repo")
         val runtime = PluginRuntime.open("probe", result.script, ProbePluginHost, PluginEnv(appVersion = "1.0"))
         try {
             val out = JSONObject(runtime.call("resolve", """{"tmdbId":1,"type":"movie","season":0,"episode":0}""", 5_000))
@@ -372,7 +372,7 @@ class NuvioPluginConverterTest {
 
     @Test fun `a long scraper id never lets the slug truncate away the anti-collision hash`() {
         val longScraper = scraper.copy(id = "a".repeat(60))
-        val result = NuvioPluginConverter.convert(longScraper, source, repoSlug = "owner/repo", tmdbApiKey = "k")
+        val result = NuvioPluginConverter.convert(longScraper, source, repoSlug = "owner/repo")
         val manifest = (ManifestParser.parse(result.manifestJson) as ManifestResult.Valid).manifest
         assertTrue(manifest.id.length <= 40)
         val hashSuffix = manifest.id.substringAfterLast('-')

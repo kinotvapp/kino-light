@@ -19,7 +19,7 @@ class NuvioNodeCryptoTest {
         contentLanguage = listOf("es"), supportedTypes = listOf("movie"), logo = null, disabledPlatforms = emptyList(),
     )
 
-    private fun convert(source: String) = NuvioPluginConverter.convert(scraper, source, repoSlug = "owner/repo", tmdbApiKey = "k")
+    private fun convert(source: String) = NuvioPluginConverter.convert(scraper, source, repoSlug = "owner/repo")
 
     /** Runs [body] (the inside of an async function) as the scraper's `getStreams`; a throw becomes `{"error": name, "message": ...}`. */
     private fun run(body: String): Any = runBlocking {

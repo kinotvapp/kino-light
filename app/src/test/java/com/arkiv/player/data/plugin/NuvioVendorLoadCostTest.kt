@@ -58,7 +58,7 @@ class NuvioVendorLoadCostTest {
         )
         val rows = mutableListOf("libraries | script bytes | open ms (median of 5, default PluginEnv) | QuickJS heap after open | after one call using them")
         for ((cheerio, crypto, buffer) in combos) {
-            val script = NuvioPluginConverter.convert(scraper, source(cheerio, crypto, buffer), repoSlug = "o/r", tmdbApiKey = "k").script
+            val script = NuvioPluginConverter.convert(scraper, source(cheerio, crypto, buffer), repoSlug = "o/r").script
             val env = PluginEnv(appVersion = "1.0")
             val times = (1..5).map {
                 val t0 = System.nanoTime()

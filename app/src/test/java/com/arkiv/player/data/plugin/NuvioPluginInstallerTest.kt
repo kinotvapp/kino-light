@@ -43,7 +43,7 @@ class NuvioPluginInstallerTest {
         nuvio = NuvioPluginInstaller(installer, fetcher(mapOf(
             "https://raw.githubusercontent.com/owner/nuvio-repo/HEAD/manifest.json" to manifestJson,
             "https://raw.githubusercontent.com/owner/nuvio-repo/HEAD/providers/fakesrc.js" to scraperJs,
-        )), tmdbApiKey = "test-key")
+        )))
     }
 
     @Test fun `previewRepo lists installable scrapers for a Nuvio-format repo`() = runBlocking {
@@ -68,7 +68,7 @@ class NuvioPluginInstallerTest {
         """.trimIndent()
         val n = NuvioPluginInstaller(installer, fetcher(mapOf(
             "https://raw.githubusercontent.com/owner/nuvio-repo/HEAD/manifest.json" to manifestWithDisabled,
-        )), tmdbApiKey = "k")
+        )))
         val preview = n.previewRepo("owner/nuvio-repo")
         assertEquals(listOf("fakesrc", "off", "iosonly"), preview!!.scrapers.map { it.id })
         assertEquals(listOf("fakesrc"), preview.scrapers.filter(NuvioManifestParser::isInstallable).map { it.id })
@@ -77,7 +77,7 @@ class NuvioPluginInstallerTest {
     @Test fun `previewRepo returns null for a repo whose manifest isn't Nuvio-shaped`() = runBlocking {
         val notNuvio = NuvioPluginInstaller(installer, fetcher(mapOf(
             "https://raw.githubusercontent.com/owner/other/HEAD/manifest.json" to """{"hello":"world"}""",
-        )), tmdbApiKey = "k")
+        )))
         assertNull(notNuvio.previewRepo("owner/other"))
     }
 
@@ -91,7 +91,7 @@ class NuvioPluginInstallerTest {
             "https://raw.githubusercontent.com/yoruix/nuvio-providers/HEAD/manifest.json" to placeholderManifest,
             "https://raw.githubusercontent.com/yoruix/nuvio-providers/main/manifest.json" to manifestJson,
             "https://raw.githubusercontent.com/yoruix/nuvio-providers/main/providers/fakesrc.js" to scraperJs,
-        )), tmdbApiKey = "k")
+        )))
         val preview = n.previewRepo("yoruix/nuvio-providers")
         assertEquals("yoruix/nuvio-providers@main", preview!!.address)
         assertEquals(listOf("fakesrc"), preview.scrapers.map { it.id })
@@ -102,7 +102,7 @@ class NuvioPluginInstallerTest {
             "https://raw.githubusercontent.com/o/r/HEAD/manifest.json" to placeholderManifest,
             // no .../main/manifest.json entry at all: 404s, same as @main not existing
             "https://raw.githubusercontent.com/o/r/master/manifest.json" to manifestJson,
-        )), tmdbApiKey = "k")
+        )))
         val preview = n.previewRepo("o/r")
         assertEquals("o/r@master", preview!!.address)
     }
@@ -111,13 +111,13 @@ class NuvioPluginInstallerTest {
         val n = NuvioPluginInstaller(installer, fetcher(mapOf(
             "https://raw.githubusercontent.com/o/r/HEAD/manifest.json" to manifestJson, // a real Nuvio manifest, but never asked for
             "https://raw.githubusercontent.com/o/r/main/manifest.json" to placeholderManifest,
-        )), tmdbApiKey = "k")
+        )))
         assertNull(n.previewRepo("o/r@main")) // must not fall back to HEAD (nor try @master)
     }
 
     @Test fun `previewRepo tries no fallback at all when the default branch has no manifest json`() = runBlocking {
         val requested = mutableListOf<String>()
-        val n = NuvioPluginInstaller(installer, PluginFetcher { url, _ -> requested += url; throw FileNotFoundException(url) }, tmdbApiKey = "k")
+        val n = NuvioPluginInstaller(installer, PluginFetcher { url, _ -> requested += url; throw FileNotFoundException(url) })
         assertNull(n.previewRepo("owner/native-plugin-repo")) // looks like a plain native Kino plugin address
         assertEquals(listOf("https://raw.githubusercontent.com/owner/native-plugin-repo/HEAD/manifest.json"), requested)
     }
@@ -127,7 +127,7 @@ class NuvioPluginInstallerTest {
             "https://raw.githubusercontent.com/yoruix/nuvio-providers/HEAD/manifest.json" to placeholderManifest,
             "https://raw.githubusercontent.com/yoruix/nuvio-providers/main/manifest.json" to manifestJson,
             "https://raw.githubusercontent.com/yoruix/nuvio-providers/main/providers/fakesrc.js" to scraperJs,
-        )), tmdbApiKey = "k")
+        )))
         val repoPreview = n.previewRepo("yoruix/nuvio-providers")!!
         // Mirrors PluginsViewModel.add()/pickNuvioScraper: the picker re-resolves from the address
         // that actually worked, not the person's raw typed text.
@@ -151,7 +151,7 @@ class NuvioPluginInstallerTest {
         val other = NuvioPluginInstaller(installer, fetcher(mapOf(
             "https://raw.githubusercontent.com/other/repo2/HEAD/manifest.json" to manifestJson, // same scraper id "fakesrc"
             "https://raw.githubusercontent.com/other/repo2/HEAD/providers/fakesrc.js" to scraperJs,
-        )), tmdbApiKey = "k")
+        )))
         nuvio.install(nuvio.previewScraper("owner/nuvio-repo", "fakesrc"))
         other.install(other.previewScraper("other/repo2", "fakesrc"))
         assertEquals(2, store.list().size)
@@ -165,7 +165,7 @@ class NuvioPluginInstallerTest {
         val broken = NuvioPluginInstaller(installer, fetcher(mapOf(
             "https://raw.githubusercontent.com/owner/broken/HEAD/manifest.json" to manifestJson,
             "https://raw.githubusercontent.com/owner/broken/HEAD/providers/fakesrc.js" to "<html>404 not really, see \"https://fakesrc.example\"</html>",
-        )), tmdbApiKey = "k")
+        )))
         val preview = broken.previewScraper("owner/broken", "fakesrc")
         val e = org.junit.Assert.assertThrows(InstallException::class.java) { runBlocking { broken.install(preview) } }
         assertTrue(e.message.orEmpty().isNotBlank())
@@ -176,7 +176,7 @@ class NuvioPluginInstallerTest {
             "https://raw.githubusercontent.com/owner/nohosts/HEAD/manifest.json" to manifestJson,
             "https://raw.githubusercontent.com/owner/nohosts/HEAD/providers/fakesrc.js" to
                 "function getStreams() { return []; } module.exports = { getStreams: getStreams };",
-        )), tmdbApiKey = "k")
+        )))
         val e = org.junit.Assert.assertThrows(InstallException::class.java) { runBlocking { noHosts.previewScraper("owner/nohosts", "fakesrc") } }
         assertTrue(e.message.orEmpty().contains("ningún dominio"))
     }
@@ -192,7 +192,7 @@ class NuvioPluginInstallerTest {
                 "https://raw.githubusercontent.com/pepito-perez/nohosts/HEAD/manifest.json" to manifestJson,
                 "https://raw.githubusercontent.com/pepito-perez/nohosts/HEAD/providers/fakesrc.js" to
                     "function getStreams() { return []; } module.exports = { getStreams: getStreams };",
-            )), tmdbApiKey = "k")
+            )))
             runCatching { noHosts.previewScraper("pepito-perez/nohosts", "fakesrc") }
             assertEquals(2, events.size)
             events.forEach { e ->
@@ -222,7 +222,7 @@ class NuvioPluginInstallerTest {
             "https://raw.githubusercontent.com/owner/md/HEAD/manifest.json" to manifestJson,
             "https://raw.githubusercontent.com/owner/md/HEAD/providers/fakesrc.js" to js,
             domainsUrl to """{"moviesdrive": "https://new4.moviesdrive.christmas", "4khdhub": "https://4khdhub.one"}""",
-        )), tmdbApiKey = "k")
+        )))
         val preview = withDomains.previewScraper("owner/md", "fakesrc")
         assertEquals(
             // TMDB is the adapter's own and always first; then the scraper's rotated domain. 4khdhub.one is
@@ -240,7 +240,7 @@ class NuvioPluginInstallerTest {
     )
     private fun liveNuvio() = NuvioPluginInstaller(installer, PluginFetcher { url, _ ->
         repoFiles[url]?.toByteArray() ?: throw FileNotFoundException(url)
-    }, tmdbApiKey = "test-key")
+    })
 
     private fun installedId(n: NuvioPluginInstaller): String = runBlocking {
         n.install(n.previewScraper("owner/nuvio-repo", "fakesrc"))
@@ -292,7 +292,7 @@ class NuvioPluginInstallerTest {
     /** Installs [hosts] + `search`/`resolve` under this scraper's id, exactly as the previous converter left it on disk. */
     private fun installAsTheOldConverterDid(hosts: List<String>): String = runBlocking {
         val entry = NuvioScraperEntry("fakesrc", "FakeSrc", "providers/fakesrc.js", true, emptyList(), listOf("movie"), null, emptyList())
-        val current = NuvioPluginConverter.convert(entry, scraperJs, repoSlug = "owner/nuvio-repo", tmdbApiKey = "test-key")
+        val current = NuvioPluginConverter.convert(entry, scraperJs, repoSlug = "owner/nuvio-repo")
         val oldJson = org.json.JSONObject(current.manifestJson)
             .put("capabilities", org.json.JSONArray(listOf("search", "resolve"))).put("hosts", org.json.JSONArray(hosts))
             .put("apiVersion", 1).also { it.remove("streamHosts") }.toString()

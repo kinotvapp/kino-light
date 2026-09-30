@@ -38,7 +38,7 @@ class NuvioAbortControllerTest {
     /** Runs [body] as `async getStreams()`; whatever string it returns lands after `https://cdn.example/`. */
     private fun run(body: String, host: PluginHost, timeoutMs: Long = 5_000): String = runBlocking {
         val source = "async function getStreams() {\n$body\n}\nmodule.exports = { getStreams: getStreams };\n"
-        val result = NuvioPluginConverter.convert(scraper, source, repoSlug = "owner/repo", tmdbApiKey = "k")
+        val result = NuvioPluginConverter.convert(scraper, source, repoSlug = "owner/repo")
         val runtime = PluginRuntime.open("probe", result.script, host, PluginEnv(appVersion = "1.0"))
         try {
             val json = runtime.call("resolve", """{"tmdbId":1,"type":"movie","season":0,"episode":0}""", timeoutMs)

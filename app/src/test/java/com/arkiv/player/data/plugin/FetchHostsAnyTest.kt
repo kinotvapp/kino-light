@@ -54,7 +54,7 @@ class FetchHostsAnyTest {
 
     @Test fun `the Nuvio converter asks for it`() {
         val entry = NuvioScraperEntry("fakesrc", "FakeSrc", "providers/fakesrc.js", true, emptyList(), listOf("movie"), null, emptyList())
-        val c = NuvioPluginConverter.convert(entry, scraperJs, repoSlug = "owner/nuvio-repo", tmdbApiKey = "k")
+        val c = NuvioPluginConverter.convert(entry, scraperJs, repoSlug = "owner/nuvio-repo")
         assertTrue((ManifestParser.parse(c.manifestJson) as ManifestResult.Valid).manifest.fetchHostsAny)
     }
 
@@ -95,7 +95,7 @@ class FetchHostsAnyTest {
         NuvioPluginInstaller(installer, fetcher(mapOf(
             "https://raw.githubusercontent.com/owner/nuvio-repo/HEAD/manifest.json" to nuvioManifest,
             "https://raw.githubusercontent.com/owner/nuvio-repo/HEAD/providers/fakesrc.js" to scraperJs,
-        )), tmdbApiKey = "test-key")
+        )))
     }
 
     private val redLine = "Puede conectarse a cualquier servidor de internet"

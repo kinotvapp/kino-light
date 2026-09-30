@@ -20,7 +20,7 @@ class NuvioQualityPickTest {
 
     private fun picked(streamsJs: String): Pair<String, List<String>> {
         val source = "async function getStreams(tmdbId, mediaType, season, episode) {\nreturn $streamsJs;\n}\nmodule.exports = { getStreams: getStreams };"
-        val script = NuvioPluginConverter.convert(scraper, source, repoSlug = "owner/repo", tmdbApiKey = "k").script
+        val script = NuvioPluginConverter.convert(scraper, source, repoSlug = "owner/repo").script
         val host = NuvioRoutingHost(emptyMap())
         val out = runBlocking {
             val rt = PluginRuntime.open("quality", script, host, PluginEnv(appVersion = "1.0"))

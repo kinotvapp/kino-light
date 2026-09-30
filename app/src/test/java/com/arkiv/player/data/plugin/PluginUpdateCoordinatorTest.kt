@@ -30,7 +30,7 @@ class PluginUpdateCoordinatorTest {
         var kinoFetchCalls = 0
         val kino = PluginInstaller(store, PluginFetcher { _, _ -> kinoFetchCalls++; throw FileNotFoundException("no update host in this test") }, probe = { _, _ -> emptySet() })
         var nuvioFetchCalls = 0
-        val nuvio = NuvioPluginInstaller(kino, PluginFetcher { _, _ -> nuvioFetchCalls++; throw FileNotFoundException("no update host in this test") }, tmdbApiKey = "k")
+        val nuvio = NuvioPluginInstaller(kino, PluginFetcher { _, _ -> nuvioFetchCalls++; throw FileNotFoundException("no update host in this test") })
 
         val coordinator = PluginUpdateCoordinator(store, kino, nuvio)
         coordinator.checkUpdate("normal")
@@ -64,7 +64,7 @@ class PluginUpdateCoordinatorTest {
         // and real wall-clock time for the other would make "due" comparisons meaningless.
         val kino = PluginInstaller(store, PluginFetcher { _, _ -> kinoFetchCalls++; throw FileNotFoundException("offline") }, probe = { _, _ -> emptySet() }, clock = { now })
         var nuvioFetchCalls = 0
-        val nuvio = NuvioPluginInstaller(kino, PluginFetcher { _, _ -> nuvioFetchCalls++; throw FileNotFoundException("offline") }, tmdbApiKey = "k")
+        val nuvio = NuvioPluginInstaller(kino, PluginFetcher { _, _ -> nuvioFetchCalls++; throw FileNotFoundException("offline") })
 
         val coordinator = PluginUpdateCoordinator(store, kino, nuvio, clock = { now })
 

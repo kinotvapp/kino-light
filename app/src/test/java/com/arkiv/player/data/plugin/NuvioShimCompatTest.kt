@@ -36,7 +36,7 @@ class NuvioShimCompatTest {
     }
 
     private fun resolvedUrl(source: String, host: PluginHost): String = runBlocking {
-        val result = NuvioPluginConverter.convert(scraper, source, repoSlug = "owner/repo", tmdbApiKey = "k")
+        val result = NuvioPluginConverter.convert(scraper, source, repoSlug = "owner/repo")
         val runtime = PluginRuntime.open("probe", result.script, host, PluginEnv(appVersion = "1.0"))
         try {
             JSONObject(runtime.call("resolve", """{"tmdbId":1,"type":"movie","season":0,"episode":0}""", 5_000)).getString("url")
