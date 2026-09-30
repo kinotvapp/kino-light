@@ -3239,7 +3239,7 @@ private fun PlayerContent(
             ) {
                 CircularProgressIndicator(color = Color.White, strokeWidth = 3.dp)
                 if (resolving) {
-                    // Counts while it lasts: a converted Nuvio scraper may take up to 45 s.
+                    // Counts while it lasts: a converted Nuvio scraper may take up to 75 s.
                     var elapsedMs by remember { mutableStateOf(0L) }
                     LaunchedEffect(Unit) {
                         val start = android.os.SystemClock.elapsedRealtime()
@@ -4589,7 +4589,7 @@ private fun SkipButton(
 }
 
 /**
- * The spinner's line while a source resolves. A converted Nuvio scraper may take up to 45 s
+ * The spinner's line while a source resolves. A converted Nuvio scraper may take up to 75 s
  * (`PluginContentSource.NUVIO_RESOLVE_TIMEOUT_MS`): after the first few seconds the line also says
  * it is still looking and for how long, so a long wait never reads as a freeze.
  */

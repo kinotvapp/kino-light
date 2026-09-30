@@ -24,13 +24,13 @@ class NuvioResolveTimeoutTest {
         return asked to source
     }
 
-    @Test fun `a Nuvio-origin plugin's resolve gets 45 s, any other plugin keeps 20 s`() {
+    @Test fun `a Nuvio-origin plugin's resolve gets 75 s, any other plugin keeps 20 s`() {
         val (nuvio, nuvioSource) = resolveTimeout(record.copy(nuvioRepo = "D3PR3D4DOR/pelisplus-latino-nuvio", nuvioScraperId = "pelisplushd"))
-        assertEquals(45_000L, nuvio)
+        assertEquals(75_000L, nuvio)
         val (plain, plainSource) = resolveTimeout(record)
         assertEquals(20_000L, plain)
         // The search backstop covers a search queued behind one whole resolve of the same plugin.
-        assertTrue(nuvioSource.searchTimeoutMs!! >= PluginContentSource.SEARCH_TIMEOUT_MS + 45_000L)
+        assertTrue(nuvioSource.searchTimeoutMs!! >= PluginContentSource.SEARCH_TIMEOUT_MS + 75_000L)
         assertEquals(
             PluginContentSource.SEARCH_TIMEOUT_MS + 20_000L + PluginContentSource.SEARCH_BACKSTOP_GRACE_MS,
             plainSource.searchTimeoutMs,
@@ -44,7 +44,7 @@ class NuvioResolveTimeoutTest {
             runBlocking { kotlinx.coroutines.withContext(BackgroundPluginCall + PluginDownloadCall) { source.resolve(movie) } }
             return asked
         }
-        assertEquals(90_000L, downloadTimeout(record.copy(nuvioRepo = "D3PR3D4DOR/pelisplus-latino-nuvio", nuvioScraperId = "pelisplushd")))
+        assertEquals(150_000L, downloadTimeout(record.copy(nuvioRepo = "D3PR3D4DOR/pelisplus-latino-nuvio", nuvioScraperId = "pelisplushd")))
         assertEquals(40_000L, downloadTimeout(record))
     }
 

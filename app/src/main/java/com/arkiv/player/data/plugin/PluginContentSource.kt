@@ -190,7 +190,7 @@ class PluginContentSource(
         // variants) would otherwise never be saved.
         val limit = if (currentCoroutineContext()[PluginDownloadCall] != null) resolveTimeoutMs * DOWNLOAD_RESOLVE_FACTOR else resolveTimeoutMs
         val out = callOrThrow("resolve", JSONObject.quote(own.ref), limit)
-        // Outside the call on purpose: its limit (20 s, 45 s for a Nuvio scraper) and the pool's per-plugin lock are both over
+        // Outside the call on purpose: its limit (20 s, 75 s for a Nuvio scraper) and the pool's per-plugin lock are both over
         // by now, so a person taking their time to answer holds up neither.
         askAboutUndeclaredHosts(out, own)
         val hosts = streamHostsFor(own)
@@ -329,7 +329,7 @@ class PluginContentSource(
         const val RESOLVE_TIMEOUT_MS = 20_000L
 
         /** `resolve` of a converted Nuvio scraper (see `resolveTimeoutMs`). */
-        const val NUVIO_RESOLVE_TIMEOUT_MS = 45_000L
+        const val NUVIO_RESOLVE_TIMEOUT_MS = 75_000L
 
         /** How many times the player's resolve limit a download's resolve ([PluginDownloadCall]) gets. */
         const val DOWNLOAD_RESOLVE_FACTOR = 2
