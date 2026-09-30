@@ -50,18 +50,14 @@ data class HostApprovalRequest(
      * `kino.fetch`, a DRM license or a live channel (see [StreamHostApproval]).
      */
     val offersAnyVideoHost: Boolean = false,
-    /** "Permitir este servidor" is possible: false when the plugin's 20 approved hosts are all taken. */
-    val allowsThisHost: Boolean = true,
     private val onAnswer: (HostApprovalAnswer) -> Unit,
 ) {
     /**
      * The person's choice. One the dialog does not offer ([ALLOW_ANY_VIDEO_HOST][HostApprovalAnswer.ALLOW_ANY_VIDEO_HOST]
-     * without [offersAnyVideoHost], [ALLOW_HOST][HostApprovalAnswer.ALLOW_HOST] without [allowsThisHost])
-     * is ignored: the question stays up.
+     * without [offersAnyVideoHost]) is ignored: the question stays up.
      */
     fun answer(answer: HostApprovalAnswer) {
         if (answer == HostApprovalAnswer.ALLOW_ANY_VIDEO_HOST && !offersAnyVideoHost) return
-        if (answer == HostApprovalAnswer.ALLOW_HOST && !allowsThisHost) return
         onAnswer(answer)
     }
 
@@ -80,12 +76,10 @@ data class HostApprovalRequest(
     /**
      * The sentence under the plugin's name in the dialog. A fetch keeps the sentence it always had;
      * a Stream's URL says what is on that host, since by then the plugin already answered and it is
-     * the video (or its subtitles, audio or license) that would come from there. With no room for
-     * one more host it says so, and only the broad permission (or "Rechazar") is offered.
+     * the video (or its subtitles, audio or license) that would come from there.
      */
     val question: String get() = when {
         reason == HostApprovalReason.FETCH -> "Quiere conectarse por primera vez a $host. ¿Permitir?"
-        !allowsThisHost -> "$what, pero $pluginName ya tiene el máximo de ${ManifestParser.MAX_HOSTS} servidores aprobados."
         else -> "$what, un servidor nuevo para este plugin. ¿Permitir?"
     }
 
@@ -151,8 +145,7 @@ class HostApprovalCenter(
 
     /**
      * [requestUntilAnswered] for a VOD stream's host, whose dialog may also offer the broad video
-     * permission ([offerAnyVideoHost]) and may have no room left for this one host ([allowsThisHost]
-     * false: then only "Rechazar" and the broad permission are offered). The whole answer.
+     * permission ([offerAnyVideoHost]). The whole answer.
      */
     suspend fun askStreamHost(
         pluginId: String,
@@ -160,8 +153,7 @@ class HostApprovalCenter(
         host: String,
         reason: HostApprovalReason,
         offerAnyVideoHost: Boolean,
-        allowsThisHost: Boolean = true,
-    ): HostApprovalAnswer = ask(pluginId, pluginName, host, reason, offerAnyVideoHost, allowsThisHost)
+    ): HostApprovalAnswer = ask(pluginId, pluginName, host, reason, offerAnyVideoHost)
 
     private suspend fun ask(
         pluginId: String,
@@ -169,13 +161,12 @@ class HostApprovalCenter(
         host: String,
         reason: HostApprovalReason,
         offerAnyVideoHost: Boolean = false,
-        allowsThisHost: Boolean = true,
     ): HostApprovalAnswer =
         mutex.withLock {
             val shownAt = clock()
             var answer: HostApprovalAnswer? = null
             try {
-                awaitAnswer(pluginId, pluginName, host, reason, offerAnyVideoHost, allowsThisHost).also { answer = it }
+                awaitAnswer(pluginId, pluginName, host, reason, offerAnyVideoHost).also { answer = it }
             } finally {
                 lastClosedAt = clock()
                 val ms = (lastClosedAt!! - shownAt) / 1_000_000
@@ -199,18 +190,17 @@ class HostApprovalCenter(
         host: String,
         reason: HostApprovalReason,
         offerAnyVideoHost: Boolean,
-        allowsThisHost: Boolean,
     ): HostApprovalAnswer =
         suspendCancellableCoroutine { cont ->
             var req: HostApprovalRequest? = null
-            req = HostApprovalRequest(pluginId, pluginName, host, reason, armDelayMs(), offerAnyVideoHost, allowsThisHost) { answer ->
+            req = HostApprovalRequest(pluginId, pluginName, host, reason, armDelayMs(), offerAnyVideoHost) { answer ->
                 _pending.compareAndSet(req, null)
                 if (cont.isActive) cont.resume(answer) {}
             }
             cont.invokeOnCancellation { _pending.compareAndSet(req, null) }
             if (cont.isActive) {
                 shownCount++
-                val extra = (if (offerAnyVideoHost) ", offers the broad video permission" else "") + (if (!allowsThisHost) ", no room for this host" else "")
+                val extra = if (offerAnyVideoHost) ", offers the broad video permission" else ""
                 log("[$pluginId] host dialog $reason $host shown$extra, arms in ${req!!.armDelayMs} ms")
                 _pending.value = req
                 // A cancellation landing between the check above and the publish ran

@@ -29,7 +29,6 @@ object PluginFailureText {
             return when (r.why) {
                 PluginCallTrace.Refusal.REJECTED_NOW, PluginCallTrace.Refusal.REJECTED_BEFORE -> "$name necesita ${r.host}, que rechazaste"
                 PluginCallTrace.Refusal.NOT_ASKED -> "$name necesita ${r.host}, que no está aprobado"
-                PluginCallTrace.Refusal.LIMIT -> "$name necesita ${r.host}, pero ya tiene el máximo de servidores aprobados"
             }
         }
         events.filterIsInstance<PluginCallTrace.Failed>().firstOrNull()?.let { f ->

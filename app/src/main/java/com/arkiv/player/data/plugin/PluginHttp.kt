@@ -499,7 +499,6 @@ class PluginHttp(
             val ra = reactiveApproval
             if (ra == null || !PluginHostGate.isPromptableMiss(url, hosts)) refuse(PluginCallTrace.Refusal.NOT_ASKED)
             if (url.host in ra.rejectedHosts) refuse(PluginCallTrace.Refusal.REJECTED_BEFORE)
-            if (hosts.declared.size >= ManifestParser.MAX_HOSTS) refuse(PluginCallTrace.Refusal.LIMIT)
             val call = calls?.current
             if (calls != null && (call == null || !call.asksAboutHosts)) {
                 // Nobody to ask on this call's behalf: it is over (a scraper's own retries outliving
@@ -509,14 +508,7 @@ class PluginHttp(
                 refuse(PluginCallTrace.Refusal.NOT_ASKED)
             }
             when (askOnce(ra, url.host, call)) {
-                // Still refused only when the cap filled up while the person was deciding: askOnce
-                // then logged why, and this rethrows the original host_not_allowed.
-                true -> try {
-                    checkOnce(from, url)
-                } catch (still: HostNotAllowedException) {
-                    trace?.refused(url.host, PluginCallTrace.Refusal.LIMIT)
-                    throw still
-                }
+                true -> checkOnce(from, url)
                 false -> refuse(PluginCallTrace.Refusal.REJECTED_NOW)
                 // No answer: the call ended while the question was up (it came down unanswered).
                 // Without a tracker, a requester that gave up (tests): a timeout, as it always was.
@@ -548,9 +540,9 @@ class PluginHttp(
      *   for as long as the question is queued or on screen, and the question is cancelled -- null,
      *   nothing recorded -- when the call ends first. Without one (tests), a requester's own `null`
      *   surfaces as a `timeout` [PluginFetchException], as it always did.
-     * - [hostsLock] also makes the 20-host cap check-and-add atomic against a DIFFERENT host being
-     *   approved by another winner at the same moment: two winners racing at 19 declared hosts can no
-     *   longer both add their host and land at 21.
+     * - [hostsLock] also makes the add itself atomic against a DIFFERENT host being approved by
+     *   another winner at the same moment: neither winner's host is lost to the other's copy of
+     *   [liveHosts]. There is no cap on how many hosts the person can approve: each one is theirs.
      * - Deliberately not `CoroutineScope(currentCoroutineContext()).async { … }` (as first sketched):
      *   that would parent the shared deferred to whichever caller wins the race, so an unrelated
      *   cancellation further up THAT winner's own call stack (its own timeout, say) would complete the
@@ -598,14 +590,8 @@ class PluginHttp(
                     when (answer) {
                         true -> {
                             val current = liveHosts.value
-                            if (current.declared.size < ManifestParser.MAX_HOSTS) {
-                                liveHosts.value = current.copy(declared = current.declared + host)
-                                ra.onApproved(host)
-                            } else {
-                                // Checked before asking too (ensureHostAllowed); reachable only when a
-                                // DIFFERENT host's approval filled the last slot while this prompt was up.
-                                log("[$pluginId] host $host approved but not added: already at the ${ManifestParser.MAX_HOSTS}-host limit")
-                            }
+                            liveHosts.value = current.copy(declared = current.declared + host)
+                            ra.onApproved(host)
                         }
                         false -> {
                             ra.rejectedHosts = ra.rejectedHosts + host
@@ -632,15 +618,15 @@ class PluginHttp(
     /**
      * Mirrors a decision about [host] taken OUTSIDE this instance's own `kino.fetch` -- a URL of the
      * Stream the plugin's `resolve` returned ([StreamHostApproval]), already persisted there -- into
-     * this open runtime, the way [askOnce] applies its own: an approved host joins [liveHosts] (same
-     * cap, never twice), a refused one joins [ReactiveApproval.rejectedHosts]. Without it the
+     * this open runtime, the way [askOnce] applies its own: an approved host joins [liveHosts] (never
+     * twice), a refused one joins [ReactiveApproval.rejectedHosts]. Without it the
      * plugin's next `kino.fetch` to that host in this runtime would ask the person again about a
      * host they just answered. Persisting is the caller's job, so no callback fires here.
      */
     fun recordDecision(host: String, approved: Boolean) = synchronized(hostsLock) {
         if (approved) {
             val current = liveHosts.value
-            if (!HostRules.matches(host, current.declared) && current.declared.size < ManifestParser.MAX_HOSTS) {
+            if (!HostRules.matches(host, current.declared)) {
                 liveHosts.value = current.copy(declared = current.declared + host)
             }
         } else {

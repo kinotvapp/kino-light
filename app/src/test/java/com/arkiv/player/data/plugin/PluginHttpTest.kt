@@ -430,16 +430,26 @@ class PluginHttpTest {
         assertFalse(asked)
     }
 
-    @Test fun `at the 20-host cap a new host is refused without asking`() = runTest {
-        var asked = false
+    // No cap on what the person approves: with 20 hosts (the most a manifest may declare) a 21st
+    // and on to a 25th are still asked about, added and handed to onApproved to be persisted.
+    @Test fun `past 20 hosts a new host is still asked about and added`() = runTest {
+        val offline = object : Dns { override fun lookup(hostname: String): List<InetAddress> = throw java.net.UnknownHostException(hostname) }
+        val asked = mutableListOf<String>()
+        val approved = mutableListOf<String>()
         val twenty = (1..20).map { "h$it.example.com" }
         val h = PluginHttp(
-            OkHttpClient(), "test", EffectiveHosts(twenty), "1.0", allowInsecureLocalhost = true,
-            reactiveApproval = PluginHttp.ReactiveApproval("P", HostApprovalRequester { _, _, _ -> asked = true; true }, {}, {}, emptySet()),
+            OkHttpClient(), "test", EffectiveHosts(twenty), "1.0", allowInsecureLocalhost = true, delegateDns = offline,
+            reactiveApproval = PluginHttp.ReactiveApproval("P", HostApprovalRequester { _, _, host -> asked += host; true }, { approved += it }, {}, emptySet()),
         )
-        val e = fetchError(h, PluginHttp.Request("https://h21.example.com/x"))
-        assertEquals("host_not_allowed", e.code)
-        assertFalse(asked)
+        val more = (21..25).map { "h$it.example.com" }
+        // Past the gate: only DNS (stubbed offline) fails.
+        for (host in more) assertEquals(host, "network", fetchError(h, PluginHttp.Request("https://$host/x")).code)
+        assertEquals(more, asked)
+        assertEquals(more, approved)
+        assertEquals(twenty + more, h.hosts.declared)
+        // recordDecision (a Stream's host approved at resolve time) is not capped either.
+        h.recordDecision("h26.example.com", approved = true)
+        assertTrue(HostRules.matches("h26.example.com", h.hosts.declared))
     }
 
     // The requester owns the waiting window (HostApprovalCenter times itself out once the dialog is
@@ -567,9 +577,9 @@ class PluginHttpTest {
         assertTrue(HostRules.matches("new-cdn.example", h.hosts.declared))
     }
 
-    // An approval that finds the 20-host cap already filled (by a DIFFERENT host approved while this
-    // prompt was up) adds nothing and says so in the log instead of failing silently.
-    @Test fun `an approval that lands on a full host cap is logged and the fetch stays refused`() = runBlocking {
+    // Two approvals of DIFFERENT hosts racing at 19 hosts both land: neither is lost to the other,
+    // and there is no cap to fill.
+    @Test fun `two approvals racing past 20 hosts both land`() = runBlocking {
         val offline = object : Dns { override fun lookup(hostname: String): List<InetAddress> = throw java.net.UnknownHostException(hostname) }
         val live = LiveHosts(EffectiveHosts((1..19).map { "h$it.example.com" }))
         val logs = java.util.concurrent.CopyOnWriteArrayList<String>()
@@ -590,13 +600,13 @@ class PluginHttpTest {
         )
         val slow = async(kotlinx.coroutines.Dispatchers.Default) { runCatching { h.fetch(PluginHttp.Request("https://slow.example.org/x")) } }
         slowAsking.await()
-        // Meanwhile another host is approved and takes the 20th slot.
+        // Meanwhile another host is approved and becomes the 20th.
         assertEquals("network", fetchError(h, PluginHttp.Request("https://fast.example.org/x")).code)
         releaseSlow.complete(Unit)
-        assertEquals("host_not_allowed", (slow.await().exceptionOrNull() as PluginFetchException).code)
-        assertEquals(listOf("fast.example.org"), approved.toList())
-        assertEquals(20, live.value.declared.size)
-        assertTrue(logs.toString(), logs.any { "slow.example.org" in it && "20" in it })
+        assertEquals("network", (slow.await().exceptionOrNull() as PluginFetchException).code)
+        assertEquals(listOf("fast.example.org", "slow.example.org"), approved.toList())
+        assertEquals(21, live.value.declared.size)
+        assertTrue(logs.toString(), logs.none { "limit" in it })
     }
 
     // --- Only a call someone is waiting on may ask (PluginCallTracker) ---

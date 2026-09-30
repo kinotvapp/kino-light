@@ -596,7 +596,7 @@ class AppGraph(context: Context) {
     /**
      * Reactive host approval for a returned Stream's URLs (the player's resolve only, see
      * `InteractivePluginCall`) and for the hosts the player itself reaches while a plugin stream plays
-     * (`PlayerViewModel.onPluginHostRefused`): the same dialog, registry writes and 20-host cap as
+     * (`PlayerViewModel.onPluginHostRefused`): the same dialog and registry writes (no cap) as
      * [openPluginRuntime]'s fetch-time approval, and the plugin's open runtime, if any, learns the
      * answer too.
      */
@@ -654,7 +654,7 @@ class AppGraph(context: Context) {
                 requester = hostApprovalCenter,
                 onApproved = { host ->
                     if (!pluginRegistry.addApprovedHost(id, host)) {
-                        android.util.Log.w("KinoPlugin", "[$id] approved host $host not saved: already there or at the ${ManifestParser.MAX_HOSTS}-host limit")
+                        android.util.Log.w("KinoPlugin", "[$id] approved host $host not saved: already there")
                     }
                 },
                 onRejected = { host -> pluginRegistry.rejectHost(id, host) },

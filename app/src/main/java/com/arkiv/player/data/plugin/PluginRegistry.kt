@@ -190,14 +190,14 @@ class PluginRegistry(
     fun markDamaged(id: String) = update(id) { it.copy(damaged = true) }
 
     /**
-     * Adds [host] to [id]'s approved hosts if it isn't there already and the 20-host cap
-     * ([ManifestParser.MAX_HOSTS]) isn't reached. Returns whether it actually changed anything, so a
-     * caller mid-`kino.fetch` knows whether to retry or give up.
+     * Adds [host] to [id]'s approved hosts if it isn't there already. There is no cap: every one of
+     * them is the person's own approval ([ManifestParser.MAX_HOSTS] limits only the manifest's own
+     * list). Returns whether it actually changed anything.
      */
     fun addApprovedHost(id: String, host: String): Boolean {
         var added = false
         update(id) {
-            if (host in it.hosts || it.hosts.size >= ManifestParser.MAX_HOSTS) it
+            if (host in it.hosts) it
             else { added = true; it.copy(hosts = it.hosts + host) }
         }
         return added

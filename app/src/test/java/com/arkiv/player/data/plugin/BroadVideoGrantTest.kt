@@ -93,7 +93,6 @@ class BroadVideoGrantTest {
         val req = nextPrompt()
         assertEquals(HostApprovalReason.VIDEO, req.reason)
         assertTrue(req.offersAnyVideoHost)
-        assertTrue(req.allowsThisHost)
         req.answer(HostApprovalAnswer.ALLOW_ANY_VIDEO_HOST)
         val played = playing.await()
         assertEquals("https://jeremyparticipantanything.com/e/1.m3u8", played.url)
@@ -121,13 +120,12 @@ class BroadVideoGrantTest {
         assertEquals(listOf("example.com", "cdn.other.example"), record.hosts)
     }
 
-    @Test fun `with all 20 hosts approved the dialog still offers the permission, not the single server`() = runTest {
+    @Test fun `with 20 hosts approved the dialog offers both the permission and the single server`() = runTest {
         install(listOf("example.com") + (1..19).map { "h$it.example.com" })
         val playing = play(source { """{"url":"https://jeremyparticipantanything.com/e/1.m3u8"}""" })
         val req = nextPrompt()
         assertTrue(req.offersAnyVideoHost)
-        assertFalse(req.allowsThisHost)
-        assertTrue(req.question, "máximo de 20" in req.question)
+        assertFalse(req.question, "máximo" in req.question)
         req.answer(HostApprovalAnswer.ALLOW_ANY_VIDEO_HOST)
         assertEquals("https://jeremyparticipantanything.com/e/1.m3u8", playing.await().url)
         assertTrue(record.anyVideoHost)

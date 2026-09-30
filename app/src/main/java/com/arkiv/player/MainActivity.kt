@@ -194,9 +194,7 @@ class MainActivity : AppCompatActivity() {
                                                 onClick = reject,
                                                 modifier = Modifier.fillMaxWidth().focusRequester(rejectFocus).focusRing(),
                                             ) { Text("Rechazar") }
-                                            if (req.allowsThisHost) {
-                                                Button(onClick = allowHost, modifier = Modifier.fillMaxWidth().focusRing()) { Text(req.allowHostLabel) }
-                                            }
+                                            Button(onClick = allowHost, modifier = Modifier.fillMaxWidth().focusRing()) { Text(req.allowHostLabel) }
                                             Button(
                                                 onClick = { answer(com.arkiv.player.data.plugin.HostApprovalAnswer.ALLOW_ANY_VIDEO_HOST) },
                                                 modifier = Modifier.fillMaxWidth().focusRing(),
@@ -211,9 +209,7 @@ class MainActivity : AppCompatActivity() {
                                                 onClick = reject,
                                                 modifier = Modifier.focusRequester(rejectFocus).focusRing(),
                                             ) { Text("Rechazar") }
-                                            if (req.allowsThisHost) {
-                                                Button(onClick = allowHost, modifier = Modifier.focusRing()) { Text(req.allowHostLabel) }
-                                            }
+                                            Button(onClick = allowHost, modifier = Modifier.focusRing()) { Text(req.allowHostLabel) }
                                         }
                                     }
                                 }

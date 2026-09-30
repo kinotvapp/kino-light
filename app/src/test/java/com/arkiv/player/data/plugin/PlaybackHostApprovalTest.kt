@@ -176,11 +176,13 @@ class PlaybackHostApprovalTest {
         assertEquals("never shown a dialog", 0, center.shownCount)
     }
 
-    @Test fun `with the 20-host cap full it fails clearly without asking`() = runTest {
-        reinstall((1..ManifestParser.MAX_HOSTS).map { "h$it.example.com" })
-        val outcome = refused(prompts(), "seg.other.example").await()
-        assertEquals(PlaybackHostOutcome.Fail("$NAME: el video usa otro servidor (seg.other.example), pero $NAME ya tiene el máximo de 20 servidores aprobados"), outcome)
-        assertNull(center.pending.value)
+    @Test fun `with 20 hosts or more it still asks, and approving persists the 21st`() = runTest {
+        val twenty = (1..ManifestParser.MAX_HOSTS).map { "h$it.example.com" }
+        reinstall(twenty)
+        val outcome = refused(prompts(), "seg.other.example")
+        nextPrompt().respond(true)
+        assertEquals(PlaybackHostOutcome.Retry, outcome.await())
+        assertEquals(twenty + "seg.other.example", record.hosts)
     }
 
     // One prompt per host per playback attempt: if the same host is refused again after its "yes"

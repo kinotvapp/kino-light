@@ -22,9 +22,6 @@ enum class StreamHostDecision {
     /** The person said no, now or before (remembered per plugin), or the plugin is gone. */
     REJECTED,
 
-    /** The plugin already has [ManifestParser.MAX_HOSTS] approved hosts: nothing more can be added. */
-    LIMIT_REACHED,
-
     /**
      * The person granted the broad video permission ([InstalledRecord.anyVideoHost]), now or
      * before: this plugin's VOD video may come from any public server. No host was added.
@@ -55,7 +52,7 @@ sealed interface PlaybackHostOutcome {
  * refused a request (an HLS playlist's segments or keys on another CDN, a redirect hop) only because
  * the host is undeclared, and it is askable ([UndeclaredPlaybackHostException]). Asked through the
  * same [StreamHostDecider] as a returned Stream's hosts ([StreamHostApproval]): the same dialog, no
- * time limit, the same per-plugin memory, the same registry writes and 20-host cap.
+ * time limit, the same per-plugin memory, the same registry writes (no cap on how many).
  *
  * One question per host per playback attempt ([newAttempt], called on every fresh resolve): a host
  * refused again after its "yes" -- the rebuilt player still can't use it -- ends in an error, never
@@ -74,9 +71,6 @@ class PlaybackHostPrompts(private val decider: StreamHostDecider) {
         return when (decider.decide(pluginId, pluginName, host, HostApprovalReason.VIDEO, offerAnyVideoHost)) {
             StreamHostDecision.APPROVED, StreamHostDecision.APPROVED_ANY_VIDEO_HOST -> PlaybackHostOutcome.Retry
             StreamHostDecision.REJECTED -> PlaybackHostOutcome.Fail("$pluginName: el video usa otro servidor ($host) que no permitiste")
-            StreamHostDecision.LIMIT_REACHED -> PlaybackHostOutcome.Fail(
-                "$pluginName: el video usa otro servidor ($host), pero $pluginName ya tiene el máximo de ${ManifestParser.MAX_HOSTS} servidores aprobados",
-            )
         }
     }
 }
@@ -88,10 +82,9 @@ class PlaybackHostPrompts(private val decider: StreamHostDecider) {
  *
  * Same dialog ([HostApprovalCenter]), same eligibility (`PluginOutput.undeclaredHosts` keeps only
  * what [PluginHostGate.isPromptableMiss] calls a promptable miss), same per-plugin memory and the
- * same persistence path as a fetch-time approval ([PluginRegistry.addApprovedHost] with its 20-host
- * cap, [PluginRegistry.rejectHost]):
+ * same persistence path as a fetch-time approval ([PluginRegistry.addApprovedHost],
+ * [PluginRegistry.rejectHost]), with no cap on how many hosts the person approves:
  * - a host this plugin was told "no" for is refused without asking, until "Olvidar rechazos de host";
- * - with 20 approved hosts already there is nothing to ask: [StreamHostDecision.LIMIT_REACHED];
  * - otherwise the person is asked, with NO time limit ([HostApprovalCenter.requestUntilAnswered]):
  *   the plugin's call is over, nothing runs against a clock, and they are waiting for their video.
  *
@@ -119,13 +112,7 @@ class StreamHostApproval(
         }
         // An earlier question in the same Stream (or a fetch meanwhile) may already have added it.
         if (HostRules.matches(host, record.hosts)) return StreamHostDecision.APPROVED
-        val full = record.hosts.size >= ManifestParser.MAX_HOSTS
-        if (full && !offer) {
-            log("[$pluginId] $reason host $host: not asked, already at the ${ManifestParser.MAX_HOSTS}-host limit")
-            return StreamHostDecision.LIMIT_REACHED
-        }
-        // With the 20 hosts taken, the broad permission is still offered: it takes no slot.
-        val answer = center.askStreamHost(pluginId, pluginName, host, reason, offer, allowsThisHost = !full)
+        val answer = center.askStreamHost(pluginId, pluginName, host, reason, offer)
         // No suspension from here on (see the class KDoc).
         if (answer == HostApprovalAnswer.ALLOW_ANY_VIDEO_HOST) {
             registry.setAnyVideoHost(pluginId, true)
@@ -133,11 +120,6 @@ class StreamHostApproval(
             return StreamHostDecision.APPROVED_ANY_VIDEO_HOST
         }
         val approved = answer == HostApprovalAnswer.ALLOW_HOST
-        if (!approved && full) {
-            // Only the broad permission (or no) was on offer: a "no" to it is not a "no" to this host.
-            log("[$pluginId] $reason host $host: broad video permission declined, at the ${ManifestParser.MAX_HOSTS}-host limit")
-            return StreamHostDecision.LIMIT_REACHED
-        }
         if (!approved) {
             registry.rejectHost(pluginId, host)
             openRuntimeHttp(pluginId)?.recordDecision(host, approved = false)
@@ -146,9 +128,9 @@ class StreamHostApproval(
         val added = registry.addApprovedHost(pluginId, host)
         val present = added || registry.find(pluginId)?.record?.hosts?.let { HostRules.matches(host, it) } == true
         if (!present) {
-            // Only when ANOTHER host (a fetch-time approval) filled the last slot while this dialog was up.
-            log("[$pluginId] $reason host $host approved but not added: already at the ${ManifestParser.MAX_HOSTS}-host limit")
-            return StreamHostDecision.LIMIT_REACHED
+            // Only when the plugin was uninstalled while this dialog was up: nothing to add it to.
+            log("[$pluginId] $reason host $host approved but not added: the plugin is gone")
+            return StreamHostDecision.REJECTED
         }
         openRuntimeHttp(pluginId)?.recordDecision(host, approved = true)
         return StreamHostDecision.APPROVED

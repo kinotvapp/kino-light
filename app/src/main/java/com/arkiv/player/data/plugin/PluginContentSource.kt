@@ -238,8 +238,8 @@ class PluginContentSource(
      * of them granted, so a "yes" never leads to a different refusal. Returns having changed nothing
      * but the approved/rejected hosts: the caller's own [PluginOutput.stream] check then decides, with
      * the hosts read afresh, exactly as it always has -- a rejected video host fails with the same
-     * sentence as before, a rejected subtitle or audio host just drops that track. The one new failure
-     * is a video (or license) host the 20-host cap leaves no room for, said plainly.
+     * sentence as before, a rejected subtitle or audio host just drops that track. There is no cap
+     * on how many hosts the person approves, so an approved host is always added.
      */
     private suspend fun askAboutUndeclaredHosts(out: String, own: PluginRef) {
         val decider = streamHostApproval ?: return
@@ -260,10 +260,6 @@ class PluginContentSource(
             log("[$id] resolve: ${miss.reason} on undeclared host ${miss.host} -> $decision")
             if (decision == StreamHostDecision.APPROVED_ANY_VIDEO_HOST) { anyVideoHost = true; continue }
             if (!miss.required || decision == StreamHostDecision.APPROVED) continue
-            if (decision == StreamHostDecision.LIMIT_REACHED) {
-                val what = if (miss.reason == HostApprovalReason.LICENSE) "La licencia del video" else "El video"
-                throw GatewayException("$name: $what está en ${miss.host}, pero $name ya tiene el máximo de ${ManifestParser.MAX_HOSTS} servidores aprobados")
-            }
             return // rejected: the check that follows refuses the Stream with the sentence it always had
         }
     }

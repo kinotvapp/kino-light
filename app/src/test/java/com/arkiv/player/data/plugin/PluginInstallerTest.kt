@@ -181,57 +181,54 @@ class PluginInstallerTest {
         assertFalse(store.get("demo")!!.record.anyVideoHost)
     }
 
-    @Test fun `a reactively approved host the update's own hosts push past the cap is logged, not dropped silently`() = runBlocking {
+    // No cap on what the person approved: an update that declares all 20 hosts keeps every host
+    // they approved in the moment on top of them -- here the 21st and, later, up to the 25th.
+    @Test fun `an update declaring 20 hosts keeps every reactively approved host past them`() = runBlocking {
         val logs = mutableListOf<String>()
         val logging = PluginInstaller(store, fetcher, probe = { exports(it) }, clock = { now }, log = { logs += it })
         val nineteen = (1..19).map { "h$it.example.com" }
         publish("1.0.0", hosts = nineteen)
         logging.install(logging.preview("o/r"))
-        // The person said yes in the moment: the record now holds the 20th host.
-        store.updateRecord("demo") { it.copy(hosts = it.hosts + "new-cdn.example") }
+        // The person said yes in the moment, several times over.
+        val approved = (21..25).map { "r$it.example.net" }
+        store.updateRecord("demo") { it.copy(hosts = it.hosts + approved) }
 
-        // An update that stops needing nothing but takes the last slot for a host of its own.
+        // An update that declares a 20th host of its own.
         publish("2.0.0", hosts = nineteen + "h20.example.com")
         val outcome = logging.checkUpdate("demo") as UpdateOutcome.NeedsApproval
         logging.install(outcome.preview)
 
-        // Behavior unchanged: the declared hosts win the cap, and the reactive one is asked about again later.
-        assertEquals(nineteen + "h20.example.com", store.get("demo")!!.record.hosts)
-        assertEquals(logs.toString(), 1, logs.size)
-        assertTrue(logs.single(), "[demo]" in logs.single() && "new-cdn.example" in logs.single() && "2.0.0" in logs.single() && "20" in logs.single())
-    }
-
-    @Test fun `carrying reactive hosts over logs nothing when none is dropped by the cap`() = runBlocking {
-        val logs = mutableListOf<String>()
-        val logging = PluginInstaller(store, fetcher, probe = { exports(it) }, clock = { now }, log = { logs += it })
-        publish("1.0.0"); logging.install(logging.preview("o/r"))
-        store.updateRecord("demo") { it.copy(hosts = it.hosts + "new-cdn.example" + "old-cdn.example") }
-        // One reactive host kept, one now declared by the manifest itself: neither is a cap drop.
-        publish("1.1.0", hosts = listOf("example.com", "old-cdn.example"))
-        assertEquals(UpdateOutcome.Applied("1.1.0"), logging.checkUpdate("demo"))
-        assertEquals(listOf("example.com", "old-cdn.example", "new-cdn.example"), store.get("demo")!!.record.hosts)
+        val hosts = store.get("demo")!!.record.hosts
+        assertEquals(nineteen + "h20.example.com" + approved, hosts)
+        assertEquals(25, hosts.size)
         assertEquals(emptyList<String>(), logs)
     }
 
-    @Test fun `carried-over reactive hosts respect the host cap and a covering wildcard`() {
+    @Test fun `carrying reactive hosts over keeps one the new manifest now declares only once`() = runBlocking {
+        publish("1.0.0"); installFresh()
+        store.updateRecord("demo") { it.copy(hosts = it.hosts + "new-cdn.example" + "old-cdn.example") }
+        // One reactive host kept, one now declared by the manifest itself: kept once, declared first.
+        publish("1.1.0", hosts = listOf("example.com", "old-cdn.example"))
+        assertEquals(UpdateOutcome.Applied("1.1.0"), installer.checkUpdate("demo"))
+        assertEquals(listOf("example.com", "old-cdn.example", "new-cdn.example"), store.get("demo")!!.record.hosts)
+    }
+
+    @Test fun `carried-over reactive hosts are all kept, declared first, unless a wildcard covers them`() {
         fun stored(manifestHosts: List<String>, recordHosts: List<String>) = StoredPlugin(
             PluginManifest("demo", "Demo", "1.0.0", 1, "plugin.js", "", "", "", manifestHosts, setOf("search"), null, null),
             "{}", InstalledRecord("o/r", "1.0.0", "x", recordHosts, 0L), tmp.root,
         )
-        val nineteen = (1..19).map { "h$it.example.com" }
-        var dropped: List<String>? = null
-        val carried = PluginInstaller.hostsCarriedOver(nineteen, stored(nineteen, nineteen + listOf("a.example.org", "b.example.org"))) { dropped = it }
-        assertEquals(nineteen + "a.example.org", carried)
-        assertEquals(ManifestParser.MAX_HOSTS, carried.size)
-        assertEquals(listOf("b.example.org"), dropped)
-        // Already covered by the new version's own `*.example.org`: not kept a second time, and not a cap drop
-        // (neither is x.example.com, which the OLD manifest declared and the new one no longer does).
-        dropped = null
+        val twenty = (1..ManifestParser.MAX_HOSTS).map { "h$it.example.com" }
+        val reactive = (21..25).map { "r$it.example.org" }
+        val carried = PluginInstaller.hostsCarriedOver(twenty, stored(twenty, twenty + reactive + "r21.example.org"))
+        assertEquals(twenty + reactive, carried)
+        assertEquals(25, carried.size)
+        // Already covered by the new version's own `*.example.org`: not kept a second time (neither is
+        // x.example.com, which the OLD manifest declared and the new one no longer does).
         assertEquals(
             listOf("*.example.org", "c.example.net"),
-            PluginInstaller.hostsCarriedOver(listOf("*.example.org"), stored(listOf("x.example.com"), listOf("x.example.com", "a.example.org", "c.example.net"))) { dropped = it },
+            PluginInstaller.hostsCarriedOver(listOf("*.example.org"), stored(listOf("x.example.com"), listOf("x.example.com", "a.example.org", "c.example.net"))),
         )
-        assertNull(dropped)
         // A first install carries nothing over.
         assertEquals(listOf("example.com"), PluginInstaller.hostsCarriedOver(listOf("example.com"), null))
     }

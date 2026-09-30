@@ -181,46 +181,45 @@ class StreamHostApprovalTest {
         assertEquals("never shown a dialog", 0, center.shownCount)
     }
 
-    // With the 20 slots taken this one host can't be allowed, but the broad video permission takes
-    // no slot: the dialog offers only that (and Rechazar). Declining it is not a "no" to the host --
-    // nothing is remembered -- and the stream fails with the clear cap sentence, as before.
-    @Test fun `with 20 hosts already approved only the broad permission is offered, and declining fails clearly`() = runTest {
-        val full = (1..ManifestParser.MAX_HOSTS).map { "h$it.example.com" }
-        reinstall(full)
+    // No cap on what the person approves: a plugin with its 20 declared hosts plus 4 already
+    // approved (24) still gets the single-server choice, and a "yes" adds and persists the 25th.
+    @Test fun `past 20 hosts the single server is still offered, and approving adds it`() = runTest {
+        val twenty = (1..ManifestParser.MAX_HOSTS).map { "h$it.example.com" }
+        val approvedBefore = (21..24).map { "h$it.example.com" }
+        reinstall(twenty) { copy(hosts = twenty + approvedBefore) }
         val playing = play(source("""{"url":"https://cdn.other.example/v.mp4"}"""))
         val req = nextPrompt()
-        assertFalse(req.allowsThisHost)
         assertTrue(req.offersAnyVideoHost)
-        req.respond(false)
-        val e = runCatching { playing.await() }.exceptionOrNull()
-        assertTrue(e is GatewayException)
-        assertEquals("$NAME: El video está en cdn.other.example, pero $NAME ya tiene el máximo de 20 servidores aprobados", e!!.message)
-        assertEquals(full, record.hosts)
-        assertEquals(emptyList<String>(), record.rejectedHosts)
+        assertEquals("El video está en cdn.other.example, un servidor nuevo para este plugin. ¿Permitir?", req.question)
+        req.respond(true)
+        assertEquals("https://cdn.other.example/v.mp4", playing.await().url)
+        assertEquals(twenty + approvedBefore + "cdn.other.example", record.hosts)
+        assertEquals(25, record.hosts.size)
+        assertFalse(record.anyVideoHost)
     }
 
-    @Test fun `with 20 hosts approved a license host still fails with no question`() = runTest {
-        val full = (1 until ManifestParser.MAX_HOSTS).map { "h$it.example.com" }
-        reinstall(full + "cdn.other.example")
-        val e = runCatching {
-            play(source("""{"url":"https://cdn.other.example/1.mpd","drm":{"type":"widevine","licenseUrl":"https://lic.other.example/wv"}}""")).await()
-        }.exceptionOrNull()
-        assertEquals("$NAME: La licencia del video está en lic.other.example, pero $NAME ya tiene el máximo de 20 servidores aprobados", e?.message)
-        assertEquals(0, center.shownCount)
+    @Test fun `past 20 hosts a license host is still asked about, and approving plays it`() = runTest {
+        val twenty = (1 until ManifestParser.MAX_HOSTS).map { "h$it.example.com" } + "cdn.other.example"
+        reinstall(twenty)
+        val playing = play(source("""{"url":"https://cdn.other.example/1.mpd","drm":{"type":"widevine","licenseUrl":"https://lic.other.example/wv"}}"""))
+        val req = nextPrompt()
+        assertEquals(HostApprovalReason.LICENSE, req.reason)
+        assertFalse(req.offersAnyVideoHost)
+        req.respond(true)
+        assertEquals("https://cdn.other.example/1.mpd", playing.await().url)
+        assertEquals(twenty + "lic.other.example", record.hosts)
     }
 
-    // A fetch-time approval of ANOTHER host can fill the last slot while this dialog is up.
-    @Test fun `if the cap fills while the person decides, approving still fails clearly and adds nothing`() = runTest {
-        val almost = (1 until ManifestParser.MAX_HOSTS).map { "h$it.example.com" }
-        reinstall(almost)
+    // A fetch-time approval of ANOTHER host landing while this dialog is up takes nothing away from it.
+    @Test fun `another host approved while the person decides does not stop this one`() = runTest {
+        val twenty = (1..ManifestParser.MAX_HOSTS).map { "h$it.example.com" }
+        reinstall(twenty)
         val playing = play(source("""{"url":"https://cdn.other.example/v.mp4"}"""))
         val req = nextPrompt()
-        assertTrue(registry.addApprovedHost(ID, "last.example.com"))
+        assertTrue(registry.addApprovedHost(ID, "h21.example.com"))
         req.respond(true)
-        val e = runCatching { playing.await() }.exceptionOrNull()
-        assertEquals("$NAME: El video está en cdn.other.example, pero $NAME ya tiene el máximo de 20 servidores aprobados", e?.message)
-        assertFalse("cdn.other.example" in record.hosts)
-        assertEquals(ManifestParser.MAX_HOSTS, record.hosts.size)
+        assertEquals("https://cdn.other.example/v.mp4", playing.await().url)
+        assertEquals(twenty + "h21.example.com" + "cdn.other.example", record.hosts)
     }
 
     // --- side files ---

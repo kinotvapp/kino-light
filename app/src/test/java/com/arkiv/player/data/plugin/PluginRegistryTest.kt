@@ -228,17 +228,17 @@ class PluginRegistryTest {
             .forEach { assertEquals(it, ready.hosts, ready.streamHostsFor("pa", it)) }
     }
 
-    @Test fun `addApprovedHost appends once and respects the 20-host cap`() {
+    @Test fun `addApprovedHost appends once, with no cap on how many`() {
         install("pa", "A") { copy(hosts = listOf("example.com")) }
         assertTrue(registry.addApprovedHost("pa", "cdn.example.com"))
         assertEquals(listOf("example.com", "cdn.example.com"), registry.find("pa")!!.record.hosts)
         assertFalse(registry.addApprovedHost("pa", "cdn.example.com")) // already there
         assertEquals(listOf("example.com", "cdn.example.com"), registry.find("pa")!!.record.hosts)
-        val twenty = (1..18).map { "h$it.example.com" }
-        install("pb", "B") { copy(hosts = listOf("example.com") + twenty) } // 19 declared
-        assertTrue(registry.addApprovedHost("pb", "h19.example.com")) // now 20: allowed
-        assertFalse(registry.addApprovedHost("pb", "h20.example.com")) // 21st: refused
-        assertEquals(20, registry.find("pb")!!.record.hosts.size)
+        val nineteen = (1..19).map { "h$it.example.com" }
+        install("pb", "B") { copy(hosts = listOf("example.com") + nineteen) } // 20 declared
+        assertTrue(registry.addApprovedHost("pb", "h20.example.com")) // 21st
+        assertTrue(registry.addApprovedHost("pb", "h21.example.com")) // 22nd
+        assertEquals(22, registry.find("pb")!!.record.hosts.size)
     }
 
     @Test fun `rejectHost remembers per plugin, forgetRejections clears it`() {

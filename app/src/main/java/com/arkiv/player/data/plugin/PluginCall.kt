@@ -100,7 +100,7 @@ class PluginCallTracker {
  * reads it. Bounded: a runaway scraper can't grow it past [MAX_EVENTS].
  */
 class PluginCallTrace {
-    enum class Refusal { REJECTED_NOW, REJECTED_BEFORE, NOT_ASKED, LIMIT }
+    enum class Refusal { REJECTED_NOW, REJECTED_BEFORE, NOT_ASKED }
     enum class Failure { DNS, TIMEOUT, NETWORK }
 
     sealed interface Event { val host: String }

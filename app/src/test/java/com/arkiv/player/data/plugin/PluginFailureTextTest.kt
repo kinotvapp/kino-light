@@ -65,8 +65,6 @@ class PluginFailureTextTest {
     @Test fun `a host a search could not ask about is named as not approved`() {
         val e = PluginErrorException(PluginErrors.UNAVAILABLE, "x").with(trace { refused("cdn.example", PluginCallTrace.Refusal.NOT_ASKED) })
         assertEquals("Fuente necesita cdn.example, que no está aprobado", shown(e))
-        val full = PluginErrorException(PluginErrors.UNAVAILABLE, "x").with(trace { refused("cdn.example", PluginCallTrace.Refusal.LIMIT) })
-        assertEquals("Fuente necesita cdn.example, pero ya tiene el máximo de servidores aprobados", shown(full))
     }
 
     @Test fun `the Nuvio adapter's own reasons`() {
