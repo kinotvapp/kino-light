@@ -129,7 +129,7 @@ object NuvioPluginConverter {
         val wrapped = "var __nuvioModuleExports = (function (console) { return (function () {\n" +
             "var module = { exports: {} };\n" +
             "var exports = module.exports;\n" +
-            scraperSource +
+            NuvioAsyncStart.defer(scraperSource) +
             "\nreturn module.exports;\n})(); })(__nuvioConsole);\n"
         // The scraper's own declared types and display name, baked in for the adapter's support check.
         val displayName = scraper.name.trim().ifEmpty { scraper.id }
@@ -430,4 +430,72 @@ object NuvioPluginConverter {
 
     /** `resolve`'s `unavailable` detail prefix: nothing playable, and the scraper `console.error`ed why. */
     const val SCRAPER_ERROR_PREFIX = "error del scraper: "
+}
+
+/**
+ * Works around our QuickJS build (quickjs-kt 1.0.0-alpha13) aborting the WHOLE call when a promise
+ * is rejected before anything handles it, even if a `try`/`catch` would catch it a moment later
+ * (fixed upstream in quickjs-kt 1.0.1, which needs Kotlin 2.3; see docs/plugins/README.md, "The
+ * trap"). A transpiled `async` function hits it all the time: the transpilers' helpers run the
+ * body's first step synchronously inside the `Promise` executor, so a `throw` before the first
+ * `await` rejects before the caller's `await` has attached its handler.
+ *
+ * [defer] moves that first step one microtask later in the helpers bundlers emit -- esbuild's
+ * `__async` (plain and minified), TypeScript's `__awaiter` (plain and minified) and Babel's
+ * `_asyncToGenerator` -- so the caller is listening by the time the body can throw. Each pattern is
+ * anchored on the helper's own `Promise` constructor and its first-step call; a source without one
+ * comes back untouched. Native `async` functions have nothing to rewrite.
+ */
+internal object NuvioAsyncStart {
+    private const val ID = """[\w$]+"""
+
+    /**
+     * esbuild: `new Promise((resolve, reject) => { ... step((generator = generator.apply(__this, __arguments)).next()); })`,
+     * minified `new Promise((c,a)=>{...n((e=e.apply(o,s)).next())})`.
+     */
+    private val ESBUILD = Regex(
+        """(new Promise\(\(\s*$ID\s*,\s*($ID)\s*\)\s*=>\s*\{)((?:(?!new Promise)[\s\S]){0,800}?)""" +
+            """($ID)\(\(($ID)\s*=\s*\5\.apply\(\s*($ID)\s*,\s*($ID)\s*\)\)\.next\(\)\)""",
+    )
+
+    /**
+     * TypeScript/tslib: `new (P || (P = Promise))(function (resolve, reject) { ... step((generator = generator.apply(thisArg, _arguments || [])).next()); })`,
+     * minified `new(n||(n=Promise))(function(o,i){...c((r=r.apply(e,t||[])).next())})`.
+     */
+    private val TYPESCRIPT = Regex(
+        """(new\s*\(\s*($ID)\s*\|\|\s*\(\s*\2\s*=\s*Promise\s*\)\s*\)\s*\(\s*function\s*\(\s*$ID\s*,\s*($ID)\s*\)\s*\{)""" +
+            """((?:(?!new\s*\()[\s\S]){0,1000}?)""" +
+            """($ID)\(\(($ID)\s*=\s*\6\.apply\(\s*($ID\s*,\s*$ID(?:\s*\|\|\s*\[\s*\])?)\s*\)\)\.next\(\)\)""",
+    )
+
+    /**
+     * Babel: `function _asyncToGenerator(fn) { ... new Promise(function (resolve, reject) { ... _next(undefined); }) }`
+     * (`_next(void 0)` in newer Babel). Its step already catches a throw and rejects, so it needs no `.catch`.
+     */
+    private val BABEL = Regex(
+        """(function\s+_asyncToGenerator\s*\(\s*$ID\s*\)\s*\{(?:(?!function\s+_asyncToGenerator)[\s\S]){0,800}?)\b_next\((void 0|undefined)\)""",
+    )
+
+    fun defer(source: String): String {
+        var out = source
+        if ("new Promise" in out) {
+            out = ESBUILD.replace(out) { m ->
+                val g = m.groupValues
+                "${g[1]}${g[3]}Promise.resolve().then(() => ${g[4]}((${g[5]} = ${g[5]}.apply(${g[6]}, ${g[7]})).next())).catch(${g[2]})"
+            }
+        }
+        if ("Promise))" in out) {
+            out = TYPESCRIPT.replace(out) { m ->
+                val g = m.groupValues
+                "${g[1]}${g[4]}Promise.resolve().then(function () { ${g[5]}((${g[6]} = ${g[6]}.apply(${g[7]})).next()); }).catch(${g[3]})"
+            }
+        }
+        if ("_asyncToGenerator" in out) {
+            out = BABEL.replace(out) { m ->
+                val g = m.groupValues
+                "${g[1]}Promise.resolve().then(function () { _next(${g[2]}); })"
+            }
+        }
+        return out
+    }
 }
