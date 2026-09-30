@@ -1,6 +1,13 @@
 package com.arkiv.player.ui.player
 
 import com.arkiv.player.data.InProgressMark
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -74,5 +81,30 @@ internal class PlaybackAttempts(
         val (attempt, written) = pending ?: return
         pending = null
         if (!attempt.started) undo(written)
+    }
+
+    /**
+     * Follows [CastStarts] in [scope]: a chapter a DLNA renderer accepted has started, whatever the
+     * local player did. Subscribed before this returns, so no accepted cast is missed.
+     */
+    fun followCastStarts(scope: CoroutineScope): Job =
+        scope.launch(start = CoroutineStart.UNDISPATCHED) { CastStarts.accepted.collect { started(it) } }
+}
+
+/**
+ * The chapters a DLNA renderer accepted to play (`sendToRenderer`), for [PlaybackAttempts].
+ *
+ * Casting to DLNA pauses the local player, and from then on the TV plays: the local player may never
+ * report playing ([PlaybackAttempts.started] comes from its ticks and saves), and when it never got
+ * as far as a duration -- it could not open the source itself, or the person cast in its first
+ * second and it failed afterwards -- the exit save doesn't run either. Without this, leaving the
+ * player after a whole movie watched on the TV undid the chapter's early history mark.
+ */
+internal object CastStarts {
+    private val events = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    val accepted: SharedFlow<String> = events.asSharedFlow()
+
+    fun accepted(episodeId: String) {
+        events.tryEmit(episodeId)
     }
 }

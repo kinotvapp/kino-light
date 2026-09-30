@@ -174,6 +174,18 @@ internal suspend fun sendToRenderer(
      * one audio track); a renderer handed the file as-is plays its own default.
      */
     audio: com.arkiv.player.cast.CastAudioChoice? = null,
+): Boolean = sendToRendererNow(dlna, device, ep, lanIp, liveHlsProxy, audio).also { accepted ->
+    // The TV plays it now: the chapter's attempt started, even if the paused local player never does.
+    if (accepted && ep != null) CastStarts.accepted(ep.episodeId)
+}
+
+private suspend fun sendToRendererNow(
+    dlna: DlnaController,
+    device: DlnaDevice,
+    ep: PlayerData?,
+    lanIp: () -> String?,
+    liveHlsProxy: LiveHlsProxy,
+    audio: com.arkiv.player.cast.CastAudioChoice?,
 ): Boolean = when (ep?.kind) {
     null -> {
         DlnaLog.w("sendToRenderer: nothing is playing (no item)")

@@ -699,7 +699,7 @@ class PlayerViewModel internal constructor(
             Log.w(PLAY, "history: ${written.episodeId} never played -> taking back its early mark (had a row before: ${written.previous != null})")
             runCatching { repo.undoInProgress(written) }.onFailure { Log.w(PLAY, "history: undo failed: ${it.message}") }
         },
-    )
+    ).also { it.followCastStarts(viewModelScope) }
 
     /**
      * A plugin title whose source didn't open: the title to look up in every source ("Ver otras

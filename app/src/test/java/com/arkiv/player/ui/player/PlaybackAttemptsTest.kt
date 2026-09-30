@@ -52,6 +52,29 @@ class PlaybackAttemptsTest {
     private val finished = PlaybackEntity("plugin:a:s1::s1e1", 2_300_000L, 2_400_000L, watched = true, lastPlayedAt = 20L, updatedAt = 21L)
 
     @Test
+    fun `a chapter a DLNA renderer accepted keeps its mark though the local player never played`() = runTest {
+        val follow = attempts.followCastStarts(this)
+        val a = attempts.open("plugin:a:m1::movie")
+        attempts.begin(a, writeMark = true)
+        CastStarts.accepted("plugin:a:m1::other") // another chapter: nothing of this one
+        CastStarts.accepted("plugin:a:m1::movie")
+        testScheduler.advanceUntilIdle()
+        attempts.close()
+        assertTrue("watched on the TV: the history row stays", "plugin:a:m1::movie" in table.rows)
+        follow.cancel()
+    }
+
+    @Test
+    fun `without an accepted cast the same exit still undoes the mark`() = runTest {
+        val follow = attempts.followCastStarts(this)
+        val a = attempts.open("plugin:a:m1::movie")
+        attempts.begin(a, writeMark = true)
+        attempts.close()
+        assertNull(table.rows["plugin:a:m1::movie"])
+        follow.cancel()
+    }
+
+    @Test
     fun `a failure before starting with no previous row deletes the row`() = runTest {
         val a = attempts.open("plugin:a:m1::movie")
         attempts.begin(a, writeMark = true)
