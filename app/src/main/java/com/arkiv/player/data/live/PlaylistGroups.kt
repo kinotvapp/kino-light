@@ -1,5 +1,6 @@
 package com.arkiv.player.data.live
 
+import com.arkiv.player.data.plugin.Genre
 import com.arkiv.player.data.gateway.LiveChannel
 import com.arkiv.player.data.plugin.EffectiveHosts
 import com.arkiv.player.data.plugin.PluginOutput
@@ -83,7 +84,7 @@ internal fun groupPlaylist(
         if (code in entries) { skipped++; dropped++; continue }
         val catId = "pl:$key:${sha1Hex(group).take(10)}"
         val category = categories[catId]
-            ?: if (categories.size < maxCategories - 1) ProviderCategory(catId, group).also { categories[catId] = it }
+            ?: if (categories.size < maxCategories - 1) ProviderCategory(catId, group, Genre.infer(group) ?: playlist.genre).also { categories[catId] = it }
             else categories.getOrPut(otrosId) { ProviderCategory(otrosId, "Otros") }
         val ref = if (playlist.resolve) PluginRef(pluginId, code, PluginRef.LIVE, e.url).encode() else null
         byCategory.getOrPut(category.id) { ArrayList() } +=

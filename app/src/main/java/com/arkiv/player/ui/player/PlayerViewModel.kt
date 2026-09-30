@@ -100,6 +100,19 @@ data class PlayerData(
 )
 
 /**
+ * The access `loadPlugin` plays under. The built-in provider "Mis canales" ([com.arkiv.player.data.live.OwnLive.PLUGIN_ID])
+ * is not an installed plugin, so the registry would answer `Uninstalled`: it gets its own access, whose
+ * live hosts are any public host ([com.arkiv.player.data.live.OwnLive.access]). Everything else is the
+ * registry's answer.
+ */
+internal fun pluginAccessFor(
+    pluginId: String?,
+    registry: com.arkiv.player.data.plugin.PluginPlayback?,
+): com.arkiv.player.data.plugin.PluginAccess =
+    if (pluginId == com.arkiv.player.data.live.OwnLive.PLUGIN_ID) com.arkiv.player.data.live.OwnLive.access()
+    else registry?.accessFor(pluginId) ?: com.arkiv.player.data.plugin.PluginAccess.Uninstalled(pluginId ?: "desconocido")
+
+/**
  * Should [episodeId]'s progress be logged to history?
  *
  * The question is answered against the playlist that's currently playing because `saveProgress`
@@ -1100,7 +1113,8 @@ class PlayerViewModel internal constructor(
             return
         }
         val label = if (item?.kind == SourceKind.PLUGIN) {
-            plugins?.nameOf(com.arkiv.player.data.plugin.PluginIds.pluginIdOfEpisode(item.episodeId)) ?: "Plugin"
+            pluginAccessFor(com.arkiv.player.data.plugin.PluginIds.pluginIdOfEpisode(item.episodeId), plugins).takeIf { it is com.arkiv.player.data.plugin.PluginAccess.Ready }?.name
+                ?: plugins?.nameOf(com.arkiv.player.data.plugin.PluginIds.pluginIdOfEpisode(item.episodeId)) ?: "Plugin"
         } else {
             "Xuper"
         }
@@ -1533,8 +1547,7 @@ class PlayerViewModel internal constructor(
      */
     private suspend fun loadPlugin(episodeId: String) {
         val pluginId = com.arkiv.player.data.plugin.PluginIds.pluginIdOfEpisode(episodeId)
-        val access = plugins?.accessFor(pluginId)
-            ?: com.arkiv.player.data.plugin.PluginAccess.Uninstalled(pluginId ?: "desconocido")
+        val access = pluginAccessFor(pluginId, plugins)
         val blocked = access.blockedMessage()
         if (blocked != null) {
             Log.w(PLAY, "loadPlugin() $episodeId blocked: $blocked")
@@ -1594,7 +1607,7 @@ class PlayerViewModel internal constructor(
         // approved in the middle of that call (reactive host approval) is where its stream just came
         // from, and `access` above was read before it existed. Only ever the same plugin's own
         // record, freshly read; if it stopped being Ready meanwhile, the earlier answer stands.
-        val hostsReady = (plugins?.accessFor(pluginId) as? com.arkiv.player.data.plugin.PluginAccess.Ready) ?: ready
+        val hostsReady = (pluginAccessFor(pluginId, plugins) as? com.arkiv.player.data.plugin.PluginAccess.Ready) ?: ready
         pluginExpiry = com.arkiv.player.data.plugin.PluginStreamExpiry(System.currentTimeMillis(), play.expiresInSeconds)
         val header = if (live) null else repo.headerInfo(episodeId)
         _webExtras.value = WebExtras(episodeId, play.headers, pluginSubtitles(play.subtitles), pluginAudioTracks(play.audioTracks), drm = pluginDrm(play))

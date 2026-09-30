@@ -24,7 +24,15 @@ import kotlinx.coroutines.withContext
 
 /** One category tile: a Magis home row's id (also the Xuper plugin's `browse` ref for it), its
  *  label, and a preview image taken from the row's first title. */
-data class CategorySpec(val id: String, val title: String, val previewUrl: String?)
+data class CategorySpec(
+    val id: String,
+    val title: String,
+    val previewUrl: String?,
+    /** Set on a tile that comes from ANOTHER plugin's browsable Home row ([GenreTile]); null = the Xuper catalog's. */
+    val pluginId: String? = null,
+    /** What that plugin's `browse` takes (the row's `ref`); for a Xuper tile it is [id]. */
+    val ref: String = id,
+)
 
 /**
  * The Categories screen, built from the REAL Magis catalog -- the SAME source as the Home (see
@@ -48,6 +56,8 @@ class CategoriesViewModel(
     private val plugins: Flow<List<InstalledPlugin>>,
     /** Manual "recargar catálogo" pulses from the home's top bar (`AppGraph.homeReloads`). */
     reload: Flow<Unit> = emptyFlow(),
+    /** The other plugins' browsable Home rows as tiles (`AppGraph.genreTiles`). */
+    tiles: Flow<List<GenreTile>> = emptyFlow(),
 ) : ViewModel() {
 
     private val _rows = MutableStateFlow<List<CategorySpec>>(emptyList())
@@ -60,6 +70,15 @@ class CategoriesViewModel(
     /** The tiles to paint: none while there's no usable Xuper plugin to open them with. */
     val rows: StateFlow<List<CategorySpec>> = combine(_rows, pluginId) { specs, id -> if (id == null) emptyList() else specs }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** The other plugins' rows, grouped by genre after Xuper's own tiles (the whole tab when Xuper is off). */
+    val genreSections: StateFlow<List<GenreSection>> = tiles
+        .map { genreSectionsOf(it) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    fun specOf(tile: GenreTile) = CategorySpec(
+        id = "${tile.pluginId}::${tile.ref}", title = tile.title, previewUrl = tile.previewUrl, pluginId = tile.pluginId, ref = tile.ref,
+    )
 
     private val _loading = MutableStateFlow(true)
     val loading: StateFlow<Boolean> = _loading.asStateFlow()
@@ -115,7 +134,8 @@ class CategoriesViewModel(
      * plugin stopped being usable between painting the tile and the tap (the tiles go away then).
      */
     fun browseTarget(spec: CategorySpec): PluginMoreTarget.Browse? =
-        pluginId.value?.let { PluginMoreTarget.Browse(it, spec.title, spec.id) }
+        spec.pluginId?.let { PluginMoreTarget.Browse(it, spec.title, spec.ref) }
+            ?: pluginId.value?.let { PluginMoreTarget.Browse(it, spec.title, spec.id) }
 
     companion object {
         /**

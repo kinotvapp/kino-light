@@ -15,7 +15,7 @@
   "manifest": {
     "maxBytes": 16384,
     "idPattern": "^[a-z0-9][a-z0-9-]{1,39}$",
-    "reservedIds": ["magis", "ditu", "live", "local", "unknown", "plugin"],
+    "reservedIds": ["magis", "ditu", "live", "local", "unknown", "plugin", "own"],
     "nameMaxChars": 40,
     "descriptionMaxChars": 300,
     "authorMaxChars": 60,
@@ -115,6 +115,7 @@
     "playlistFormats": ["m3u"],
     "epgFormats": ["xmltv"]
   },
+  "genres": ["peliculas", "series", "anime", "infantil", "documentales", "deportes", "noticias", "musica", "entretenimiento", "otros"],
   "discovery": { "topic": "kino-plugin", "maxResults": 30 },
   "search": {
     "types": ["movie", "series", "any"],

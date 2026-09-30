@@ -54,12 +54,12 @@ class LiveCatalogTest {
     }
 
     @Test fun `xuper comes first, then every plugin that adds channels, in registry order`() {
-        assertEquals(listOf("xuper", "plugin:tv1", "plugin:tv2"), liveProviderIds(listOf(plugin("tv1"), xuper(), plugin("tv2"))))
+        assertEquals(listOf("xuper", "plugin:tv1", "plugin:tv2", OwnLive.PROVIDER), liveProviderIds(listOf(plugin("tv1"), xuper(), plugin("tv2"))))
     }
 
     @Test fun `a plugin adds channels only while usable, configured, on apiVersion 3 and declaring channels`() {
         assertEquals(
-            emptyList<String>(),
+            listOf(OwnLive.PROVIDER),
             liveProviderIds(
                 listOf(
                     plugin("off", enabled = false), plugin("dmg", damaged = true), plugin("slow", unresponsive = true),
@@ -71,9 +71,9 @@ class LiveCatalogTest {
     }
 
     @Test fun `the xuper install is never a plugin provider, and without it there is no xuper`() {
-        assertEquals(listOf("xuper"), liveProviderIds(listOf(xuper(caps = setOf("home", "resolve", "channels")))))
-        assertEquals(listOf("plugin:tv1"), liveProviderIds(listOf(xuper(enabled = false), plugin("tv1"))))
-        assertEquals(emptyList<String>(), liveProviderIds(emptyList()))
+        assertEquals(listOf("xuper", OwnLive.PROVIDER), liveProviderIds(listOf(xuper(caps = setOf("home", "resolve", "channels")))))
+        assertEquals(listOf("plugin:tv1", OwnLive.PROVIDER), liveProviderIds(listOf(xuper(enabled = false), plugin("tv1"))))
+        assertEquals(listOf(OwnLive.PROVIDER), liveProviderIds(emptyList()))
     }
 
     @Test fun `blocked messages say what to do`() {
@@ -91,28 +91,30 @@ class LiveCatalogTest {
     @Test fun `providers follow the registry and keep their instance while the plugin is unchanged`() = runTest {
         val registry = MutableStateFlow(listOf(xuper(), plugin("tv1")))
         var built = 0
-        val catalog = LiveCatalog(registry, backgroundScope, xuperProvider = { Fake("xuper") }, pluginProvider = { p -> built++; Fake("plugin:${p.id}") })
-        assertEquals(listOf("xuper", "plugin:tv1"), catalog.providers.value.map { it.id })
+        val catalog = LiveCatalog(registry, backgroundScope, xuperProvider = { Fake("xuper") }, pluginProvider = { p -> built++; Fake("plugin:${p.id}") }, ownProvider = { Fake(OwnLive.PROVIDER) })
+        assertEquals(listOf("xuper", "plugin:tv1", OwnLive.PROVIDER), catalog.providers.value.map { it.id })
         val first = catalog.provider("plugin:tv1")
         registry.value = listOf(plugin("tv1"))
         runCurrent()
-        assertEquals(listOf("plugin:tv1"), catalog.providers.value.map { it.id })
+        assertEquals(listOf("plugin:tv1", OwnLive.PROVIDER), catalog.providers.value.map { it.id })
         assertSame(first, catalog.provider("plugin:tv1"))
         assertEquals(1, built)
-        assertEquals(listOf(LiveProviderTab("plugin:tv1", "plugin:tv1", 0L)), catalog.tabs.value)
+        assertEquals(listOf(LiveProviderTab("plugin:tv1", "plugin:tv1", 0L), LiveProviderTab(OwnLive.PROVIDER, OwnLive.PROVIDER, 0L)), catalog.tabs.value)
         assertTrue(catalog.available.value)
         registry.value = listOf(plugin("tv1", version = "1.1.0"))
         runCurrent()
         assertEquals(2, built)
         registry.value = emptyList()
         runCurrent()
-        assertFalse(catalog.available.value)
+        // The person's own channels are always there: En vivo stays reachable with nothing installed.
+        assertTrue(catalog.available.value)
+        assertEquals(listOf(OwnLive.PROVIDER), catalog.providers.value.map { it.id })
         assertEquals("Este canal venía de un plugin que ya no está instalado", catalog.blockedMessage("plugin:tv1"))
     }
 
     @Test fun `a replaced or dropped provider is closed once, a kept one never`() = runTest {
         val registry = MutableStateFlow(listOf(xuper(), plugin("tv1"), plugin("tv2")))
-        val catalog = LiveCatalog(registry, backgroundScope, xuperProvider = { Fake("xuper") }, pluginProvider = { p -> Fake("plugin:${p.id}") })
+        val catalog = LiveCatalog(registry, backgroundScope, xuperProvider = { Fake("xuper") }, pluginProvider = { p -> Fake("plugin:${p.id}") }, ownProvider = { Fake(OwnLive.PROVIDER) })
         val xuperOne = catalog.provider("xuper") as Fake
         val tv1 = catalog.provider("plugin:tv1") as Fake
         val tv2 = catalog.provider("plugin:tv2") as Fake
@@ -130,12 +132,12 @@ class LiveCatalogTest {
         runCurrent()
         assertEquals(1, xuperOne.closed)
         assertEquals(1, tv1.closed)
-        assertEquals(emptyList<LiveChannelProvider>(), catalog.providers.value)
+        assertEquals(listOf(OwnLive.PROVIDER), catalog.providers.value.map { it.id })
     }
 
     @Test fun `forget closes a plugin's provider at once, before the registry drops it, and only once`() = runTest {
         val registry = MutableStateFlow(listOf(plugin("tv1"), plugin("tv2")))
-        val catalog = LiveCatalog(registry, backgroundScope, xuperProvider = { Fake("xuper") }, pluginProvider = { p -> Fake("plugin:${p.id}") })
+        val catalog = LiveCatalog(registry, backgroundScope, xuperProvider = { Fake("xuper") }, pluginProvider = { p -> Fake("plugin:${p.id}") }, ownProvider = { Fake(OwnLive.PROVIDER) })
         val tv1 = catalog.provider("plugin:tv1") as Fake
         val tv2 = catalog.provider("plugin:tv2") as Fake
         catalog.forget("tv1")
@@ -144,12 +146,12 @@ class LiveCatalogTest {
         registry.value = listOf(plugin("tv2"))
         runCurrent()
         assertEquals(1, tv1.closed)
-        assertEquals(listOf("plugin:tv2"), catalog.providers.value.map { it.id })
+        assertEquals(listOf("plugin:tv2", OwnLive.PROVIDER), catalog.providers.value.map { it.id })
         catalog.forget("nothing")
     }
 
     @Test fun `only plugin providers have a notice`() = runTest {
-        val catalog = LiveCatalog(MutableStateFlow(listOf(xuper())), backgroundScope, xuperProvider = { Fake("xuper", MutableStateFlow("x")) }, pluginProvider = { Fake("plugin:${it.id}") })
+        val catalog = LiveCatalog(MutableStateFlow(listOf(xuper())), backgroundScope, xuperProvider = { Fake("xuper", MutableStateFlow("x")) }, pluginProvider = { Fake("plugin:${it.id}") }, ownProvider = { Fake(OwnLive.PROVIDER) })
         assertEquals(null, catalog.noticeFor("tv1").first())
         assertEquals(null, catalog.noticeFor("xuper").first())
     }
@@ -157,7 +159,7 @@ class LiveCatalogTest {
     @Test fun `a plugin's notice follows its current provider, a replacement and its removal`() = runTest {
         val registry = MutableStateFlow(listOf(plugin("tv1")))
         val notices = ArrayDeque(listOf("Lista recortada: 5000 de 9000 canales", "Lista recortada: 5000 de 7000 canales"))
-        val catalog = LiveCatalog(registry, backgroundScope, xuperProvider = { Fake("xuper") }, pluginProvider = { p -> Fake("plugin:${p.id}", MutableStateFlow(notices.removeFirst())) })
+        val catalog = LiveCatalog(registry, backgroundScope, xuperProvider = { Fake("xuper") }, pluginProvider = { p -> Fake("plugin:${p.id}", MutableStateFlow(notices.removeFirst())) }, ownProvider = { Fake(OwnLive.PROVIDER) })
         val seen = mutableListOf<String?>()
         backgroundScope.launch(kotlinx.coroutines.test.UnconfinedTestDispatcher(testScheduler)) { catalog.noticeFor("tv1").collect { seen += it } }
         assertEquals(listOf<String?>("Lista recortada: 5000 de 9000 canales"), seen)
@@ -167,5 +169,39 @@ class LiveCatalogTest {
         registry.value = emptyList()
         runCurrent()
         assertEquals(null, seen.last())
+    }
+
+    @Test fun `the own provider is always the last one, with no plugins at all`() {
+        assertEquals(listOf(OwnLive.PROVIDER), liveProviderIds(emptyList()))
+    }
+
+    @Test fun `the own provider never says its plugin is not installed`() {
+        assertEquals("Este canal no está disponible ahora", liveBlockedMessage(OwnLive.PROVIDER, emptyList()))
+    }
+
+    @Test fun `the catalog builds the own provider once and keeps the instance, and En vivo is reachable with nothing installed`() = runTest {
+        var built = 0
+        val registry = MutableStateFlow<List<InstalledPlugin>>(emptyList())
+        val catalog = LiveCatalog(
+            registry, backgroundScope,
+            xuperProvider = { error("no xuper") }, pluginProvider = { error("no plugin") },
+            ownProvider = { built++; Fake(OwnLive.PROVIDER) },
+        )
+        assertEquals(listOf(OwnLive.PROVIDER), catalog.providers.value.map { it.id })
+        assertTrue(catalog.available.value)
+        val first = catalog.providers.value.single()
+        registry.value = listOf(plugin("tv1"))
+        assertSame(first, catalog.providers.value.last())
+        assertEquals(1, built)
+    }
+
+    @Test fun `the own channels alone are not a source provider, they must not hide Home's onboarding`() = runTest {
+        val registry = MutableStateFlow<List<InstalledPlugin>>(emptyList())
+        val catalog = LiveCatalog(registry, backgroundScope, xuperProvider = { Fake("xuper") }, pluginProvider = { p -> Fake("plugin:${p.id}") }, ownProvider = { Fake(OwnLive.PROVIDER) })
+        assertTrue(catalog.available.value)
+        assertFalse(catalog.hasSourceProviders.value)
+        registry.value = listOf(plugin("tv1"))
+        runCurrent()
+        assertTrue(catalog.hasSourceProviders.value)
     }
 }

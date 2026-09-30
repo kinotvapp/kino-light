@@ -307,7 +307,7 @@ function rows(value, ctx, drop) {
     let ref = typeof r.ref === "string" && r.ref ? r.ref : null;
     if (ref && !ctx.allowNext) { drop(`home: row ${id} has a ref but the plugin doesn't declare browse`); ref = null; }
     if (ref && ref.length > o().maxRefChars) { drop(`home: row ${id} ref too long`); ref = null; }
-    out.push({ id, title, ref, items: list });
+    out.push({ id, title, ref, items: list, genre: genreOf(r.genre) });
   });
   return out;
 }
@@ -362,6 +362,12 @@ function seasons(value, drop) {
 /** Up to `maxHeaders` request headers as the app keeps them: a token name, none of the forbidden ones, a string value with no line break. */
 const HEADER_NAME = /^[A-Za-z0-9-]{1,64}$/;
 const FORBIDDEN_HEADERS = ["host", "content-length", "transfer-encoding", "connection"];
+/** A declared `genre`, read as Genre.parse: the id when it is in the closed vocabulary (case and outer spaces ignored), else null. */
+function genreOf(raw) {
+  const g = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  return contract.genres.includes(g) ? g : null;
+}
+
 function headersOf(h) {
   const out = {};
   if (h === null || typeof h !== "object" || Array.isArray(h)) return out;
@@ -488,7 +494,7 @@ function playlistOf(p, { manifest, servers }, drop) {
   const refreshHours = h >= live().minRefreshHours && h <= live().maxRefreshHours ? h : live().defaultRefreshHours;
   const hideGroups = [...new Set((Array.isArray(p.hideGroups) ? p.hideGroups : []).slice(0, live().maxHideGroups)
     .map((g) => (typeof g === "string" ? g.trim().toLowerCase().slice(0, 100) : "")).filter(Boolean))];
-  return { url, headers: headersOf(p.headers), epgUrl, refreshHours, hideGroups, resolve: p.resolve === true };
+  return { url, headers: headersOf(p.headers), epgUrl, refreshHours, hideGroups, resolve: p.resolve === true, streamHeaders: headersOf(p.streamHeaders), genre: genreOf(p.genre) };
 }
 
 /** liveCategories(), read as PluginOutput.liveCategories: `{ categories, playlists }`. */
@@ -520,7 +526,7 @@ function liveCategories(value, ctx, drop) {
     if (seen.has(id)) return drop(`liveCategories: duplicate ${id} dropped`);
     seen.add(id);
     const cc = typeof c.country === "string" ? c.country.trim().toUpperCase() : "";
-    categories.push({ id, title, country: /^[A-Z]{2}$/.test(cc) ? cc : "" });
+    categories.push({ id, title, country: /^[A-Z]{2}$/.test(cc) ? cc : "", genre: genreOf(c.genre) });
   });
   return { categories, playlists };
 }

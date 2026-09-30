@@ -27,8 +27,13 @@ class ManifestParserTest {
     }
 
     @Test fun `id rules`() {
-        listOf("A", "a", "-abc", "has_underscore", "x".repeat(41), "magis", "ditu", "live", "local", "unknown", "plugin")
+        listOf("A", "a", "-abc", "has_underscore", "x".repeat(41), "magis", "ditu", "live", "local", "unknown", "plugin", "own")
             .forEach { assertEquals(it, "id", invalidField(base().put("id", it))) }
+    }
+
+    @Test fun `the reserved id of the built-in live provider is the one OwnLive uses`() {
+        assertEquals("own", com.arkiv.player.data.live.OwnLive.PLUGIN_ID)
+        assertEquals("id", invalidField(base().put("id", com.arkiv.player.data.live.OwnLive.PLUGIN_ID)))
     }
 
     @Test fun `name must be 1 to 40 chars`() {

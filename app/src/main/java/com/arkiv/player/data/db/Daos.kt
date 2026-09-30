@@ -926,3 +926,33 @@ interface KinobotDao {
     @Query("DELETE FROM kinobot_messages")
     suspend fun clear()
 }
+
+internal const val QUERY_OWN_LIVE_SOURCES_SINCE =
+    "SELECT * FROM own_live_sources WHERE updatedAt > :cursor ORDER BY updatedAt ASC"
+
+@Dao
+interface OwnLiveSourceDao {
+    @Query("SELECT * FROM own_live_sources WHERE deleted = 0 ORDER BY name COLLATE NOCASE")
+    fun flowAll(): Flow<List<OwnLiveSourceEntity>>
+
+    @Query("SELECT * FROM own_live_sources WHERE deleted = 0 ORDER BY name COLLATE NOCASE")
+    suspend fun all(): List<OwnLiveSourceEntity>
+
+    /** Includes tombstones: sync and the store read the row as it is. */
+    @Query("SELECT * FROM own_live_sources WHERE id = :id")
+    suspend fun get(id: String): OwnLiveSourceEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun save(s: OwnLiveSourceEntity)
+
+    // Leaves `updatedAt` alone on purpose: the SyncTriggers UPDATE trigger reseals it (same pattern as live_favorites).
+    @Query("UPDATE own_live_sources SET deleted = 1 WHERE id = :id")
+    suspend fun delete(id: String)
+
+    @Query("SELECT COUNT(*) FROM own_live_sources WHERE deleted = 0")
+    suspend fun count(): Int
+
+    /** Sync push: rows touched after [cursor], oldest first. */
+    @Query(QUERY_OWN_LIVE_SOURCES_SINCE)
+    suspend fun getSince(cursor: Long): List<OwnLiveSourceEntity>
+}

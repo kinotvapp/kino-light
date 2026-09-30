@@ -30,7 +30,7 @@ class XuperLiveProviderTest {
     @Test fun `it is the portal's catalog with string category ids`() = runBlocking {
         assertEquals("xuper", xuper.id)
         assertEquals("76182", xuper.initialCategory())
-        assertEquals(listOf(ProviderCategory("76182", "Todos"), ProviderCategory("12", "Deportes")), xuper.categories(false))
+        assertEquals(listOf(ProviderCategory("76182", "Todos"), ProviderCategory("12", "Deportes", "deportes")), xuper.categories(false))
         assertEquals(listOf("xuper"), xuper.channels("12").map { it.provider })
         assertEquals(emptyList<LiveChannel>(), xuper.channels("not-a-number"))
         assertEquals(listOf<Any>(12), asked)

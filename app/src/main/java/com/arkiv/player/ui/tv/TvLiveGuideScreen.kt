@@ -1,5 +1,6 @@
 package com.arkiv.player.ui.tv
 
+import com.arkiv.player.data.plugin.Genre
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -61,10 +62,13 @@ import coil.compose.AsyncImage
 import com.arkiv.player.data.gateway.LiveChannel
 import com.arkiv.player.data.gateway.liveCode
 import com.arkiv.player.data.live.LiveProviderTab
+import com.arkiv.player.data.live.OwnLive
 import com.arkiv.player.ui.live.CATEGORY_FAVORITES
 import com.arkiv.player.ui.live.FAVORITE_HINT
 import com.arkiv.player.ui.live.LiveSearchView
 import com.arkiv.player.ui.live.LiveViewModel
+import com.arkiv.player.ui.live.OwnSourcesCopy
+import com.arkiv.player.ui.live.OwnSourcesViewModel
 import com.arkiv.player.ui.live.LiveZappingSource
 import com.arkiv.player.ui.live.ProviderBadge
 import com.arkiv.player.ui.live.favoriteNotice
@@ -163,6 +167,16 @@ fun TvLiveGuideScreen(onWatchChannel: (LiveChannel) -> Unit, onBack: () -> Unit)
         },
     )
     val state by vm.state.collectAsStateWithLifecycle()
+    val ownVm: OwnSourcesViewModel = viewModel(
+        factory = viewModelFactory {
+            initializer { OwnSourcesViewModel(graph.ownLiveStore, graph.ownProbe, onSaved = { vm.reload() }) }
+        },
+    )
+    var ownManager by remember { mutableStateOf(false) }
+    val ownFormOpen by ownVm.ui.collectAsStateWithLifecycle()
+    val ownButtonFocus = remember { FocusRequester() }
+    var ownButtonFocused by remember { mutableStateOf(false) }
+    var ownFlowWasOpen by remember { mutableStateOf(false) }
 
     var view by remember { mutableStateOf(TvLocalView.NONE) }
 
@@ -346,6 +360,18 @@ fun TvLiveGuideScreen(onWatchChannel: (LiveChannel) -> Unit, onBack: () -> Unit)
                         Text("Recargar canales", style = MaterialTheme.typography.bodyMedium)
                     }
                 }
+                Spacer(Modifier.height(12.dp))
+                Surface(
+                    onClick = { ownManager = true },
+                    modifier = Modifier.fillMaxWidth().height(48.dp).focusRequester(ownButtonFocus).onFocusChanged { ownButtonFocused = it.isFocused },
+                    shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+                    colors = arkivTvSurfaceColors(),
+                    border = arkivTvSurfaceBorder(),
+                ) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(OwnSourcesCopy.MY_SOURCES, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
                 if (search.isNotBlank()) {
                     Spacer(Modifier.height(12.dp))
                     Surface(
@@ -422,7 +448,10 @@ fun TvLiveGuideScreen(onWatchChannel: (LiveChannel) -> Unit, onBack: () -> Unit)
                             onClick = { view = TvLocalView.RECENT },
                         )
                     }
-                    items(state.categories, key = { it.id }) { cat ->
+                    items(state.genres, key = { "genre:$it" }) { g ->
+                        TvCategoryChip(label = Genre.label(g), icon = null, selected = state.genre == g, onClick = { vm.chooseGenre(g) })
+                    }
+                    items(state.visibleCategories, key = { it.id }) { cat ->
                         TvCategoryChip(
                             label = cat.name,
                             icon = null,
@@ -447,6 +476,8 @@ fun TvLiveGuideScreen(onWatchChannel: (LiveChannel) -> Unit, onBack: () -> Unit)
                             TvGuideMessage("Cargando canales…", null)
                         baseChannels.isEmpty() && state.activeCategory == CATEGORY_FAVORITES ->
                             TvGuideMessage("Aún no tienes favoritos", "Mantén OK sobre un canal para agregarlo.")
+                        baseChannels.isEmpty() && state.activeProvider == OwnLive.PROVIDER && state.categories.isEmpty() ->
+                            TvGuideMessage(OwnSourcesCopy.EMPTY_TITLE, "Elige «${OwnSourcesCopy.MY_SOURCES}» a la izquierda para agregar un canal .m3u8 o una lista M3U. Si tienes un celular o una TV vinculados, se copiarán solos.")
                         baseChannels.isEmpty() ->
                             TvGuideMessage("Sin canales", "No encontramos canales en esta categoría.")
                         else -> LazyColumn(
@@ -482,6 +513,20 @@ fun TvLiveGuideScreen(onWatchChannel: (LiveChannel) -> Unit, onBack: () -> Unit)
             },
             onDismiss = { confirmChannel = null },
         )
+    }
+
+    TvOwnSourceDialogs(ownVm, showManager = ownManager, onCloseManager = { ownManager = false })
+    // A closed dialog hands focus back to the button that opened the flow (Compose clears it with the dialog).
+    val ownFlowOpen = ownManager || ownFormOpen.open
+    LaunchedEffect(ownFlowOpen) {
+        if (ownFlowOpen) {
+            ownFlowWasOpen = true
+            return@LaunchedEffect
+        }
+        // Not on the first composition: only when a dialog of this flow has just closed.
+        if (!ownFlowWasOpen) return@LaunchedEffect
+        ownFlowWasOpen = false
+        retryFocus(attempts = 20, isAlreadyFocused = { ownButtonFocused }, wait = { delay(50) }, request = { ownButtonFocus.requestFocus() })
     }
 }
 

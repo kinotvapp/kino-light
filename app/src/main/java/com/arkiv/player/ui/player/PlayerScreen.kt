@@ -344,7 +344,6 @@ private val SCREEN_SEQ = java.util.concurrent.atomic.AtomicInteger(0)
 fun PlayerScreen(
     episodeId: String,
     onBack: () -> Unit,
-    onOpenEpisodes: () -> Unit,
     onNextEpisode: (String) -> Unit = {},
     isTv: Boolean = false,
     /** A plugin title whose plugin needs configuring: opens that plugin's Configurar screen. */
@@ -360,7 +359,7 @@ fun PlayerScreen(
         }
         return
     }
-    PlayerContent(episodeId, onBack, onOpenEpisodes, onNextEpisode, controller, serviceExo, isTv, onOpenPluginSettings)
+    PlayerContent(episodeId, onBack, onNextEpisode, controller, serviceExo, isTv, onOpenPluginSettings)
 }
 
 @OptIn(UnstableApi::class, androidx.compose.material3.ExperimentalMaterial3Api::class)
@@ -368,7 +367,6 @@ fun PlayerScreen(
 private fun PlayerContent(
     episodeId: String,
     onBack: () -> Unit,
-    onOpenEpisodes: () -> Unit,
     onNextEpisode: (String) -> Unit,
     controller: MediaController,
     serviceExo: ExoPlayer,
@@ -477,17 +475,21 @@ private fun PlayerContent(
     // web: playing a Magis chapter announced a web source that doesn't exist on that path.
     // No other source turns on that flag (archive had its own banner, and it was removed in this
     // branch's pruning).
+    // "Mis canales" is built in, so the registry has no name for it.
+    fun pluginLabel(pluginId: String?): String? =
+        if (pluginId == com.arkiv.player.data.live.OwnLive.PLUGIN_ID) com.arkiv.player.data.live.OwnLive.NAME
+        else graph.pluginRegistry.nameOf(pluginId)
     val resolvingSourceName = remember(episodeId) {
         when (PlayerSource.kindFor(episodeId)) {
             SourceKind.MAGIS -> "de Xuper"
             SourceKind.DITU -> "de Caracol"
-            SourceKind.PLUGIN -> "de " + (graph.pluginRegistry.nameOf(
+            SourceKind.PLUGIN -> "de " + (pluginLabel(
                 com.arkiv.player.data.plugin.PluginIds.pluginIdOfEpisode(episodeId),
             ) ?: "un plugin")
             // An En vivo channel of a plugin (`live:plugin:<id>:<code>`): only its opens resolve.
             SourceKind.LIVE -> com.arkiv.player.data.gateway.LiveChannelKeys.parse(episodeId.removePrefix(PlayerSource.LIVE_PREFIX))
                 ?.first?.let(com.arkiv.player.data.gateway.LiveChannelKeys::pluginIdOf)
-                ?.let { "de " + (graph.pluginRegistry.nameOf(it) ?: "un plugin") } ?: "web"
+                ?.let { "de " + (pluginLabel(it) ?: "un plugin") } ?: "web"
             else -> "web"
         }
     }
@@ -2804,7 +2806,6 @@ private fun PlayerContent(
     }
     val currentSeekBy by rememberUpdatedState { deltaMs: Long -> seekBy(deltaMs) }
 
-    val onOpenEpisodesState = rememberUpdatedState(onOpenEpisodes)
 
     val outerModifier = if (isLandscape) Modifier.fillMaxSize()
     else Modifier.fillMaxSize().systemBarsPadding()
@@ -3057,7 +3058,7 @@ private fun PlayerContent(
         // GESTURE layer (phone only, both sources; ported from TorrentPlayerScreen): tap = controls;
         // left/right double-tap = ∓10s; long-press = temporary 2×; horizontal swipe = seek;
         // vertical swipe LEFT = brightness (volume-by-swipe removed: volume is the on-screen slider
-        // button now, see PlayerVolume). For archive, a large downward swipe opens the episode list.
+        // button now, see PlayerVolume). No swipe leaves the player: a slip of the finger must never close it.
         if (!isTv) {
             Box(
                 Modifier.fillMaxSize()
@@ -3115,12 +3116,11 @@ private fun PlayerContent(
                         var decided = false
                         var startX = 0f
                         var seekTarget = 0L
-                        var totalDx = 0f
                         var totalDy = 0f
                         detectDragGestures(
                             onDragStart = { o ->
                                 decided = false; horizontal = false; startX = o.x
-                                totalDx = 0f; totalDy = 0f
+                                totalDy = 0f
                                 // While casting, the horizontal seek must start/apply on the
                                 // active player (Chromecast), not always the local one.
                                 seekTarget = currentPlayer.currentPosition.coerceAtLeast(0)
@@ -3139,14 +3139,12 @@ private fun PlayerContent(
                                     }
                                 } else if (horizontal) {
                                     currentPlayer.seekTo(seekTarget); mirror.jumpTo(seekTarget); bump()
-                                } else if (totalDy > 240f && totalDy > kotlin.math.abs(totalDx) * 1.5f) {
-                                    onOpenEpisodesState.value()
                                 }
                                 gestures.clearHud()
                             },
                             onDrag = { change, drag ->
                                 change.consume()
-                                totalDx += drag.x; totalDy += drag.y
+                                totalDy += drag.y
                                 if (!decided) { decided = true; horizontal = kotlin.math.abs(drag.x) >= kotlin.math.abs(drag.y) }
                                 // Live: nothing to draw frame by frame -- the zap is resolved
                                 // entirely in onDragEnd, above. No seek/volume/brightness, see its comment.

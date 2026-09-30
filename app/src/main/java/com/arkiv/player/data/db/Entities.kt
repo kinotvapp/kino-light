@@ -247,6 +247,27 @@ data class LiveRecentEntity(
 )
 
 /**
+ * A live source the person typed: one stream ([kind] `CHANNEL`) or a whole M3U list (`PLAYLIST`).
+ * Synced between linked devices (last-write-wins by [updatedAt], [deleted] is the tombstone); a
+ * playlist's CHANNELS are never stored here, each device downloads its own copy.
+ */
+@Entity(tableName = "own_live_sources")
+data class OwnLiveSourceEntity(
+    @PrimaryKey val id: String,
+    val kind: String,
+    val name: String,
+    val url: String,
+    val groupName: String? = null,
+    val logo: String? = null,
+    val epgUrl: String? = null,
+    val userAgent: String? = null,
+    val referer: String? = null,
+    val refreshHours: Int = 0,
+    val updatedAt: Long = 0,
+    val deleted: Boolean = false,
+)
+
+/**
  * Local cache of the channel catalog, so the section opens instantly and keeps showing the
  * grid even when the gateway is slow or down. **Doesn't travel through sync**: it's rebuildable
  * cache, not user data, and putting it in the snapshot would mean sending 1,000 rows between

@@ -16,7 +16,7 @@ class PluginOutputTest {
 
     @Test fun `valid items keep their fields, invalid ones are dropped with a log line`() {
         val json = """[
-          {"id":"a1","ref":"r1","title":" Metrópolis ","kind":"movie","year":1927,"poster":"https://x/p.jpg","backdrop":"http://x/b.jpg"},
+          {"id":"a1","ref":"r1","title":" Metrópolis ","kind":"movie","year":1927,"poster":"https://x/p.jpg","backdrop":"http://cdn.x.com/b.jpg"},
           {"id":"bad id","ref":"r","title":"t","kind":"movie"},
           {"id":"a2","ref":"","title":"t","kind":"movie"},
           {"id":"a3","ref":"r","title":"   ","kind":"movie"},
@@ -30,7 +30,7 @@ class PluginOutputTest {
             assertEquals("Metrópolis", title)
             assertEquals("1927", year)
             assertEquals("https://x/p.jpg", poster)
-            assertEquals("", backdrop) // http images are dropped
+            assertEquals("http://cdn.x.com/b.jpg", backdrop) // http images are kept: art is display only
         }
         assertTrue(logs.isNotEmpty())
     }
@@ -490,6 +490,38 @@ class PluginOutputTest {
         assertEquals(listOf("https://cdn.example.com/b.jpg", "", ""), items.map { it.backdrop })
     }
 
+    @Test fun `images may be http or https, on a public name or a public IPv4 address`() {
+        val items = items(
+            """[{"id":"a","ref":"r","title":"A","kind":"movie","poster":"http://cdn.example.com/p.jpg","backdrop":"https://cdn.example.com/b.jpg"},
+                {"id":"b","ref":"r","title":"B","kind":"movie","poster":"http://8.8.8.8/p.jpg","backdrop":"https://8.8.4.4:8443/b.jpg"}]""",
+            allowSeries = false,
+        )
+        assertEquals(listOf("http://cdn.example.com/p.jpg", "http://8.8.8.8/p.jpg"), items.map { it.poster })
+        assertEquals(listOf("https://cdn.example.com/b.jpg", "https://8.8.4.4:8443/b.jpg"), items.map { it.backdrop })
+    }
+
+    @Test fun `http images on the home network or a local name are dropped too, and other schemes never pass`() {
+        val items = items(
+            """[{"id":"a","ref":"r","title":"A","kind":"movie","poster":"http://192.168.1.1/cgi-bin/reboot","backdrop":"http://localhost:8080/b.jpg"},
+                {"id":"b","ref":"r","title":"B","kind":"movie","poster":"http://nas.local/p.jpg","backdrop":"http://10.0.0.5/b.jpg"},
+                {"id":"c","ref":"r","title":"C","kind":"movie","poster":"ftp://cdn.example.com/p.jpg","backdrop":"file:///sdcard/b.jpg"},
+                {"id":"d","ref":"r","title":"D","kind":"movie","poster":"HTTP://cdn.example.com/p.jpg","backdrop":"data:image/png;base64,AAAA"}]""",
+            allowSeries = false,
+        )
+        assertEquals(listOf("", "", "", ""), items.map { it.poster })
+        assertEquals(listOf("", "", "", ""), items.map { it.backdrop })
+    }
+
+    @Test fun `a single-label name over http is dropped, it is a home router or a NAS by another name`() {
+        val items = items(
+            """[{"id":"a","ref":"r","title":"A","kind":"movie","poster":"http://router/logo.png","backdrop":"http://nas/b.png"},
+                {"id":"b","ref":"r","title":"B","kind":"movie","poster":"http://cdn.example.com/p.png","backdrop":"http://8.8.8.8/b.png"}]""",
+            allowSeries = false,
+        )
+        assertEquals(listOf("", "http://cdn.example.com/p.png"), items.map { it.poster })
+        assertEquals(listOf("", "http://8.8.8.8/b.png"), items.map { it.backdrop })
+    }
+
     @Test fun `an image on a server the person typed is kept, exactly that server only`() {
         val lan = EffectiveHosts(emptyList(), listOf(UserHost("http", "192.168.1.10", 8096)))
         val page = PluginOutput.page(
@@ -662,5 +694,41 @@ class PluginOutputTest {
         assertEquals("Los canales solo pueden usar direcciones IPv4 públicas o nombres de dominio", e.message)
         val lan = assertThrows(PluginContractException::class.java) { PluginOutput.stream("""{"url":"http://10.0.0.2/1.m3u8"}""", any) }
         assertEquals("El video apunta a 10.0.0.2, una dirección local", lan.message)
+    }
+
+    @Test fun `a playlist can carry streamHeaders for the player, apart from the headers of its download`() {
+        val hosts = EffectiveHosts(listOf("lists.example.com"))
+        val json = """{"playlist":{"url":"https://lists.example.com/a.m3u","format":"m3u",
+            "headers":{"Authorization":"Bearer T"},
+            "streamHeaders":{"User-Agent":"VLC/3.0.20 LibVLC/3.0.20","Referer":"https://lists.example.com/","Host":"evil","X-Long":"${"x".repeat(5000)}"}}}"""
+        val playlist = PluginOutput.liveCategories(json, hosts).playlists.single()
+        assertEquals(mapOf("Authorization" to "Bearer T"), playlist.headers)
+        assertEquals(
+            mapOf("User-Agent" to "VLC/3.0.20 LibVLC/3.0.20", "Referer" to "https://lists.example.com/"),
+            playlist.streamHeaders,
+        )
+    }
+
+    @Test fun `a playlist without streamHeaders has none`() {
+        val hosts = EffectiveHosts(listOf("lists.example.com"))
+        val playlist = PluginOutput.liveCategories("""{"playlist":{"url":"https://lists.example.com/a.m3u","format":"m3u"}}""", hosts).playlists.single()
+        assertTrue(playlist.streamHeaders.isEmpty())
+    }
+
+    @Test fun `a Home row, a live category and a playlist can declare a genre from the vocabulary`() {
+        val rows = """[{"id":"r1","title":"Fútbol","genre":"Deportes","items":[{"id":"a","ref":"r","title":"A","kind":"movie"}]},
+                       {"id":"r2","title":"Otra","genre":"sports","items":[{"id":"b","ref":"r","title":"B","kind":"movie"}]},
+                       {"id":"r3","title":"Sin género","items":[{"id":"c","ref":"r","title":"C","kind":"movie"}]}]"""
+        assertEquals(listOf("deportes", null, null), PluginOutput.rows(rows, allowSeries = true, allowBrowse = false, log = log).map { it.genre })
+
+        val hosts = EffectiveHosts(listOf("lists.example.com"))
+        val catalog = PluginOutput.liveCategories(
+            """[{"id":"n","title":"Noticias propias","genre":"noticias"},{"id":"x","title":"Raro","genre":"nope"},
+                {"playlist":{"url":"https://lists.example.com/a.m3u","format":"m3u","genre":"infantil"}},
+                {"playlist":{"url":"https://lists.example.com/b.m3u","format":"m3u"}}]""",
+            hosts,
+        )
+        assertEquals(listOf("noticias", null), catalog.categories.map { it.genre })
+        assertEquals(listOf("infantil", null), catalog.playlists.map { it.genre })
     }
 }

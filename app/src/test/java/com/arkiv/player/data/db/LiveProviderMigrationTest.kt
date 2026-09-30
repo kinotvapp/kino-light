@@ -46,7 +46,7 @@ class LiveProviderMigrationTest {
     }
 
     /** The live tables' part of [SyncTriggers.ddl] (this test DB has only the three live tables). */
-    private fun liveTriggers(): Array<String> = SyncTriggers.ddl().filter { "live_" in it }.toTypedArray()
+    private fun liveTriggers(): Array<String> = SyncTriggers.ddl().filter { "live_" in it && "own_live_" !in it }.toTypedArray()
 
     /** column name -> pk position (0 = not in the key), from PRAGMA table_info. */
     private fun pk(table: String): Map<String, Int> =
@@ -126,7 +126,7 @@ class LiveProviderMigrationTest {
         assertEquals(emptyList<List<Any?>>(), rows("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE '%\\_new' ESCAPE '\\'"))
         assertEquals(emptyList<List<Any?>>(), rows("SELECT name FROM sqlite_master WHERE type = 'trigger'"))
         // What ArkivDatabase's onOpen then does: new triggers, then sealing; the migrated clocks stay.
-        exec(*liveTriggers(), *SyncTriggers.sealRowsWithNoClock().filter { "live_" in it }.toTypedArray())
+        exec(*liveTriggers(), *SyncTriggers.sealRowsWithNoClock().filter { "live_" in it && "own_live_" !in it }.toTypedArray())
         exec("UPDATE live_favorites SET deleted = 1 WHERE provider = 'xuper' AND code = 'c1'")
         assertEquals(222L, (rows("SELECT updatedAt FROM live_favorites WHERE code = 'c2'")[0][0] as Number).toLong())
         assertTrue((rows("SELECT updatedAt FROM live_favorites WHERE code = 'c1'")[0][0] as Number).toLong() > 111)

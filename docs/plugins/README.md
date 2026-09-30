@@ -385,7 +385,7 @@ What it never allows:
 - subtitles, audio tracks and a `drm` block's `licenseUrl`: still your `hosts` only, and every
   redirect they make is judged the same way;
 - movies and episodes: a non-live `Stream` is checked exactly as before;
-- images: the poster rule (https, never local) does not change.
+- images: the poster rule (http or https, never local) does not change.
 
 The consent sheet shows it in red, "Puede reproducir canales desde cualquier servidor que indique su
 lista", and an update that newly adds it waits for the person's approval, like a new host.
@@ -441,7 +441,8 @@ Item       = { id: string, ref: string, title: string, kind: "movie" | "series" 
                lang?: string, quality?: string, originalTitle?: string,
                genres?: string[], rating?: number, runtimeMinutes?: number,
                ids?: { tmdb?: number, imdb?: string }, badges?: string[], adult?: boolean }
-Row        = { id: string, title: string, items: Item[], ref?: string }
+Row        = { id: string, title: string, items: Item[], ref?: string, genre?: Genre }
+Genre      = "peliculas" | "series" | "anime" | "infantil" | "documentales" | "deportes" | "noticias" | "musica" | "entretenimiento" | "otros"
 Page       = { items: Item[], next?: string }
 SeriesInfo = { title?: string, poster?: string, backdrop?: string, overview?: string,
                ids?: { tmdb?: number, imdb?: string }, genres?: string[], year?: string }
@@ -470,6 +471,16 @@ episodes and list every season of the show in `seasons`, the one you are answeri
 as chips; choosing another one calls `episodes` with that season's `ref` and opens it as that title,
 with its own progress in the library. `seasons` is optional and new in this revision of apiVersion 1:
 a plugin that never returns it keeps working exactly as before.
+
+**Genre (Categorías and the En vivo filter).** A Home `Row`, a live `LiveCategory` and a `playlist` may carry an optional
+`genre` from a closed list of ten ids: `peliculas`, `series`, `anime`, `infantil`, `documentales`, `deportes`, `noticias`,
+`musica`, `entretenimiento`, `otros` (Kino shows their Spanish names). It is what lets Kino line up categories from
+different plugins: the Categorías tab groups the browsable Home rows (those with a `ref`, when you declare `browse`) of
+every plugin by genre, and En vivo can be filtered by genre across all providers. A value outside the list is ignored,
+never an error, and without a `genre` Kino guesses from the row's or group's title ("Deportes", "Noticias Colombia",
+"Kids", "Películas de acción"…), so setting it is worth it when your titles do not say it. On a `playlist` the genre is
+the default for every group of the list (a guess from each group's own title is used when the playlist has none).
+Kino versions before this field ignore it.
 
 **Paging ("Ver más").** If you declare `browse`, a Home row with a `ref` gets a "Ver más" card that
 opens a grid: Kino calls `browse(ref, null)`, then `browse(ref, next)` while the person scrolls and
@@ -504,7 +515,7 @@ all or nothing.
 | Text fields | `title` is required and non-blank, up to 200 characters. `overview` up to 2000; `lang` and `quality` up to 20 (for example `"es"`, `"1080p"`); `year` up to 10 (a number is accepted and converted). Longer text is cut; the text of `SeriesInfo` and `Episode` is cut the same way (200 characters for titles, 2000 for overviews). |
 | Extra item fields | All optional; a wrong one is ignored, not the item. `genres` at most 5, each at most 30 characters; `badges` (shown as chips, e.g. `"HD"`, `"Latino"`) at most 3 of at most 20; `rating` from 0 to 10; `runtimeMinutes` from 1 to 1000; `ids.tmdb` a positive integer (Kino uses it to match your title with TMDB, to find it again from search, and to enrich its info page -- see below); `ids.imdb` matches `^tt\d{5,10}$` (also enriches a movie's info page when you have no `ids.tmdb`). An episode's `airDate` is `YYYY-MM-DD`. |
 | `adult` | An item with `adult: true` is dropped: Kino has no place behind its 18+ lock for plugin titles yet. |
-| Images | `poster`, `backdrop` and `still` must be `https` URLs of at most 2048 characters, or they are ignored. Images are loaded by Kino directly and are **not** checked against `hosts` (they are display only), and Kino does not send your headers or cookies with them. This is the one exception to the host rule, with one limit: an image on an IP address or a local name (`localhost`, `.local`, `.lan`, …) is ignored too, unless it is on a server the person typed in your settings (then `http` works too). |
+| Images | `poster`, `backdrop` and `still` must be `http` or `https` URLs of at most 2048 characters, or they are ignored. Images are loaded by Kino directly and are **not** checked against `hosts` (they are display only), and Kino does not send your headers or cookies with them. This is the one exception to the host rule, with one limit: an image on the home network, a private or reserved IP address, or a local name (`localhost`, `.local`, `.lan`, …) is ignored too, unless it is on a server the person typed in your settings. A public IPv4 address is fine. |
 
 **`ids.tmdb` enriches the info page, not only matching.** When TMDB has this exact title (matched by
 `ids.tmdb`, or by `ids.imdb` on a movie when you gave no `ids.tmdb`), opening it adds three kinds of
@@ -590,8 +601,9 @@ more functions. Their arguments:
 They return:
 
 ```ts
-LiveCategory = { id: string, title: string, country?: string, adult?: boolean }
+LiveCategory = { id: string, title: string, country?: string, adult?: boolean, genre?: Genre }
 Playlist     = { playlist: { url: string, format: "m3u", headers?: Record<string, string>,
+                             streamHeaders?: Record<string, string>, genre?: Genre,
                              epg?: { url: string, format: "xmltv" }, refreshHours?: number,
                              hideGroups?: string[], resolve?: boolean } }
 LiveChannel  = { id: string, title: string, categoryId?: string, ref?: string, stream?: Stream,
@@ -606,13 +618,19 @@ A plugin can give its channels in three ways, and mix them:
 2. **A channel with an inline `stream`.** A `Stream` checked by the same rules as `resolve()`'s
    answer; it plays with no call to your plugin. A channel whose `stream` is refused is dropped. With
    both `ref` and `stream`, the stream plays and the `ref` is only the fallback. A channel with
-   neither is dropped.
+   neither is dropped. Some channels only answer a known player: give the `Stream` a `headers` with
+   the `User-Agent` (or `Referer`) it insists on, and the player sends it with every request for that channel.
 3. **A playlist.** Put `{ playlist: { ... } }` entries next to your categories in the
    `liveCategories()` answer (or return one alone). Kino downloads the M3U list itself, and its XMLTV
    guide from `epg.url`, and groups the entries into categories. Both URLs must be `https` on one of
    your `hosts` (or `http` on one declared `insecureHttp`, or a server the person typed), always:
    a playlist on another host is dropped, and an `epg` on another host only loses the guide.
-   `headers` go with those downloads. `refreshHours` is 1 to 168 (default 12); `hideGroups` lists
+   `headers` go with those downloads. `streamHeaders` are what the **player** sends for every channel of
+   the list, for the channels that only answer a known `User-Agent` (or a `Referer`): they are filtered
+   like a Stream's `headers` and kept apart from `headers` on purpose, because those carry your list's own
+   credentials and go only to the list's host, never to the many hosts the channels are on. A header an
+   M3U entry names itself (`#EXTVLCOPT:http-user-agent=...`) wins. Kino versions before the one that added
+   `streamHeaders` ignore the field, so the list plays without it. `refreshHours` is 1 to 168 (default 12); `hideGroups` lists
    group titles not to show (case doesn't matter, at most 50). With `resolve: true`, each entry plays
    through your `resolve(<entry url>)`, for lists whose links need a fresh token. At most 10 per
    answer.
@@ -1173,7 +1191,21 @@ Before you publish, check that:
 ### Get found
 
 Kino lists community plugins by searching GitHub for public repositories with the topic
-`kino-plugin` (forks are left out). To be listed:
+`kino-plugin` (forks are left out).
+
+**Without the `kino-plugin` topic, Kino will not find your plugin.** It is the only way the app
+discovers a plugin: a perfect manifest, a public repository and a thousand stars change nothing if the
+topic is missing. Put it on **the repository that contains `kino-plugin.json`** (a common mistake:
+adding it to another repository by the same author that only holds data, such as an `.m3u` playlist).
+Check it: `curl -s https://api.github.com/repos/OWNER/REPO | tr -d ' \n' | grep -o '"topics":\[[^]]*\]'`
+must print `"kino-plugin"` inside the list.
+
+**Descriptions.** The card shows the `description` of your **manifest** (up to 300 characters; empty
+leaves the card without text), so write one. The GitHub repository description (About) is not read by
+the app and does not affect discovery, but set it too:
+`gh repo edit OWNER/REPO --add-topic kino-plugin --description "What your plugin does"` does both.
+
+To be listed:
 
 1. On your repository's GitHub page, add the topic `kino-plugin` (About ▸ ⚙ ▸ Topics).
 2. Keep `kino-plugin.json` at the root of the repository: Kino reads it to show your plugin's name,

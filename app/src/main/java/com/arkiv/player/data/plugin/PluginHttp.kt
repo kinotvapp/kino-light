@@ -165,8 +165,10 @@ class PluginDns(
                 // 6to4 2002::/16 and Teredo 2001::/32 embed an IPv4 address, private ones included.
                 (b[0] == 0x20 && b[1] == 0x02) || (b[0] == 0x20 && b[1] == 0x01 && b[2] == 0 && b[3] == 0)
         } else {
-            // 240.0.0.0/4 is reserved (and holds the 255.255.255.255 broadcast).
-            b[0] == 0 || (b[0] == 100 && (b[1] and 0xC0) == 64) || b[0] >= 240
+            // 240.0.0.0/4 is reserved (and holds the 255.255.255.255 broadcast). The IETF-protocol,
+            // documentation and benchmarking ranges are refused exactly like HostRules.isPublicIpv4Literal does.
+            b[0] == 0 || (b[0] == 100 && (b[1] and 0xC0) == 64) || b[0] >= 240 ||
+                (b[0] == 192 && b[1] == 0 && (b[2] == 0 || b[2] == 2)) || (b[0] == 198 && (b[1] and 0xFE) == 18)
         }
     }
 

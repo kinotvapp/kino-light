@@ -262,6 +262,13 @@ fun ArkivTvRoot(
             }
         }
         composable("categorias_home") {
+            // Categorías is the Xuper catalog: with Xuper off there is nothing to show, so a route reached anyway leaves.
+            val installed by graph.pluginAdmin.plugins.collectAsStateWithLifecycle()
+            val genreTiles by graph.genreTiles.collectAsStateWithLifecycle()
+            if (!com.arkiv.player.ui.categoriesTabAvailable(installed, genreTiles.isNotEmpty())) {
+                LaunchedEffect(Unit) { navController.popBackStack() }
+                return@composable
+            }
             TvCategoriesScreen(
                 onBrowse = { navController.navigate(com.arkiv.player.ui.plugin.PluginMoreTarget.route(it)) },
                 onOpenSearchRoute = { navController.navigate(it) },
@@ -324,7 +331,6 @@ fun ArkivTvRoot(
             PlayerScreen(
                 episodeId = episodeId,
                 onBack = { navController.popBackStack() },
-                onOpenEpisodes = { navController.popBackStack() },
                 onNextEpisode = { goToPlayer(it) },
                 isTv = true,
                 // The player leaves: after configuring, Back returns to where the title was.

@@ -80,7 +80,8 @@ object ManifestParser {
     const val MAX_DESCRIPTION_CHARS = 300
     const val MAX_AUTHOR_CHARS = 60
     const val MAX_HOMEPAGE_CHARS = 200
-    val RESERVED_IDS = setOf("magis", "ditu", "live", "local", "unknown", "plugin")
+    // "own" is the built-in live provider "Mis canales" (data/live/OwnLive.PLUGIN_ID): no real plugin may claim it.
+    val RESERVED_IDS = setOf("magis", "ditu", "live", "local", "unknown", "plugin", "own")
     val CAPABILITIES = setOf("search", "home", "browse", "episodes", "resolve", "download", "drm", CHANNELS)
     val REQUIRED_CAPABILITIES = listOf("resolve")
     val AT_LEAST_ONE_OF_CAPABILITIES = listOf("search", "home")

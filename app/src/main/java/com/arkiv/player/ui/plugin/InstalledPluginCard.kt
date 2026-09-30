@@ -87,7 +87,7 @@ internal fun InstalledPluginCard(
         shape = RoundedCornerShape(CARD_CORNER),
         colors = CardDefaults.cardColors(containerColor = ArkivSurface),
     ) {
-        CardTile(name = model.name, iconFile = model.iconFile, tileColorArgb = model.tileColorArgb, pill = null)
+        PluginCardSurface(name = model.name, iconFile = model.iconFile, tileColorArgb = model.tileColorArgb, pill = null) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 12.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -170,6 +170,7 @@ internal fun InstalledPluginCard(
                     Text("Gestionar", style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
+        }
         }
     }
     if (sheetOpen) {

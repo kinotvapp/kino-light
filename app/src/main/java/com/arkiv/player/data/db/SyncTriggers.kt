@@ -1,7 +1,7 @@
 package com.arkiv.player.data.db
 
 /**
- * The DDL that keeps `updatedAt` current on these six tables.
+ * The DDL that keeps `updatedAt` current on these seven tables.
  *
  * `updatedAt` was the clock two removed cloud-sync paths depended on: the merge used it to decide
  * who won between two devices' copies of a row (`cloudsync.LwwMerge`, `sync.SyncMerge`), and the
@@ -35,7 +35,7 @@ object SyncTriggers {
      * as it did in v33, when the live tables' keys became `(provider, code)`: a key of `code`
      * alone would let sealing a plugin's `c1` reseal Xuper's `c1` too.
      *
-     * These are the six that travel through sync. `live_channels_cache` is left out on purpose:
+     * These are the seven that travel through sync. `live_channels_cache` is left out on purpose:
      * it's rebuildable catalog cache, not user data, and giving it sync triggers would send ~1000
      * rows between devices for nothing.
      */
@@ -46,6 +46,7 @@ object SyncTriggers {
         "skip_markers" to listOf("id"),
         "live_favorites" to listOf("provider", "code"),
         "live_recents" to listOf("provider", "code"),
+        "own_live_sources" to listOf("id"),
     )
 
     /** The trigger's `WHERE`: every column of the (possibly composite) primary key. */

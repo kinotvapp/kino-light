@@ -100,6 +100,7 @@ import com.arkiv.player.ui.home.HomeViewModel
 import com.arkiv.player.ui.home.TvHomeLanding
 import com.arkiv.player.ui.home.emptyStateNeedsRefocus
 import com.arkiv.player.ui.home.homeEmptyCopy
+import com.arkiv.player.ui.categoriesTabAvailable
 import com.arkiv.player.ui.home.homeShowsEmptyState
 import com.arkiv.player.ui.home.HOME_LOADING_LINE
 import com.arkiv.player.ui.home.TV_HOME_VISIBLE_ROWS
@@ -504,8 +505,10 @@ fun TvHomeScreen(
     }
     // The module's providers right now: a switched-off plugin's recents leave the row (they are kept, not deleted).
     val liveOn by graph.liveModule.available.collectAsStateWithLifecycle()
+    val liveSources by graph.hasLiveSources.collectAsStateWithLifecycle()
+    val genreTiles by graph.genreTiles.collectAsStateWithLifecycle()
     val installedPlugins by graph.pluginAdmin.plugins.collectAsStateWithLifecycle()
-    val homeEmpty = homeShowsEmptyState(installedPlugins, pluginRows.size, liveOn)
+    val homeEmpty = homeShowsEmptyState(installedPlugins, pluginRows.size, liveSources)
     val emptyCopy = homeEmptyCopy(installedPlugins, isTv = true)
     val homeEmptyNow by rememberUpdatedState(homeEmpty)
     val emptySourcesFocus = remember { FocusRequester() }
@@ -1307,7 +1310,7 @@ fun TvHomeScreen(
                 ),
             )
             add(TvRailItem(Icons.Default.Refresh, "Recargar", { graph.reloadHomeCatalog() }))
-            add(TvRailItem(Icons.Default.GridView, "Categorías", onOpenCategoriasHome))
+            if (categoriesTabAvailable(installedPlugins, genreTiles.isNotEmpty())) add(TvRailItem(Icons.Default.GridView, "Categorías", onOpenCategoriasHome))
             if (xuperLive) add(TvRailItem(Icons.Default.PlayCircle, "Xuper", onOpenCategorias))
             add(TvRailItem(Icons.Default.VideoLibrary, "Mi biblioteca", onOpenLibrary))
             if (liveOn) add(TvRailItem(Icons.Default.LiveTv, "En vivo", onOpenLive))
