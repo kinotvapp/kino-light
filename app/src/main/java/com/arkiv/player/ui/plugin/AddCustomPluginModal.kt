@@ -71,7 +71,7 @@ internal fun AddCustomPluginModal(
                 )
                 Text(
                     buildAnnotatedString {
-                        append("También podés instalar un scraper de ")
+                        append("También puedes instalar un scraper de ")
                         withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append("Nuvio") }
                         append(", por ejemplo tapframe/nuvio-providers.")
                     },

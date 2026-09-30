@@ -337,7 +337,7 @@ fun HomeScreen(
             if (seedsExhausted) {
                 Text(
                     "Por ahora no hay sesiones disponibles para tu zona. Estamos publicando nuevas; " +
-                        "volvé a intentar en un rato o toca \"Sembrar semillas\" en Ajustes → App.",
+                        "vuelve a intentar en un rato o toca \"Sembrar semillas\" en Ajustes → App.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.fillMaxWidth().padding(16.dp),

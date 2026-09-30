@@ -1043,7 +1043,7 @@ fun TvHomeScreen(
                         item(key = "seeds_exhausted") {
                             Text(
                                 "Por ahora no hay sesiones disponibles para tu zona. Estamos publicando " +
-                                    "nuevas; volvé a intentar en un rato o usa \"Sembrar semillas\" en Ajustes → App.",
+                                    "nuevas; vuelve a intentar en un rato o usa \"Sembrar semillas\" en Ajustes → App.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = ArkivTextSecondary,
                                 modifier = Modifier.fillMaxWidth().padding(horizontal = 48.dp, vertical = 12.dp),

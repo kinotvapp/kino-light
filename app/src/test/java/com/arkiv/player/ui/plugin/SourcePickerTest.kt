@@ -138,6 +138,6 @@ class SourcePickerTest {
         assertEquals("¿Qué son los plugins?", SOURCE_PICKER_INTRO_WHAT_TITLE)
         assertEquals("Cada plugin conecta Kino con una fuente de contenido distinta.", SOURCE_PICKER_INTRO_WHAT_BODY)
         assertEquals("Así los agregás", SOURCE_PICKER_INTRO_HOW_TITLE)
-        assertEquals("Tocá una tarjeta para instalarla. Podés agregar o quitar plugins cuando quieras.", SOURCE_PICKER_INTRO_HOW_BODY)
+        assertEquals("Toca una tarjeta para instalarla. Puedes agregar o quitar plugins cuando quieras.", SOURCE_PICKER_INTRO_HOW_BODY)
     }
 }

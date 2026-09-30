@@ -10,6 +10,6 @@ class HomeIntroTest {
         assertEquals("El menú", HOME_INTRO_MENU_TITLE)
         assertEquals("Categorías, Biblioteca, Plugins y Ajustes están acá.", HOME_INTRO_MENU_BODY)
         assertEquals("Buscar", HOME_INTRO_SEARCH_TITLE)
-        assertEquals("Tocá la lupa para buscar algo puntual.", HOME_INTRO_SEARCH_BODY)
+        assertEquals("Toca la lupa para buscar algo puntual.", HOME_INTRO_SEARCH_BODY)
     }
 }

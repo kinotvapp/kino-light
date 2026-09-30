@@ -100,7 +100,7 @@ fun TvDownloadsSection(onPlayEpisode: (String) -> Unit, modifier: Modifier = Mod
 
         if (groups.isEmpty()) {
             Text(
-                "No hay nada descargado en este aparato.\nGuardá una serie desde el buscador y va a aparecer acá.",
+                "No hay nada descargado en este aparato.\nGuarda una serie desde el buscador y va a aparecer acá.",
                 style = MaterialTheme.typography.bodyLarge,
                 color = ArkivTextSecondary,
             )

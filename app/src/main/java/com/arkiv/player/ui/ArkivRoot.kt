@@ -153,7 +153,7 @@ internal const val HOME_INTRO_CONTENT_BODY = "Acá vas a ver lo que traen tus pl
 internal const val HOME_INTRO_MENU_TITLE = "El menú"
 internal const val HOME_INTRO_MENU_BODY = "Categorías, Biblioteca, Plugins y Ajustes están acá."
 internal const val HOME_INTRO_SEARCH_TITLE = "Buscar"
-internal const val HOME_INTRO_SEARCH_BODY = "Tocá la lupa para buscar algo puntual."
+internal const val HOME_INTRO_SEARCH_BODY = "Toca la lupa para buscar algo puntual."
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

@@ -473,7 +473,7 @@ private fun ItemsRow(
                     // nothing reads as the app having hung -- and that's exactly what happened.
                     onClick = {
                         if (badge == null) onPlay(item)
-                        else if (item.isSeries) onNotice("Las series todavía no se reproducen desde acá. Buscala por nombre.")
+                        else if (item.isSeries) onNotice("Las series todavía no se reproducen desde acá. Búscala por nombre.")
                         else onNotice("Este título no está disponible para reproducir.")
                     },
                 )
