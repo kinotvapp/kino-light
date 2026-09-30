@@ -32,6 +32,7 @@
     "maxPathChars": 200,
     "liveStreamHosts": { "value": "any", "apiVersion": 3, "requires": "channels" },
     "streamHosts": { "value": "any", "apiVersion": 4 },
+    "fetchHosts": { "value": "any", "apiVersion": 4 },
     "discoverable": { "default": true },
     "secrets": { "apiVersion": 4, "namePattern": "^[A-Za-z][A-Za-z0-9_]{0,31}$", "maxSecrets": 16, "maxValueBytes": 4096, "prefix": "kino-sealed:v1:" }
   },

@@ -2075,6 +2075,52 @@ test("streamHosts any (apiVersion 4) lets a movie's stream be on any public host
   assert.throws(() => checkOutput("resolve", { url: "http://192.168.1.20/v.mp4" }, r.manifest, []), /local/);
 });
 
+test("fetchHosts: only \"any\" at apiVersion 4, ignored below it, and the app's Spanish message", () => {
+  const ok = validateManifest(manifest({ apiVersion: 4, fetchHosts: "any" }));
+  assert.equal(ok.ok, true);
+  assert.equal(ok.manifest.fetchHostsAny, true);
+  assert.equal(validateManifest(manifest({ apiVersion: 4 })).manifest.fetchHostsAny, false);
+  for (const value of ["all", true, ["any"], null, ""]) {
+    assert.deepEqual(validateManifest(manifest({ apiVersion: 4, fetchHosts: value })),
+      { ok: false, field: "fetchHosts", message: 'El campo "fetchHosts" solo admite "any"' });
+  }
+  // Below apiVersion 4 the app does not know the field: any value is ignored, never refused.
+  for (const apiVersion of [1, 2, 3]) {
+    for (const value of ["any", "all", 7]) {
+      const ignored = validateManifest(manifest({ apiVersion, fetchHosts: value }));
+      assert.equal(ignored.ok, true);
+      assert.equal(ignored.manifest.fetchHostsAny, false);
+    }
+  }
+  assert.deepEqual(contract.manifest.fetchHosts, { value: "any", apiVersion: 4 });
+  // No consent line: the app shows its red line only for a Nuvio-converted plugin.
+  assert.deepEqual(consentLines(ok.manifest), []);
+});
+
+test("fetchHosts on a hand-written plugin: validate accepts it with a warning that Kino ignores it", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "kino-fetchhosts-"));
+  const warning = "fetchHosts solo tiene efecto en plugins convertidos desde Nuvio; en tu plugin se ignora";
+  try {
+    writeFileSync(join(dir, "plugin.js"), "export async function search(){ return { items: [] } }\nexport async function resolve(){ return { url: 'https://example.com/a.m3u8' } }");
+    writeFileSync(join(dir, "kino-plugin.json"), manifest({ apiVersion: 4, fetchHosts: "any" }));
+    const r = await validate(dir);
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.notes, [warning]);
+    const cli = spawnSync(process.execPath, [join(here, "..", "validate.mjs"), dir], { encoding: "utf8" });
+    assert.equal(cli.status, 0);
+    assert.match(cli.stderr, /fetchHosts solo tiene efecto en plugins convertidos desde Nuvio; en tu plugin se ignora/);
+    // Ignored below apiVersion 4: no warning, as there is nothing Kino reads.
+    writeFileSync(join(dir, "kino-plugin.json"), manifest({ apiVersion: 3, fetchHosts: "any" }));
+    assert.deepEqual((await validate(dir)).notes, []);
+    writeFileSync(join(dir, "kino-plugin.json"), manifest({ apiVersion: 4, fetchHosts: "all" }));
+    const bad = spawnSync(process.execPath, [join(here, "..", "validate.mjs"), dir], { encoding: "utf8" });
+    assert.equal(bad.status, 1);
+    assert.match(bad.stderr, /fetchHosts: El campo "fetchHosts" solo admite "any"/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("streamHosts any covers a movie's side subtitles and audio too, never a channel's, like the broad video permission", () => {
   const m = validateManifest(JSON.stringify({ ...JSON.parse(manifest()), apiVersion: 4, streamHosts: "any" })).manifest;
   const value = {

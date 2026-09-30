@@ -134,6 +134,13 @@ export function validateManifest(text, { knownPermissions = contract.permissions
     if (o.streamHosts !== m.streamHosts.value) return bad("streamHosts", `El campo "streamHosts" solo admite "${m.streamHosts.value}"`);
     streamHostsAny = true;
   }
+  // Below its apiVersion the field is unknown and ignored like any other. Kino honors it only on a
+  // plugin it converted from a Nuvio scraper (validate.mjs warns a hand-written one); the parse is the same.
+  let fetchHostsAny = false;
+  if (o.fetchHosts !== undefined && o.apiVersion >= m.fetchHosts.apiVersion) {
+    if (o.fetchHosts !== m.fetchHosts.value) return bad("fetchHosts", `El campo "fetchHosts" solo admite "${m.fetchHosts.value}"`);
+    fetchHostsAny = true;
+  }
   // Only discovery reads it (never the runtime): valid at every apiVersion, exactly true or false.
   if (o.discoverable !== undefined && typeof o.discoverable !== "boolean") return bad("discoverable", 'El campo "discoverable" debe ser true o false');
   const discoverable = o.discoverable === undefined ? m.discoverable.default : o.discoverable;
@@ -165,7 +172,7 @@ export function validateManifest(text, { knownPermissions = contract.permissions
   if (hosts.length === 0 && !(o.settings || []).some((x) => x.type === "url" || (x.type === "list" && Array.isArray(x.fields) && x.fields.some((f) => f.type === "url")))) {
     return bad("hosts", 'El campo "hosts" solo puede estar vacío si el plugin tiene un ajuste de tipo "url"');
   }
-  return { ok: true, manifest: { ...o, hosts: [...new Set(hosts)], capabilities: caps, permissions: o.permissions || [], settings: o.settings || [], insecureHosts, liveStreamHostsAny, streamHostsAny, discoverable, secrets } };
+  return { ok: true, manifest: { ...o, hosts: [...new Set(hosts)], capabilities: caps, permissions: o.permissions || [], settings: o.settings || [], insecureHosts, liveStreamHostsAny, streamHostsAny, fetchHostsAny, discoverable, secrets } };
 }
 
 /**

@@ -158,6 +158,7 @@ names the field.
 | `color` | Optional `#RRGGBB`: the accent of your plugin's tab and chips. A neutral color by default. |
 | `icon` | Optional relative path to a square `.png`, at most 128 KB. An icon that is missing or too big is skipped without failing the install. |
 | `discoverable` | Optional `true` or `false` (default `true`), at every `apiVersion`. `false` keeps the plugin out of Kino's community search (see [Get found](#get-found)); people can still install it by typing its address. Any other value is refused with "El campo \"discoverable\" debe ser true o false". |
+| `fetchHosts` | Not for your plugin: Kino writes `"fetchHosts": "any"` into the manifests it makes when it converts a Nuvio scraper, and honors it **only** on those (after the person approves it in red), so a converted scraper's `kino.fetch` may reach any public host. On a plugin written by hand it is ignored: your `kino.fetch` stays on your `hosts`, and `sdk/validate.mjs` warns "fetchHosts solo tiene efecto en plugins convertidos desde Nuvio; en tu plugin se ignora". From `apiVersion: 4` its only value is `"any"`; any other is refused with "El campo \"fetchHosts\" solo admite \"any\"". Below apiVersion 4 it is ignored. |
 | `description`, `author`, `homepage` | Optional strings. Trimmed and cut to 300, 60 and 200 characters. Kino shows the name, author, version and description when it asks the person to install. |
 
 Other keys are ignored. `hosts` does three jobs: it is what the person approves, it is the only set

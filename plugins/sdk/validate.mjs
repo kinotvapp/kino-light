@@ -54,6 +54,8 @@ export async function validate(dirArg, { run = null, args = [], config = {}, rep
   const consent = consentLines(m);
   const notes = [];
   if (!m.discoverable) notes.push("No aparecerá en la búsqueda de Kino");
+  // The app honors fetchHosts only on a plugin it converted from a Nuvio scraper (never on one written by hand).
+  if (m.fetchHostsAny) notes.push("fetchHosts solo tiene efecto en plugins convertidos desde Nuvio; en tu plugin se ignora");
   if (m.secrets && Object.keys(m.secrets).length) {
     notes.push("No se puede comprobar aquí para qué repositorio se sellaron los secretos: Kino lo comprueba al instalar. Además, solo se abren si la persona instala el plugin desde su rama principal, sin @rama.");
   }
