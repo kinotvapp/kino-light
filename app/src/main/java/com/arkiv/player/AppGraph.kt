@@ -1303,7 +1303,10 @@ class AppGraph(context: Context) {
     private fun pluginDownloaderFor(pluginId: String): com.arkiv.player.data.local.HttpRangeDownloader {
         val hosts = pluginRegistry.find(pluginId)?.videoHosts ?: com.arkiv.player.data.plugin.EffectiveHosts(emptyList())
         return com.arkiv.player.data.local.HttpRangeDownloader(
-            com.arkiv.player.data.plugin.PluginStreamHttp.client(downloadHttp, hosts),
+            // `askAboutFor`: nobody is asked during a download, but a host the player WOULD ask about
+            // is then told apart (UndeclaredPlaybackHostException), so the refused row can say
+            // "play it once to approve that server" (see PluginHostRefusal).
+            com.arkiv.player.data.plugin.PluginStreamHttp.client(downloadHttp, hosts, askAboutFor = pluginId),
         )
     }
 
