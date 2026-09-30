@@ -26,6 +26,7 @@ function require(name) {
   }
   if (name === "crypto-js") return __nuvioVendored(name, typeof __nuvioLibCryptoJs === "undefined" ? undefined : __nuvioLibCryptoJs);
   if (name === "buffer") return __nuvioVendored(name, typeof __nuvioLibBuffer === "undefined" ? undefined : __nuvioLibBuffer);
+  if (name === "crypto" || name === "node:crypto") return __nuvioNodeCrypto;
   if (name === "axios") return __nuvioAxios;
   throw new Error("Nuvio compat: unsupported require('" + name + "')");
 }
@@ -115,6 +116,8 @@ function clearTimeout(id) { delete __nuvioTimers[id]; }
 // cross into kino.crypto as hex. Every subtle method answers a Promise and reports failures the way
 // browsers do: a DOMException-like Error whose `name` is OperationError, DataError, ... (names that are
 // legal and match no Java class: see trampas.md on quickjs-kt error names).
+// The byte helpers below, shared with Node's `crypto` further down (set inside the IIFE).
+var __nuvioCryptoKit;
 var __nuvioWebCrypto = (function () {
   var HEX = [];
   for (var h = 0; h < 256; h++) HEX.push((h < 16 ? "0" : "") + h.toString(16));
@@ -153,7 +156,7 @@ var __nuvioWebCrypto = (function () {
   function toWordArray(bytes) {
     var words = new Array((bytes.length + 3) >> 2).fill(0);
     for (var i = 0; i < bytes.length; i++) words[i >>> 2] |= bytes[i] << (24 - (i % 4) * 8);
-    return cryptoJs("SHA-384").lib.WordArray.create(words, bytes.length);
+    return cryptoJs("this algorithm").lib.WordArray.create(words, bytes.length);
   }
   function fromWordArray(wa) {
     var out = new Uint8Array(wa.sigBytes);
@@ -378,6 +381,8 @@ var __nuvioWebCrypto = (function () {
     return array;
   }
 
+  __nuvioCryptoKit = { toHex: toHex, fromHex: fromHex, cryptoJs: cryptoJs, toWordArray: toWordArray, fromWordArray: fromWordArray };
+
   return Object.freeze({
     subtle: subtle,
     getRandomValues: getRandomValues,
@@ -395,6 +400,250 @@ if (typeof globalThis.crypto !== "object" || globalThis.crypto === null) globalT
 // encrypt's salt); its vendored build reads this name where it would read Node's `global` (see
 // nuvio-vendor/crypto-js.js's header). With globalThis.crypto set above it finds that first anyway.
 var __nuvioCryptoRandomSource = { crypto: crypto };
+
+// --- Node's `crypto` module: `require('crypto')` / `require('node:crypto')`. ---
+// What Node-style scrapers use of it (EntrePeliculasySeries and MegaDede solve Embed69's proof of
+// work with createHash and decrypt its links with createDecipheriv): hashes, HMAC, AES/3DES ciphers
+// with Node's streaming update/final, PBKDF2, random bytes. Buffers in and out, over the vendored
+// `Buffer` (bundled whenever a scraper names this module). The work runs natively through
+// kino.crypto; SHA-384 and the PBKDF2 cases kino.crypto refuses go through the vendored crypto-js.
+var __nuvioNodeCrypto = (function () {
+  var kit = function () { return __nuvioCryptoKit; };
+  function buf() {
+    if (typeof Buffer === "undefined") throw new Error("Nuvio compat: require('crypto') needs Buffer, which was not bundled with this scraper");
+    return Buffer;
+  }
+  function encodingOf(enc) {
+    var e = String(enc).toLowerCase();
+    return e === "utf-8" ? "utf8" : e === "binary" ? "latin1" : e;
+  }
+  function bytesIn(data, enc, what) {
+    if (typeof data === "string") {
+      var e = enc ? encodingOf(enc) : "utf8";
+      // buffer@6 predates base64url; its base64 decoder already tolerates missing padding.
+      if (e === "base64url") { data = data.replace(/-/g, "+").replace(/_/g, "/"); e = "base64"; }
+      return buf().from(data, e);
+    }
+    if (data instanceof ArrayBuffer) return new Uint8Array(data);
+    if (ArrayBuffer.isView(data)) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+    throw new TypeError("The \"" + what + "\" argument must be of type string or an instance of Buffer, TypedArray, or DataView.");
+  }
+  // `bytes` is always a fresh array here, so the Buffer may share its memory.
+  function bytesOut(bytes, enc) {
+    var b = buf().from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    if (enc === undefined || enc === null || enc === "buffer") return b;
+    var e = encodingOf(enc);
+    if (e === "hex") return kit().toHex(bytes);
+    if (e === "base64url") return b.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    return b.toString(e);
+  }
+  function join(chunks) {
+    if (chunks.length === 1) return chunks[0];
+    var size = 0, i;
+    for (i = 0; i < chunks.length; i++) size += chunks[i].length;
+    var out = new Uint8Array(size);
+    for (i = 0, size = 0; i < chunks.length; i++) { out.set(chunks[i], size); size += chunks[i].length; }
+    return out;
+  }
+  var hex = function (bytes) { return kit().toHex(bytes); };
+
+  var HASHES = { md5: "MD5", sha1: "SHA1", sha256: "SHA256", sha384: "SHA384", sha512: "SHA512" };
+  function hashName(alg) {
+    var n = String(alg).toLowerCase().replace(/^rsa-/, "").replace(/-/g, "");
+    if (!HASHES[n]) throw new Error("Digest method not supported: " + alg);
+    return n;
+  }
+  function digest(n, bytes) {
+    if (n === "sha384") return kit().fromWordArray(kit().cryptoJs("SHA-384").SHA384(kit().toWordArray(bytes)));
+    return kit().fromHex(kino.crypto.hash(n, hex(bytes), { inputEncoding: "hex", outputEncoding: "hex" }));
+  }
+  function hmac(n, key, bytes) {
+    if (n === "sha384") return kit().fromWordArray(kit().cryptoJs("HMAC SHA-384").HmacSHA384(kit().toWordArray(bytes), kit().toWordArray(key)));
+    return kit().fromHex(kino.crypto.hmac(n, hex(key), hex(bytes), { keyEncoding: "hex", inputEncoding: "hex", outputEncoding: "hex" }));
+  }
+  function makeHash(n, key) {
+    var chunks = [], done = false;
+    var h = {
+      update: function (data, enc) {
+        if (done) throw new Error("Digest already called");
+        chunks.push(new Uint8Array(bytesIn(data, enc, "data")));
+        return h;
+      },
+      digest: function (enc) {
+        if (done) throw new Error("Digest already called");
+        done = true;
+        var all = join(chunks);
+        return bytesOut(key ? hmac(n, key, all) : digest(n, all), enc);
+      },
+    };
+    if (!key) h.copy = function () { var c = makeHash(n, null); chunks.forEach(function (x) { c.update(x); }); return c; };
+    return h;
+  }
+
+  // [key bytes, iv bytes (0: none; -1: any non-empty), mode, block bytes]
+  var CIPHERS = {
+    "aes-128-cbc": [16, 16, "cbc", 16], "aes-192-cbc": [24, 16, "cbc", 16], "aes-256-cbc": [32, 16, "cbc", 16],
+    "aes-128-ecb": [16, 0, "ecb", 16], "aes-192-ecb": [24, 0, "ecb", 16], "aes-256-ecb": [32, 0, "ecb", 16],
+    "aes-128-ctr": [16, 16, "ctr", 16], "aes-192-ctr": [24, 16, "ctr", 16], "aes-256-ctr": [32, 16, "ctr", 16],
+    "aes-128-gcm": [16, -1, "gcm", 16], "aes-192-gcm": [24, -1, "gcm", 16], "aes-256-gcm": [32, -1, "gcm", 16],
+    "des-ede3-cbc": [24, 8, "cbc", 8], "des-ede3-ecb": [24, 0, "ecb", 8],
+  };
+  var ALIASES = { aes128: "aes-128-cbc", aes192: "aes-192-cbc", aes256: "aes-256-cbc", "des-ede3": "des-ede3-ecb", des3: "des-ede3-cbc" };
+  function kinoCipher(encrypt, alg, key, iv, data, padding, aad) {
+    if (!data.length && padding === "none") return new Uint8Array(0);
+    var p = { key: hex(key), keyEncoding: "hex", data: hex(data), inputEncoding: "hex", outputEncoding: "hex", padding: padding };
+    if (iv.length) { p.iv = hex(iv); p.ivEncoding = "hex"; }
+    if (aad && aad.length) { p.aad = hex(aad); p.aadEncoding = "hex"; }
+    return kit().fromHex(encrypt ? kino.crypto.encrypt(alg, p) : kino.crypto.decrypt(alg, p));
+  }
+  function providerError(reason) { return new Error("error:1C800064:Provider routines::" + reason); }
+
+  // Node's streaming contract: update() hands back what it can already (whole blocks; for CBC/ECB
+  // decryption with padding, all but the last block, which final() unpads), final() the rest. Each
+  // update recomputes over everything so far and returns only the new part: CBC/ECB/CTR/GCM
+  // outputs are prefixes of each other, and scrapers pass their data in one or two pieces.
+  function makeCipher(encrypt, algorithm, key, iv, options) {
+    var name = String(algorithm).toLowerCase();
+    name = ALIASES[name] || name;
+    var spec = CIPHERS[name];
+    if (!spec) throw new Error("Unknown cipher: " + algorithm);
+    var mode = spec[2], block = spec[3];
+    var k = new Uint8Array(bytesIn(key, undefined, "key"));
+    if (k.length !== spec[0]) throw new RangeError("Invalid key length");
+    var v = iv === null || iv === undefined ? new Uint8Array(0) : new Uint8Array(bytesIn(iv, undefined, "iv"));
+    if (spec[1] === -1 ? !v.length : v.length !== spec[1]) throw new TypeError("Invalid initialization vector");
+    var tagLength = mode === "gcm" && options && options.authTagLength !== undefined ? options.authTagLength : 16;
+    if (mode === "gcm" && !(tagLength >= 4 && tagLength <= 16)) throw new TypeError("Invalid authentication tag length: " + tagLength);
+    var chunks = [], total = 0, emitted = 0, autoPadding = true, aad = null, tag = null, authTag = null, finished = false;
+
+    // Same-length output for a prefix of the input. CTR and GCM are a keystream XOR, so their
+    // encryption also decrypts (GCM's tag, the part that differs, is dropped here).
+    function transform(bytes) {
+      if (mode === "gcm") return kinoCipher(true, name, k, v, bytes, "none", null).subarray(0, bytes.length);
+      if (mode === "ctr") return kinoCipher(true, name, k, v, bytes, "none", null);
+      return kinoCipher(encrypt, name, k, v, bytes, "none", null);
+    }
+    function ready() {
+      if (mode === "gcm" || mode === "ctr") return total;
+      if (!encrypt && autoPadding) return Math.max(0, Math.floor((total - 1) / block)) * block;
+      return Math.floor(total / block) * block;
+    }
+    var c = {
+      update: function (data, inEnc, outEnc) {
+        if (finished) throw new Error("Unsupported state");
+        var b = new Uint8Array(bytesIn(data, inEnc, "data"));
+        chunks.push(b);
+        total += b.length;
+        var r = ready();
+        var out = new Uint8Array(0);
+        if (r > emitted) {
+          out = transform(join(chunks).subarray(0, r)).slice(emitted, r);
+          emitted = r;
+        }
+        return bytesOut(out, outEnc);
+      },
+      final: function (outEnc) {
+        if (finished) throw new Error("Unsupported state");
+        finished = true;
+        var data = join(chunks);
+        var out = new Uint8Array(0);
+        if (mode === "gcm") {
+          if (encrypt) {
+            var sealed = kinoCipher(true, name, k, v, data, "none", aad);
+            authTag = sealed.slice(sealed.length - 16, sealed.length - 16 + tagLength);
+          } else {
+            if (!tag) throw new Error("Unsupported state or unable to authenticate data");
+            var check = kinoCipher(true, name, k, v, transform(data), "none", aad);
+            var diff = 0;
+            for (var i = 0; i < tag.length; i++) diff |= check[data.length + i] ^ tag[i];
+            if (diff) throw new Error("Unsupported state or unable to authenticate data");
+          }
+        } else if (mode !== "ctr") {
+          if (data.length % block !== 0 && (!encrypt || !autoPadding)) throw providerError("wrong final block length");
+          if (!encrypt && autoPadding && !data.length) throw providerError("wrong final block length");
+          var whole;
+          try {
+            whole = kinoCipher(encrypt, name, k, v, data, autoPadding ? "pkcs7" : "none", null);
+          } catch (e) {
+            throw providerError("bad decrypt");
+          }
+          out = whole.slice(emitted);
+        }
+        return bytesOut(out, outEnc);
+      },
+      setAutoPadding: function (on) { autoPadding = on !== false; return c; },
+      setAAD: function (data) { aad = new Uint8Array(bytesIn(data, undefined, "buffer")); return c; },
+      getAuthTag: function () {
+        if (!encrypt || !authTag) throw new Error("Invalid state for operation getAuthTag");
+        return bytesOut(authTag.slice());
+      },
+      setAuthTag: function (t) {
+        if (encrypt) throw new Error("Invalid state for operation setAuthTag");
+        tag = new Uint8Array(bytesIn(t, undefined, "buffer"));
+        if (tag.length < 4 || tag.length > 16) throw new TypeError("Invalid authentication tag length: " + tag.length);
+        return c;
+      },
+    };
+    return c;
+  }
+
+  function randomBytes(size, callback) {
+    var n = Math.floor(Number(size));
+    if (!(n >= 0) || n > 2147483647) throw new RangeError("The value of \"size\" is out of range.");
+    var out = new Uint8Array(n);
+    for (var at = 0; at < n; at += 1024) out.set(kit().fromHex(kino.crypto.randomBytes(Math.min(1024, n - at), "hex")), at);
+    var b = bytesOut(out);
+    if (typeof callback === "function") { Promise.resolve().then(function () { callback(null, b); }); return undefined; }
+    return b;
+  }
+
+  function pbkdf2Sync(password, salt, iterations, keylen, digestName) {
+    var n = hashName(digestName === undefined ? "sha1" : digestName);
+    var pw = new Uint8Array(bytesIn(password, undefined, "password"));
+    var s = new Uint8Array(bytesIn(salt, undefined, "salt"));
+    if (!(iterations >= 1) || iterations !== Math.floor(iterations)) throw new RangeError("The value of \"iterations\" is out of range.");
+    if (!(keylen >= 0) || keylen !== Math.floor(keylen)) throw new RangeError("The value of \"keylen\" is out of range.");
+    if (keylen === 0) return bytesOut(new Uint8Array(0));
+    // kino.crypto: sha1/sha256/sha512, up to 100000 iterations and 64 bytes; crypto-js otherwise.
+    if ((n === "sha1" || n === "sha256" || n === "sha512") && iterations <= 100000 && keylen <= 64) {
+      return bytesOut(kit().fromHex(kino.crypto.pbkdf2(n, hex(pw), hex(s), iterations, keylen, { keyEncoding: "hex", inputEncoding: "hex", outputEncoding: "hex" })));
+    }
+    var C = kit().cryptoJs("PBKDF2 with " + n);
+    var words = C.PBKDF2(kit().toWordArray(pw), kit().toWordArray(s), { keySize: Math.ceil(keylen / 4), iterations: iterations, hasher: C.algo[HASHES[n]] });
+    return bytesOut(kit().fromWordArray(words).slice(0, keylen));
+  }
+
+  var nodeCrypto = {
+    createHash: function (alg) { return makeHash(hashName(alg), null); },
+    createHmac: function (alg, key) { return makeHash(hashName(alg), new Uint8Array(bytesIn(key, undefined, "key"))); },
+    createCipheriv: function (alg, key, iv, options) { return makeCipher(true, alg, key, iv, options); },
+    createDecipheriv: function (alg, key, iv, options) { return makeCipher(false, alg, key, iv, options); },
+    randomBytes: randomBytes,
+    pseudoRandomBytes: randomBytes,
+    randomUUID: function () { return kino.crypto.uuid(); },
+    pbkdf2Sync: pbkdf2Sync,
+    pbkdf2: function (password, salt, iterations, keylen, digestName, callback) {
+      var out, err = null;
+      try { out = pbkdf2Sync(password, salt, iterations, keylen, digestName); } catch (e) { err = e; }
+      Promise.resolve().then(function () { callback(err, out); });
+    },
+    timingSafeEqual: function (a, b) {
+      var x = bytesIn(a, undefined, "buf1"), y = bytesIn(b, undefined, "buf2");
+      if (x.length !== y.length) throw new RangeError("Input buffers must have the same byte length");
+      var diff = 0;
+      for (var i = 0; i < x.length; i++) diff |= x[i] ^ y[i];
+      return diff === 0;
+    },
+    getHashes: function () { return Object.keys(HASHES); },
+    getCiphers: function () { return Object.keys(CIPHERS); },
+    getRandomValues: function (array) { return crypto.getRandomValues(array); },
+    webcrypto: crypto,
+    subtle: crypto.subtle,
+    constants: {},
+  };
+  nodeCrypto.default = nodeCrypto;
+  return Object.freeze(nodeCrypto);
+})();
 
 // --- axios, on top of the fetch above: what scrapers use of it, not the whole library. ---
 // `axios(config)` / `axios(url, config)`, `.request/.get/.delete/.head/.options/.post/.put/.patch`,

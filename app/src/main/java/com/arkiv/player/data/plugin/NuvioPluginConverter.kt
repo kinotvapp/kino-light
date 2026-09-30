@@ -27,13 +27,18 @@ data class NuvioConversionResult(
 internal enum class NuvioLibrary(val file: String, private val trigger: Regex, val binding: String = "") {
     // Any mention: `require("cheerio-without-node-native")`, its `cheerio`/`react-native-cheerio` aliases.
     CHEERIO("cheerio.js", Regex("cheerio")),
-    // Also any `crypto.subtle` use: the shim's Web Crypto computes SHA-384 (digest and HMAC) with it.
-    CRYPTO_JS("crypto-js.js", Regex("""crypto-js|\bsubtle\b""")),
+    // Also any `crypto.subtle` use or Node `crypto` module: the shim computes SHA-384 (and PBKDF2
+    // beyond what kino.crypto takes) with it.
+    CRYPTO_JS("crypto-js.js", Regex("""crypto-js|\bsubtle\b|$NODE_CRYPTO""")),
     // The global (`Buffer.from(...)`) or the module; never `ArrayBuffer`/`messageBuffer` (no word boundary).
-    BUFFER("buffer.js", Regex("""\bBuffer\b|["'`]buffer["'`]"""), binding = "var Buffer = __nuvioLibBuffer.Buffer;\n");
+    // Node's `crypto` module (the shim's) answers in Buffers, so naming it needs Buffer too.
+    BUFFER("buffer.js", Regex("""\bBuffer\b|["'`]buffer["'`]|$NODE_CRYPTO"""), binding = "var Buffer = __nuvioLibBuffer.Buffer;\n");
 
     fun needs(scraperSource: String): Boolean = trigger.containsMatchIn(scraperSource)
 }
+
+/** A quoted `crypto` / `node:crypto` module name: `require("crypto")`, `import ... from "node:crypto"`. */
+private const val NODE_CRYPTO = """["'`](?:node:)?crypto["'`]"""
 
 /**
  * Turns one Nuvio scraper into a Kino plugin (spec §5): the compat shim ([PluginPrelude.nuvioShim])
