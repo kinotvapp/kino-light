@@ -28,6 +28,12 @@ class LiveSearchRelevanceTest {
         assertEquals(1, LiveSearchRelevance.filter(items, listOf("Hacerse malo", "", "Breaking Bad")).size)
     }
 
+    @Test fun `a half-typed name and letters glued to digits still match`() {
+        val items = listOf(live("Discovery Channel"), live("ESPN 2"), live("ESPN2 HD"), live("Fox Sports"))
+        assertEquals(listOf("Discovery Channel"), titles(LiveSearchRelevance.filter(items, listOf("discov"))))
+        assertEquals(listOf("ESPN 2", "ESPN2 HD"), titles(LiveSearchRelevance.filter(items, listOf("ESPN2"))))
+    }
+
     @Test fun `a query with no word of three letters filters nothing`() {
         val items = listOf(live("Pluto TV Cine Acción"))
         assertEquals(1, LiveSearchRelevance.filter(items, listOf("tv")).size)
