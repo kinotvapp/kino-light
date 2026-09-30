@@ -34,14 +34,14 @@ class PluginFailureTextTest {
 
     @Test fun `a site that did not answer is named, with how it failed`() {
         fun failed(kind: PluginCallTrace.Failure) =
-            shown(PluginErrorException(PluginErrors.NOT_FOUND, NuvioPluginConverter.NO_STREAMS).with(trace { failed("4khdhub.click", kind) }))
+            shown(PluginErrorException(PluginErrors.NOT_FOUND, "x").with(trace { failed("4khdhub.click", kind) }))
         assertEquals("Fuente: no se encontró el sitio 4khdhub.click", failed(PluginCallTrace.Failure.DNS))
         assertEquals("Fuente: 4khdhub.click no respondió a tiempo", failed(PluginCallTrace.Failure.TIMEOUT))
         assertEquals("Fuente: no se pudo conectar con 4khdhub.click", failed(PluginCallTrace.Failure.NETWORK))
     }
 
     @Test fun `a server error from the site is named`() {
-        val e = PluginErrorException(PluginErrors.NOT_FOUND, NuvioPluginConverter.NO_STREAMS)
+        val e = PluginErrorException(PluginErrors.NOT_FOUND, "x")
             .with(trace { answered("api.hlowb.com", 503); answered("api.themoviedb.org", 200) })
         assertEquals("Fuente: api.hlowb.com respondió con error 503", shown(e))
     }
@@ -50,6 +50,33 @@ class PluginFailureTextTest {
     @Test fun `a 404 is not a failure cause`() {
         val e = PluginErrorException(PluginErrors.NOT_FOUND, NuvioPluginConverter.NO_STREAMS).with(trace { answered("mirror.example", 404) })
         assertEquals("Fuente no encontró este título", shown(e))
+    }
+
+    // A scraper walks many mirrors; a dead one is routine. When it still finished with a clean "nothing
+    // here", that is the answer, not the mirror.
+    @Test fun `the adapter's no-result answer outranks a dead mirror or an HTTP error`() {
+        val dns = PluginErrorException(PluginErrors.NOT_FOUND, NuvioPluginConverter.NO_STREAMS).with(
+            trace {
+                failed("mirror3.xyz", PluginCallTrace.Failure.DNS)
+                answered("mirror4.xyz", 403)
+            },
+        )
+        assertEquals("Fuente no encontró este título", shown(dns))
+        val torrents = PluginErrorException(PluginErrors.UNAVAILABLE, NuvioPluginConverter.ONLY_TORRENTS)
+            .with(trace { failed("mirror3.xyz", PluginCallTrace.Failure.TIMEOUT) })
+        assertEquals("Fuente solo tiene torrents de este título", shown(torrents))
+    }
+
+    @Test fun `a site that failed still outranks the scraper's own script error`() {
+        val e = PluginErrorException(PluginErrors.UNAVAILABLE, NuvioPluginConverter.SCRAPER_ERROR_PREFIX + "boom")
+            .with(trace { failed("mirror3.xyz", PluginCallTrace.Failure.DNS) })
+        assertEquals("Fuente: no se encontró el sitio mirror3.xyz", shown(e))
+    }
+
+    @Test fun `a refused host outranks the adapter's no-result answer`() {
+        val e = PluginErrorException(PluginErrors.NOT_FOUND, NuvioPluginConverter.NO_STREAMS)
+            .with(trace { refused("b.example", PluginCallTrace.Refusal.NOT_ASKED) })
+        assertEquals("Fuente necesita b.example, que no está aprobado", shown(e))
     }
 
     @Test fun `a refused host outranks a site that failed`() {
@@ -96,7 +123,7 @@ class PluginFailureTextTest {
 
     @Test fun `every attempt is logged with function, time and cause`() {
         val logs = mutableListOf<String>()
-        shown(PluginErrorException(PluginErrors.NOT_FOUND, NuvioPluginConverter.NO_STREAMS).with(trace { failed("x.example", PluginCallTrace.Failure.DNS) }), logs)
+        shown(PluginErrorException(PluginErrors.NOT_FOUND, "x").with(trace { failed("x.example", PluginCallTrace.Failure.DNS) }), logs)
         val line = logs.single()
         assertTrue(line, line.startsWith("[p] resolve failed after ") && " ms: " in line && "no se encontró el sitio x.example" in line)
         assertTrue(line, "x.example" in line && "DNS" in line)

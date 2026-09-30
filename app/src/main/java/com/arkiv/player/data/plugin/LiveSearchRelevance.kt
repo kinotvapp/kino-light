@@ -22,10 +22,26 @@ internal object LiveSearchRelevance {
     fun filter(items: List<PluginItem>, queryForms: List<String>): List<PluginItem> {
         val forms = queryForms.map(::titleTokens).filter { it.isNotEmpty() }
         if (forms.isEmpty()) return items
+        val joinedForms = queryForms.map { words(it).joinToString("") }.filter { it.length > 2 }
         return items.filter { item ->
             if (item.kind != PluginOutput.KIND_LIVE) return@filter true
             val name = titleTokens(item.title)
-            forms.any { form -> form.count { word -> name.any { it.startsWith(word) } }.toDouble() / form.size >= MIN_RELEVANCE }
+            forms.any { form -> form.count { word -> name.any { it.startsWith(word) } }.toDouble() / form.size >= MIN_RELEVANCE } ||
+                matchesJoined(words(item.title), joinedForms)
+        }
+    }
+
+    /**
+     * Whether a query written with or without spaces matches a name written the other way: "nat geo" finds
+     * "NatGeo", "canal rcn" finds "CanalRCN", "natgeo" finds "Nat Geo HD". The query's words, glued together
+     * ([joinedForms]), must start the name glued together from one of its word boundaries on, so "geo" alone
+     * still doesn't find "NatGeo" (no word of it starts there).
+     */
+    private fun matchesJoined(nameWords: List<String>, joinedForms: List<String>): Boolean {
+        if (joinedForms.isEmpty()) return false
+        return nameWords.indices.any { i ->
+            val tail = nameWords.subList(i, nameWords.size).joinToString("")
+            joinedForms.any { tail.startsWith(it) }
         }
     }
 
@@ -40,9 +56,12 @@ internal object LiveSearchRelevance {
     // Letters and digits split apart ("ESPN2" and "ESPN 2" both give "espn"), and a query word
     // counts when a name word starts with it (typing "discov" finds "Discovery"): people search
     // channels while still typing, so this is looser than kino.rank on purpose.
-    internal fun titleTokens(text: String): Set<String> {
+    internal fun titleTokens(text: String): Set<String> = words(text).filter { it.length > 2 }.toSet()
+
+    /** Every word of [text] in order, short ones included: lower case, accents off, letters and digits apart. */
+    private fun words(text: String): List<String> {
         val plain = MARKS.replace(Normalizer.normalize(text.lowercase(), Normalizer.Form.NFKD), "")
-        return WORD.findAll(plain).map { it.value }.filter { it.length > 2 }.toSet()
+        return WORD.findAll(plain).map { it.value }.toList()
     }
 
     private val WORD = Regex("[a-z]+|[0-9]+")

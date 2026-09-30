@@ -1312,6 +1312,9 @@ class ArkivRepository(
                 lastPlayedAt = clock(),
             )
         )
+        // A save means it played: a pick's card is no longer "unplayed", so a later failed chapter of the
+        // same title (after its history rows were removed) can't take the whole card with it.
+        if (unplayedPicks.isNotEmpty()) itemDao.getEpisode(episodeId)?.itemId?.let { unplayedPicks -= it }
         // This is the MOST COMMON path by which a chapter ends up watched (the player calls here
         // every ~5s): if the frame isn't destroyed here too, watching a chapter to the end —without
         // ever touching setWatched's manual toggle— would leave it alive forever.

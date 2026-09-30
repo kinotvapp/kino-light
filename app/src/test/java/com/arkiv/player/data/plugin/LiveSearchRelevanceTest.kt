@@ -34,6 +34,21 @@ class LiveSearchRelevanceTest {
         assertEquals(listOf("ESPN 2", "ESPN2 HD"), titles(LiveSearchRelevance.filter(items, listOf("ESPN2"))))
     }
 
+    @Test fun `a name written as one word matches a query written as several, and the other way round`() {
+        val items = listOf(live("NatGeo"), live("CanalRCN HD"), live("TVAzteca"), live("Nat Geo Wild"), live("Fox Sports"))
+        assertEquals(listOf("NatGeo", "Nat Geo Wild"), titles(LiveSearchRelevance.filter(items, listOf("nat geo"))))
+        assertEquals(listOf("CanalRCN HD"), titles(LiveSearchRelevance.filter(items, listOf("Canal RCN"))))
+        assertEquals(listOf("TVAzteca"), titles(LiveSearchRelevance.filter(items, listOf("tv azteca"))))
+        assertEquals(listOf("NatGeo", "Nat Geo Wild"), titles(LiveSearchRelevance.filter(items, listOf("natgeo"))))
+    }
+
+    @Test fun `a joined query must start at a word of the name, not anywhere inside it`() {
+        val items = listOf(live("NatGeo"), live("Canal RCN"))
+        // "geo" starts no word of "NatGeo"; "rcn" starts the second word of "Canal RCN".
+        assertEquals(listOf("Canal RCN"), titles(LiveSearchRelevance.filter(items, listOf("geo rcn", "rcn"))))
+        assertEquals(emptyList<String>(), titles(LiveSearchRelevance.filter(items, listOf("geo"))))
+    }
+
     @Test fun `a query with no word of three letters filters nothing`() {
         val items = listOf(live("Pluto TV Cine Acción"))
         assertEquals(1, LiveSearchRelevance.filter(items, listOf("tv")).size)
