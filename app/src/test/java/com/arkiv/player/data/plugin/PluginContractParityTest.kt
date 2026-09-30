@@ -197,6 +197,7 @@ class PluginContractParityTest {
         assertEquals(PluginContentSource.BROWSE_TIMEOUT_MS, t.getLong("browse"))
         assertEquals(PluginContentSource.EPISODES_TIMEOUT_MS, t.getLong("episodes"))
         assertEquals(PluginContentSource.RESOLVE_TIMEOUT_MS, t.getLong("resolve"))
+        assertEquals(PluginContentSource.NUVIO_RESOLVE_TIMEOUT_MS, t.getLong("nuvioResolve"))
         assertEquals(PluginLiveContract.CATEGORIES_TIMEOUT_MS, t.getLong("liveCategories"))
         assertEquals(PluginLiveContract.CHANNELS_TIMEOUT_MS, t.getLong("liveChannels"))
         assertEquals(PluginLiveContract.GUIDE_TIMEOUT_MS, t.getLong("guide"))

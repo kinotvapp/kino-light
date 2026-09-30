@@ -129,6 +129,7 @@
     "browse": 20000,
     "episodes": 20000,
     "resolve": 20000,
+    "nuvioResolve": 45000,
     "liveCategories": 20000,
     "liveChannels": 20000,
     "guide": 20000
