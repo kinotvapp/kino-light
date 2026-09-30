@@ -271,8 +271,9 @@ Declare `"download"` in `capabilities` (with `"apiVersion": 2`) and Kino offers 
 offline viewing: "Descargar" on the info page and "Guardar en el dispositivo" in the library, on
 phones (Kino never downloads on a TV). Nothing extra to export. When the person saves a title, Kino
 calls your `resolve(ref)` when the download actually runs, exactly as playing would, and saves the
-`Stream` as **one file**, with your `headers` on the request, through the same host gate as the player
-(https on your `hosts` or the person's own server, every redirect hop checked, never the home
+`Stream` as **one file**, with your `headers` on every request, through the same host gate as the
+player for that stream (https on your `hosts` or the person's own server -- or any public host under
+the broad video permission / `streamHosts: "any"` -- every redirect hop checked, never the home
 network). Your `subtitles` are saved next to it. `audioTracks` are **not** saved: the offline copy has
 only the audio inside the video file, so a source that dubs through separate tracks is heard in its
 main audio when offline.
@@ -281,13 +282,17 @@ What downloads, and what does not:
 
 - A progressive file (`mp4`, `mkv`, `webm`, `ts`, …) downloads. The saved file takes its extension
   from your `mime` when you give one, else from the URL, else `mp4`; the player sniffs the bytes anyway.
-- An HLS or DASH manifest (`.m3u8`, `.mpd`, a `mime` such as `application/vnd.apple.mpegurl` or
-  `application/dash+xml`, or a response whose `Content-Type` or first bytes say so, whatever the URL
-  looks like) does **not**: the download ends as "Este video no se puede descargar", a final state
-  with no "Reintentar" (it would refuse the same way) that the person can only remove. A
-  DRM-protected stream or a live channel is refused the same way. There is no separate "resolve for
-  download" call: if your source offers both a manifest and a file, prefer the file, or accept that
-  those titles play but do not download.
+- An HLS VOD stream (`.m3u8`, an `mpegurl` `mime`, or a response that turns out to be a playlist)
+  downloads too, saved as one file: MPEG-TS segments become a `.ts`, fMP4 ones (`EXT-X-MAP`) an
+  `.mp4`. From a master playlist Kino takes the highest variant up to 1080p whose audio is inside the
+  video; AES-128 keys, byte ranges and discontinuities are handled, and your `headers` go on the
+  playlists, the key and every segment. A retry resumes at the first missing segment.
+- What cannot be saved ends as "Este video no se puede descargar", a final state with no
+  "Reintentar" (it would refuse the same way) that the person can only remove: a DASH or Smooth
+  manifest (`.mpd`, `application/dash+xml`, …), a live HLS playlist (no `EXT-X-ENDLIST`), SAMPLE-AES
+  or any DRM key, a master whose every video variant needs a separate audio rendition (Kino does not
+  save a silent video), a DRM-protected stream and a live channel. Subtitle renditions inside the
+  playlist are not saved (your `subtitles` are). There is no separate "resolve for download" call.
 - The queue downloads one title at a time, so a `ref` may wait a while before `resolve` is called:
   keep something stable in it and look the fresh link up inside `resolve` (as recommended above). A
   retry resumes the partial file even when your URL changed. A `resolve` the queue makes that times
@@ -379,7 +384,7 @@ TLDs, which a `*.xyz` entry can never cover). With `"apiVersion": 4` a plugin ma
   [broad video permission](#what-you-return) -- it is the same rule, asked for by you instead of
   granted by the person. **In the player only**, the `url` `resolve` returns, everything its manifest
   names, every redirect hop, **and** the `subtitles` and `audioTracks` you return may be on any public
-  host. A download resolves and fetches exactly as without it (your `hosts` only);
+  host. A download of that movie or episode follows the same rule;
 - a live channel: the rule of [`liveStreamHosts: "any"`](#channels-from-any-server-livestreamhosts-apiversion-3)
   (the stream, its manifest and redirects; your `subtitles` and `audioTracks` stay on your `hosts`).
 
@@ -727,8 +732,8 @@ It does **not** add a poster, a backdrop or seasons from TMDB -- those stay exac
   covers: the home network (private, loopback, link-local and CGNAT addresses, IPv6 literals,
   local names, a public name that resolves into the LAN); a `drm` block's `licenseUrl` (still your
   hosts only, asked about as above); `kino.fetch` (your own code still reaches only your hosts and
-  the ones approved one by one); live channels (their own rule); and downloads (a download resolves
-  and fetches exactly as without it). It exists for sources whose hosters change domain per video
+  the ones approved one by one); live channels (their own rule). A download of a movie or an episode
+  follows the player's rule, so it is covered too. It exists for sources whose hosters change domain per video
   or mid-playback; a plugin with a fixed CDN should still declare it.
 - `mime` is optional, of the form `video/mp4` (anything else refuses the stream). When it is missing
   Kino's player detects HLS, DASH or a plain file from the URL and the content.

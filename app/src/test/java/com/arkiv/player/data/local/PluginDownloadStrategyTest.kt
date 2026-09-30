@@ -15,6 +15,7 @@ import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -74,6 +75,9 @@ class PluginDownloadStrategyTest {
         downloaderFor = { pluginId -> downloaders += pluginId; HttpRangeDownloader(OkHttpClient(), freeSpace = { Long.MAX_VALUE }) },
         offersDownloads = offers,
     )
+
+    /** Three MPEG-TS packets whose payload bytes are all [n]. */
+    private fun ts(n: Int): ByteArray = ByteArray(3 * 188) { i -> if (i % 188 == 0) 0x47 else n.toByte() }
 
     private suspend fun DownloadStrategy.run(id: String = episodeId) = download(id, false, tmp.root) { _, _ -> }
 
@@ -190,14 +194,44 @@ class PluginDownloadStrategyTest {
         assertEquals("plugin_demo_m1__0.mp4", c.file.name)
     }
 
-    @Test fun `an HLS manifest is refused before any request, permanently`() = runBlocking {
-        val outcome = strategy(FakeSource { playable("/master.m3u8") }).run()
+    @Test fun `a DASH manifest is refused before any request, permanently`() = runBlocking {
+        val outcome = strategy(FakeSource { playable("/manifest.mpd") }).run()
 
         val failed = outcome as DownloadOutcome.Failed
         assertEquals(PluginDownloadEligibility.NOT_DOWNLOADABLE, failed.reason)
         assertFalse("nothing to retry: the stream's shape will not change", failed.transient)
         assertTrue("a final state: no Reintentar, no crash report", failed.permanent)
         assertEquals(0, server.requestCount)
+    }
+
+    @Test fun `an HLS VOD stream is saved as one TS file with the Stream's headers on every request`() = runBlocking {
+        server.enqueue(MockResponse().setBody("#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4,\nseg0.ts\n#EXTINF:4,\nseg1.ts\n#EXT-X-ENDLIST\n"))
+        // Fetched concurrently, so both answer the same bytes (the queue has no path routing).
+        server.enqueue(MockResponse().setBody(okio.Buffer().write(ts(5))))
+        server.enqueue(MockResponse().setBody(okio.Buffer().write(ts(5))))
+        val source = FakeSource { playable("/hls/index.m3u8", headers = mapOf("Referer" to "https://site.example/")) }
+
+        val done = strategy(source).run() as DownloadOutcome.Done
+
+        assertEquals(File(tmp.root, "${LocalFilePaths.sanitize(episodeId)}.ts"), done.file)
+        assertArrayEquals(ts(5) + ts(5), done.file.readBytes())
+        repeat(3) { assertEquals("https://site.example/", server.takeRequest().getHeader("Referer")) }
+        assertEquals("only the final file is left", listOf(done.file.name), tmp.root.list()!!.filter { it.startsWith(LocalFilePaths.sanitize(episodeId)) })
+    }
+
+    @Test fun `a live HLS playlist is refused permanently, nothing saved`() = runBlocking {
+        server.enqueue(MockResponse().setBody("#EXTM3U\n#EXTINF:4,\nseg0.ts\n"))
+        val failed = strategy(FakeSource { playable("/live/index.m3u8") }).run() as DownloadOutcome.Failed
+        assertEquals(PluginDownloadEligibility.NOT_DOWNLOADABLE, failed.reason)
+        assertTrue(failed.permanent)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test fun `a SAMPLE-AES playlist is refused permanently`() = runBlocking {
+        server.enqueue(MockResponse().setBody("#EXTM3U\n#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"skd://k\"\n#EXTINF:4,\nseg0.ts\n#EXT-X-ENDLIST\n"))
+        val failed = strategy(FakeSource { playable("/drm/index.m3u8") }).run() as DownloadOutcome.Failed
+        assertEquals(PluginDownloadEligibility.NOT_DOWNLOADABLE, failed.reason)
+        assertTrue(failed.permanent)
     }
 
     @Test fun `a DRM stream is refused, permanently`() = runBlocking {
@@ -208,15 +242,14 @@ class PluginDownloadStrategyTest {
         assertEquals(0, server.requestCount)
     }
 
-    @Test fun `a manifest in disguise is caught from the response and refused permanently`() = runBlocking {
-        // An extensionless URL, no mime: the eligibility check passes, the bytes say otherwise.
-        server.enqueue(MockResponse().setBody("#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\nseg0.ts\n"))
-        val outcome = strategy(FakeSource { playable("/hls/index") }).run()
-
-        val failed = outcome as DownloadOutcome.Failed
-        assertEquals(PluginDownloadEligibility.NOT_DOWNLOADABLE, failed.reason)
-        assertTrue(failed.permanent)
-        assertFalse(failed.transient)
+    @Test fun `an HLS playlist in disguise is caught from the response and saved as HLS, any other manifest refused`() = runBlocking {
+        // An extensionless URL, no mime: the eligibility check passes, the bytes say it is HLS.
+        val playlist = "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\nseg0.ts\n#EXT-X-ENDLIST\n"
+        server.enqueue(MockResponse().setBody(playlist))
+        server.enqueue(MockResponse().setBody(playlist)) // the HLS downloader fetches it again
+        server.enqueue(MockResponse().setBody(okio.Buffer().write(ts(7))))
+        val done = strategy(FakeSource { playable("/hls/index") }).run() as DownloadOutcome.Done
+        assertArrayEquals(ts(7), done.file.readBytes())
         val target = File(tmp.root, LocalFilePaths.fileNameFor(episodeId, "plugin.mp4"))
         assertFalse(target.exists())
         assertFalse(LocalFilePaths.partOf(target).exists())

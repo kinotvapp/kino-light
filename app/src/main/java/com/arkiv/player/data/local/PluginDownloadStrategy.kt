@@ -22,8 +22,9 @@ import java.io.File
  * Stream is one file the downloader can save, and downloads it with the Stream's headers through
  * [downloaderFor] -- the plugin's own client, gated to its hosts like the player's (redirects and all),
  * built per plugin id by `AppGraph` -- with the response sniffed for a manifest in disguise
- * ([ManifestSniff]). Either refusal is a PERMANENT [DownloadOutcome.Failed] ("Este video no se puede
- * descargar"): the row ends `refused`, with no "Reintentar" and no crash report. Subtitles become
+ * ([ManifestSniff]). An HLS stream (by URL, mime or sniffed) is saved as one file by [HlsDownloader]
+ * over that same client. Every refusal is a PERMANENT [DownloadOutcome.Failed] ("Este video no se
+ * puede descargar"): the row ends `refused`, with no "Reintentar" and no crash report. Subtitles become
  * sidecars ([SubtitleSidecars]); `audioTracks` are NOT saved: the offline copy has only the audio
  * inside the video file (documented in the SDK guide).
  *
@@ -37,6 +38,8 @@ class PluginDownloadStrategy(
     private val source: ContentSource,
     private val downloaderFor: (pluginId: String) -> HttpRangeDownloader,
     private val offersDownloads: (pluginId: String) -> Boolean,
+    /** The HLS downloader over a plugin's [HttpRangeDownloader]: its client (the same gate) and disk measure. */
+    private val hlsFor: (HttpRangeDownloader) -> HlsDownloader = { HlsDownloader(it.client, it.freeSpace) },
 ) : DownloadStrategy {
 
     override suspend fun download(
@@ -63,25 +66,57 @@ class PluginDownloadStrategy(
         PluginDownloadEligibility.refusal(playable, live = live)?.let { return DownloadOutcome.Failed(it, permanent = true) }
 
         val http = downloaderFor(pluginId)
+        if (PluginDownloadEligibility.isHls(playable.url, playable.mime)) return downloadHls(http, episodeId, playable, targetDir, onProgress)
         val target = File(targetDir, LocalFilePaths.fileNameFor(episodeId, "plugin.${extensionOf(playable)}"))
         // Explicit resumeKey: a plugin URL may carry a token that changes on every resolution, so
         // using it as the key (the default) would discard the `.part` on every retry and start over.
         // `refuseManifests`: what the eligibility check cannot see (a playlist behind an
-        // extensionless URL with no mime) is caught from the response itself, same refusal.
+        // extensionless URL with no mime) is caught from the response itself: an HLS playlist is
+        // then saved as HLS, any other manifest refused.
         return http.download(playable.url, target, playable.headers, resumeKey = episodeId, refuseManifests = true, onProgress = onProgress).fold(
-            onSuccess = { file ->
-                SubtitleSidecars.save(http, episodeId, playable.subtitles, targetDir, playable.headers)
-                DownloadOutcome.Done(file)
-            },
+            onSuccess = { file -> done(http, episodeId, playable, targetDir, file) },
             onFailure = {
-                if (it is ManifestResponseException) {
-                    DownloadOutcome.Failed(PluginDownloadEligibility.NOT_DOWNLOADABLE, permanent = true)
-                } else {
-                    DownloadOutcome.Failed(it.message ?: "Falló la descarga", transient = DownloadRetryPolicy.isTransient(it))
+                when {
+                    it is ManifestResponseException && it.hls -> downloadHls(http, episodeId, playable, targetDir, onProgress)
+                    it is ManifestResponseException -> DownloadOutcome.Failed(PluginDownloadEligibility.NOT_DOWNLOADABLE, permanent = true)
+                    else -> failed(it)
                 }
             },
         )
     }
+
+    /**
+     * An HLS VOD stream saved as one file by [HlsDownloader], through the same gated client and with
+     * the Stream's headers on every playlist, key and segment. What the playlist shows can never be
+     * saved (live, SAMPLE-AES, separate audio only…) is a permanent refusal like any other.
+     */
+    private suspend fun downloadHls(
+        http: HttpRangeDownloader,
+        episodeId: String,
+        playable: GatewayPlayable,
+        targetDir: File,
+        onProgress: (Long, Long) -> Unit,
+    ): DownloadOutcome = hlsFor(http).download(
+        playable.url, playable.headers, targetDir, LocalFilePaths.sanitize(episodeId), resumeKey = episodeId, onProgress = onProgress,
+    ).fold(
+        onSuccess = { file -> done(http, episodeId, playable, targetDir, file) },
+        onFailure = {
+            if (it is HlsRefusedException) {
+                android.util.Log.i(TAG, "HLS download of $episodeId refused: ${it.detail}")
+                DownloadOutcome.Failed(PluginDownloadEligibility.NOT_DOWNLOADABLE, permanent = true)
+            } else {
+                failed(it)
+            }
+        },
+    )
+
+    private suspend fun done(http: HttpRangeDownloader, episodeId: String, playable: GatewayPlayable, targetDir: File, file: File): DownloadOutcome {
+        SubtitleSidecars.save(http, episodeId, playable.subtitles, targetDir, playable.headers)
+        return DownloadOutcome.Done(file)
+    }
+
+    private fun failed(e: Throwable) =
+        DownloadOutcome.Failed(e.message ?: "Falló la descarga", transient = DownloadRetryPolicy.isTransient(e))
 
     /**
      * The saved file's extension: the declared `mime` names the container when it is one we know,
@@ -96,5 +131,6 @@ class PluginDownloadStrategy(
     companion object {
         /** The plugin is disabled, gone, or no longer declares `download`: nothing of it runs. */
         const val NOT_OFFERED = "Este plugin ya no puede descargar videos"
+        private const val TAG = "KinoPluginDownload"
     }
 }

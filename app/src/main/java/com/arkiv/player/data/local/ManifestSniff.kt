@@ -6,7 +6,10 @@ package com.arkiv.player.data.local
  * answers the same manifest tomorrow), and the strategy that asked for the check turns it into a
  * permanent refusal ("Este video no se puede descargar").
  */
-class ManifestResponseException : RuntimeException(PluginDownloadEligibility.NOT_DOWNLOADABLE)
+class ManifestResponseException(
+    /** The manifest is an HLS playlist: `PluginDownloadStrategy` then saves it with [HlsDownloader] instead. */
+    val hls: Boolean = false,
+) : RuntimeException(PluginDownloadEligibility.NOT_DOWNLOADABLE)
 
 /**
  * Recognizes a streaming manifest from what the server ACTUALLY sent, for [HttpRangeDownloader]'s
@@ -24,6 +27,14 @@ object ManifestSniff {
         val type = contentType?.substringBefore(';')?.trim()?.lowercase().orEmpty()
         return type.isNotEmpty() && MANIFEST_MIMES.any { type.contains(it) }
     }
+
+    /** Any `mpegurl` type: `application/vnd.apple.mpegurl`, `application/x-mpegurl`, `audio/mpegurl`… */
+    fun isHlsMime(contentType: String?): Boolean =
+        contentType?.substringBefore(';')?.trim()?.lowercase().orEmpty().contains("mpegurl")
+
+    /** Whether a body starting with [head] is an HLS playlist (`#EXTM3U`, after a BOM or whitespace). */
+    fun looksLikeHls(head: ByteArray): Boolean =
+        head.isNotEmpty() && String(head, Charsets.UTF_8).removePrefix("\uFEFF").trimStart().startsWith(HLS_HEADER)
 
     /**
      * Whether a body starting with [head] is a manifest: an HLS playlist header (`#EXTM3U`), a DASH

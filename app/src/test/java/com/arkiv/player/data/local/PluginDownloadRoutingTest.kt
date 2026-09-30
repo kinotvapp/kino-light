@@ -120,7 +120,7 @@ class PluginDownloadRoutingTest {
         val resolved = mutableListOf<String>()
         override fun recognizes(ref: String) = true
         override fun search(ctx: GatewaySearchQuery): Flow<SearchEvent> = emptyFlow()
-        override suspend fun resolve(ref: String): GatewayPlayable { resolved += ref; return GatewayPlayable("plugin", "https://example.com/v.m3u8") }
+        override suspend fun resolve(ref: String): GatewayPlayable { resolved += ref; return GatewayPlayable("plugin", "https://example.com/v.mpd") }
         override suspend fun episodesWithSeries(ref: String): Pair<List<GatewayEpisode>, GatewaySeries?> = emptyList<GatewayEpisode>() to null
     }
 
@@ -134,7 +134,7 @@ class PluginDownloadRoutingTest {
             offersDownloads = registry::offersDownloads,
         )
 
-        // Usable and declaring download: it resolves (and this stream is then refused as HLS).
+        // Usable and declaring download: it resolves (and this stream is then refused as DASH).
         val refused = strategy.download(demoEpisode, false, tmp.root) { _, _ -> } as DownloadOutcome.Failed
         assertEquals(PluginDownloadEligibility.NOT_DOWNLOADABLE, refused.reason)
         assertEquals(listOf("ref"), source.resolved)

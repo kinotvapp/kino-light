@@ -33,13 +33,14 @@ object RangeMath {
  * gluing one file's tail to another's prefix and marking it "Listo".
  */
 class HttpRangeDownloader(
-    private val client: OkHttpClient,
+    /** Also what an HLS download of the same source goes through ([HlsDownloader]): the same gate, the same timeouts. */
+    val client: OkHttpClient,
     /**
      * Bytes free on the disk holding the given directory. `File.usableSpace` rather than `StatFs`:
      * on Android it's the same `statvfs` (space available to the app) and it also works on the JVM,
      * so the tests run without Robolectric. Injectable so they can simulate a full disk.
      */
-    private val freeSpace: (File) -> Long = { it.usableSpace },
+    val freeSpace: (File) -> Long = { it.usableSpace },
     /** Bytes written between two measurements of the disk; see [FreeSpacePolicy.CHECK_EVERY_BYTES]. */
     private val checkEveryBytes: Long = FreeSpacePolicy.CHECK_EVERY_BYTES,
 ) {
@@ -95,9 +96,10 @@ class HttpRangeDownloader(
                 val body = resp.body ?: throw IOException("respuesta sin cuerpo")
 
                 // A manifest by its own admission: whatever partial exists is that same garbage.
-                if (refuseManifests && ManifestSniff.isManifestMime(resp.header("Content-Type"))) {
+                val contentType = resp.header("Content-Type")
+                if (refuseManifests && ManifestSniff.isManifestMime(contentType)) {
                     discardPartial(part, origin)
-                    throw ManifestResponseException()
+                    throw ManifestResponseException(hls = ManifestSniff.isHlsMime(contentType))
                 }
 
                 // If Range was requested and the server answered 200 (doesn't support it), what
@@ -124,7 +126,7 @@ class HttpRangeDownloader(
                     val head = if (refuseManifests && effectiveStart == 0L) readHead(input, ManifestSniff.SNIFF_BYTES) else EMPTY
                     if (head.isNotEmpty() && ManifestSniff.looksLikeManifest(head)) {
                         discardPartial(part, origin)
-                        throw ManifestResponseException()
+                        throw ManifestResponseException(hls = ManifestSniff.looksLikeHls(head))
                     }
 
                     // The mark gets (re)written BEFORE the first byte: if the process dies halfway,
