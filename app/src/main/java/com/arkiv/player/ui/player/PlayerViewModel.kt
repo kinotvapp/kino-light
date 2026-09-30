@@ -695,12 +695,6 @@ class PlayerViewModel internal constructor(
     private val _otherSources = MutableStateFlow<com.arkiv.player.data.SourceSearchTitle?>(null)
     val otherSources: StateFlow<com.arkiv.player.data.SourceSearchTitle?> = _otherSources.asStateFlow()
 
-    /**
-     * The player is playing [episodeId] with a known duration: its attempt really started, and its
-     * early mark stays. Called on every tick while that's true; cheap and idempotent.
-     */
-    fun onPlaybackStarted(episodeId: String) = attempts.started(episodeId)
-
     /** The previous episode's can't stay on screen with the next one's. */
     private fun clearTrivia() {
         triviaJob?.cancel()
@@ -1380,6 +1374,13 @@ class PlayerViewModel internal constructor(
      * happened.
      */
     fun onPlaybackHealthy() {
+        // Playing: the loaded chapter's attempt really started, so the history mark written on
+        // opening stays even if the person leaves before the first save. Off this existing tick on
+        // purpose: `PlayerContent` can't take another call site (see `OtherSourcesAction`).
+        // Only when what's published is that chapter: right after a new load() the previous item
+        // can still be playing for a moment.
+        val onScreen = _magisItem.value?.episodeId ?: ditu.current.value?.episodeId ?: _playlist.value?.requested
+        if (onScreen != null && onScreen == loadedEpisodeId) attempts.started(onScreen)
         if (!playbackHiccup) return
         playbackHiccup = false
         _error.value = null

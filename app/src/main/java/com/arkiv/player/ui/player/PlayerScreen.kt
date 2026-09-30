@@ -362,8 +362,16 @@ fun PlayerScreen(
         }
         return
     }
-    PlayerContent(episodeId, onBack, onOpenEpisodes, onNextEpisode, controller, serviceExo, isTv, onOpenPluginSettings, onOpenOtherSources)
+    // Through a CompositionLocal and not a parameter: one more parameter on `PlayerContent` is enough
+    // for ART to reject the whole class (see [OtherSourcesAction]).
+    androidx.compose.runtime.CompositionLocalProvider(LocalOpenOtherSources provides onOpenOtherSources) {
+        PlayerContent(episodeId, onBack, onOpenEpisodes, onNextEpisode, controller, serviceExo, isTv, onOpenPluginSettings)
+    }
 }
+
+/** Where "Ver otras fuentes" goes; null hides the button. Provided by [PlayerScreen]. */
+private val LocalOpenOtherSources =
+    androidx.compose.runtime.staticCompositionLocalOf<((com.arkiv.player.data.SourceSearchTitle) -> Unit)?> { null }
 
 @OptIn(UnstableApi::class, androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
@@ -376,7 +384,6 @@ private fun PlayerContent(
     serviceExo: ExoPlayer,
     isTv: Boolean,
     onOpenPluginSettings: (pluginId: String) -> Unit,
-    onOpenOtherSources: ((com.arkiv.player.data.SourceSearchTitle) -> Unit)?,
 ) {
     val graph = rememberGraph()
     val subtitleStyle by graph.subtitlePrefs.prefs.collectAsStateWithLifecycle()
@@ -468,21 +475,6 @@ private fun PlayerContent(
             isAlreadyFocused = { linkAccountFocused },
             wait = { delay(WAIT_BETWEEN_FOCUS_ATTEMPTS_MS) },
             request = { linkAccountFocus.requestFocus() },
-        )
-    }
-    // A plugin title's source didn't play: the error offers the title's other sources. TV: same
-    // focus situation as "Vincular cuenta" above -- nothing else on screen can take the D-pad, and
-    // the button only opens a list, so it's safe to land on.
-    val otherSources by vm.otherSources.collectAsStateWithLifecycle()
-    val offerOtherSources = otherSources != null && onOpenOtherSources != null
-    val otherSourcesFocus = remember { FocusRequester() }
-    var otherSourcesFocused by remember { mutableStateOf(false) }
-    LaunchedEffect(offerOtherSources, loadError, isTv) {
-        if (!isTv || !offerOtherSources || loadError == null) return@LaunchedEffect
-        retryFocus(
-            isAlreadyFocused = { otherSourcesFocused },
-            wait = { delay(WAIT_BETWEEN_FOCUS_ATTEMPTS_MS) },
-            request = { otherSourcesFocus.requestFocus() },
         )
     }
     val blocked by vm.blocked.collectAsStateWithLifecycle()
@@ -2111,11 +2103,6 @@ private fun PlayerContent(
             // !isLive (Task 14): live has no "where you were" to save -- no "continue watching",
             // no progress bar to resume. Polling/saving position on a live stream was exactly
             // what broke Magis VOD (see LiveController's KDoc).
-            // Playing with a known duration: this chapter's attempt really started, so the history
-            // mark written on opening stays even if the person leaves before the first save below.
-            if (!isLive && epId != null && (isExo || mediaId == epId) && ready && activePlayer.isPlaying && dur > 0) {
-                vm.onPlaybackStarted(epId)
-            }
             // ExoPlayer doesn't expose mediaId matching the episodeId → the comparison is skipped for isExo.
             if (!isLive && tick % 10 == 0 && epId != null &&
                 (isExo || mediaId == epId) && ready && activePlayer.isPlaying &&
@@ -3309,19 +3296,7 @@ private fun PlayerContent(
                         Text("Vincular cuenta", color = Color(0xFFB00020))
                     }
                 }
-                val title = otherSources
-                if (title != null && onOpenOtherSources != null) {
-                    Button(
-                        onClick = { onOpenOtherSources(title) },
-                        modifier = Modifier
-                            .padding(top = 12.dp)
-                            .focusRequester(otherSourcesFocus)
-                            .onFocusChanged { otherSourcesFocused = it.isFocused },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color.White),
-                    ) {
-                        Text("Ver otras fuentes", color = Color(0xFFB00020))
-                    }
-                }
+                OtherSourcesAction(vm, isTv)
             }
         }
 
@@ -4622,3 +4597,39 @@ internal fun resolvingText(sourceName: String, elapsedMs: Long): String {
 
 /** How long [resolvingText] stays the plain sentence before it starts counting. */
 private const val RESOLVING_QUIET_SECONDS = 5L
+
+/**
+ * "Ver otras fuentes" on the player's error, when a plugin title's source didn't play
+ * ([PlayerViewModel.otherSources]). Its own composable, and its destination in
+ * [LocalOpenOtherSources], on purpose: `PlayerContent` is at the size where one more parameter or a
+ * few more states make ART reject the whole class (`VerifyError ... copy-cat1` on opening the
+ * player, measured on the Redmi Note 9 Pro, Android 12; the previous build opened fine there).
+ *
+ * TV: the same focus situation as "Vincular cuenta" -- nothing else on screen can take the D-pad
+ * while the error shows -- so it takes focus itself; it only opens a list, a safe place to land.
+ */
+@Composable
+private fun OtherSourcesAction(vm: PlayerViewModel, isTv: Boolean) {
+    val onOpen = LocalOpenOtherSources.current ?: return
+    val title = vm.otherSources.collectAsStateWithLifecycle().value ?: return
+    val focus = remember { FocusRequester() }
+    var focused by remember { mutableStateOf(false) }
+    LaunchedEffect(title, isTv) {
+        if (!isTv) return@LaunchedEffect
+        retryFocus(
+            isAlreadyFocused = { focused },
+            wait = { delay(WAIT_BETWEEN_FOCUS_ATTEMPTS_MS) },
+            request = { focus.requestFocus() },
+        )
+    }
+    Button(
+        onClick = { onOpen(title) },
+        modifier = Modifier
+            .padding(top = 12.dp)
+            .focusRequester(focus)
+            .onFocusChanged { focused = it.isFocused },
+        colors = ButtonDefaults.buttonColors(containerColor = Color.White),
+    ) {
+        Text("Ver otras fuentes", color = Color(0xFFB00020))
+    }
+}
