@@ -114,6 +114,7 @@ class AppGraph(context: Context) {
                 .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
                 .dns(com.arkiv.player.data.net.DohDns)
                 .build(),
+            isOnline = { hasInternet.value },
         )
     }
 
