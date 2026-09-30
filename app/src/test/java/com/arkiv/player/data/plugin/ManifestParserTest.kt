@@ -38,8 +38,8 @@ class ManifestParserTest {
 
     @Test fun `version must be semver`() = assertEquals("version", invalidField(base().put("version", "1.0")))
 
-    @Test fun `apiVersion above the supported one says Kino must be updated`() {
-        val r = ManifestParser.parse(base().put("apiVersion", 4).toString()) as ManifestResult.Invalid
+    @Test fun `apiVersion 5 still needs a newer Kino`() {
+        val r = ManifestParser.parse(base().put("apiVersion", 5).toString()) as ManifestResult.Invalid
         assertEquals("apiVersion", r.field)
         assertEquals("Este plugin necesita una versión más nueva de Kino", r.message)
         assertEquals("apiVersion", invalidField(base().put("apiVersion", "1")))
@@ -230,5 +230,53 @@ class ManifestParserTest {
             assertEquals("discoverable", r.field)
             assertEquals("El campo \"discoverable\" debe ser true o false", r.message)
         }
+    }
+
+    @Test fun `secrets parse with apiVersion 4`() {
+        val seal = TestSealing.seal("v", "owner/repo", "apiKey")
+        val secrets = JSONObject().put("apiKey", seal)
+        val m = (ManifestParser.parse(base().put("apiVersion", 4).put("secrets", secrets).toString()) as ManifestResult.Valid).manifest
+        assertEquals(mapOf("apiKey" to seal), m.secrets)
+    }
+
+    @Test fun `secrets are ignored below apiVersion 4`() {
+        val seal = TestSealing.seal("v", "owner/repo", "apiKey")
+        val secrets = JSONObject().put("apiKey", seal)
+        for (api in 1..3) {
+            val m = (ManifestParser.parse(base().put("apiVersion", api).put("secrets", secrets).toString()) as ManifestResult.Valid).manifest
+            assertEquals(emptyMap<String, String>(), m.secrets)
+        }
+    }
+
+    @Test fun `malformed seals are invalid manifests`() {
+        listOf(
+            "kino-sealed:v2:" + TestSealing.seal("v", "owner/repo", "apiKey").substringAfter(SealedSecrets.PREFIX_V1),
+            SealedSecrets.PREFIX_V1 + "@@@@",
+            SealedSecrets.PREFIX_V1 + "AAAA",
+        ).forEach { badSeal ->
+            val secrets = JSONObject().put("apiKey", badSeal)
+            val r = ManifestParser.parse(base().put("apiVersion", 4).put("secrets", secrets).toString()) as ManifestResult.Invalid
+            assertEquals("secrets", r.field)
+            assertEquals("El secreto \"apiKey\" no es un sello de Kino válido", r.message)
+        }
+    }
+
+    @Test fun `bad names and too many secrets are invalid`() {
+        val seal = TestSealing.seal("v", "owner/repo", "x")
+
+        val badName = JSONObject().put("2x", seal)
+        val r1 = ManifestParser.parse(base().put("apiVersion", 4).put("secrets", badName).toString()) as ManifestResult.Invalid
+        assertEquals("secrets", r1.field)
+        assertEquals("El secreto \"2x\" tiene un nombre inválido", r1.message)
+
+        val many = JSONObject()
+        for (i in 1..17) many.put("s$i", seal)
+        val r2 = ManifestParser.parse(base().put("apiVersion", 4).put("secrets", many).toString()) as ManifestResult.Invalid
+        assertEquals("secrets", r2.field)
+        assertEquals("El campo \"secrets\" admite hasta 16 secretos", r2.message)
+
+        val r3 = ManifestParser.parse(base().put("apiVersion", 4).put("secrets", JSONArray()).toString()) as ManifestResult.Invalid
+        assertEquals("secrets", r3.field)
+        assertEquals("El campo \"secrets\" debe ser un objeto", r3.message)
     }
 }

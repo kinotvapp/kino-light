@@ -60,6 +60,12 @@ class PluginContractParityTest {
         assertEquals(ManifestParser.LIVE_STREAM_HOSTS_API_VERSION, lsh.getInt("apiVersion"))
         assertEquals(ManifestParser.CHANNELS, lsh.getString("requires"))
         assertEquals(ManifestParser.DISCOVERABLE_DEFAULT, m.getJSONObject("discoverable").getBoolean("default"))
+        val secrets = m.getJSONObject("secrets")
+        assertEquals(ManifestParser.SECRETS_API_VERSION, secrets.getInt("apiVersion"))
+        assertEquals(SealedSecrets.NAME.pattern, secrets.getString("namePattern"))
+        assertEquals(SealedSecrets.MAX_SECRETS, secrets.getInt("maxSecrets"))
+        assertEquals(SealedSecrets.MAX_PLAINTEXT_BYTES, secrets.getInt("maxValueBytes"))
+        assertEquals(SealedSecrets.PREFIX_V1, secrets.getString("prefix"))
     }
 
     @Test fun `host rules`() {

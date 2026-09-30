@@ -26,7 +26,7 @@ const manifest = (extra = {}) => JSON.stringify({
 });
 
 test("contract.json is the one the app pins", () => {
-  assert.equal(contract.apiVersion, 3);
+  assert.equal(contract.apiVersion, 4);
   assert.deepEqual(contract.capabilities.names, ["search", "home", "browse", "episodes", "resolve", "download", "drm", "channels"]);
   assert.deepEqual(contract.capabilities.declarative, ["download", "drm"]);
   assert.deepEqual(contract.permissions, []);
@@ -863,6 +863,44 @@ test("discoverable: an optional boolean at every apiVersion; false is a note, no
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// A shape-valid (but not cryptographically meaningful) v1 seal: 61 zero bytes, the minimum length
+// (32-byte ephemeral pubkey + 12-byte nonce + 16-byte GCM tag + 1 plaintext byte), base64url-encoded.
+// isWellFormed only checks shape, never opens the seal, so this is enough to exercise the manifest rules.
+const FAKE_SEAL = "kino-sealed:v1:" + Buffer.alloc(61).toString("base64url");
+
+test("secrets: parsed with apiVersion 4, ignored below it, and its Spanish messages", () => {
+  const secrets = { apiKey: FAKE_SEAL };
+
+  const ok = validateManifest(manifest({ apiVersion: 4, secrets }));
+  assert.equal(ok.ok, true);
+  assert.deepEqual(ok.manifest.secrets, secrets);
+
+  for (const apiVersion of [1, 2, 3]) {
+    const ignored = validateManifest(manifest({ apiVersion, secrets }));
+    assert.equal(ignored.ok, true);
+    assert.deepEqual(ignored.manifest.secrets, {});
+  }
+
+  assert.deepEqual(validateManifest(manifest({ apiVersion: 4, secrets: [] })),
+    { ok: false, field: "secrets", message: 'El campo "secrets" debe ser un objeto' });
+
+  const many = Object.fromEntries(Array.from({ length: 17 }, (_, i) => [`s${i}`, FAKE_SEAL]));
+  assert.deepEqual(validateManifest(manifest({ apiVersion: 4, secrets: many })),
+    { ok: false, field: "secrets", message: 'El campo "secrets" admite hasta 16 secretos' });
+
+  assert.deepEqual(validateManifest(manifest({ apiVersion: 4, secrets: { "2x": FAKE_SEAL } })),
+    { ok: false, field: "secrets", message: 'El secreto "2x" tiene un nombre inválido' });
+
+  for (const badSeal of ["kino-sealed:v2:" + FAKE_SEAL.slice("kino-sealed:v1:".length), "kino-sealed:v1:@@@@", "kino-sealed:v1:AAAA"]) {
+    assert.deepEqual(validateManifest(manifest({ apiVersion: 4, secrets: { apiKey: badSeal } })),
+      { ok: false, field: "secrets", message: 'El secreto "apiKey" no es un sello de Kino válido' });
+  }
+
+  assert.deepEqual(contract.manifest.secrets, {
+    apiVersion: 4, namePattern: "^[A-Za-z][A-Za-z0-9_]{0,31}$", maxSecrets: 16, maxValueBytes: 4096, prefix: "kino-sealed:v1:",
+  });
 });
 
 // ---------- live channels: the kit's own M3U/XMLTV readers (apiVersion 3) ----------

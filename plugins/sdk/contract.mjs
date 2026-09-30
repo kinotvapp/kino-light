@@ -132,6 +132,21 @@ export function validateManifest(text, { knownPermissions = contract.permissions
   // Only discovery reads it (never the runtime): valid at every apiVersion, exactly true or false.
   if (o.discoverable !== undefined && typeof o.discoverable !== "boolean") return bad("discoverable", 'El campo "discoverable" debe ser true o false');
   const discoverable = o.discoverable === undefined ? m.discoverable.default : o.discoverable;
+  // Below its apiVersion the field is unknown and ignored like any other (v1/v2/v3 stay as they were).
+  let secrets = {};
+  if (o.secrets !== undefined && o.apiVersion >= m.secrets.apiVersion) {
+    if (o.secrets === null || typeof o.secrets !== "object" || Array.isArray(o.secrets)) return bad("secrets", 'El campo "secrets" debe ser un objeto');
+    const secretNames = Object.keys(o.secrets);
+    if (secretNames.length > m.secrets.maxSecrets) return bad("secrets", `El campo "secrets" admite hasta ${m.secrets.maxSecrets} secretos`);
+    const NAME = re(m.secrets.namePattern);
+    const parsed = {};
+    for (const name of secretNames) {
+      if (!NAME.test(name)) return bad("secrets", `El secreto "${name.slice(0, 40)}" tiene un nombre inválido`);
+      if (!isWellFormedSeal(o.secrets[name], m.secrets)) return bad("secrets", `El secreto "${name}" no es un sello de Kino válido`);
+      parsed[name] = o.secrets[name];
+    }
+    secrets = parsed;
+  }
   if (o.color !== undefined && o.color !== "" && !re(m.colorPattern).test(o.color)) return bad("color", 'El campo "color" debe ser del tipo #RRGGBB');
   if (o.icon !== undefined && o.icon !== "" && (!isSafeRelativePath(o.icon) || !o.icon.endsWith(".png"))) return bad("icon", 'El campo "icon" debe ser una ruta relativa a un .png');
   if (o.permissions !== undefined && !Array.isArray(o.permissions)) return bad("permissions", 'El campo "permissions" debe ser una lista');
@@ -145,7 +160,21 @@ export function validateManifest(text, { knownPermissions = contract.permissions
   if (hosts.length === 0 && !(o.settings || []).some((x) => x.type === "url")) {
     return bad("hosts", 'El campo "hosts" solo puede estar vacío si el plugin tiene un ajuste de tipo "url"');
   }
-  return { ok: true, manifest: { ...o, hosts: [...new Set(hosts)], capabilities: caps, permissions: o.permissions || [], settings: o.settings || [], insecureHosts, liveStreamHostsAny, discoverable } };
+  return { ok: true, manifest: { ...o, hosts: [...new Set(hosts)], capabilities: caps, permissions: o.permissions || [], settings: o.settings || [], insecureHosts, liveStreamHostsAny, discoverable, secrets } };
+}
+
+/**
+ * Shape only, like the app's SealedSecrets.isWellFormed: the kit never opens a seal. The overhead
+ * (32-byte ephemeral pubkey + 12-byte nonce + 16-byte GCM tag = 60 bytes) plus 1..maxValueBytes of
+ * plaintext bounds the decoded length; SealedSecrets.kt is the source of truth for these numbers.
+ */
+function isWellFormedSeal(seal, s) {
+  if (typeof seal !== "string" || !seal.startsWith(s.prefix)) return false;
+  const body = seal.slice(s.prefix.length);
+  if (body.length === 0 || !/^[A-Za-z0-9_-]+$/.test(body)) return false;
+  const raw = Buffer.from(body, "base64url");
+  const overhead = 60;
+  return raw.length >= overhead + 1 && raw.length <= overhead + s.maxValueBytes;
 }
 
 function validateSettings(list) {

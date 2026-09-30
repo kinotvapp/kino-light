@@ -1,7 +1,7 @@
 {
-  "$comment": "Kino plugin contract, apiVersion 1, 2 and 3. The single source of truth for every number and rule a plugin meets. The app checks each value against its own code, and a test in the app pins this file to it; sdk/validate.mjs, sdk/run.mjs and the guide's tables read this file.",
-  "apiVersion": 3,
-  "maxApiVersion": 3,
+  "$comment": "Kino plugin contract, apiVersion 1, 2, 3 and 4. The single source of truth for every number and rule a plugin meets. The app checks each value against its own code, and a test in the app pins this file to it; sdk/validate.mjs, sdk/run.mjs and the guide's tables read this file.",
+  "apiVersion": 4,
+  "maxApiVersion": 4,
   "capabilities": {
     "names": ["search", "home", "browse", "episodes", "resolve", "download", "drm", "channels"],
     "required": ["resolve"],
@@ -31,7 +31,8 @@
     "pathSegmentPattern": "^[A-Za-z0-9._-]+$",
     "maxPathChars": 200,
     "liveStreamHosts": { "value": "any", "apiVersion": 3, "requires": "channels" },
-    "discoverable": { "default": true }
+    "discoverable": { "default": true },
+    "secrets": { "apiVersion": 4, "namePattern": "^[A-Za-z][A-Za-z0-9_]{0,31}$", "maxSecrets": 16, "maxValueBytes": 4096, "prefix": "kino-sealed:v1:" }
   },
   "hostRules": {
     "labelPattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",

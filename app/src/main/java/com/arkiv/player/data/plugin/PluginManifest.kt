@@ -35,6 +35,12 @@ data class PluginManifest(
      * every apiVersion. Default [ManifestParser.DISCOVERABLE_DEFAULT].
      */
     val discoverable: Boolean = true,
+    /**
+     * `"secrets": { "<name>": "kino-sealed:v1:…" }` (apiVersion 4): sealed values the plugin may ask
+     * for with `kino.secret(name)`. Never the plain value -- the seal stays sealed until a runtime
+     * opens it (see [SealedSecrets]).
+     */
+    val secrets: Map<String, String> = emptyMap(),
 )
 
 sealed interface ManifestResult {
@@ -52,11 +58,14 @@ object ManifestParser {
      * The highest `apiVersion` a manifest may declare, and the value this build reports at runtime
      * as `kino.apiVersion`. Each feature gates on its OWN constant below
      * ([CAPABILITY_API_VERSIONS], [INSECURE_HOST_API_VERSION], [NO_HOSTS_API_VERSION],
-     * `PluginOutput.LIVE_API_VERSION`), never on this one: raising it must not move an older gate.
+     * [SECRETS_API_VERSION], `PluginOutput.LIVE_API_VERSION`), never on this one: raising it must
+     * not move an older gate.
      */
-    const val SUPPORTED_API = 3
+    const val SUPPORTED_API = 4
     /** The `{ "host", "insecureHttp": true }` host object arrived with apiVersion 2. */
     const val INSECURE_HOST_API_VERSION = 2
+    /** The `secrets` field (sealed values a plugin may ask for with `kino.secret(name)`) arrived with apiVersion 4. */
+    const val SECRETS_API_VERSION = 4
     /** apiVersion 3: the plugin adds channels to the En vivo module (see `data/live/PluginLiveProvider`). */
     const val CHANNELS = "channels"
     /** The only value `liveStreamHosts` admits: a live channel's stream may be on any public host. */
@@ -188,6 +197,23 @@ object ManifestParser {
             true
         }
 
+        // Below apiVersion 4 the field is unknown and ignored like any other (v1/v2/v3 stay byte-for-byte).
+        val secrets = if (!o.has("secrets") || api < SECRETS_API_VERSION) emptyMap() else {
+            val secretsJson = o.opt("secrets") as? JSONObject ?: return invalid("secrets", "El campo \"secrets\" debe ser un objeto")
+            val names = secretsJson.keys().asSequence().toList()
+            if (names.size > SealedSecrets.MAX_SECRETS) {
+                return invalid("secrets", "El campo \"secrets\" admite hasta ${SealedSecrets.MAX_SECRETS} secretos")
+            }
+            val parsed = LinkedHashMap<String, String>(names.size)
+            for (n in names) {
+                if (!SealedSecrets.NAME.matches(n)) return invalid("secrets", "El secreto \"${n.take(MAX_NAME_CHARS)}\" tiene un nombre inválido")
+                val seal = secretsJson.opt(n) as? String ?: ""
+                if (!SealedSecrets.isWellFormed(seal)) return invalid("secrets", "El secreto \"$n\" no es un sello de Kino válido")
+                parsed[n] = seal
+            }
+            parsed
+        }
+
         // Only discovery reads it (never the runtime), so it is valid at every apiVersion (ruling R2).
         val discoverable = when (val d = o.opt("discoverable")) {
             null -> DISCOVERABLE_DEFAULT
@@ -227,6 +253,7 @@ object ManifestParser {
                 homepage = text(o, "homepage", MAX_HOMEPAGE_CHARS), hosts = hosts, capabilities = caps,
                 color = color?.uppercase(), icon = icon, permissions = permissions, settings = settings,
                 insecureHosts = insecureHosts, liveStreamHostsAny = liveStreamHostsAny, discoverable = discoverable,
+                secrets = secrets,
             ),
         )
     }
