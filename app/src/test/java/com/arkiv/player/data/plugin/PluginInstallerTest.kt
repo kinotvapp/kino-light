@@ -438,6 +438,37 @@ class PluginInstallerTest {
         assertFalse(installer.preview("o/r@dev").newSealedSecrets)
     }
 
+    // Review gap 3: a pasted GitHub page URL of a subfolder names its branch only because the page does.
+    @Test fun `a pasted tree URL of a sealed plugin in a subfolder installs ref-less when the default branch serves the same manifest`() = runBlocking {
+        installer = installerWithSeal()
+        val seal = TestSealing.seal("shh", SealedSecrets.bindingOf(PluginAddress("o", "r", "sub/dir")), "apiKey")
+        publish(api = 4, secrets = mapOf("apiKey" to seal), prefix = "https://raw.githubusercontent.com/o/r/main/sub/dir/")
+        publish(api = 4, secrets = mapOf("apiKey" to seal), prefix = "https://raw.githubusercontent.com/o/r/HEAD/sub/dir/")
+        val preview = installer.preview("https://github.com/o/r/tree/main/sub/dir")
+        assertEquals(PluginAddress("o", "r", "sub/dir"), preview.address)
+        assertEquals("o/r/sub/dir", installer.install(preview).address)
+    }
+
+    @Test fun `a pasted tree URL whose branch differs from the default one names the address to type`() {
+        installer = installerWithSeal()
+        val seal = TestSealing.seal("shh", SealedSecrets.bindingOf(PluginAddress("o", "r", "sub")), "apiKey")
+        publish("1.1.0", api = 4, secrets = mapOf("apiKey" to seal), prefix = "https://raw.githubusercontent.com/o/r/dev/sub/")
+        publish("1.0.0", api = 4, secrets = mapOf("apiKey" to seal), prefix = "https://raw.githubusercontent.com/o/r/HEAD/sub/")
+        val e = assertThrows(InstallException::class.java) { runBlocking { installer.preview("https://github.com/o/r/tree/dev/sub") } }
+        assertEquals("Los datos sellados solo funcionan desde la rama principal del repositorio: escribe o/r/sub", e.message)
+    }
+
+    @Test fun `a pasted tree URL without seals keeps its branch, and a typed ref is never rewritten`() = runBlocking {
+        installer = installerWithSeal()
+        publish(prefix = "https://raw.githubusercontent.com/o/r/dev/sub/")
+        assertEquals(PluginAddress("o", "r", "sub", "dev"), installer.preview("https://github.com/o/r/tree/dev/sub").address)
+        val seal = TestSealing.seal("shh", SealedSecrets.bindingOf(PluginAddress("o", "r", "sub")), "apiKey")
+        publish(api = 4, secrets = mapOf("apiKey" to seal), prefix = "https://raw.githubusercontent.com/o/r/main/sub/")
+        publish(api = 4, secrets = mapOf("apiKey" to seal), prefix = "https://raw.githubusercontent.com/o/r/HEAD/sub/")
+        val e = assertThrows(InstallException::class.java) { runBlocking { installer.preview("o/r/sub@main") } }
+        assertEquals(PluginInstaller.NON_HEAD_SEALS_MESSAGE, e.message)
+    }
+
     @Test fun `an update that brings seals to a plugin installed at a non-HEAD ref fails`() = runBlocking {
         installer = installerWithSeal()
         val prefix = "https://raw.githubusercontent.com/o/r/dev/"

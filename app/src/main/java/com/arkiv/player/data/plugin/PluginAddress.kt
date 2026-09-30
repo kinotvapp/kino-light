@@ -30,6 +30,13 @@ data class PluginAddress(
         private val NAME = Regex("^[A-Za-z0-9._-]{1,100}$")
         private val GITHUB = Regex("^https?://(www\\.)?github\\.com/", RegexOption.IGNORE_CASE)
 
+        /** True for a pasted GitHub page URL that names its branch (`https://github.com/o/r/tree/<ref>…`). */
+        fun isTreeUrl(input: String): Boolean {
+            val s = input.trim()
+            if (!GITHUB.containsMatchIn(s)) return false
+            return GITHUB.replace(s, "").split('/').getOrNull(2) == "tree"
+        }
+
         fun parse(input: String): PluginAddress? {
             var s = input.trim().trimEnd('/')
             if (s.isEmpty()) return null

@@ -156,7 +156,10 @@ class PluginInstaller(
     suspend fun preview(input: String): InstallPreview {
         val address = PluginAddress.parse(input)
             ?: throw InstallException("Escribe usuario/repositorio, por ejemplo kinotvapp/kino-plugin-archive")
-        return previewFor(address)
+        // A pasted GitHub page (`…/tree/<branch>/<folder>`) names its branch only because the page
+        // does: that is not a pin the person chose. See [previewFor]'s headTwin.
+        val headTwin = address.copy(ref = PluginAddress.HEAD).takeIf { address.ref != PluginAddress.HEAD && PluginAddress.isTreeUrl(input) }
+        return previewFor(address, headTwin)
     }
 
     suspend fun install(preview: InstallPreview): InstalledRecord {
@@ -299,7 +302,14 @@ class PluginInstaller(
         )
     }
 
-    private suspend fun previewFor(address: PluginAddress): InstallPreview {
+    /**
+     * [headTwin]: the same repo and folder without a ref, for an [address] whose ref came from a
+     * pasted GitHub page URL. Only for a manifest with sealed secrets (which never open at an
+     * explicit ref, [SealedSecrets.opensAt]): when the default branch serves the very same
+     * `kino-plugin.json`, the plugin installs from there, ref-less, exactly as if the person had
+     * typed `owner/repo/folder`; otherwise the refusal names that address.
+     */
+    private suspend fun previewFor(address: PluginAddress, headTwin: PluginAddress? = null): InstallPreview {
         val bytes = try {
             fetcher.fetch(address.rawUrl(PluginStore.MANIFEST_FILE), ManifestParser.MAX_BYTES + 1)
         } catch (e: FileNotFoundException) {
@@ -320,6 +330,11 @@ class PluginInstaller(
                 )
                 throw InstallException(r.message)
             }
+        }
+        if (headTwin != null && manifest.secrets.isNotEmpty()) {
+            val atHead = runCatching { fetcher.fetch(headTwin.rawUrl(PluginStore.MANIFEST_FILE), ManifestParser.MAX_BYTES + 1) }.getOrNull()
+            if (atHead == null || !atHead.contentEquals(bytes)) throw InstallException(treeSealsMessage(headTwin))
+            return previewFor(headTwin)
         }
         verifySeals(address, manifest)
         return diffAgainstInstalled(address, manifest, json)
@@ -404,6 +419,10 @@ class PluginInstaller(
         /** Shown when a manifest declares `secrets` and this build has no way to open any seal at all. */
         const val NO_SEALS_MESSAGE = "Este Kino no puede abrir datos sellados"
         /** Shown when a manifest with `secrets` is installed or updated from any address with an explicit `@ref` ([SealedSecrets.opensAt]). */
+        /** A pasted `…/tree/<branch>/…` URL of a plugin with seals whose branch isn't what the default branch serves. */
+        fun treeSealsMessage(headTwin: PluginAddress) =
+            "Los datos sellados solo funcionan desde la rama principal del repositorio: escribe ${headTwin.canonical}"
+
         const val NON_HEAD_SEALS_MESSAGE = "Los datos sellados solo funcionan si instalas el plugin desde su rama principal, sin @rama"
         /** Shown when a seal doesn't open for this plugin's address (wrong repo, wrong name, tampered, or malformed). */
         const val WRONG_SEALS_MESSAGE = "Los datos sellados de este plugin no son para este repositorio o están dañados"
