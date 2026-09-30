@@ -45,7 +45,8 @@ declares and the person approved on screen, plus the servers the person typed in
 settings (see [section 3](#3-the-manifest)).
 
 Kino loads exactly one JavaScript file, so there is nothing for an `import` to resolve to. If you
-use a build step or a library, bundle everything into that single file.
+use a build step or a library, bundle everything into that single file -- see
+["Splitting your code across files"](#splitting-your-code-across-files) for a worked example.
 
 **How people install it.** In Kino, Ajustes > Plugins, they type the address of your repository:
 
@@ -1235,6 +1236,53 @@ literals, spread, `replaceAll`, `Array.prototype.at` and `flat`, `Object.fromEnt
   airtight (a huge computed key still names a function); a plugin that crashes the app anyway is
   switched off (see "App closed during a call" above). Setting `name` on ordinary objects, and
   `this.name = "MyError"` in an `Error` subclass, work as usual.
+
+### Splitting your code across files
+
+Kino loads exactly one file (the manifest's `entry`), and the engine has no `require` and no
+module resolver, so an `import` from `plugin.js` to a second file has nothing to resolve against on
+the device. That does not mean you must write the whole plugin in one file — just that the file you
+publish has to be the finished, single-file result.
+
+Write it split, normally, then bundle it before you publish:
+
+```
+src/
+  animeav1.js       a helper module
+  plugin.js         the entry point; imports from animeav1.js
+kino-plugin.json
+package.json
+```
+
+```js
+// src/animeav1.js
+export async function searchAnimeAV1(query) {
+  const res = await kino.fetch(`https://animeav1.com/api/search?q=${encodeURIComponent(query)}`);
+  return JSON.parse(res.text()).results.map((r) => ({ id: r.slug, title: r.title, poster: r.image }));
+}
+```
+
+```js
+// src/plugin.js -- this import is fine: it runs through the bundler, never on the device
+import { searchAnimeAV1 } from "./animeav1.js";
+
+export async function search(query) {
+  return searchAnimeAV1(query);
+}
+```
+
+Bundle with [esbuild](https://esbuild.github.io/) (`npm i -D esbuild`), targeting ES module output
+(Kino runs the published file as one):
+
+```bash
+npx esbuild src/plugin.js --bundle --format=esm --outfile=plugin.js
+```
+
+`plugin.js` at the repo root is what comes out of that command, with `src/animeav1.js` inlined into
+it and its `export async function search` intact -- that is the file `entry` names and the one Kino
+fetches. Add it as an npm script (`"build": "esbuild src/plugin.js --bundle --format=esm --outfile=plugin.js"`)
+and run it before every `sdk/` test or publish. Rollup and webpack work the same way; esbuild needs
+the least configuration for a plugin this size.
 
 ### The trap: a rejection nobody is listening to yet
 
