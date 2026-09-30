@@ -20,6 +20,18 @@ import io.sentry.SentryEvent
  *    (`"token=abc123"` -> `"token=[REDACTED]"`, `"Authorization: Bearer eyJ..."` ->
  *    `"Authorization=Bearer [REDACTED]"`), driven by [sensitiveValuePattern].
  *
+ * Plus addresses, by value, in every event's message, exception values (the whole cause chain) and
+ * kept breadcrumbs: URLs, e-mails, IPv4/IPv6 literals, hostnames and long ids become placeholders
+ * ([PrivateText.scrubAddresses]) -- `Unable to resolve host "casa.duckdns.org"` or `Cleartext HTTP
+ * traffic to 192.168.1.5` must not name the person's server. Exception TYPES and stack frames are
+ * never touched: they are the app's code, not the person's data.
+ *
+ * Breadcrumbs ([breadcrumb], also the SDK's `beforeBreadcrumb`): only the SDK's own lifecycle,
+ * navigation, device, network-state and UI-interaction categories ([allowedBreadcrumbCategories])
+ * are kept. Anything else is dropped -- above all `Logcat`: the Gradle plugin's logcat
+ * instrumentation is off (`app/build.gradle.kts`), but should it ever come back, every `Log.w` line
+ * (a plugin's raw error text, `fetch GET <host><path>`) would ride along on every event.
+ *
  * Not a full-text DLP scanner -- "obviously sensitive fields/values", not every possible leak
  * shape. This is defense in depth: nothing in this app's own Sentry wiring hands the SDK a
  * credential on purpose (no OkHttp/network breadcrumbs are wired in -- `autoInstallation` is off
@@ -96,22 +108,53 @@ object SentryScrubber {
             ?.forEach { event.removeTag(it) }
 
         event.message?.let { message ->
-            message.formatted = redactSensitiveText(message.formatted)
-            message.message = redactSensitiveText(message.message)
+            message.formatted = scrubText(message.formatted)
+            message.message = scrubText(message.message)
         }
-        event.exceptions?.forEach { it.value = redactSensitiveText(it.value) }
+        // Values only (the message of each exception in the cause chain); type, module and
+        // stacktrace stay exactly as captured.
+        event.exceptions?.forEach { it.value = scrubText(it.value) }
 
-        event.breadcrumbs?.forEach { breadcrumb -> scrubBreadcrumb(breadcrumb) }
+        event.breadcrumbs?.let { crumbs ->
+            val kept = crumbs.mapNotNull { breadcrumb(it) }
+            if (kept.size != crumbs.size) event.breadcrumbs = kept
+        }
 
         return event
     }
 
-    /** By-key AND by-value scrub for one breadcrumb: its own `message` text (by value) and its
-     *  `data` map (by key). */
-    private fun scrubBreadcrumb(breadcrumb: Breadcrumb) {
-        breadcrumb.message = redactSensitiveText(breadcrumb.message)
+    /**
+     * One breadcrumb as it may leave the device, or null to drop it: only [allowedBreadcrumbCategories]
+     * are kept, with their message and string data scrubbed like an exception value and credential-
+     * named data keys removed. The SDK's `beforeBreadcrumb` (see `ArkivApp.installSentry`), and
+     * [scrub] again for whatever an event already carries.
+     */
+    fun breadcrumb(breadcrumb: Breadcrumb): Breadcrumb? {
+        val category = breadcrumb.category ?: return null
+        if (category !in allowedBreadcrumbCategories) return null
+        breadcrumb.message = scrubText(breadcrumb.message)
         val data = breadcrumb.data
         data.keys.filter { sensitiveKeyPattern.containsMatchIn(it) }.toList()
             .forEach { data.remove(it) }
+        data.entries.filter { it.value is String }.toList()
+            .forEach { (key, value) -> data[key] = scrubText(value as String) }
+        return breadcrumb
     }
+
+    /** Credential shapes, then addresses; app/platform text, so dotted code names are kept. */
+    private fun scrubText(text: String?): String? {
+        val redacted = redactSensitiveText(text)
+        if (redacted.isNullOrEmpty()) return redacted
+        return PrivateText.scrubAddresses(redacted, keepCodeNames = true)
+    }
+
+    /**
+     * The SDK's own breadcrumbs that carry no person data: app/activity lifecycle and navigation
+     * (class names), system and connectivity events, orientation, taps/scrolls (view ids). Everything
+     * else -- `Logcat`, `http`, a category nobody here chose -- is dropped.
+     */
+    private val allowedBreadcrumbCategories = setOf(
+        "app.lifecycle", "ui.lifecycle", "navigation", "device.event", "device.orientation",
+        "network.event", "ui.click", "ui.scroll", "ui.swipe", "session",
+    )
 }

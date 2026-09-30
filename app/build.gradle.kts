@@ -584,6 +584,16 @@ sentry {
     includeSourceContext.set(false)
     includeDependenciesReport.set(false)
     telemetry.set(false)
+    // Privacy: the logcat instrumentation rewrites every `Log.w`/`Log.e` call into a Sentry
+    // breadcrumb, and those lines carry a plugin's raw error text and `fetch GET <host><path>` (the
+    // person's own server, LAN IPs, user ids) -- up to 100 of them on every event. Off; the runtime
+    // `beforeBreadcrumb` (SentryScrubber.breadcrumb) also drops the `Logcat` category should it
+    // ever come back.
+    tracingInstrumentation {
+        logcat {
+            enabled.set(false)
+        }
+    }
 }
 
 /**

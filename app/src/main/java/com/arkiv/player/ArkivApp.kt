@@ -301,6 +301,9 @@ class ArkivApp : Application(), ImageLoaderFactory {
             // inline here. Applies to EVERY event this file or Crash.report sends, regardless of
             // source (unhandled, ANR, NDK, or hand-captured) -- beforeSend is one global hook.
             options.setBeforeSend { event, _ -> com.arkiv.player.crash.SentryScrubber.scrub(event) }
+            // Breadcrumbs: only the SDK's own lifecycle/navigation/device/UI categories survive, scrubbed;
+            // `Logcat` (and anything else) is dropped at the door -- see SentryScrubber.breadcrumb.
+            options.setBeforeBreadcrumb { breadcrumb, _ -> com.arkiv.player.crash.SentryScrubber.breadcrumb(breadcrumb) }
         }
     }
 
