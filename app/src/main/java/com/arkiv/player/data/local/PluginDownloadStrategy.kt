@@ -24,7 +24,10 @@ import java.io.File
  * built per plugin id by `AppGraph` -- with the response sniffed for a manifest in disguise
  * ([ManifestSniff]). An HLS stream (by URL, mime or sniffed) is saved as one file by [HlsDownloader]
  * over that same client. Every refusal is a PERMANENT [DownloadOutcome.Failed] ("Este video no se
- * puede descargar"): the row ends `refused`, with no "Reintentar" and no crash report. Subtitles become
+ * puede descargar"): the row ends `refused`, with no "Reintentar" and no crash report. So is the host
+ * gate refusing a request ([PluginHostRefusal]: a segment CDN, a redirect or a key the plugin never
+ * declared), with a sentence that names the server; downloading again after approving it while
+ * playing works, since each download reads the plugin's hosts afresh. Subtitles become
  * sidecars ([SubtitleSidecars]); `audioTracks` are NOT saved: the offline copy has only the audio
  * inside the video file (documented in the SDK guide).
  *
@@ -101,7 +104,10 @@ class PluginDownloadStrategy(
     ).fold(
         onSuccess = { file -> done(http, episodeId, playable, targetDir, file) },
         onFailure = {
-            if (it is HlsRefusedException) {
+            if (PluginHostRefusal.of(it) != null) {
+                android.util.Log.i(TAG, "HLS download of $episodeId refused by the host gate")
+                DownloadOutcome.Failed(PluginHostRefusal.message(it), permanent = true)
+            } else if (it is HlsRefusedException) {
                 android.util.Log.i(TAG, "HLS download of $episodeId refused: ${it.detail}")
                 DownloadOutcome.Failed(PluginDownloadEligibility.NOT_DOWNLOADABLE, permanent = true)
             } else {
@@ -117,8 +123,10 @@ class PluginDownloadStrategy(
         return DownloadOutcome.Done(file)
     }
 
+    /** A host-gate refusal is permanent ([PluginHostRefusal]); anything else keeps its own classification. */
     private fun failed(e: Throwable) =
-        DownloadOutcome.Failed(e.message ?: "Falló la descarga", transient = DownloadRetryPolicy.isTransient(e))
+        if (PluginHostRefusal.of(e) != null) DownloadOutcome.Failed(PluginHostRefusal.message(e), permanent = true)
+        else DownloadOutcome.Failed(e.message ?: "Falló la descarga", transient = DownloadRetryPolicy.isTransient(e))
 
     /**
      * The saved file's extension: the declared `mime` names the container when it is one we know,

@@ -44,8 +44,9 @@ object PluginStreamHttp {
         /**
          * The plugin whose undeclared-but-askable hosts this client reports as
          * [UndeclaredPlaybackHostException], so the player can ask the person
-         * ([PluginHostGate.playbackRefusal]). Only the player's stream client sets it; null (a
-         * download, a license client, every other caller) refuses exactly as before.
+         * ([PluginHostGate.playbackRefusal]). The player's stream client sets it, and so does a
+         * plugin's download client, which asks nobody but words its refusal from it
+         * (`PluginHostRefusal`); null (a license client, every other caller) refuses exactly as before.
          */
         askAboutFor: String? = null,
         /**

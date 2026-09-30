@@ -237,8 +237,7 @@ class PluginDownloadStrategyTest {
 
         server.enqueue(MockResponse().setBody("#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"k\"\n#EXTINF:4,\nseg0.ts\n#EXT-X-ENDLIST\n"))
         server.enqueue(MockResponse().setBody(okio.Buffer().write(ts(5)))) // head probe
-        server.enqueue(MockResponse().setBody(okio.Buffer().write(ts(5)))) // the segment
-        server.enqueue(MockResponse().setBody("<html>no</html>")) // the "key"
+        server.enqueue(MockResponse().setBody("<html>no</html>")) // the "key", to decrypt that head
         val badKey = strategy(FakeSource { playable("/key/index.m3u8") }).run() as DownloadOutcome.Failed
         assertEquals(PluginDownloadEligibility.NOT_DOWNLOADABLE, badKey.reason)
         assertTrue("no Reintentar that would fail the same way", badKey.permanent)
@@ -325,6 +324,51 @@ class PluginDownloadStrategyTest {
         val plugin = strategy(FakeSource { throw GatewayException("Demo: enlace vencido") }).run() as DownloadOutcome.Failed
         assertEquals("Demo: enlace vencido", plugin.reason)
         assertFalse(plugin.transient)
+    }
+
+    /** A plugin client whose gate refuses every request to a path starting with [refusedPath] with [refusal]. */
+    private fun refusingStrategy(source: ContentSource, refusedPath: String, refusal: () -> IOException) = PluginDownloadStrategy(
+        refForEpisode = { savedRef },
+        source = source,
+        downloaderFor = {
+            val client = OkHttpClient.Builder().addInterceptor { chain ->
+                if (chain.request().url.encodedPath.startsWith(refusedPath)) throw refusal()
+                chain.proceed(chain.request())
+            }.build()
+            HttpRangeDownloader(client, freeSpace = { Long.MAX_VALUE })
+        },
+        offersDownloads = { true },
+    )
+
+    @Test fun `HLS segments on a host the plugin never declared are a permanent refusal that says how to allow it`() = runBlocking {
+        server.enqueue(MockResponse().setBody("#EXTM3U\n#EXTINF:4,\n/cdn/seg0.ts\n#EXT-X-ENDLIST\n"))
+        val strategy = refusingStrategy(FakeSource { playable("/hls/index.m3u8") }, "/cdn/") {
+            com.arkiv.player.data.plugin.UndeclaredPlaybackHostException("demo", "cdn.other.example")
+        }
+        val failed = strategy.run() as DownloadOutcome.Failed
+        assertTrue("refused: no retries, no re-resolve loop", failed.permanent)
+        assertFalse(failed.transient)
+        assertEquals(
+            "El video usa un servidor (cdn.other.example) que este plugin no tiene permitido. " +
+                "Reprodúcelo una vez para aprobar ese servidor y vuelve a descargarlo.",
+            failed.reason,
+        )
+        assertEquals(DownloadRetryPolicy.resolve(failed.transient, failed.permanent, 0), FailureResolution.REFUSE)
+        assertEquals("nothing left", emptyList<String>(), tmp.root.list()!!.filter { it.startsWith(LocalFilePaths.sanitize(episodeId)) })
+    }
+
+    @Test fun `a progressive file refused by the host gate is permanent too, and so is a redirect into the home network`() = runBlocking {
+        val refused = refusingStrategy(FakeSource { playable("/v.mp4") }, "/v.mp4") {
+            com.arkiv.player.data.plugin.HostNotAllowedException("evil.example")
+        }.run() as DownloadOutcome.Failed
+        assertTrue(refused.permanent)
+        assertEquals("El servidor del video (evil.example) no está permitido para este plugin.", refused.reason)
+
+        val lan = refusingStrategy(FakeSource { playable("/v.mp4") }, "/v.mp4") {
+            com.arkiv.player.data.plugin.PrivateAddressException("nas.example")
+        }.run() as DownloadOutcome.Failed
+        assertTrue(lan.permanent)
+        assertFalse(lan.transient)
     }
 
     @Test fun `a failed download keeps the downloader's transience`() = runBlocking {

@@ -1,5 +1,9 @@
 package com.arkiv.player.data.local
 
+import com.arkiv.player.data.plugin.HostNotAllowedException
+import com.arkiv.player.data.plugin.PluginFetchException
+import com.arkiv.player.data.plugin.PrivateAddressException
+import com.arkiv.player.data.plugin.UndeclaredPlaybackHostException
 import java.io.IOException
 import java.io.InterruptedIOException
 import java.net.SocketException
@@ -44,9 +48,11 @@ object DownloadRetryPolicy {
      * Network or server failure (retryable) vs content/environment failure (definitive).
      *
      * Anything that isn't an `IOException` counts as definitive: an unexpected logic exception
-     * doesn't get fixed by waiting 30 seconds.
+     * doesn't get fixed by waiting 30 seconds. So is a plugin's host gate refusing the request
+     * ([PluginHostRefusal]), although it arrives as an `IOException` (an `UnknownHostException` for
+     * a name that points into the home network): the same host is refused on every retry.
      */
-    fun isTransient(t: Throwable): Boolean = when (t) {
+    fun isTransient(t: Throwable): Boolean = if (PluginHostRefusal.of(t) != null) false else when (t) {
         is HttpStatusException -> isTransientStatus(t.code)
         // Cutoff mid-transfer: this is exactly the `.part` + `Range` case.
         is IncompleteDownloadException -> true
@@ -98,4 +104,35 @@ enum class FailureResolution {
     FAIL,
     /** `refused`: final, no retry, no report, removable. */
     REFUSE,
+}
+
+/**
+ * A plugin download the plugin's host gate refused (`PluginStreamHttp`, the same gate the player
+ * applies): a CDN the plugin never declared, a redirect to one, a name that resolves into the home
+ * network, plain http where only https is allowed. Deterministic -- the same request is refused on
+ * every retry -- so it is a permanent refusal ([DownloadOutcome.Failed.permanent]), never a network
+ * trouble to retry. Classified here by type, whatever `PluginHttp` says in its message.
+ */
+object PluginHostRefusal {
+    /** The gate's refusal in [t] or its cause chain, or null when [t] is anything else. */
+    fun of(t: Throwable): Throwable? = generateSequence(t) { it.cause }.take(MAX_CAUSES).firstOrNull(::isGate)
+
+    /**
+     * What the Downloads row says. A host the player would ask about ([UndeclaredPlaybackHostException],
+     * thrown by a download client built with `askAboutFor`) tells the person how to allow it: playing
+     * the title once asks, and the approved host is in the plugin's hosts for the next download.
+     */
+    fun message(t: Throwable): String = when (val e = of(t)) {
+        is UndeclaredPlaybackHostException ->
+            "El video usa un servidor (${e.host.take(100)}) que este plugin no tiene permitido. " +
+                "Reprodúcelo una vez para aprobar ese servidor y vuelve a descargarlo."
+        is PrivateAddressException -> "El servidor del video apunta a tu red local, y este plugin no puede usarla."
+        is HostNotAllowedException -> "El servidor del video (${e.host.take(100)}) no está permitido para este plugin."
+        else -> "El servidor del video no está permitido para este plugin."
+    }
+
+    private fun isGate(e: Throwable): Boolean =
+        e is HostNotAllowedException || e is PrivateAddressException || (e is PluginFetchException && e.code == "host_not_allowed")
+
+    private const val MAX_CAUSES = 8
 }

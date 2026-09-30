@@ -58,6 +58,9 @@ class HlsDownloadTest {
     private fun downloader(freeSpace: Long = Long.MAX_VALUE, concurrency: Int = 4) =
         HlsDownloader(OkHttpClient(), freeSpace = { freeSpace }, concurrency = concurrency, attempts = 1, retryDelayMs = 0)
 
+    /** Every file the download of "ep" left in the directory. */
+    private fun leftovers() = tmp.root.list()!!.filter { it.startsWith("ep.") }.sorted()
+
     private fun HlsDownloader.run(path: String, headers: Map<String, String> = emptyMap(), progress: MutableList<Pair<Long, Long>> = mutableListOf()) =
         runBlocking { download(url(path), headers, tmp.root, "ep", resumeKey = "ep-1") { d, t -> progress += d to t } }
 
@@ -404,6 +407,170 @@ class HlsDownloadTest {
         assertTrue(downloader().run("/t.m3u8").exceptionOrNull() is HlsRefusedException)
     }
 
+    @Test fun `an empty segment is asked for again, and a CDN hiccup does not kill the download`() {
+        routes["/e.m3u8"] = { text("#EXTM3U\n#EXTINF:4,\ne0.ts\n#EXTINF:4,\ne1.ts\n#EXT-X-ENDLIST\n") }
+        routes["/e0.ts"] = { body(ts(0)) }
+        var asked = 0
+        routes["/e1.ts"] = { if (++asked < 3) MockResponse().setBody("") else body(ts(1)) }
+        val file = downloader().run("/e.m3u8").getOrThrow()
+        assertArrayEquals(ts(0) + ts(1), file.readBytes())
+        assertEquals(3, asked)
+
+        // Empty every time: a hole in the video, refused after the same three asks, nothing left.
+        tmp.root.listFiles()!!.forEach { it.delete() }
+        routes["/e1.ts"] = { MockResponse().setBody("") }
+        requests.clear()
+        assertTrue(downloader().run("/e.m3u8").exceptionOrNull() is HlsRefusedException)
+        assertEquals(3, requests.count { it.path == "/e1.ts" })
+        assertEquals(emptyList<String>(), leftovers())
+    }
+
+    // ---- a refusal leaves nothing behind (M1) --------------------------------------------------
+
+    @Test fun `a refusal after some segments deletes the part, the state and the raw segments`() {
+        routes["/m.m3u8"] = { text("#EXTM3U\n" + (0 until 3).joinToString("") { "#EXTINF:4,\nm$it.ts\n" } + "#EXT-X-DISCONTINUITY\n#EXTINF:4,\nm3.ts\n#EXT-X-ENDLIST\n") }
+        (0 until 3).forEach { i -> routes["/m$i.ts"] = { body(tsProgram(listOf(0x1B, 0x0F), i)) } }
+        routes["/m3.ts"] = { body(tsProgram(listOf(0x24, 0x0F), 3)) } // HEVC after the splice
+        val e = downloader(concurrency = 1).run("/m.m3u8").exceptionOrNull()
+        assertTrue(e is HlsRefusedException)
+        assertEquals("nothing will ever resume it", emptyList<String>(), leftovers())
+    }
+
+    @Test fun `a network failure still keeps the part for the retry`() {
+        routes["/n.m3u8"] = { text("#EXTM3U\n#EXTINF:4,\nn0.ts\n#EXTINF:4,\nn1.ts\n#EXT-X-ENDLIST\n") }
+        routes["/n0.ts"] = { body(ts(0)) }
+        routes["/n1.ts"] = { MockResponse().setResponseCode(503) }
+        assertTrue(downloader(concurrency = 1).run("/n.m3u8").isFailure)
+        assertEquals(listOf("ep.hls.part", "ep.hls.state"), leftovers())
+    }
+
+    // ---- a segment is bounded while it is written (M2) ----------------------------------------
+
+    @Test fun `a segment over the cap is refused while it streams, and one that declares too much before`() {
+        routes["/b.m3u8"] = { text("#EXTM3U\n#EXTINF:4,\nb0.ts\n#EXTINF:4,\nb1.ts\n#EXT-X-ENDLIST\n") }
+        routes["/b0.ts"] = { body(ts(0)) }
+        // Chunked: no length to check up front, 64 KB of "segment" against a 16 KB cap.
+        routes["/b1.ts"] = { MockResponse().setChunkedBody(Buffer().write(ts(1, packets = 350)), 4096) }
+        val small = HlsDownloader(OkHttpClient(), freeSpace = { Long.MAX_VALUE }, concurrency = 1, attempts = 3, retryDelayMs = 0, minSegmentCapBytes = 16 * 1024)
+        val e = small.run("/b.m3u8").exceptionOrNull()
+        assertTrue(e is HlsRefusedException)
+        assertFalse(DownloadRetryPolicy.isTransient(e!!))
+        assertEquals("refused once, not retried", 1, requests.count { it.path == "/b1.ts" })
+        assertEquals(emptyList<String>(), leftovers())
+
+        routes["/b1.ts"] = { body(ts(1, packets = 350)) } // Content-Length says 65800
+        requests.clear()
+        assertTrue(small.run("/b.m3u8").exceptionOrNull() is HlsRefusedException)
+    }
+
+    @Test fun `the cap follows the declared bandwidth, so a big but plausible segment is kept`() {
+        // 4 Mbit/s × 4 s = 2 MB expected: a 100 KB segment is far below 8 times that.
+        routes["/master.m3u8"] = { text("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=4000000,RESOLUTION=1280x720\nv.m3u8\n") }
+        routes["/v.m3u8"] = { text("#EXTM3U\n#EXTINF:4,\nv0.ts\n#EXT-X-ENDLIST\n") }
+        routes["/v0.ts"] = { body(ts(0, packets = 550)) }
+        val small = HlsDownloader(OkHttpClient(), freeSpace = { Long.MAX_VALUE }, attempts = 1, retryDelayMs = 0, minSegmentCapBytes = 16 * 1024)
+        assertTrue(small.run("/master.m3u8").isSuccess)
+    }
+
+    @Test fun `the disk is measured while a segment is written, and a full disk keeps the part`() {
+        routes["/s.m3u8"] = { text("#EXTM3U\n#EXTINF:4,\ns0.ts\n#EXTINF:4,\ns1.ts\n#EXT-X-ENDLIST\n") }
+        routes["/s0.ts"] = { body(ts(0)) }
+        routes["/s1.ts"] = { body(ts(1, packets = 700)) } // ~130 KB
+        val free = java.util.concurrent.atomic.AtomicLong(Long.MAX_VALUE)
+        val checks = java.util.concurrent.atomic.AtomicInteger()
+        val d = HlsDownloader(
+            OkHttpClient(), freeSpace = { checks.incrementAndGet(); free.get() }, checkEveryBytes = 16 * 1024,
+            concurrency = 1, attempts = 3, retryDelayMs = 0,
+        )
+        // Segment 0 passes; the disk fills up during segment 1.
+        routes["/s1.ts"] = { free.set(0); body(ts(1, packets = 700)) }
+        val e = d.run("/s.m3u8").exceptionOrNull()
+        assertTrue(e is InsufficientSpaceException)
+        assertEquals("not retried onto a full disk", 1, requests.count { it.path == "/s1.ts" })
+        assertTrue(checks.get() > 2)
+        assertEquals("the part stays: freeing space and retrying resumes it", listOf("ep.hls.part", "ep.hls.state"), leftovers())
+    }
+
+    // ---- the plugin's host gate (I1) ----------------------------------------------------------
+
+    /** The plugin's download client: `localhost` declared (over http, test-only), [dns] for every other name. */
+    private fun gated(counted: MutableList<String>, dns: (String) -> List<java.net.InetAddress> = { listOf(java.net.InetAddress.getLoopbackAddress()) }): OkHttpClient {
+        val base = OkHttpClient.Builder().addInterceptor { chain -> counted += chain.request().url.host; chain.proceed(chain.request()) }.build()
+        val lookup = object : okhttp3.Dns { override fun lookup(hostname: String) = dns(hostname) }
+        return com.arkiv.player.data.plugin.PluginStreamHttp.client(
+            base, com.arkiv.player.data.plugin.EffectiveHosts(listOf("localhost", "cdn.declared.example")),
+            allowInsecureLocalhost = true, delegateDns = lookup, askAboutFor = "demo",
+        )
+    }
+
+    /** Through [gated]: the playlist on `localhost` by that name (the declared host), not the server's own. */
+    private fun HlsDownloader.runLocal(path: String) =
+        runBlocking { download("http://localhost:${server.port}$path", emptyMap(), tmp.root, "ep", resumeKey = "ep-1") { _, _ -> } }
+
+    @Test fun `segments on a CDN the plugin never declared are refused once, for good, with nothing left`() {
+        routes["/u.m3u8"] = { text("#EXTM3U\n#EXTINF:4,\nhttps://cdn.other.example/u0.ts\n#EXT-X-ENDLIST\n") }
+        val counted = mutableListOf<String>()
+        val d = HlsDownloader(gated(counted), freeSpace = { Long.MAX_VALUE }, attempts = 3, retryDelayMs = 0)
+        val e = d.runLocal("/u.m3u8").exceptionOrNull()!!
+        assertTrue(e is com.arkiv.player.data.plugin.UndeclaredPlaybackHostException)
+        assertFalse(DownloadRetryPolicy.isTransient(e))
+        assertEquals("no quick retries either", 1, counted.count { it == "cdn.other.example" })
+        assertTrue(PluginHostRefusal.message(e).contains("Reprodúcelo una vez"))
+        assertEquals(PluginHostRefusal.message(e), HlsFailureText.of(e))
+        assertEquals(emptyList<String>(), leftovers())
+    }
+
+    @Test fun `a declared CDN that resolves into the home network, and a redirect off the declared hosts, are refusals`() {
+        routes["/p.m3u8"] = { text("#EXTM3U\n#EXTINF:4,\nhttps://cdn.declared.example/p0.ts\n#EXT-X-ENDLIST\n") }
+        val lan = { host: String ->
+            if (host == "localhost") listOf(java.net.InetAddress.getLoopbackAddress()) else listOf(java.net.InetAddress.getByName("192.168.1.5"))
+        }
+        val e = HlsDownloader(gated(mutableListOf(), lan), freeSpace = { Long.MAX_VALUE }, attempts = 3, retryDelayMs = 0).runLocal("/p.m3u8").exceptionOrNull()!!
+        assertTrue(e.toString(), PluginHostRefusal.of(e) is com.arkiv.player.data.plugin.PrivateAddressException)
+        assertFalse(DownloadRetryPolicy.isTransient(e))
+
+        routes["/r.m3u8"] = { text("#EXTM3U\n#EXTINF:4,\nr0.ts\n#EXT-X-ENDLIST\n") }
+        routes["/r0.ts"] = { MockResponse().setResponseCode(302).setHeader("Location", "https://evil.example/r0.ts") }
+        val counted = mutableListOf<String>()
+        val redirected = HlsDownloader(gated(counted), freeSpace = { Long.MAX_VALUE }, attempts = 3, retryDelayMs = 0).runLocal("/r.m3u8").exceptionOrNull()!!
+        assertTrue(PluginHostRefusal.of(redirected) is com.arkiv.player.data.plugin.HostNotAllowedException)
+        assertFalse(DownloadRetryPolicy.isTransient(redirected))
+        assertEquals(1, requests.count { it.path == "/r0.ts" })
+    }
+
+    // ---- AES-128 resume (fingerprint on the plaintext) ----------------------------------------
+
+    @Test fun `an AES stream whose key changes on every resolve still resumes`() {
+        fun enc(key: ByteArray, plain: ByteArray, seq: Long) = Cipher.getInstance("AES/CBC/PKCS5Padding")
+            .apply { init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(ByteBuffer.allocate(16).putLong(8, seq).array())) }
+            .doFinal(plain)
+        fun serve(dir: String, key: ByteArray) {
+            routes["/$dir/i.m3u8"] = { text("#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"k.bin\"\n" + (0 until 4).joinToString("") { "#EXTINF:4,\ns$it.ts\n" } + "#EXT-X-ENDLIST\n") }
+            routes["/$dir/k.bin"] = { body(key) }
+            (0 until 4).forEach { i -> routes["/$dir/s$i.ts"] = { body(enc(key, ts(i, packets = 100), i.toLong())) } }
+        }
+        serve("one", ByteArray(16) { 1 })
+        routes["/one/s2.ts"] = { MockResponse().setResponseCode(503) }
+        assertTrue(downloader(concurrency = 2).run("/one/i.m3u8").isFailure)
+
+        // The next resolve: another key URL and other key bytes, the same video.
+        serve("two", ByteArray(16) { 2 })
+        requests.clear()
+        val file = downloader(concurrency = 2).run("/two/i.m3u8").getOrThrow()
+        assertArrayEquals((0 until 4).map { ts(it, packets = 100) }.reduce { a, b -> a + b }, file.readBytes())
+        assertTrue("segment 1 was not fetched again", requests.none { it.path == "/two/s1.ts" })
+        assertEquals("segment 0 is only probed", "bytes=0-16383", requests.single { it.path == "/two/s0.ts" }.getHeader("Range"))
+    }
+
+    @Test fun `a prefix of whole AES blocks decrypts without the padding`() {
+        val key = ByteArray(16) { 3 }
+        val iv = ByteArray(16) { 4 }
+        val plain = ByteArray(100) { it.toByte() }
+        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding").apply { init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(iv)) }.doFinal(plain)
+        assertArrayEquals(plain.copyOf(48), HlsCrypto.decryptPrefix(cipher.copyOf(50), key, iv))
+        assertEquals(0, HlsCrypto.decryptPrefix(ByteArray(15), key, iv).size)
+    }
+
     @Test fun `every non-refusal failure reads as a Spanish sentence`() {
         assertEquals("El servidor ya no tiene este video (HTTP 404).", HlsFailureText.of(HttpStatusException(404)))
         assertEquals("El servidor del video no dio acceso (HTTP 403).", HlsFailureText.of(HttpStatusException(403)))
@@ -428,6 +595,47 @@ class HlsDownloadTest {
         val streams = types.flatMapIndexed { i, t -> listOf(t.toByte(), 0xE1.toByte(), (0x01 + i).toByte(), 0xF0.toByte(), 0) }.toByteArray()
         val pmt = byteArrayOf(0x02, 0xB0.toByte(), (13 + streams.size).toByte(), 0, 1, 0xC1.toByte(), 0, 0, 0xE1.toByte(), 0x01, 0xF0.toByte(), 0) + streams + ByteArray(4)
         return psi(0, pat) + psi(0x100, pmt) + ts(n, packets)
+    }
+
+    /** One TS packet on [pid] whose payload bytes are all [n]. */
+    private fun pkt(pid: Int, n: Int): ByteArray =
+        ByteArray(188) { n.toByte() }.also { it[0] = 0x47; it[1] = (pid shr 8).toByte(); it[2] = pid.toByte(); it[3] = 0x10 }
+
+    /** PAT (program 1 on PID 0x100) + a PMT declaring [streams] (pid to type). */
+    private fun programAt(streams: List<Pair<Int, Int>>): ByteArray {
+        val pat = byteArrayOf(0x00, 0xB0.toByte(), 13, 0, 1, 0xC1.toByte(), 0, 0, 0, 1, 0xE1.toByte(), 0x00, 0, 0, 0, 0)
+        val entries = streams.flatMap { (pid, t) -> listOf(t.toByte(), (0xE0 or (pid shr 8)).toByte(), pid.toByte(), 0xF0.toByte(), 0) }.toByteArray()
+        val pmt = byteArrayOf(0x02, 0xB0.toByte(), (13 + entries.size).toByte(), 0, 1, 0xC1.toByte(), 0, 0, 0xE1.toByte(), 0x01, 0xF0.toByte(), 0) + entries + ByteArray(4)
+        return psi(0, pat) + psi(0x100, pmt)
+    }
+
+    @Test fun `the PMT's streams are read with their PIDs`() {
+        assertEquals(listOf(TsStream(0x101, 0x1B), TsStream(0x102, 0x0F), TsStream(0x1F0, 0x15)), TsProgram.streams(programAt(listOf(0x101 to 0x1B, 0x102 to 0x0F, 0x1F0 to 0x15))))
+        assertTrue(TsProgram.isAudioVideo(0x1B) && TsProgram.isAudioVideo(0x0F) && TsProgram.isAudioVideo(0x81))
+        assertFalse(TsProgram.isAudioVideo(0x15) || TsProgram.isAudioVideo(0x86) || TsProgram.isAudioVideo(0x06))
+    }
+
+    @Test fun `metadata streams coming and going at a discontinuity are not a change`() {
+        routes["/id3.m3u8"] = { text("#EXTM3U\n#EXTINF:4,\na.ts\n#EXT-X-DISCONTINUITY\n#EXTINF:4,\nb.ts\n#EXT-X-ENDLIST\n") }
+        val first = programAt(listOf(0x101 to 0x1B, 0x102 to 0x0F, 0x103 to 0x15)) + pkt(0x101, 1) + pkt(0x102, 2)
+        val second = programAt(listOf(0x101 to 0x1B, 0x102 to 0x0F, 0x1F0 to 0x86)) + pkt(0x101, 3) + pkt(0x1F0, 4)
+        routes["/a.ts"] = { body(first) }
+        routes["/b.ts"] = { body(second) }
+        val file = downloader().run("/id3.m3u8").getOrThrow()
+        assertArrayEquals("same PIDs: written as they came", first + second, file.readBytes())
+    }
+
+    @Test fun `the same codecs on other PIDs after a splice are written back under the first PIDs`() {
+        routes["/pid.m3u8"] = { text("#EXTM3U\n#EXTINF:4,\na.ts\n#EXT-X-DISCONTINUITY\n#EXTINF:4,\nb.ts\n#EXTINF:4,\nc.ts\n#EXT-X-ENDLIST\n") }
+        val first = programAt(listOf(0x101 to 0x1B, 0x102 to 0x0F)) + pkt(0x101, 1) + pkt(0x102, 2)
+        // The splice's muxer: video on 0x102 (the first segment's audio PID), audio on 0x201, ID3 on 0x101.
+        val secondPmt = programAt(listOf(0x102 to 0x1B, 0x201 to 0x0F, 0x101 to 0x15))
+        routes["/a.ts"] = { body(first) }
+        routes["/b.ts"] = { body(secondPmt + pkt(0x102, 3) + pkt(0x201, 4) + pkt(0x101, 5)) }
+        routes["/c.ts"] = { body(pkt(0x102, 6) + pkt(0x201, 7)) } // no PMT of its own: the renumbering goes on
+        val file = downloader(concurrency = 1).run("/pid.m3u8").getOrThrow()
+        val expected = first + secondPmt + pkt(0x101, 3) + pkt(0x102, 4) + pkt(TsPidRewriter.NULL_PID, 5) + pkt(0x101, 6) + pkt(0x102, 7)
+        assertArrayEquals(expected, file.readBytes())
     }
 
     @Test fun `the PMT's stream types are read from a segment head`() {

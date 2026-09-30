@@ -30,7 +30,15 @@ import kotlin.coroutines.coroutineContext
  *
  * Files, all named `<base>.…` so "Quitar"'s prefix sweep reaches every one: `<base>.hls.part` (the
  * output so far), `<base>.hls.state` ([HlsResumeState]), `<base>.hls.seg<N>` (a batch's raw
- * segments, deleted as soon as they are appended, and on cancellation).
+ * segments, deleted as soon as they are appended, and on cancellation). A refusal
+ * ([HlsRefusedException], or the plugin's host gate: [PluginHostRefusal]) deletes all of them: the
+ * row ends `refused` and nothing will ever resume that part, so it must not sit on the disk.
+ *
+ * A segment is bounded while it is written: never more than [segmentCapFor] bytes (a playlist
+ * listing a live endpoint or a whole movie as one "segment" is refused, not written until the disk
+ * is full), and the disk is measured every [checkEveryBytes] of it ([FreeSpacePolicy]). A segment
+ * that arrives empty is asked for again [emptyAttempts] times (a CDN hiccup answering 200 with no
+ * body) before it is a refusal.
  *
  * Fetches [concurrency] segments at a time and appends them in order; each gets [attempts] quick
  * tries. A failure that survives them surfaces as is ([DownloadRetryPolicy] classifies it: network
@@ -44,6 +52,9 @@ class HlsDownloader(
     private val concurrency: Int = DEFAULT_CONCURRENCY,
     private val attempts: Int = 3,
     private val retryDelayMs: Long = 1_000,
+    /** The floor of [segmentCapFor]: whatever the playlist declares, a segment may be this big. */
+    private val minSegmentCapBytes: Long = MIN_SEGMENT_CAP_BYTES,
+    private val emptyAttempts: Int = 3,
 ) {
 
     suspend fun download(
@@ -57,6 +68,16 @@ class HlsDownloader(
     ): Result<File> = withContext(Dispatchers.IO) {
         runCatching { run(url, headers, targetDir, baseName, resumeKey, onProgress) }
             .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
+            .onFailure { if (isRefusal(it)) discard(targetDir, baseName) }
+    }
+
+    /** Final for this stream: the worker ends the row `refused`, and nothing resumes its files. */
+    private fun isRefusal(t: Throwable) = t is HlsRefusedException || PluginHostRefusal.of(t) != null
+
+    /** Every file of an HLS download of [base] but the finished one: part, state and raw segments. */
+    private fun discard(dir: File, base: String) {
+        dir.listFiles { f -> f.name == "$base.hls.part" || f.name == "$base.hls.state" || f.name.startsWith("$base.hls.seg") }
+            ?.forEach { runCatching { it.delete() } }
     }
 
     private suspend fun run(
@@ -99,9 +120,16 @@ class HlsDownloader(
         // The content's own bytes go into the fingerprint (fMP4: the init section, needed anyway;
         // TS: the head of the first segment), so a retry that resolved to another encode with the
         // same segment count and duration starts over instead of splicing two encodes, while the
-        // same bytes behind another CDN's URL still resume.
+        // same bytes behind another CDN's URL still resume. An AES-128 TS head is hashed DECRYPTED:
+        // sites that hand out a new key (URL and bytes) on every resolve encrypt the same video
+        // differently each time, and the part holds plaintext anyway, so only the plaintext says
+        // whether it is the same content. The key itself is never part of the fingerprint.
+        val keys = ConcurrentHashMap<String, ByteArray>()
         val initBytes = media.init?.let { fetchCapped(it.uri, it.range, headers, MAX_INIT_BYTES, "init section") }
-        val contentBytes = initBytes ?: fetchHead(segments[0], headers)
+        val contentBytes = initBytes ?: fetchHead(segments[0], headers).let { head ->
+            val key = segments[0].key?.let { k -> keys[k.uri] ?: fetchKey(k.uri, headers).also { keys[k.uri] = it } }
+            if (key == null) head else HlsCrypto.decryptPrefix(head, key, HlsCrypto.ivFor(segments[0]))
+        }
         val fingerprint = HlsResumeState.fingerprint(media, variant, HlsResumeState.contentHash(contentBytes))
 
         val saved = runCatching { stateFile.readText() }.getOrNull()?.let(HlsResumeState::fromJson)
@@ -116,11 +144,10 @@ class HlsDownloader(
             RandomAccessFile(part, "rw").use { it.setLength(state.partBytes) }
         }
 
-        // TS discontinuities are kept as they are unless the program's elementary streams change
-        // there ([TsProgram]): compared with the first segment's, re-read from the part on a resume.
-        val program = TsProgramCheck(if (!fmp4 && state.segmentsDone > 0) TsProgram.streamTypes(readHead(part)) else null)
+        // TS discontinuities are kept as they are unless the program's audio/video codecs change
+        // there ([TsProgramCheck]): compared with the first segment's, re-read from the part on a resume.
+        val program = TsProgramCheck(if (!fmp4 && state.segmentsDone > 0) TsProgram.streams(readHead(part)) else null)
 
-        val keys = ConcurrentHashMap<String, ByteArray>()
         var sinceDiskCheck = 0L
         var done = state.segmentsDone
         report(onProgress, state, segments.size)
@@ -129,7 +156,9 @@ class HlsDownloader(
                 coroutineContext.ensureActive()
                 val batch = (done until minOf(done + concurrency, segments.size)).toList()
                 val raw = coroutineScope {
-                    batch.map { i -> async { fetchToFile(segments[i], File(dir, "$base.hls.seg$i"), headers) } }.awaitAll()
+                    batch.map { i ->
+                        async { fetchSegment(i, segments[i], File(dir, "$base.hls.seg$i"), headers, segmentCapFor(segments[i], bandwidth)) }
+                    }.awaitAll()
                 }
                 val sizes = state!!.sizes.toMutableList()
                 FileOutputStream(part, true).use { out ->
@@ -191,8 +220,8 @@ class HlsDownloader(
         fmp4: Boolean,
         program: TsProgramCheck,
     ): Long {
-        // Checked as each segment arrives, not at the end: an empty answer will be empty on every
-        // retry too, and an fMP4 fragment of 0 bytes cannot even be described in the sidx.
+        // Checked as each segment arrives, not at the end ([fetchSegment] already asked again): an
+        // fMP4 fragment of 0 bytes cannot even be described in the sidx, and a TS one is a hole.
         if (raw.length() == 0L) throw HlsRefusedException("segment $index is empty")
         val key = segment.key?.let { k -> keys[k.uri] ?: fetchKey(k.uri, headers).also { keys[k.uri] = it } }
         val written = try {
@@ -237,15 +266,19 @@ class HlsDownloader(
                 return@use 0L
             }
             if (!fmp4) program.check(index, first, segment.discontinuity, head.copyOfRange(start, headLength))
-            out.write(head, start, headLength - start)
+            // Renumbered PIDs after a splice are written back under the first segment's (see TsProgramCheck).
+            val rewriter = program.rewriter()?.let { TsPidRewriter(out, it) }
+            val write: (ByteArray, Int, Int) -> Unit = rewriter?.let { r -> r::write } ?: { b, off, len -> out.write(b, off, len) }
+            write(head, start, headLength - start)
             var written = (headLength - start).toLong()
             val buf = ByteArray(64 * 1024)
             while (true) {
                 val n = stream.read(buf)
                 if (n < 0) break
-                out.write(buf, 0, n)
+                write(buf, 0, n)
                 written += n
             }
+            rewriter?.finish()
             written
         }
     }
@@ -315,31 +348,67 @@ class HlsDownloader(
 
     private fun readHead(file: File): ByteArray = file.inputStream().use { it.readAtMost(HEAD_BYTES.toLong()) }
 
-    private suspend fun fetchToFile(segment: HlsSegment, file: File, headers: Map<String, String>): File = withRetries {
-        client.newCall(request(segment.uri, segment.range, headers)).execute().use { resp ->
-            if (!resp.isSuccessful) throw HttpStatusException(resp.code)
-            val body = resp.body ?: throw IOException("respuesta sin cuerpo")
-            // A server that ignores Range sends the whole resource: take the asked-for slice of it.
-            val skip = if (segment.range != null && resp.code == 200) segment.range.offset else 0L
-            val expected = segment.range?.length ?: body.contentLength()
-            body.byteStream().use { input ->
-                if (skip > 0) input.skipNBytesCompat(skip)
-                FileOutputStream(file).use { out ->
-                    val buf = ByteArray(64 * 1024)
-                    var total = 0L
-                    while (true) {
-                        coroutineContext.ensureActive()
-                        val want = if (segment.range != null) minOf(buf.size.toLong(), expected - total).toInt() else buf.size
-                        if (want <= 0) break
-                        val n = input.read(buf, 0, want)
-                        if (n < 0) break
-                        out.write(buf, 0, n)
-                        total += n
+    /**
+     * The most one segment may weigh: [SEGMENT_CAP_FACTOR] times what the variant's declared
+     * bandwidth says it should (a VBR peak is far below that), never under [minSegmentCapBytes] and
+     * never over a sidx reference's 31 bits.
+     */
+    private fun segmentCapFor(segment: HlsSegment, bandwidth: Long): Long {
+        val expected = if (bandwidth > 0) (bandwidth / 8.0 * segment.durationSec).toLong() else 0L
+        return maxOf(minSegmentCapBytes, expected * SEGMENT_CAP_FACTOR).coerceAtMost(Mp4Sidx.MAX_REFERENCE_SIZE)
+    }
+
+    /**
+     * [fetchToFile], asked again when it arrives empty: a 200 with an empty (chunked) body is often a
+     * CDN hiccup that the next request doesn't repeat. Empty [emptyAttempts] times in a row is a hole
+     * in the video, and a refusal.
+     */
+    private suspend fun fetchSegment(index: Int, segment: HlsSegment, file: File, headers: Map<String, String>, cap: Long): File {
+        repeat(emptyAttempts) { n ->
+            val fetched = fetchToFile(index, segment, file, headers, cap)
+            if (fetched.length() > 0) return fetched
+            if (n < emptyAttempts - 1) delay(retryDelayMs)
+        }
+        throw HlsRefusedException("segment $index is empty")
+    }
+
+    private suspend fun fetchToFile(index: Int, segment: HlsSegment, file: File, headers: Map<String, String>, cap: Long): File {
+        if (segment.range != null && segment.range.length > cap) throw HlsRefusedException("segment $index byte range of ${segment.range.length} bytes")
+        return withRetries {
+            client.newCall(request(segment.uri, segment.range, headers)).execute().use { resp ->
+                if (!resp.isSuccessful) throw HttpStatusException(resp.code)
+                val body = resp.body ?: throw IOException("respuesta sin cuerpo")
+                // A server that ignores Range sends the whole resource: take the asked-for slice of it.
+                val skip = if (segment.range != null && resp.code == 200) segment.range.offset else 0L
+                val expected = segment.range?.length ?: body.contentLength()
+                if (expected > cap) throw HlsRefusedException("segment $index declares $expected bytes")
+                body.byteStream().use { input ->
+                    if (skip > 0) input.skipNBytesCompat(skip)
+                    FileOutputStream(file).use { out ->
+                        val buf = ByteArray(64 * 1024)
+                        var total = 0L
+                        var sinceDiskCheck = 0L
+                        while (true) {
+                            coroutineContext.ensureActive()
+                            val want = if (segment.range != null) minOf(buf.size.toLong(), expected - total).toInt() else buf.size
+                            if (want <= 0) break
+                            val n = input.read(buf, 0, want)
+                            if (n < 0) break
+                            // Bounded whatever the headers said: a chunked body has no length to check up front.
+                            if (total + n > cap) throw HlsRefusedException("segment $index larger than $cap bytes")
+                            out.write(buf, 0, n)
+                            total += n
+                            sinceDiskCheck += n
+                            if (sinceDiskCheck >= checkEveryBytes) {
+                                sinceDiskCheck = 0L
+                                freeSpace(file.parentFile ?: file).let { if (FreeSpacePolicy.isExhausted(it)) throw InsufficientSpaceException(it) }
+                            }
+                        }
+                        if (expected > 0 && total < expected) throw IncompleteDownloadException(total, expected)
                     }
-                    if (expected > 0 && total < expected) throw IncompleteDownloadException(total, expected)
                 }
+                file
             }
-            file
         }
     }
 
@@ -404,5 +473,9 @@ class HlsDownloader(
         private const val KEY_BYTES = 16
         /** How much of the first TS segment identifies the content for the resume fingerprint. */
         private const val HEAD_PROBE_BYTES = 16L * 1024
+        /** A segment is a few MB (10 s of 4K is ~50 MB); this much is never one, whatever was declared. */
+        const val MIN_SEGMENT_CAP_BYTES = 256L * 1024 * 1024
+        /** How far over its declared bandwidth × duration a segment may go before it is refused. */
+        private const val SEGMENT_CAP_FACTOR = 8L
     }
 }

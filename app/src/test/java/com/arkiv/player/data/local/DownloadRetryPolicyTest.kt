@@ -18,6 +18,19 @@ class DownloadRetryPolicyTest {
     }
 
     @Test
+    fun `the plugin's host gate refusing a request is never transient`() {
+        assertFalse(DownloadRetryPolicy.isTransient(com.arkiv.player.data.plugin.HostNotAllowedException("cdn.example")))
+        assertFalse(DownloadRetryPolicy.isTransient(com.arkiv.player.data.plugin.UndeclaredPlaybackHostException("demo", "cdn.example")))
+        // An UnknownHostException by type, but the name points into the home network: the same every time.
+        assertFalse(DownloadRetryPolicy.isTransient(com.arkiv.player.data.plugin.PrivateAddressException("nas.example")))
+        assertFalse(DownloadRetryPolicy.isTransient(com.arkiv.player.data.plugin.PluginFetchException("host_not_allowed", "solo se permite https")))
+        assertFalse("found in the cause chain too", DownloadRetryPolicy.isTransient(IOException("wrapped", com.arkiv.player.data.plugin.HostNotAllowedException("x.example"))))
+        // A plugin fetch's own network trouble still is.
+        assertTrue(DownloadRetryPolicy.isTransient(com.arkiv.player.data.plugin.PluginFetchException("network", "error de red")))
+        assertTrue(DownloadRetryPolicy.isTransient(UnknownHostException("cdn.example")))
+    }
+
+    @Test
     fun `a download cut off halfway is transient`() {
         assertTrue(DownloadRetryPolicy.isTransient(IncompleteDownloadException(written = 400, total = 1000)))
     }

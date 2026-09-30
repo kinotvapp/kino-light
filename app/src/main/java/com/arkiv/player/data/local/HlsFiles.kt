@@ -16,6 +16,19 @@ object HlsCrypto {
     fun ivFor(segment: HlsSegment): ByteArray =
         segment.key?.iv ?: ByteBuffer.allocate(16).putLong(8, segment.sequence).array()
 
+    /**
+     * The first whole blocks of [ciphertext] (a segment's head, not the whole segment) decrypted
+     * with no padding check: CBC decrypts any prefix of whole blocks on its own. For the resume
+     * fingerprint, which must see the same plaintext whatever key the stream was encrypted with.
+     */
+    fun decryptPrefix(ciphertext: ByteArray, key: ByteArray, iv: ByteArray): ByteArray {
+        val length = ciphertext.size / 16 * 16
+        if (length == 0) return ByteArray(0)
+        val cipher = Cipher.getInstance("AES/CBC/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(iv))
+        return cipher.doFinal(ciphertext, 0, length)
+    }
+
     /** [input] decrypted as it is read; closes [input] with it. */
     fun decrypting(input: InputStream, key: ByteArray, iv: ByteArray): InputStream {
         require(key.size == 16) { "AES-128 key must be 16 bytes, got ${key.size}" }
@@ -86,8 +99,10 @@ object Mp4Sidx {
  * [fingerprint] identifies the CONTENT across re-resolutions (the URLs carry tokens that change on
  * each `resolve`, and a retry may land on another CDN): same segment count, total duration and
  * format, the same chosen variant (bandwidth, height, codecs) and the same bytes (a hash of the
- * fMP4 init section, or of the first TS segment's head). Only then does a retry go on from
- * [segmentsDone]; anything else deletes the part and starts over, so two encodes are never spliced.
+ * fMP4 init section, or of the first TS segment's head -- decrypted when the stream is AES-128, so
+ * a site that issues a new key on every resolve still resumes: the key's URL and bytes are never
+ * part of it). Only then does a retry go on from [segmentsDone]; anything else deletes the part and
+ * starts over, so two encodes are never spliced.
  */
 data class HlsResumeState(
     val resumeKey: String,
@@ -139,13 +154,17 @@ data class HlsResumeState(
     }
 }
 
+/** One elementary stream a TS program map table declares: its [pid] and its stream [type]. */
+data class TsStream(val pid: Int, val type: Int)
+
 /**
- * The elementary stream types (H.264, AAC, HEVC…) a TS segment's program map table (PMT) declares,
+ * The elementary streams (H.264, AAC, HEVC, ID3…) a TS segment's program map table (PMT) declares,
  * read from its first packets (PAT → PMT, both at a segment's start in HLS). Null when the head
  * holds no complete PAT + PMT: nothing is concluded from it then.
  */
 object TsProgram {
-    fun streamTypes(bytes: ByteArray): List<Int>? {
+    /** The PMT's streams, in its order. */
+    fun streams(bytes: ByteArray): List<TsStream>? {
         var pmtPid = -1
         var at = TsSync.start(bytes).takeIf { it >= 0 } ?: return null
         while (at + TsSync.PACKET <= bytes.size) {
@@ -173,16 +192,31 @@ object TsProgram {
                 // PMT: skip PCR_PID and the program descriptors, then the stream entries.
                 if (table + 12 > sectionEnd) return null
                 var e = table + 12 + ((u8(bytes, table + 10) and 0x0F shl 8) or u8(bytes, table + 11))
-                val types = mutableListOf<Int>()
+                val streams = mutableListOf<TsStream>()
                 while (e + 5 <= sectionEnd) {
-                    types += u8(bytes, e)
+                    streams += TsStream((u8(bytes, e + 1) and 0x1F shl 8) or u8(bytes, e + 2), u8(bytes, e))
                     e += 5 + ((u8(bytes, e + 3) and 0x0F shl 8) or u8(bytes, e + 4))
                 }
-                return types.sorted().takeIf { it.isNotEmpty() }
+                return streams.takeIf { it.isNotEmpty() }
             }
         }
         return null
     }
+
+    /** The PMT's stream types, sorted. */
+    fun streamTypes(bytes: ByteArray): List<Int>? = streams(bytes)?.map { it.type }?.sorted()
+
+    /**
+     * Whether [type] is audio or video the player decodes (MPEG-1/2 video, H.264, HEVC, VVC/AVS…;
+     * MPEG audio, AAC, AC-3, E-AC-3, DTS, AC-4). Everything else -- ID3 (0x15), SCTE-35 (0x86),
+     * private data (0x06), subtitles -- is metadata for this purpose: it may come and go at a splice.
+     */
+    fun isAudioVideo(type: Int): Boolean = type in AUDIO_VIDEO
+
+    private val AUDIO_VIDEO = setOf(
+        0x01, 0x02, 0x10, 0x1B, 0x24, 0x33, 0x42, 0xD1, 0xEA, // video
+        0x03, 0x04, 0x0F, 0x11, 0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x87, 0x8A, 0xAC, // audio
+    )
 
     private fun u8(b: ByteArray, i: Int) = b[i].toInt() and 0xFF
 }
@@ -191,19 +225,107 @@ object TsProgram {
  * What a concatenated MPEG-TS does at an `EXT-X-DISCONTINUITY`. The segments are kept as they are:
  * a splice with the same streams (an intro, an ad, a re-encoded part) restarts its timestamps, and
  * the player's TS reader follows that jump the way it follows a 33-bit timestamp wrap -- the audio
- * clock resyncs and playback goes on; only seeking near the splice may land a little off. What it
- * cannot follow is a change of streams (H.264 → HEVC, AAC → AC-3, a track added or gone): the
- * extractor keeps the first PMT's readers, so the rest would play broken or silent. That is refused
- * ([HlsRefusedException]) as soon as the segment arrives. fMP4 needs no check: its one init section
- * ([HlsDownloadPlan]) fixes the tracks for the whole stream.
+ * clock resyncs and playback goes on; only seeking near the splice may land a little off.
+ *
+ * The player reads a saved `.ts` with ONE program map: the first segment's PMT fixes which PIDs are
+ * read and with which decoder, and every later PMT is ignored. So:
+ * - a change of audio/video codecs at a discontinuity (H.264 → HEVC, AAC → AC-3, a track added or
+ *   gone) cannot play: it is refused ([HlsRefusedException]) as soon as the segment arrives;
+ * - metadata streams (ID3, SCTE-35, private data: [TsProgram.isAudioVideo]) are ignored: they may
+ *   appear, vanish or move without changing what plays;
+ * - the same codecs on other PIDs (a splice encoded by another muxer) are kept, and their packets are
+ *   written back under the first segment's PIDs ([rewriter]); a packet of the new segment left on one
+ *   of those PIDs becomes a null packet, so it can't be read as the video or the audio.
+ * The renumbering found at a PMT holds for the segments after it, until the next PMT says otherwise.
+ * fMP4 needs no check: its one init section ([HlsDownloadPlan]) fixes the tracks for the whole stream.
+ * Called in segment order ([HlsDownloader] appends in order).
  */
-class TsProgramCheck(private var base: List<Int>?) {
+class TsProgramCheck(private var base: List<TsStream>?) {
+    /** Current segment PID → the first segment's PID; empty = written as is. */
+    private var remap: Map<Int, Int> = emptyMap()
+
+    /** First-segment audio/video PIDs no stream of the current segments maps to: nulled. */
+    private var nulled: Set<Int> = emptySet()
+
     fun check(index: Int, first: Boolean, discontinuity: Boolean, head: ByteArray) {
-        if (first) { base = TsProgram.streamTypes(head); return }
-        if (!discontinuity) return
-        val here = TsProgram.streamTypes(head) ?: return
+        val here = TsProgram.streams(head)
+        if (first) { base = here; remap = emptyMap(); nulled = emptySet(); return }
+        here ?: return // no PMT in this head: the renumbering in force goes on
         val expected = base ?: return
-        if (here != expected) throw HlsRefusedException("streams change at the discontinuity of segment $index: $expected -> $here")
+        val baseAv = expected.filter { TsProgram.isAudioVideo(it.type) }
+        val hereAv = here.filter { TsProgram.isAudioVideo(it.type) }
+        if (baseAv.map { it.type }.sorted() != hereAv.map { it.type }.sorted()) {
+            // A change WITHOUT a discontinuity tag is not refused (the player would not reset either).
+            if (discontinuity) {
+                throw HlsRefusedException("streams change at the discontinuity of segment $index: ${types(baseAv)} -> ${types(hereAv)}")
+            }
+            remap = emptyMap(); nulled = emptySet()
+            return
+        }
+        // Same codecs: pair them per type, in PID order.
+        val pairs = HashMap<Int, Int>()
+        baseAv.groupBy { it.type }.forEach { (type, olds) ->
+            val news = hereAv.filter { it.type == type }.sortedBy { it.pid }
+            olds.sortedBy { it.pid }.zip(news).forEach { (old, new) -> if (old.pid != new.pid) pairs[new.pid] = old.pid }
+        }
+        remap = pairs
+        nulled = if (pairs.isEmpty()) emptySet() else baseAv.map { it.pid }.toSet() - hereAv.map { it.pid }.toSet()
+    }
+
+    /** How to rewrite a packet's PID for the segment just [check]ed, or null when it is written as is. */
+    fun rewriter(): ((Int) -> Int)? {
+        if (remap.isEmpty()) return null
+        val map = remap
+        val drop = nulled
+        return { pid -> map[pid] ?: if (pid in drop) TsPidRewriter.NULL_PID else pid }
+    }
+
+    private fun types(streams: List<TsStream>) = streams.map { it.type }.sorted()
+}
+
+/**
+ * Writes MPEG-TS packets to [out] with each one's PID passed through [pidFor]. Written from a packet
+ * boundary on (what [TsSync.start] found), whole packets at a time; a trailing partial packet is
+ * written as it is by [finish].
+ */
+class TsPidRewriter(private val out: java.io.OutputStream, private val pidFor: (Int) -> Int) {
+    private val packet = ByteArray(TsSync.PACKET)
+    private var filled = 0
+
+    fun write(bytes: ByteArray, offset: Int, length: Int) {
+        var i = offset
+        val end = offset + length
+        while (i < end) {
+            val n = minOf(TsSync.PACKET - filled, end - i)
+            System.arraycopy(bytes, i, packet, filled, n)
+            filled += n
+            i += n
+            if (filled == TsSync.PACKET) {
+                rewrite()
+                out.write(packet)
+                filled = 0
+            }
+        }
+    }
+
+    fun finish() {
+        if (filled > 0) out.write(packet, 0, filled)
+        filled = 0
+    }
+
+    private fun rewrite() {
+        if (packet[0] != SYNC) return
+        val pid = (packet[1].toInt() and 0x1F shl 8) or (packet[2].toInt() and 0xFF)
+        val to = pidFor(pid)
+        if (to == pid) return
+        packet[1] = ((packet[1].toInt() and 0xE0) or (to shr 8 and 0x1F)).toByte()
+        packet[2] = to.toByte()
+    }
+
+    companion object {
+        /** MPEG-TS null packets: every reader skips them. */
+        const val NULL_PID = 0x1FFF
+        private const val SYNC: Byte = 0x47
     }
 }
 
@@ -213,7 +335,12 @@ class TsProgramCheck(private var base: List<Int>?) {
  * the JVM or the server said. The retry policy still classifies the exception itself.
  */
 object HlsFailureText {
-    fun of(t: Throwable): String = when (t) {
+    fun of(t: Throwable): String = when {
+        PluginHostRefusal.of(t) != null -> PluginHostRefusal.message(t)
+        else -> ofNetwork(t)
+    }
+
+    private fun ofNetwork(t: Throwable): String = when (t) {
         is InsufficientSpaceException -> t.message ?: NO_SPACE
         is HttpStatusException -> when (t.code) {
             401, 403 -> "El servidor del video no dio acceso (HTTP ${t.code})."
