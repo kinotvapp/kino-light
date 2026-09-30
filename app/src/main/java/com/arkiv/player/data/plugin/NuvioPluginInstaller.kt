@@ -3,7 +3,14 @@ package com.arkiv.player.data.plugin
 import java.io.FileNotFoundException
 import java.io.IOException
 
-/** [NuvioPluginInstaller.previewRepo]'s result: [address] is the one that actually worked -- with an explicit `@ref` when a fallback (see [NuvioPluginInstaller.resolveNuvioManifest]) was needed -- so [PluginsViewModel.pickNuvioScraper] hands it, not the person's raw typed text, to [NuvioPluginInstaller.previewScraper]. */
+/**
+ * [NuvioPluginInstaller.previewRepo]'s result: [address] is the one that actually worked -- with an explicit
+ * `@ref` when a fallback (see [NuvioPluginInstaller.resolveNuvioManifest]) was needed -- so
+ * [PluginsViewModel.pickNuvioScraper] hands it, not the person's raw typed text, to
+ * [NuvioPluginInstaller.previewScraper]. [scrapers] is the manifest's WHOLE list, disabled and
+ * Android-disabled entries included: the full-screen picker shows every one of them (dimmed, not
+ * installable, when [NuvioManifestParser.isInstallable] says no), not just the subset it could install.
+ */
 data class NuvioRepoPreview(val address: String, val scrapers: List<NuvioScraperEntry>)
 
 /**
@@ -25,7 +32,7 @@ class NuvioPluginInstaller(
         } catch (e: InstallException) {
             return null
         }
-        return NuvioRepoPreview(resolved.canonical, NuvioManifestParser.installable(manifest))
+        return NuvioRepoPreview(resolved.canonical, manifest.scrapers)
     }
 
     /**

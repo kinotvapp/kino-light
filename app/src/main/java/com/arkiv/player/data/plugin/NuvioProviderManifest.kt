@@ -2,7 +2,11 @@ package com.arkiv.player.data.plugin
 
 import org.json.JSONObject
 
-/** One entry of a Nuvio provider repo's `manifest.json` `scrapers` array (spec §1.1). */
+/**
+ * One entry of a Nuvio provider repo's `manifest.json` `scrapers` array (spec §1.1). [description],
+ * [version] and [author] are optional in the wild -- a real manifest carries them, the fixtures this
+ * app's own tests use often don't -- so they default to null instead of failing the whole entry.
+ */
 data class NuvioScraperEntry(
     val id: String,
     val name: String,
@@ -12,6 +16,9 @@ data class NuvioScraperEntry(
     val supportedTypes: List<String>,
     val logo: String?,
     val disabledPlatforms: List<String>,
+    val description: String? = null,
+    val version: String? = null,
+    val author: String? = null,
 )
 
 data class NuvioProviderManifest(val name: String, val scrapers: List<NuvioScraperEntry>)
@@ -37,12 +44,19 @@ object NuvioManifestParser {
                 enabled = s.optBoolean("enabled", true),
                 contentLanguage = strings(s, "contentLanguage"), supportedTypes = strings(s, "supportedTypes"),
                 logo = s.optString("logo").takeIf { it.isNotEmpty() }, disabledPlatforms = strings(s, "disabledPlatforms"),
+                description = s.optString("description").takeIf { it.isNotEmpty() },
+                version = s.optString("version").takeIf { it.isNotEmpty() },
+                author = s.optString("author").takeIf { it.isNotEmpty() },
             )
         }
         return NuvioProviderManifest(o.optString("name", "Nuvio"), scrapers)
     }
 
-    /** The scrapers Kino's picker offers: enabled by the manifest, and not disabled on Android (spec §4). */
+    /** Whether [scraper] would be offered by the picker: enabled by the manifest, and not disabled on Android (spec §4). */
+    fun isInstallable(scraper: NuvioScraperEntry): Boolean =
+        scraper.enabled && "android" !in scraper.disabledPlatforms.map(String::lowercase)
+
+    /** The scrapers Kino's picker offers: see [isInstallable]. */
     fun installable(manifest: NuvioProviderManifest): List<NuvioScraperEntry> =
-        manifest.scrapers.filter { it.enabled && "android" !in it.disabledPlatforms.map(String::lowercase) }
+        manifest.scrapers.filter(::isInstallable)
 }

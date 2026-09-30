@@ -34,6 +34,44 @@ class NuvioProviderManifestTest {
         assertEquals(listOf("vixsrc"), NuvioManifestParser.installable(m).map { it.id })
     }
 
+    @Test fun `isInstallable agrees with installable, entry by entry`() {
+        val m = NuvioManifestParser.parse(sample)!!
+        assertEquals(m.scrapers.filter(NuvioManifestParser::isInstallable), NuvioManifestParser.installable(m))
+    }
+
+    @Test fun `description, version and author parse when the manifest declares them`() {
+        val withMeta = """
+            { "name": "n", "scrapers": [
+              { "id": "x", "name": "X", "filename": "x.js", "enabled": true,
+                "description": "Busca en varios servidores", "version": "2.1.0", "author": "someone" }
+            ] }
+        """.trimIndent()
+        val scraper = NuvioManifestParser.parse(withMeta)!!.scrapers.single()
+        assertEquals("Busca en varios servidores", scraper.description)
+        assertEquals("2.1.0", scraper.version)
+        assertEquals("someone", scraper.author)
+    }
+
+    @Test fun `description, version and author are null when the manifest omits them, like the sample fixtures`() {
+        val scraper = NuvioManifestParser.parse(sample)!!.scrapers.first { it.id == "vixsrc" }
+        assertNull(scraper.description)
+        assertNull(scraper.version)
+        assertNull(scraper.author)
+    }
+
+    @Test fun `blank description, version and author are treated as absent`() {
+        val blankMeta = """
+            { "name": "n", "scrapers": [
+              { "id": "x", "name": "X", "filename": "x.js", "enabled": true,
+                "description": "", "version": "", "author": "" }
+            ] }
+        """.trimIndent()
+        val scraper = NuvioManifestParser.parse(blankMeta)!!.scrapers.single()
+        assertNull(scraper.description)
+        assertNull(scraper.version)
+        assertNull(scraper.author)
+    }
+
     @Test fun `a kino-plugin json (no scrapers array) is not a Nuvio manifest`() {
         assertNull(NuvioManifestParser.parse("""{"id":"x","name":"X","hosts":["x.com"]}"""))
     }

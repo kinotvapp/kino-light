@@ -52,6 +52,28 @@ class NuvioPluginInstallerTest {
         assertEquals("owner/nuvio-repo", preview.address) // HEAD worked first try: no `@ref` suffix
     }
 
+    /**
+     * The full-screen picker (Task: "see the scrapers properly") shows a repo's disabled and
+     * Android-disabled scrapers too, dimmed, instead of silently dropping them like the old dialog did:
+     * [NuvioPluginInstaller.previewRepo] hands over the manifest's WHOLE list, and it is
+     * [NuvioManifestParser.isInstallable] -- checked by the caller -- that decides what can be added.
+     */
+    @Test fun `previewRepo's scrapers include disabled and android-disabled entries, not just installable ones`() = runBlocking {
+        val manifestWithDisabled = """
+            { "name": "nuvio-providers", "scrapers": [
+              { "id": "fakesrc", "name": "FakeSrc", "filename": "providers/fakesrc.js", "enabled": true, "supportedTypes": ["movie"] },
+              { "id": "off", "name": "Off", "filename": "providers/off.js", "enabled": false, "supportedTypes": ["movie"] },
+              { "id": "iosonly", "name": "iOS Only", "filename": "providers/iosonly.js", "enabled": true, "supportedTypes": ["movie"], "disabledPlatforms": ["android"] }
+            ] }
+        """.trimIndent()
+        val n = NuvioPluginInstaller(installer, fetcher(mapOf(
+            "https://raw.githubusercontent.com/owner/nuvio-repo/HEAD/manifest.json" to manifestWithDisabled,
+        )), tmdbApiKey = "k")
+        val preview = n.previewRepo("owner/nuvio-repo")
+        assertEquals(listOf("fakesrc", "off", "iosonly"), preview!!.scrapers.map { it.id })
+        assertEquals(listOf("fakesrc"), preview.scrapers.filter(NuvioManifestParser::isInstallable).map { it.id })
+    }
+
     @Test fun `previewRepo returns null for a repo whose manifest isn't Nuvio-shaped`() = runBlocking {
         val notNuvio = NuvioPluginInstaller(installer, fetcher(mapOf(
             "https://raw.githubusercontent.com/owner/other/HEAD/manifest.json" to """{"hello":"world"}""",
