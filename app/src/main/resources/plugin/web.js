@@ -509,11 +509,52 @@
       return s + '//' + this.#r.host + (this.#r.port !== null ? ':' + this.#r.port : '');
     }
     get protocol() { return this.#r.scheme; }
+    set protocol(v) {
+      const m = /^([A-Za-z][A-Za-z0-9+.-]*)(:|$)/.exec(String(v));
+      if (!m) return;
+      const scheme = m[1].toLowerCase() + ':';
+      if (isSpecial(scheme) !== isSpecial(this.#r.scheme)) return;
+      if (scheme === 'file:' && (this.#r.username !== '' || this.#r.password !== '' || this.#r.port !== null)) return;
+      if (this.#r.scheme === 'file:' && this.#r.host === '') return;
+      this.#r.scheme = scheme;
+      if (this.#r.port !== null && this.#r.port === SPECIAL[scheme]) this.#r.port = null;
+    }
     get username() { return this.#r.username; }
+    set username(v) { if (this.#hasCredentialSlot()) this.#r.username = encodeSet(String(v), USERINFO); }
     get password() { return this.#r.password; }
+    set password(v) { if (this.#hasCredentialSlot()) this.#r.password = encodeSet(String(v), USERINFO); }
     get host() { return this.#r.host === null ? '' : this.#r.host + (this.#r.port !== null ? ':' + this.#r.port : ''); }
+    set host(v) { this.#setHost(String(v), true); }
     get hostname() { return this.#r.host === null ? '' : this.#r.host; }
+    set hostname(v) { this.#setHost(String(v), false); }
     get port() { return this.#r.port === null ? '' : String(this.#r.port); }
+    set port(v) {
+      if (this.#r.host === null || this.#r.host === '' || this.#r.scheme === 'file:') return;
+      const t = String(v).replace(/[\t\n\r]/g, '');
+      if (t === '') { this.#r.port = null; return; }
+      const digits = /^[0-9]+/.exec(t);
+      if (!digits) return;
+      const n = parseInt(digits[0], 10);
+      if (n > 65535) return;
+      this.#r.port = n === SPECIAL[this.#r.scheme] ? null : n;
+    }
+    #hasCredentialSlot() { return this.#r.host !== null && this.#r.host !== '' && this.#r.scheme !== 'file:'; }
+    // Host setters reuse the full parser on a probe URL of this scheme, so the new host gets the same
+    // IDNA/IPv4/IPv6/forbidden-code-point handling as the constructor; any failure leaves the URL as is
+    // (the WHATWG setters never throw).
+    #setHost(value, withPort) {
+      if (typeof this.#r.path === 'string') return;
+      let t = value.replace(/[\t\n\r]/g, '');
+      const end = t.search(isSpecial(this.#r.scheme) ? /[/?#\\]/ : /[/?#]/);
+      if (end !== -1) t = t.slice(0, end);
+      if (!withPort) { const colon = t.indexOf(':'); if (colon !== -1 && !t.startsWith('[')) t = t.slice(0, colon); }
+      if (t.includes('@') || (t === '' && isSpecial(this.#r.scheme))) return;
+      let probe;
+      try { probe = parse(this.#r.scheme + '//' + t + '/', null); } catch (e) { return; }
+      if (probe.host === null) return;
+      this.#r.host = probe.host;
+      if (withPort && probe.port !== null) this.#r.port = probe.port;
+    }
     get pathname() { return serializePath(this.#r); }
     set pathname(v) {
       if (typeof this.#r.path === 'string') return;

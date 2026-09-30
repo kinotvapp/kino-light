@@ -72,6 +72,30 @@ class PluginWebGlobalsTest {
         )
     }
 
+    // PelisPlusHD's StreamWish extractor rewrites hglink.to to hanerix.com with `u.hostname = ...`;
+    // without setters the assignment threw in strict mode and the scraper gave up on the server.
+    @Test fun `URL component setters behave like Node's`() {
+        assertEquals(
+            "[\"https://hanerix.com/e/abc?x=1\",\"https://b.example:8080/p\",\"https://b.example/p\"," +
+                "\"http://u:p%20w@a.example:81/\",\"http://a.example/\",\"https://a.example/\"," +
+                "\"https://a.example/\",\"https://a.example/\"]",
+            home(
+                """
+                'use strict';
+                const a = new URL('https://hglink.to/e/abc?x=1'); a.hostname = 'hanerix.com';
+                const b = new URL('https://a.example/p'); b.host = 'b.example:8080';
+                const c = new URL(b.href); c.port = '443';
+                const d = new URL('http://a.example/'); d.username = 'u'; d.password = 'p w'; d.port = '81';
+                const e = new URL('https://a.example/'); e.protocol = 'http'; e.port = '80';
+                const f = new URL('https://a.example/'); f.hostname = 'bad host';
+                const g = new URL('https://a.example/'); g.protocol = 'foo';
+                const h = new URL('https://a.example/'); h.port = 'x';
+                return [a.href, b.href, c.href, d.href, e.href, f.href, g.href, h.href];
+                """,
+            ),
+        )
+    }
+
     @Test fun `hostile inputs to the web globals fail as ordinary errors`() {
         val out = home(
             """
