@@ -418,18 +418,21 @@ into the manifest:
   with "Este plugin necesita una versión más nueva de Kino" — the release that includes sealed
   secrets (apiVersion 4).
 - A seal is bound to the repository (and subfolder) you passed `seal.mjs`, lowercased, **never to a
-  branch or tag**: moving the same plugin to a different branch keeps its seals valid. At install and
-  at every update Kino opens each seal once against the address the person is installing from, only to
-  check it belongs there; each run of the plugin opens them again, in memory, for that run alone. A
-  seal made for a different repository, path or name, or one that was corrupted, is refused with "Los
-  datos sellados de este plugin no son para este repositorio o están dañados"; a build that cannot open
-  seals at all (no native X25519) refuses with "Este Kino no puede abrir datos sellados".
-- **Never from a commit.** GitHub serves a fork's commits — a pull request's too — through the parent
-  repository's own address, so `owner/repo@<commit>` can be someone else's manifest, with their own
-  `hosts`, while the seal still reads `owner/repo`. A plugin with secrets installed or updated from a
-  ref that looks like a commit (7 to 40 hexadecimal characters) is refused with "Los datos sellados no
-  se pueden usar desde un commit: instala el plugin desde una rama o etiqueta", and a run at such an
-  address gets no secrets. HEAD, a branch or a tag work (a branch or tag named like a commit doesn't).
+  ref**. But it only OPENS when the plugin is installed with no explicit `@ref` at all — its default
+  branch (`HEAD`); see below. At install and at every update Kino opens each seal once against the
+  address the person is installing from, only to check it belongs there; each run of the plugin opens
+  them again, in memory, for that run alone. A seal made for a different repository, path or name, or
+  one that was corrupted, is refused with "Los datos sellados de este plugin no son para este
+  repositorio o están dañados"; a build that cannot open seals at all (no native X25519) refuses with
+  "Este Kino no puede abrir datos sellados".
+- **Only from the default branch, never an explicit `@ref`.** GitHub serves any commit reachable in a
+  repository's fork network — a fork's or a pull request's — through the parent repository's own
+  address, and not only for an obvious SHA: a short hex prefix or a git-describe ref
+  (`v1-0-g<sha>`) resolves the same way. So `owner/repo@<anything>` can be someone else's manifest,
+  with their own `hosts`, while the seal still reads `owner/repo`. A plugin with secrets installed or
+  updated with any explicit `@ref` — branch, tag, commit, whatever it's named — is refused with "Los
+  datos sellados solo funcionan si instalas el plugin desde su rama principal, sin @rama", and a run at
+  such an address gets no secrets. Only `HEAD` (no `@ref` at all) works.
 - A seal trusts the repository's *name*: if its owner is renamed or deleted and someone else
   registers that name, their repository opens your seals. Seal again for the new name, and rotate the
   value if the old one was worth protecting.

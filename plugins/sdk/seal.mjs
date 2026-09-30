@@ -35,8 +35,9 @@ const REPO_USAGE = 'expected "owner/repo" or "owner/repo/path"';
 /**
  * `owner/repo[/path]`, lowercased: what a seal binds to, exactly as the app computes it from the
  * address the plugin is installed from. A trailing `/` and a repo's `.git` are dropped like the app
- * drops them. A URL and an `@ref` are refused rather than guessed at: a seal never binds to a branch
- * (it opens from any branch or tag of the repo, never from a commit).
+ * drops them. A URL and an `@ref` are refused rather than guessed at: the binding never names a ref,
+ * and the app only opens a seal at all when the plugin is installed with NO explicit `@ref` (its
+ * default branch, HEAD) -- any explicit ref, branch, tag or commit alike, refuses it.
  */
 export function normalizeBinding(repo) {
   const s = String(repo ?? "").trim().replace(/\/+$/, "");
@@ -44,7 +45,7 @@ export function normalizeBinding(repo) {
     throw new Error(`invalid --repo: ${REPO_USAGE}, not a URL (for https://github.com/owner/repo use --repo owner/repo)`);
   }
   if (s.includes("@")) {
-    throw new Error(`invalid --repo: ${REPO_USAGE}, without an @ref -- a seal opens from any branch or tag of the repo, so it never names one`);
+    throw new Error(`invalid --repo: ${REPO_USAGE}, without an @ref -- the binding never names one, and the app only opens seals when the plugin is installed from its default branch (no @ref at all)`);
   }
   const [owner, repoRaw = "", ...path] = s.split("/");
   const name = repoRaw.replace(/\.git$/, "");

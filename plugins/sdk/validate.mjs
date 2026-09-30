@@ -54,7 +54,7 @@ export async function validate(dirArg, { run = null, args = [], config = {}, rep
   const notes = [];
   if (!m.discoverable) notes.push("No aparecerá en la búsqueda de Kino");
   if (m.secrets && Object.keys(m.secrets).length) {
-    notes.push("No se puede comprobar aquí para qué repositorio se sellaron los secretos: Kino lo comprueba al instalar.");
+    notes.push("No se puede comprobar aquí para qué repositorio se sellaron los secretos: Kino lo comprueba al instalar. Además, solo se abren si la persona instala el plugin desde su rama principal, sin @rama.");
   }
   const entry = join(dir, m.entry);
   if (!existsSync(entry)) return { ...refused([`entry ${m.entry} not found`]), consent, notes };
