@@ -166,6 +166,7 @@ fun ArkivTvRoot(
                 onPlayEpisode = { goToPlayer(it) },
                 onPlayLive = { liveCode -> goToLiveChannel(liveCode) },
                 onOpenSettings = { navController.navigate("settings") },
+                onOpenPlugins = { navController.navigate("plugins") },
                 onOpenSearch = { navController.navigate("search") },
                 onOpenLibrary = { navController.navigate("library") },
                 onOpenLive = { navController.navigate("live") },
@@ -308,6 +309,9 @@ fun ArkivTvRoot(
         }
         composable("settings") {
             TvSettingsScreen()
+        }
+        composable("plugins") {
+            TvPluginsRoute(onBack = { navController.popBackStack() })
         }
         composable("player/{episodeId}") { entry ->
             val episodeId = Uri.decode(entry.arguments?.getString("episodeId").orEmpty())

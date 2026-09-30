@@ -33,6 +33,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.LiveTv
@@ -405,6 +406,8 @@ fun TvHomeScreen(
     /** Plays a live channel directly (channel code), without going through "En vivo". */
     onPlayLive: (String) -> Unit,
     onOpenSettings: () -> Unit,
+    /** "Plugins" of the top bar: opens the Plugins screen as its own route (see [TvPluginsRoute]). */
+    onOpenPlugins: () -> Unit,
     onOpenSearch: () -> Unit,
     onOpenLibrary: () -> Unit,
     onOpenLive: () -> Unit,
@@ -698,6 +701,14 @@ fun TvHomeScreen(
     // anything. Within the bar it lands on "Buscar": looking something up is the first thing a
     // person reaches for, and the rest of the bar is one D-pad press to the right.
     val barFocus = remember { FocusRequester() }
+    // "Plugins" of the top bar: Back from its own route ([TvPluginsRoute], via ArkivTvRoot's "plugins"
+    // composable) lands back here with focus on THIS button, not the default landing -- see the
+    // `returningFromPlugins` effect below, right after `cardRestored`/`landOnDefault` reads it.
+    // `rememberSaveable`: this whole composable is disposed while "plugins" is the current NavHost
+    // destination and rebuilt when Home is entered again, so a plain `remember` would forget it.
+    var returningFromPlugins by rememberSaveable { mutableStateOf(false) }
+    val pluginsFocus = remember { FocusRequester() }
+    var pluginsLandingFocused by remember { mutableStateOf(false) }
     // A live surface can take away the node that holds focus while this screen is showing: the
     // "Xuper" button (the Xuper gate closes, e.g. its plugin gets marked damaged), the "En vivo"
     // button (the live module empties) or the channels row (its last channel's provider went).
@@ -777,6 +788,17 @@ fun TvHomeScreen(
     // below must not take it away (a late "Continuar viendo" changes `firstFocusKey`).
     var cardRestored by remember { mutableStateOf(false) }
     LaunchedEffect(firstFocusKey) {
+        // Back from the "Plugins" route: focus goes straight to that button, not the default landing a
+        // card restore or an empty cardToRestore would otherwise pick.
+        if (returningFromPlugins) {
+            returningFromPlugins = false
+            retryFocus(
+                isAlreadyFocused = { pluginsLandingFocused },
+                wait = { delay(WAIT_BETWEEN_FOCUS_ATTEMPTS_MS) },
+                request = { pluginsFocus.requestFocus() },
+            )
+            return@LaunchedEffect
+        }
         delay(200)
         if (cardToRestore != null && !cardRestored) {
             val pluginCards = {
@@ -957,6 +979,15 @@ fun TvHomeScreen(
                         label = "Buscar",
                         onClick = onOpenSearch,
                         modifier = Modifier.focusRequester(barFocus).onFocusChanged { barLandingFocused = it.isFocused },
+                    )
+                    TvNavButton(
+                        icon = Icons.Default.Extension,
+                        label = "Plugins",
+                        onClick = {
+                            returningFromPlugins = true
+                            onOpenPlugins()
+                        },
+                        modifier = Modifier.focusRequester(pluginsFocus).onFocusChanged { pluginsLandingFocused = it.isFocused },
                     )
                     TvNavButton(icon = Icons.Default.Refresh, label = "Recargar", onClick = { graph.reloadHomeCatalog() })
                     TvNavButton(
