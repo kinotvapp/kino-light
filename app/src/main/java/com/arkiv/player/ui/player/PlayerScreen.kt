@@ -368,6 +368,28 @@ fun PlayerScreen(
     }
 }
 
+/**
+ * How the source is named in the "Resolviendo…" banner. `vm.resolving` is turned on by loads that resolve against the
+ * network —`loadMagis` and `loadDitu`; `loadUnknownSource` (ids from sources removed in this branch's pruning) only turns it
+ * off—, but the text assumed it was web: playing a Magis chapter announced a web source that doesn't exist on that path. No
+ * other source turns on that flag (archive had its own banner, and it was removed in this branch's pruning). [registry] names
+ * the plugins; "Mis canales" is built in, so the registry has no name for it.
+ */
+private fun resolvingSourceName(episodeId: String, registry: com.arkiv.player.data.plugin.PluginRegistry): String {
+    fun pluginLabel(pluginId: String?): String? =
+        if (pluginId == com.arkiv.player.data.live.OwnLive.PLUGIN_ID) com.arkiv.player.data.live.OwnLive.NAME else registry.nameOf(pluginId)
+    return when (PlayerSource.kindFor(episodeId)) {
+        SourceKind.MAGIS -> "de Xuper"
+        SourceKind.DITU -> "de Caracol"
+        SourceKind.PLUGIN -> "de " + (pluginLabel(com.arkiv.player.data.plugin.PluginIds.pluginIdOfEpisode(episodeId)) ?: "un plugin")
+        // An En vivo channel of a plugin (`live:plugin:<id>:<code>`): only its opens resolve.
+        SourceKind.LIVE -> com.arkiv.player.data.gateway.LiveChannelKeys.parse(episodeId.removePrefix(PlayerSource.LIVE_PREFIX))
+            ?.first?.let(com.arkiv.player.data.gateway.LiveChannelKeys::pluginIdOf)
+            ?.let { "de " + (pluginLabel(it) ?: "un plugin") } ?: "web"
+        else -> "web"
+    }
+}
+
 /** Where "Ver otras fuentes" goes; null hides the button. Provided by [PlayerScreen]. */
 private val LocalOpenOtherSources =
     androidx.compose.runtime.staticCompositionLocalOf<((com.arkiv.player.data.SourceSearchTitle) -> Unit)?> { null }
@@ -481,30 +503,8 @@ private fun PlayerContent(
     val webExtras by vm.webExtras.collectAsStateWithLifecycle()
     val trivia by vm.trivia.collectAsStateWithLifecycle()
 
-    // How the source is named in the "Resolviendo…" banner. `vm.resolving` is turned on by loads
-    // that resolve against the network —`loadMagis` and `loadDitu`; `loadUnknownSource` (ids from
-    // sources removed in this branch's pruning) only turns it off—, but the text assumed it was
-    // web: playing a Magis chapter announced a web source that doesn't exist on that path.
-    // No other source turns on that flag (archive had its own banner, and it was removed in this
-    // branch's pruning).
-    // "Mis canales" is built in, so the registry has no name for it.
-    fun pluginLabel(pluginId: String?): String? =
-        if (pluginId == com.arkiv.player.data.live.OwnLive.PLUGIN_ID) com.arkiv.player.data.live.OwnLive.NAME
-        else graph.pluginRegistry.nameOf(pluginId)
-    val resolvingSourceName = remember(episodeId) {
-        when (PlayerSource.kindFor(episodeId)) {
-            SourceKind.MAGIS -> "de Xuper"
-            SourceKind.DITU -> "de Caracol"
-            SourceKind.PLUGIN -> "de " + (pluginLabel(
-                com.arkiv.player.data.plugin.PluginIds.pluginIdOfEpisode(episodeId),
-            ) ?: "un plugin")
-            // An En vivo channel of a plugin (`live:plugin:<id>:<code>`): only its opens resolve.
-            SourceKind.LIVE -> com.arkiv.player.data.gateway.LiveChannelKeys.parse(episodeId.removePrefix(PlayerSource.LIVE_PREFIX))
-                ?.first?.let(com.arkiv.player.data.gateway.LiveChannelKeys::pluginIdOf)
-                ?.let { "de " + (pluginLabel(it) ?: "un plugin") } ?: "web"
-            else -> "web"
-        }
-    }
+    // Out of line on purpose: `remember`'s block is inlined, and PlayerContent is at ART's verifier limit.
+    val resolvingSourceName = remember(episodeId) { resolvingSourceName(episodeId, graph.pluginRegistry) }
     // Live mode (Task 14): isolates ALL of VOD's different behavior (no progress bar or seek, its
     // own overlay, zapping) behind these flags, computed ONCE from the episodeId the screen was
     // composed with. Zapping changes the channel WITHIN the ViewModel's playlist; it never
