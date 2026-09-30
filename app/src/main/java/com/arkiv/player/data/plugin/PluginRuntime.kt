@@ -47,6 +47,8 @@ interface PluginHost {
     fun crypto(opJson: String): String = PluginCrypto.run(opJson)
     /** `kino.sleep`: [ms] already checked to be 0..5000 by the prelude. */
     suspend fun sleep(ms: Long) = kotlinx.coroutines.delay(ms)
+    /** `kino.secret(name)`: this runtime's marker for a sealed secret the manifest declares, else null. See [PluginSecrets]. */
+    fun secret(name: String): String? = null
 }
 
 data class PluginEnv(
@@ -381,6 +383,8 @@ class PluginRuntime private constructor(
                 function("cookiesClear") { _ -> host.cookiesClear() }
                 function("crypto") { args -> host.crypto(args[0] as String) }
                 asyncFunction("sleep") { args -> host.sleep((args[0] as Number).toLong()); null }
+                // "" for an undeclared name (the prelude throws on it): always a String, never Unit/null.
+                function("secret") { args -> host.secret(args[0] as String) ?: "" }
                 // Present only when this runtime's host is the one gated to the recognized Xuper
                 // source (see XuperPrivilege / AppGraph.openPluginRuntime): prelude.js feature-detects
                 // these on __kinoNative to decide whether to expose kino.xuper at all.

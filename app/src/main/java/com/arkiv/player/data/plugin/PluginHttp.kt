@@ -271,6 +271,13 @@ class PluginHttp(
         val manualRedirects: Boolean = false,
         val useCookies: Boolean = true,
         val timeoutMs: Long = 0,
+        /**
+         * Set when a sealed secret was substituted into this request ([PluginSecrets]): the ONLY host
+         * patterns it may reach, on every hop -- the manifest's own `hosts`, never a host approved
+         * reactively, a typed server or the broad video permission. Checked before the ordinary gate,
+         * which still applies on top, so a refusal here never becomes a host question.
+         */
+        val sealedTo: List<String>? = null,
     )
 
     data class Response(
@@ -400,11 +407,17 @@ class PluginHttp(
         var previous: HttpUrl? = null
         repeat(MAX_REDIRECTS + 1) {
             val from = previous
+            req.sealedTo?.let { allowed ->
+                if (!HostRules.matches(url.host, allowed)) {
+                    log("[$pluginId] fetch with sealed data to ${url.host} refused: not a host its manifest declares")
+                    throw PluginFetchException("host_not_allowed", "este plugin no puede enviar datos sellados a ${url.host.take(100)}")
+                }
+            }
             ensureHostAllowed(from, url, trace)
             if (requests.incrementAndGet() > MAX_REQUESTS_PER_CALL) {
                 throw invalid("demasiadas solicitudes en una sola llamada (máximo $MAX_REQUESTS_PER_CALL)")
             }
-            executeTraced(callClient, buildRequest(url, method, body, req.headers), url.host, trace).use { resp ->
+            executeTraced(callClient, buildRequest(url, method, body, req.headers), url.host, trace, sealed = req.sealedTo != null).use { resp ->
                 if (resp.code >= 400) trace?.answered(url.host, resp.code)
                 val location = resp.header("Location")
                 if (resp.code in REDIRECTS && location != null && !req.manualRedirects) {
@@ -423,11 +436,12 @@ class PluginHttp(
     }
 
     /** One request, on [trace] as waiting while it is out, and as a failed site if it never answers. */
-    private fun executeTraced(client: OkHttpClient, request: okhttp3.Request, host: String, trace: PluginCallTrace?): okhttp3.Response {
+    private fun executeTraced(client: OkHttpClient, request: okhttp3.Request, host: String, trace: PluginCallTrace?, sealed: Boolean = false): okhttp3.Response {
         trace?.started(host)
         val t0 = System.nanoTime()
-        // Host and path only: a query can carry tokens or keys (TMDB's api_key), never logged.
-        val what = "${request.method} $host${request.url.encodedPath.take(40)}"
+        // Host and path only: a query can carry tokens or keys (TMDB's api_key), never logged. With
+        // a sealed value substituted in, the host alone: the path may carry it too.
+        val what = if (sealed) "${request.method} $host (datos sellados)" else "${request.method} $host${request.url.encodedPath.take(40)}"
         fun ms() = (System.nanoTime() - t0) / 1_000_000
         try {
             return client.newCall(request).execute().also { log("[$pluginId] fetch $what -> ${it.code} in ${ms()} ms") }

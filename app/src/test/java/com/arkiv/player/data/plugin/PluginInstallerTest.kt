@@ -425,6 +425,43 @@ class PluginInstallerTest {
         assertTrue(preview.newSealedSecrets)
     }
 
+    // The runtime side of the same binding: the secrets AppGraph opens a runtime with come from the
+    // INSTALLED record's address (branch and all), and only the ordinary host gets them.
+    @Test fun `an installed plugin's runtime opens its seals with its recorded address`() = runBlocking {
+        installer = installerWithSeal()
+        val seal = TestSealing.seal("shh", SealedSecrets.bindingOf(PluginAddress("o", "r")), "apiKey")
+        publish(api = 4, hosts = listOf("api.example.com", "*.cdn.example.com"), secrets = mapOf("apiKey" to seal), prefix = "https://raw.githubusercontent.com/o/r/dev/")
+        installer.install(installer.preview("o/r@dev"))
+        val plugin = PluginRegistry(store).apply { reload() }.find("demo")!!
+        val secrets = pluginSecretsFor(plugin, TestSealing.agreement, TestSealing.TEST_PUBLIC)!!
+        assertEquals(listOf("api.example.com", "*.cdn.example.com"), secrets.sealedHosts)
+        assertEquals("shh", secrets.substitute(secrets.marker("apiKey")!!))
+        assertEquals(secrets.marker("apiKey"), hostFor(plugin, secrets).secret("apiKey"))
+    }
+
+    @Test fun `the privileged Xuper host never gets secrets`() = runBlocking {
+        installer = installerWithSeal()
+        val (owner, repo) = XuperPrivilege.SOURCE_REPO.split('/')
+        val seal = TestSealing.seal("shh", SealedSecrets.bindingOf(PluginAddress(owner, repo)), "apiKey")
+        publish(api = 4, secrets = mapOf("apiKey" to seal), prefix = "https://raw.githubusercontent.com/${XuperPrivilege.SOURCE_REPO}/HEAD/")
+        installer.install(installer.preview(XuperPrivilege.SOURCE_REPO))
+        val plugin = PluginRegistry(store).apply { reload() }.find("demo")!!
+        val host = hostFor(plugin, pluginSecretsFor(plugin, TestSealing.agreement, TestSealing.TEST_PUBLIC)!!)
+        assertTrue(host is PrivilegedXuperHost)
+        assertNull(host.secret("apiKey"))
+    }
+
+    private fun hostFor(plugin: InstalledPlugin, secrets: PluginSecrets?): PluginHost = pluginHostFor(
+        plugin, PluginHttp(okhttp3.OkHttpClient(), plugin.id, plugin.hosts, "9.9.9"), PluginStorage(File(tmp.root, "s.json")),
+        PluginConfig.EMPTY, null, lazy<com.arkiv.player.data.magis.MagisPluginBridge> { error("no Magis objects in this test") }, secrets,
+    )
+
+    @Test fun `a plugin without seals opens its runtime without secrets`() {
+        publish()
+        installFresh()
+        assertNull(pluginSecretsFor(PluginRegistry(store).apply { reload() }.find("demo")!!, TestSealing.agreement))
+    }
+
     @Test fun `no agreement means no install`() {
         val seal = TestSealing.seal("shh", SealedSecrets.bindingOf(PluginAddress("o", "r")), "apiKey")
         publish(api = 4, secrets = mapOf("apiKey" to seal))

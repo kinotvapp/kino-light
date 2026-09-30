@@ -752,4 +752,138 @@ class PluginHttpTest {
         assertEquals(listOf("greenmotors.cc"), asked.hosts.toList())
         assertEquals(listOf("greenmotors.cc"), asked.rejected.toList())
     }
+
+    // --- Sealed secrets (spec 2026-09-29-plugin-sealed-secrets §5): a request that carries a
+    // substituted value goes only to a host the MANIFEST declared, on every hop. ---
+
+    private val loopback = object : Dns { override fun lookup(hostname: String) = listOf(InetAddress.getLoopbackAddress()) }
+
+    /** declared.example and other.example both resolve to this MockWebServer, over plain http. */
+    private fun twoHostHttp(log: (String) -> Unit = {}, reactive: PluginHttp.ReactiveApproval? = null, user: List<UserHost> = emptyList()): PluginHttp {
+        val names = listOf("declared.example", "other.example")
+        return PluginHttp(
+            OkHttpClient(), "test", EffectiveHosts(names, user, insecure = names.toSet()), "1.0", cookies = null,
+            allowInsecureLocalhost = true, delegateDns = loopback, reactiveApproval = reactive, log = log,
+        )
+    }
+
+    private fun sealedSecrets(plain: String = "k-123") = PluginSecrets(
+        mapOf("apiKey" to TestSealing.seal(plain, "owner/repo", "apiKey")), "owner/repo", TestSealing.agreement,
+        sealedHosts = listOf("declared.example"), recipient = TestSealing.TEST_PUBLIC,
+    )
+
+    @Test fun `a request with a secret reaches a declared host`() = runBlocking {
+        val logs = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val secrets = sealedSecrets()
+        val m = secrets.marker("apiKey")!!
+        val host = DefaultPluginHost("test", twoHostHttp(log = { logs += it }), PluginStorage(tmp.root.resolve("s-sealed.json")), secrets = secrets, logger = {})
+        server.enqueue(MockResponse().setBody("ok"))
+        val req = org.json.JSONObject()
+            .put("url", "http://declared.example:${server.port}/v1/$m/items?api_key=$m&q=x")
+            .put("method", "POST")
+            .put("headers", org.json.JSONObject().put("Authorization", "Bearer $m"))
+            .put("body", org.json.JSONObject().put("kind", "form").put("value", org.json.JSONArray().put(org.json.JSONArray().put("key").put(m))))
+        val out = org.json.JSONObject(host.fetch(req.toString()))
+        assertEquals(200, out.getInt("status"))
+        val seen = server.takeRequest()
+        assertEquals("/v1/k-123/items?api_key=k-123&q=x", seen.path)
+        assertEquals("Bearer k-123", seen.getHeader("Authorization"))
+        assertEquals("key=k-123", seen.body.readUtf8())
+        // What goes back to the plugin carries the marker, never the value -- and so does the log,
+        // which names the host only.
+        assertFalse(out.toString(), "k-123" in out.toString())
+        assertTrue(out.getString("url"), m in out.getString("url"))
+        assertTrue(logs.toString(), logs.any { "fetch POST declared.example (datos sellados) -> 200" in it })
+        assertFalse(logs.toString(), logs.any { "k-123" in it || "/v1/" in it })
+    }
+
+    @Test fun `a secret in a JSON or text body is substituted too`() = runBlocking {
+        val secrets = sealedSecrets()
+        val m = secrets.marker("apiKey")!!
+        val host = DefaultPluginHost("test", twoHostHttp(), PluginStorage(tmp.root.resolve("s-body.json")), secrets = secrets, logger = {})
+        server.enqueue(MockResponse().setBody("ok"))
+        server.enqueue(MockResponse().setBody("ok"))
+        fun post(kind: String, value: String) = org.json.JSONObject().put("url", "http://declared.example:${server.port}/p").put("method", "POST")
+            .put("body", org.json.JSONObject().put("kind", kind).put("value", value)).toString()
+        host.fetch(post("json", "{\"key\":\"$m\"}"))
+        host.fetch(post("text", "key=$m"))
+        assertEquals("{\"key\":\"k-123\"}", server.takeRequest().body.readUtf8())
+        assertEquals("key=k-123", server.takeRequest().body.readUtf8())
+    }
+
+    @Test fun `a secret never goes to an undeclared host`() = runBlocking {
+        val secrets = sealedSecrets()
+        val m = secrets.marker("apiKey")!!
+        val host = DefaultPluginHost("test", twoHostHttp(), PluginStorage(tmp.root.resolve("s-undeclared.json")), secrets = secrets, logger = {})
+        // other.example IS in the plugin's host set -- only not in its manifest's `hosts`.
+        val out = org.json.JSONObject(host.fetch(org.json.JSONObject().put("url", "http://other.example:${server.port}/x?k=$m").toString()))
+        val error = out.getJSONObject("error")
+        assertEquals("host_not_allowed", error.getString("code"))
+        assertEquals("este plugin no puede enviar datos sellados a other.example", error.getString("message"))
+        assertEquals(0, server.requestCount)
+        // The same request without a marker is an ordinary one: it goes.
+        server.enqueue(MockResponse().setBody("ok"))
+        assertEquals(200, org.json.JSONObject(host.fetch(org.json.JSONObject().put("url", "http://other.example:${server.port}/x").toString())).getInt("status"))
+    }
+
+    @Test fun `the sealed-host rule is checked on the request itself, whatever the host set says`() {
+        val h = twoHostHttp()
+        val e = fetchError(h, PluginHttp.Request("http://other.example:${server.port}/x", sealedTo = listOf("declared.example")))
+        assertEquals("host_not_allowed", e.code)
+        assertEquals("este plugin no puede enviar datos sellados a other.example", e.message)
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test fun `redirect off the declared hosts is refused`() {
+        val h = twoHostHttp()
+        server.enqueue(MockResponse().setResponseCode(302).addHeader("Location", "http://other.example:${server.port}/landing"))
+        server.enqueue(MockResponse().setBody("never"))
+        val e = fetchError(h, PluginHttp.Request("http://declared.example:${server.port}/start?k=k-123", sealedTo = listOf("declared.example")))
+        assertEquals("host_not_allowed", e.code)
+        assertEquals("este plugin no puede enviar datos sellados a other.example", e.message)
+        assertFalse(e.message!!, "k-123" in e.message!!)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test fun `a sealed request may follow a redirect to another declared host`() = runBlocking {
+        val h = twoHostHttp()
+        server.enqueue(MockResponse().setResponseCode(307).addHeader("Location", "http://other.example:${server.port}/landing"))
+        server.enqueue(MockResponse().setBody("ok"))
+        val r = h.fetch(PluginHttp.Request("http://declared.example:${server.port}/start", sealedTo = listOf("declared.example", "other.example")))
+        assertEquals(200, r.status)
+        assertEquals(2, server.requestCount)
+    }
+
+    @Test fun `a manual redirect hands back the 3xx without following it`() = runBlocking {
+        val h = twoHostHttp()
+        server.enqueue(MockResponse().setResponseCode(302).addHeader("Location", "http://other.example:${server.port}/landing"))
+        val r = h.fetch(PluginHttp.Request("http://declared.example:${server.port}/start", manualRedirects = true, sealedTo = listOf("declared.example")))
+        assertEquals(302, r.status)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test fun `reactively approved and user hosts don't count`() {
+        val asks = java.util.concurrent.atomic.AtomicInteger()
+        val reactive = PluginHttp.ReactiveApproval("P", HostApprovalRequester { _, _, _ -> asks.incrementAndGet(); true }, {}, {}, emptySet())
+        val nas = UserHost("http", "nas.example", server.port)
+        val h = twoHostHttp(reactive = reactive, user = listOf(nas))
+        val sealedTo = listOf("declared.example")
+        // other.example stands for a host approved in the moment: in the host set, not the manifest.
+        listOf("http://other.example:${server.port}/x", "http://nas.example:${server.port}/x", "https://fresh.example/x").forEach { u ->
+            val e = fetchError(h, PluginHttp.Request(u, sealedTo = sealedTo))
+            assertEquals(u, "host_not_allowed", e.code)
+            assertTrue(u, e.message!!.startsWith("este plugin no puede enviar datos sellados a "))
+        }
+        assertEquals(0, asks.get())
+        assertEquals(0, server.requestCount)
+        // Control: the very same undeclared https host WOULD have been asked about without a secret.
+        fetchError(h, PluginHttp.Request("https://fresh.example/x"))
+        assertEquals(1, asks.get())
+    }
+
+    @Test fun `the refused host is cut to 100 characters`() {
+        val long = "a".repeat(60) + "." + "b".repeat(60) + ".example"
+        val e = fetchError(twoHostHttp(), PluginHttp.Request("https://$long/x", sealedTo = listOf("declared.example")))
+        assertEquals("este plugin no puede enviar datos sellados a " + long.take(100), e.message)
+    }
 }

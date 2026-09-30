@@ -95,6 +95,8 @@ class DefaultPrivilegedXuperHost internal constructor(
  * `XuperPrivilegeGateTest` -- the SAME function, not a reproduction of its condition, so a later
  * change to the gate (or its removal) can't leave a test green while the real gate silently breaks.
  * [magis] is only ever read by the privileged host, and only when a `kino.xuper.*` call runs.
+ * [secrets] ([pluginSecretsFor]) reach only the ordinary [DefaultPluginHost]; the privileged host
+ * never gets any.
  */
 internal fun pluginHostFor(
     plugin: InstalledPlugin,
@@ -103,10 +105,11 @@ internal fun pluginHostFor(
     config: PluginConfig,
     cookies: PluginCookies?,
     magis: Lazy<MagisPluginBridge>,
+    secrets: PluginSecrets? = null,
 ): PluginHost = if (XuperPrivilege.grants(plugin.record)) {
     DefaultPrivilegedXuperHost(plugin.id, http, storage, config, cookies, magis)
 } else {
-    DefaultPluginHost(plugin.id, http, storage, config, cookies)
+    DefaultPluginHost(plugin.id, http, storage, config, cookies, secrets = secrets)
 }
 
 /** `as? String`, not `optString`: Android's org.json turns a JSON `null` into the text "null". */

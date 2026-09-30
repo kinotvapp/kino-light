@@ -18,6 +18,12 @@ import java.util.Base64
  * immediately before `runtime.call(...)` and serializes calls per plugin.
  *
  * Nothing here logs a config value: [config] goes only to the plugin.
+ *
+ * [secrets] (a plugin whose manifest declares sealed ones, see [PluginSecrets]): `kino.secret`
+ * answers a marker, and [fetch] swaps markers for the plain values in the URL's path and query,
+ * every header value and a text/JSON/form body, then sends that request toward the manifest's own
+ * hosts only ([PluginHttp.Request.sealedTo]). What goes back to the plugin -- the final URL,
+ * headers, text body, an error message -- has any opened value swapped back for its marker.
  */
 class DefaultPluginHost(
     private val pluginId: String,
@@ -28,15 +34,22 @@ class DefaultPluginHost(
     /** MockWebServer tests only, as in [PluginHttp]. */
     private val allowInsecureLocalhost: Boolean = false,
     private val logger: (String) -> Unit = { android.util.Log.i("KinoPlugin", it) },
+    private val secrets: PluginSecrets? = null,
 ) : PluginHost {
+    override fun secret(name: String): String? = secrets?.marker(name)
+
     override suspend fun fetch(requestJson: String): String = try {
         val resp = http.fetch(request(JSONObject(requestJson)))
-        JSONObject().put("ok", resp.ok).put("status", resp.status).put("url", resp.url)
-            .put("headers", JSONObject(resp.headers))
-            .apply { resp.text?.let { put("text", it) }; resp.bytesBase64?.let { put("base64", it) } }
+        JSONObject().put("ok", resp.ok).put("status", resp.status).put("url", redact(resp.url))
+            .put("headers", JSONObject(resp.headers.mapValues { redact(it.value) }))
+            // A binary body (base64) is not scanned: spec §5, Redaction.
+            .apply { resp.text?.let { put("text", redact(it)) }; resp.bytesBase64?.let { put("base64", it) } }
             .toString()
     } catch (e: PluginFetchException) {
-        error(e.code, e.message.orEmpty())
+        error(e.code, redact(e.message.orEmpty()))
+    } catch (e: SealException) {
+        // A seal that won't open on this build (no native X25519): a fixed message, never a value.
+        error("invalid_request", e.message.orEmpty())
     } catch (e: IllegalArgumentException) {
         error("invalid_request", "solicitud inválida")
     } catch (e: org.json.JSONException) {
@@ -51,7 +64,7 @@ class DefaultPluginHost(
         // silently treated as "follow" (a bypassed or future prelude bug must not default-allow).
         val redirect = if (o.has("redirect") && !o.isNull("redirect")) o.getString("redirect") else "follow"
         if (redirect !in PluginHttp.REDIRECT_MODES) throw PluginFetchException("invalid_request", "redirect desconocido")
-        return PluginHttp.Request(
+        val request = PluginHttp.Request(
             url = o.getString("url"),
             method = o.optString("method", "GET"),
             headers = headers,
@@ -60,7 +73,48 @@ class DefaultPluginHost(
             useCookies = o.optBoolean("cookies", true),
             timeoutMs = o.optLong("timeoutMs", 0),
         )
+        return secrets?.let { sealed(request, it) } ?: request
     }
+
+    /**
+     * [request] with [s]'s markers swapped for their plain values and [PluginHttp.Request.sealedTo]
+     * set; null when it carries none. In the URL, only the path and the query: the scheme,
+     * userinfo, host and port keep any marker as text (parsing lowercases a host, which already
+     * breaks one), so a plain value never becomes a host name -- looked up in DNS, named in a host
+     * error, logged -- and the fragment, which never leaves the device, keeps its marker too.
+     */
+    private fun sealed(request: PluginHttp.Request, s: PluginSecrets): PluginHttp.Request? {
+        val url = request.url.toHttpUrlOrNull()
+        val inUrl = url != null && (s.containsMarker(url.encodedPath) || url.encodedQuery?.let(s::containsMarker) == true)
+        val inHeaders = request.headers.values.any(s::containsMarker)
+        val inBody = when (val b = request.body) {
+            is PluginHttp.Body.Text -> s.containsMarker(b.text)
+            is PluginHttp.Body.Json -> s.containsMarker(b.json)
+            is PluginHttp.Body.Form -> b.fields.any { (k, v) -> s.containsMarker(k) || s.containsMarker(v) }
+            is PluginHttp.Body.Bytes, null -> false
+        }
+        if (!inUrl && !inHeaders && !inBody) return null
+        val sealedUrl = if (inUrl && url != null) {
+            url.newBuilder().encodedPath(s.substitute(url.encodedPath))
+                .apply { url.encodedQuery?.let { encodedQuery(s.substitute(it)) } }
+                .build().toString()
+        } else {
+            request.url
+        }
+        return request.copy(
+            url = sealedUrl,
+            headers = request.headers.mapValues { s.substitute(it.value) },
+            body = when (val b = request.body) {
+                is PluginHttp.Body.Text -> PluginHttp.Body.Text(s.substitute(b.text))
+                is PluginHttp.Body.Json -> PluginHttp.Body.Json(s.substitute(b.json))
+                is PluginHttp.Body.Form -> PluginHttp.Body.Form(b.fields.map { (k, v) -> s.substitute(k) to s.substitute(v) })
+                is PluginHttp.Body.Bytes, null -> b
+            },
+            sealedTo = s.sealedHosts,
+        )
+    }
+
+    private fun redact(text: String): String = secrets?.redact(text) ?: text
 
     private fun body(b: JSONObject): PluginHttp.Body {
         val kind = b.optString("kind")

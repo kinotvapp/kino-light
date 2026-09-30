@@ -664,7 +664,10 @@ class AppGraph(context: Context) {
         val storage = PluginStorage(java.io.File(dataDir, "storage.json"))
         // Only the one recognized Xuper source gets the extra kino.xuper.* host functions -- see
         // pluginHostFor's KDoc and XuperPrivilege.grants for the gate itself.
-        val host = pluginHostFor(plugin, http, storage, config, cookies, magisPluginBridge)
+        // Sealed secrets (a manifest's `secrets`): markers for kino.secret, opened only when a
+        // kino.fetch first carries one, and only toward the manifest's own hosts (PluginSecrets).
+        val secrets = pluginSecretsFor(plugin, sealAgreement)
+        val host = pluginHostFor(plugin, http, storage, config, cookies, magisPluginBridge, secrets)
         val runtime = PluginRuntime.open(id, script, host, PluginEnv(appVersion = BuildConfig.VERSION_NAME), calls)
         // F5: drop this plugin's PluginHttp the moment its runtime is closed -- idle timeout, or an
         // explicit pool.close() from DefaultPluginAdmin's disable/update/uninstall -- so pluginHttps

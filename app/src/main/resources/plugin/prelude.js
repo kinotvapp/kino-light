@@ -461,6 +461,15 @@
     crypto,
     rank,
     sleep: freeze(sleep),
+    // A marker, not the value: Kotlin swaps it for the sealed value inside kino.fetch, toward the
+    // manifest's own hosts only. A name is at most 32 characters, so cutting to 64 before it
+    // crosses can never turn an undeclared name into a declared one.
+    secret: freeze(function secret(name) {
+      const s = toStr(name);
+      const m = n.secret(cut(s, 64));
+      if (!m) throw new E('este plugin no declara el secreto ' + cut(s, 40));
+      return m;
+    }),
     error: freeze(function error(code, message) { return codedError(code, message); }),
     log: freeze((...a) => log('info', a)),
   };
