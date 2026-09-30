@@ -17,7 +17,7 @@ import org.junit.Test
 class NuvioPluginConverterTest {
     private val scraper = NuvioScraperEntry(
         id = "fakesrc", name = "FakeSrc", filename = "providers/fakesrc.js", enabled = true,
-        contentLanguage = listOf("en"), supportedTypes = listOf("movie"), logo = null, disabledPlatforms = emptyList(),
+        contentLanguage = listOf("en"), supportedTypes = listOf("movie", "tv"), logo = null, disabledPlatforms = emptyList(),
     )
 
     // A tiny but representative scraper: fetch + JSON, no cheerio/crypto -- those get their own tests.
@@ -175,6 +175,65 @@ class NuvioPluginConverterTest {
             assertEquals("603-movie-0-0", item.getString("id"))
         } finally {
             runtime.close()
+        }
+    }
+
+    private suspend fun runtimeFor(types: List<String>): PluginRuntime {
+        val entry = scraper.copy(name = "CineCalidad", supportedTypes = types)
+        val result = NuvioPluginConverter.convert(entry, source, repoSlug = "o/r", tmdbApiKey = "k")
+        return PluginRuntime.open("probe", result.script, ProbePluginHost, PluginEnv(appVersion = "1.0"))
+    }
+
+    private fun searchCount(types: List<String>, type: String, season: Int = 0, episode: Int = 0): Int = runBlocking {
+        val runtime = runtimeFor(types)
+        try {
+            JSONArray(runtime.call("search", """{"tmdbId":1,"type":"$type","season":$season,"episode":$episode,"q":"X"}""", 5_000)).length()
+        } finally {
+            runtime.close()
+        }
+    }
+
+    @Test fun `a movie-only scraper is no source for series but still for movies`() {
+        assertEquals(0, searchCount(listOf("movie"), "series"))
+        assertEquals(0, searchCount(listOf("movie"), "any", season = 1, episode = 2))
+        assertEquals(1, searchCount(listOf("movie"), "movie"))
+    }
+
+    @Test fun `a tv-only scraper is no source for movies but still for series`() {
+        assertEquals(0, searchCount(listOf("tv"), "movie"))
+        assertEquals(1, searchCount(listOf("tv"), "series"))
+    }
+
+    @Test fun `anime alone and empty or unknown types support both`() {
+        for (types in listOf(listOf("anime"), emptyList(), listOf("weird"))) {
+            assertEquals(1, searchCount(types, "series"))
+            assertEquals(1, searchCount(types, "movie"))
+        }
+    }
+
+    @Test fun `resolve and episodes on an unsupported type say so instead of not finding the title`() = runBlocking {
+        val movieOnly = runtimeFor(listOf("movie"))
+        try {
+            val series = assertThrows(PluginErrorException::class.java) {
+                runBlocking { movieOnly.call("resolve", """{"tmdbId":1,"type":"series","season":1,"episode":2}""", 5_000) }
+            }
+            assertEquals("unavailable", series.code)
+            assertEquals("CineCalidad no tiene series", series.message)
+            val eps = assertThrows(PluginErrorException::class.java) {
+                runBlocking { movieOnly.call("episodes", """{"tmdbId":1,"type":"tv"}""", 5_000) }
+            }
+            assertEquals("CineCalidad no tiene series", eps.message)
+        } finally {
+            movieOnly.close()
+        }
+        val tvOnly = runtimeFor(listOf("tv"))
+        try {
+            val e = assertThrows(PluginErrorException::class.java) {
+                runBlocking { tvOnly.call("resolve", """{"tmdbId":1,"type":"movie","season":0,"episode":0}""", 5_000) }
+            }
+            assertEquals("CineCalidad no tiene películas", e.message)
+        } finally {
+            tvOnly.close()
         }
     }
 

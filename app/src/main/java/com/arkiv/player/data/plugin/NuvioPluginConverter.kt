@@ -111,7 +111,12 @@ object NuvioPluginConverter {
             "var exports = module.exports;\n" +
             scraperSource +
             "\nreturn module.exports;\n})(); })(__nuvioConsole);\n"
-        val script = shim + "\n\n" + libraries + CONSOLE + wrapped + "\n" + ADAPTER
+        // The scraper's own declared types and display name, baked in for the adapter's support check.
+        val displayName = scraper.name.trim().ifEmpty { scraper.id }
+        val supportBinding = "\nvar __NUVIO_SUPPORTED_TYPES = " +
+            JSONArray(scraper.supportedTypes.map { it.trim().lowercase() }).toString() + ";\n" +
+            "var __NUVIO_SCRAPER_NAME = " + JSONObject.quote(displayName) + ";\n"
+        val script = shim + "\n\n" + libraries + CONSOLE + wrapped + supportBinding + ADAPTER
 
         val manifestJson = JSONObject()
             // Clipped to ManifestParser's own name limit: a longer Nuvio scraper name would otherwise make the whole manifest invalid.
@@ -202,6 +207,19 @@ object NuvioPluginConverter {
           return (season > 0 && episode > 0) ? "tv" : "movie";
         }
 
+        // Nuvio's supportedTypes: movie / tv / anime. Anime alone covers films and shows; unknown or
+        // empty keeps every type.
+        function __nuvioSupports(mediaType) {
+          var t = __NUVIO_SUPPORTED_TYPES;
+          var known = t.filter(function (x) { return x === "movie" || x === "tv" || x === "anime"; });
+          if (!known.length || known.indexOf("anime") >= 0) return true;
+          return known.indexOf(mediaType) >= 0;
+        }
+
+        function __nuvioUnsupported(mediaType) {
+          return kino.error("unavailable", __NUVIO_SCRAPER_NAME + (mediaType === "tv" ? " no tiene series" : " no tiene películas"));
+        }
+
         function __nuvioRef(ref) { return (typeof ref === "string") ? JSON.parse(ref) : ref; }
 
         // A stream's quality label from Nuvio's quality/title/name, whatever a scraper put there.
@@ -255,6 +273,7 @@ object NuvioPluginConverter {
           if (!query.tmdbId) return [];
           var season = query.season || 0, episode = query.episode || 0;
           var mediaType = __nuvioMediaType(query.type, season, episode);
+          if (!__nuvioSupports(mediaType)) return [];
           var meta = null;
           try { meta = await __nuvioTmdb("/" + mediaType + "/" + query.tmdbId, __NUVIO_ARTWORK_TIMEOUT_MS); } catch (e) { meta = null; }
           var m = meta || {};
@@ -284,6 +303,7 @@ object NuvioPluginConverter {
         export async function episodes(ref) {
           await null;
           var r = __nuvioRef(ref);
+          if (!__nuvioSupports("tv")) throw __nuvioUnsupported("tv");
           var show = await __nuvioTmdb("/tv/" + r.tmdbId);
           var numbers = (show.seasons || []).map(function (s) { return s.season_number; })
             .filter(function (n) { return typeof n === "number" && n > 0; });
@@ -321,6 +341,7 @@ object NuvioPluginConverter {
           await null;
           var r = __nuvioRef(ref);
           var mediaType = __nuvioMediaType(r.type, r.season, r.episode);
+          if (!__nuvioSupports(mediaType)) throw __nuvioUnsupported(mediaType);
           if (mediaType === "tv" && !(r.season > 0 && r.episode > 0)) throw kino.error("not_found", "falta elegir temporada y capítulo");
           var season = mediaType === "tv" ? r.season : null;
           var episode = mediaType === "tv" ? r.episode : null;
