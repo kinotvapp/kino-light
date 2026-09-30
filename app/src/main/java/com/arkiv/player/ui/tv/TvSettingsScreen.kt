@@ -26,7 +26,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
-import kotlinx.coroutines.delay
 import com.arkiv.player.data.magis.MagisAccountState
 import com.arkiv.player.ui.rememberGraph
 
@@ -111,12 +110,10 @@ fun TvSettingsScreen(initialTab: String? = null) {
     // content's own header row (see [TvPluginsContent]). Plain geometry would pick whichever inner chip lies
     // below the chip that is focused, which is not necessarily the selected one.
     val pluginsEntryFocus = remember { FocusRequester() }
-    LaunchedEffect(Unit) {
-        repeat(20) {
-            if (runCatching { selectedTabFocus.requestFocus() }.isSuccess) return@LaunchedEffect
-            delay(50)
-        }
-    }
+    // The initial focus request lives in [TvSettingsChrome] itself: the chrome is composed from two call sites
+    // (inside [TvPluginsHost] on Plugins, directly on every other tab) and the host swaps it for the Nuvio
+    // picker, so switching into or out of Plugins, or Back out of the picker, disposes the focused chip. Each
+    // time a chrome enters composition it puts focus back on the selected tab.
 
     // The Plugins tab's picker (when open) needs the WHOLE screen, not the pane the tab row leaves: drawn as
     // its own full screen ([TvPluginsHost]), never nested inside this chrome's own padded container (that
@@ -173,6 +170,9 @@ private fun TvSettingsChrome(
     pluginsEntryFocus: FocusRequester,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    // Runs on every entry into composition, not just the screen's first: see the note where [selectedTabFocus]
+    // is created. Retried because the LazyRow's chips are laid out a frame or two after this starts.
+    LaunchedEffect(Unit) { requestFocusWhenReady(selectedTabFocus) }
     Column(modifier = Modifier.fillMaxSize().padding(horizontal = 64.dp, vertical = 32.dp)) {
         Text("Ajustes", style = MaterialTheme.typography.headlineMedium, color = Color.White)
         LazyRow(
