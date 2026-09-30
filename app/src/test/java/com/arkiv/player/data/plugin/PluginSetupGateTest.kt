@@ -130,4 +130,21 @@ class PluginSetupGateTest {
             PluginConsent.extraLines(again).last(),
         )
     }
+
+    @Test fun `sealed secrets get a consent line, nuevo only on an update that adds them`() {
+        val m = PluginManifest(
+            "demo", "Demo", "1.0.0", 4, "plugin.js", "", "", "",
+            listOf("example.com"), setOf("search", "resolve"), null, null,
+            secrets = mapOf("apiKey" to "kino-sealed:v1:x"),
+        )
+        val fresh = InstallPreview(PluginAddress("o", "r"), m, "{}", isUpdate = false, newHosts = listOf("example.com"), newSealedSecrets = true)
+        assertEquals(listOf(ConsentLine("Usa datos sellados por su autor")), PluginConsent.extraLines(fresh))
+        val update = InstallPreview(PluginAddress("o", "r"), m, "{}", isUpdate = true, newHosts = emptyList(), newSealedSecrets = true)
+        assertEquals(listOf(ConsentLine("Usa datos sellados por su autor", isNew = true)), PluginConsent.extraLines(update))
+        // Already approved: still shown, without the "nuevo" chip.
+        val already = update.copy(newSealedSecrets = false)
+        assertEquals(listOf(ConsentLine("Usa datos sellados por su autor")), PluginConsent.extraLines(already))
+        val plain = m.copy(secrets = emptyMap())
+        assertEquals(emptyList<ConsentLine>(), PluginConsent.extraLines(fresh.copy(manifest = plain)))
+    }
 }

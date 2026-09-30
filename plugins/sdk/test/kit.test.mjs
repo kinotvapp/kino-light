@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import { checkOutput, contract, validateManifest } from "../contract.mjs";
 import { createKino } from "../kino-shim.mjs";
 import { filterRelevant, shortQuery, sortBySimilarity } from "../kino-rank.mjs";
-import { validate } from "../validate.mjs";
+import { consentLines, validate } from "../validate.mjs";
 import { scaffold } from "../init.mjs";
 import { call } from "../run.mjs";
 import { ADULT_GROUPS, loadPlaylist, normaliseName, parseM3u, parseXmltv, parseXmltvTime, summarisePlaylist } from "../live-playlist.mjs";
@@ -901,6 +901,28 @@ test("secrets: parsed with apiVersion 4, ignored below it, and its Spanish messa
   assert.deepEqual(contract.manifest.secrets, {
     apiVersion: 4, namePattern: "^[A-Za-z][A-Za-z0-9_]{0,31}$", maxSecrets: 16, maxValueBytes: 4096, prefix: "kino-sealed:v1:",
   });
+});
+
+test("secrets: a consent line, and validate notes it can't check the repo binding here", async () => {
+  const secrets = { apiKey: FAKE_SEAL };
+  assert.deepEqual(consentLines(validateManifest(manifest({ apiVersion: 4, secrets })).manifest),
+    [{ text: "Usa datos sellados por su autor", danger: false }]);
+  assert.deepEqual(consentLines(validateManifest(manifest({ apiVersion: 4 })).manifest), []);
+
+  const dir = mkdtempSync(join(tmpdir(), "kino-secrets-"));
+  try {
+    writeFileSync(join(dir, "kino-plugin.json"), manifest({ apiVersion: 4, secrets }));
+    writeFileSync(join(dir, "plugin.js"), "export async function search(){ return { items: [] } }\nexport async function resolve(){ return { url: 'https://example.com/a.m3u8' } }");
+    const r = await validate(dir);
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.consent, [{ text: "Usa datos sellados por su autor", danger: false }]);
+    assert.deepEqual(r.notes, ["No se puede comprobar aquí para qué repositorio se sellaron los secretos: Kino lo comprueba al instalar."]);
+    const cli = spawnSync(process.execPath, [join(here, "..", "validate.mjs"), dir], { encoding: "utf8" });
+    assert.equal(cli.status, 0);
+    assert.match(cli.stderr, /No se puede comprobar aquí para qué repositorio se sellaron los secretos/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // ---------- live channels: the kit's own M3U/XMLTV readers (apiVersion 3) ----------

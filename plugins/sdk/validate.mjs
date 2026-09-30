@@ -36,6 +36,7 @@ export function consentLines(m) {
   if (m.capabilities.includes("download")) line("Puede descargar videos para verlos sin conexión");
   if (m.capabilities.includes("drm")) line("Reproduce video protegido (DRM)");
   if (m.capabilities.includes("channels")) line("Agrega canales en vivo a la pestaña En vivo");
+  if (m.secrets && Object.keys(m.secrets).length) line("Usa datos sellados por su autor");
   (m.insecureHosts || []).forEach((h) => line(`Conexión sin cifrar con ${h}`, true));
   if (m.liveStreamHostsAny) line("Puede reproducir canales desde cualquier servidor que indique su lista", true);
   return out;
@@ -50,7 +51,11 @@ export async function validate(dirArg, { run = null, args = [], config = {}, rep
   if (!checked.ok) return refused([`kino-plugin.json: ${checked.field}: ${checked.message}`]);
   const m = checked.manifest;
   const consent = consentLines(m);
-  const notes = m.discoverable ? [] : ["No aparecerá en la búsqueda de Kino"];
+  const notes = [];
+  if (!m.discoverable) notes.push("No aparecerá en la búsqueda de Kino");
+  if (m.secrets && Object.keys(m.secrets).length) {
+    notes.push("No se puede comprobar aquí para qué repositorio se sellaron los secretos: Kino lo comprueba al instalar.");
+  }
   const entry = join(dir, m.entry);
   if (!existsSync(entry)) return { ...refused([`entry ${m.entry} not found`]), consent, notes };
   if (statSync(entry).size > contract.manifest.entryMaxBytes) problems.push(`${m.entry} is bigger than ${kb(contract.manifest.entryMaxBytes)}: Kino refuses it`);

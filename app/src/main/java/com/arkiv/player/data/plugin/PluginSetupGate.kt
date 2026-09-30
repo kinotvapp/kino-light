@@ -50,6 +50,9 @@ object PluginConsent {
         if (ManifestParser.CHANNELS in m.capabilities) {
             out += ConsentLine("Agrega canales en vivo a la pestaña En vivo", isNew = preview.isUpdate && ManifestParser.CHANNELS in preview.newCapabilities)
         }
+        if (m.secrets.isNotEmpty()) {
+            out += ConsentLine("Usa datos sellados por su autor", isNew = preview.isUpdate && preview.newSealedSecrets)
+        }
         m.insecureHosts.forEach { host ->
             out += ConsentLine("Conexión sin cifrar con $host", danger = true, isNew = preview.isUpdate && host in preview.newInsecureHosts)
         }

@@ -36,6 +36,8 @@ data class InstallPreview(
     val newInsecureHosts: List<String> = emptyList(),
     /** The manifest asks for `liveStreamHosts: "any"` and the person has not approved it yet (always, on a first install that asks). */
     val newLiveStreamHostsAny: Boolean = false,
+    /** The manifest declares `secrets` and the person has not approved that yet (always, on a first install that has any). */
+    val newSealedSecrets: Boolean = false,
     /** Set for a Nuvio-origin install/update: the converted script to write, skipping the fetch. */
     val nuvioOrigin: NuvioOrigin? = null,
 )
@@ -128,6 +130,10 @@ class PluginInstaller(
     private val knownPermissions: Set<String> = PluginSettings.PERMISSIONS,
     /** Diagnostics only (logcat, the same "KinoPlugin" tag as [PluginHttp]'s); tests capture it. */
     private val log: (String) -> Unit = { android.util.Log.w("KinoPlugin", it) },
+    /** The X25519 step of opening a manifest's sealed secrets at install/update; null means this build can't (see [previewFor]). */
+    private val sealAgreement: X25519Agreement? = null,
+    /** The recipient public key seals are opened against; production always uses [SealedSecrets.KINO_PUBLIC_KEY_V1], tests swap in their own. */
+    internal val sealRecipient: ByteArray = SealedSecrets.KINO_PUBLIC_KEY_V1,
 ) {
     suspend fun preview(input: String): InstallPreview {
         val address = PluginAddress.parse(input)
@@ -181,6 +187,7 @@ class PluginInstaller(
             enabled = previous?.record?.enabled ?: true, lastUpdateCheckAt = installedAt,
             permissions = m.permissions, capabilities = m.capabilities.toList(), insecureHosts = m.insecureHosts.toList(),
             exports = exports.sorted(), liveStreamHostsAny = m.liveStreamHostsAny,
+            sealedSecrets = m.secrets.isNotEmpty(),
             // A "no" is remembered until the person forgets it (Ajustes ▸ Plugins), not until the next version.
             rejectedHosts = previous?.record?.rejectedHosts.orEmpty(),
             // The person's broad video permission, like a reactive "yes": until they revoke it or uninstall.
@@ -228,21 +235,23 @@ class PluginInstaller(
                 it.copy(
                     pendingVersion = null, pendingHosts = emptyList(), pendingPermissions = emptyList(),
                     pendingCapabilities = emptyList(), pendingInsecureHosts = emptyList(), pendingLiveStreamHostsAny = false,
+                    pendingSealedSecrets = false,
                 )
             }
             return UpdateOutcome.UpToDate
         }
         // More reach than the person approved -- a host, a permission, a download/drm/channels capability,
-        // a host newly marked insecureHttp or liveStreamHosts "any" -- waits for them. A new REQUIRED setting doesn't: the
-        // update applies and the plugin shows "Falta configurar".
+        // a host newly marked insecureHttp, liveStreamHosts "any" or newly sealed secrets -- waits for
+        // them. A new REQUIRED setting doesn't: the update applies and the plugin shows "Falta configurar".
         if (preview.newHosts.isNotEmpty() || preview.newPermissions.isNotEmpty() ||
-            preview.newCapabilities.isNotEmpty() || preview.newInsecureHosts.isNotEmpty() || preview.newLiveStreamHostsAny
+            preview.newCapabilities.isNotEmpty() || preview.newInsecureHosts.isNotEmpty() || preview.newLiveStreamHostsAny ||
+            preview.newSealedSecrets
         ) {
             touch {
                 it.copy(
                     pendingVersion = preview.manifest.version, pendingHosts = preview.newHosts, pendingPermissions = preview.newPermissions,
                     pendingCapabilities = preview.newCapabilities, pendingInsecureHosts = preview.newInsecureHosts,
-                    pendingLiveStreamHostsAny = preview.newLiveStreamHostsAny,
+                    pendingLiveStreamHostsAny = preview.newLiveStreamHostsAny, pendingSealedSecrets = preview.newSealedSecrets,
                 )
             }
             return UpdateOutcome.NeedsApproval(preview)
@@ -268,7 +277,27 @@ class PluginInstaller(
             is ManifestResult.Valid -> r.manifest
             is ManifestResult.Invalid -> throw InstallException(r.message)
         }
+        verifySeals(address, manifest)
         return diffAgainstInstalled(address, manifest, json)
+    }
+
+    /**
+     * Opens every declared secret once against [address], discarding the plaintext immediately: this
+     * only proves the seal belongs to this plugin (a seal for another repo, or a tampered one, fails
+     * GCM), never stores or logs anything. [SealException.message] equal to
+     * [SealedSecrets.NO_NATIVE_MESSAGE] (thrown here when [sealAgreement] is null, or by the native
+     * agreement when the device build can't open seals at all) means the app itself can't; any other
+     * failure means the seal doesn't belong to this plugin.
+     */
+    private fun verifySeals(address: PluginAddress, manifest: PluginManifest) {
+        val binding = SealedSecrets.bindingOf(address)
+        manifest.secrets.forEach { (name, seal) ->
+            try {
+                SealedSecrets.open(seal, binding, name, sealAgreement ?: throw SealException(SealedSecrets.NO_NATIVE_MESSAGE), sealRecipient)
+            } catch (e: SealException) {
+                throw InstallException(if (e.message == SealedSecrets.NO_NATIVE_MESSAGE) NO_SEALS_MESSAGE else WRONG_SEALS_MESSAGE)
+            }
+        }
     }
 
     /**
@@ -291,6 +320,7 @@ class PluginInstaller(
             newCapabilities = manifest.capabilities.filter { it in ManifestParser.APPROVAL_CAPABILITIES }.filterNot { it in approvedCapabilities },
             newInsecureHosts = manifest.insecureHosts.filterNot { it in approvedInsecureHosts },
             newLiveStreamHostsAny = manifest.liveStreamHostsAny && existing?.record?.liveStreamHostsAny != true,
+            newSealedSecrets = manifest.secrets.isNotEmpty() && existing?.record?.sealedSecrets != true,
             nuvioOrigin = nuvioOrigin,
         )
     }
@@ -328,5 +358,10 @@ class PluginInstaller(
         const val MAX_SCRIPT_BYTES = 1024 * 1024
         const val MAX_ICON_BYTES = 128 * 1024
         const val DAY_MS = 24 * 60 * 60 * 1000L
+
+        /** Shown when a manifest declares `secrets` and this build has no way to open any seal at all. */
+        const val NO_SEALS_MESSAGE = "Este Kino no puede abrir datos sellados"
+        /** Shown when a seal doesn't open for this plugin's address (wrong repo, wrong name, tampered, or malformed). */
+        const val WRONG_SEALS_MESSAGE = "Los datos sellados de este plugin no son para este repositorio o están dañados"
     }
 }

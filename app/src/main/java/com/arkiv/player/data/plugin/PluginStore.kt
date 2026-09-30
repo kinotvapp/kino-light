@@ -43,6 +43,10 @@ data class InstalledRecord(
     val liveStreamHostsAny: Boolean = false,
     /** A pending update newly asks for `liveStreamHosts: "any"`, shown on its consent sheet. */
     val pendingLiveStreamHostsAny: Boolean = false,
+    /** The manifest declares `secrets` (apiVersion 4): the person APPROVED this plugin using sealed values. */
+    val sealedSecrets: Boolean = false,
+    /** A pending update newly declares `secrets`, shown on its consent sheet. */
+    val pendingSealedSecrets: Boolean = false,
     /** Hosts the person explicitly said "no" to via reactive approval; never prompted again for this plugin. */
     val rejectedHosts: List<String> = emptyList(),
     /** Set together, both null for a normal (hand-written-repo) plugin: which Nuvio repo and scraper this was converted from. */
@@ -72,6 +76,8 @@ data class InstalledRecord(
         .put("exports", JSONArray(exports))
         .put("liveStreamHostsAny", liveStreamHostsAny)
         .put("pendingLiveStreamHostsAny", pendingLiveStreamHostsAny)
+        .put("sealedSecrets", sealedSecrets)
+        .put("pendingSealedSecrets", pendingSealedSecrets)
         .put("rejectedHosts", JSONArray(rejectedHosts))
         .put("nuvioRepo", nuvioRepo ?: JSONObject.NULL)
         .put("nuvioScraperId", nuvioScraperId ?: JSONObject.NULL)
@@ -99,6 +105,8 @@ data class InstalledRecord(
                 exports = list("exports"),
                 liveStreamHostsAny = o.optBoolean("liveStreamHostsAny"),
                 pendingLiveStreamHostsAny = o.optBoolean("pendingLiveStreamHostsAny"),
+                sealedSecrets = o.optBoolean("sealedSecrets"),
+                pendingSealedSecrets = o.optBoolean("pendingSealedSecrets"),
                 rejectedHosts = list("rejectedHosts"),
                 nuvioRepo = if (o.isNull("nuvioRepo")) null else o.optString("nuvioRepo").ifEmpty { null },
                 nuvioScraperId = if (o.isNull("nuvioScraperId")) null else o.optString("nuvioScraperId").ifEmpty { null },

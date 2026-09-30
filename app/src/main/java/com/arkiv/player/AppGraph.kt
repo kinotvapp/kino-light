@@ -701,6 +701,7 @@ class AppGraph(context: Context) {
                 val runtime = PluginRuntime.open("probe", script, ProbePluginHost, PluginEnv(appVersion = BuildConfig.VERSION_NAME))
                 try { runtime.exports } finally { runtime.close() }
             },
+            sealAgreement = sealAgreement,
         )
     }
 

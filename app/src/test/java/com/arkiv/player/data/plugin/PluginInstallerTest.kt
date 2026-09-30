@@ -44,12 +44,14 @@ class PluginInstallerTest {
         prefix: String = base,
         api: Int = 1,
         liveStreamHosts: String? = null,
+        secrets: Map<String, String> = emptyMap(),
     ) {
         files[prefix + "kino-plugin.json"] = JSONObject()
             .put("id", "demo").put("name", "Demo").put("version", version).put("apiVersion", api)
             .put("entry", "plugin.js").put("hosts", JSONArray(hosts))
             .put("capabilities", JSONArray(capabilities))
             .apply { if (liveStreamHosts != null) put("liveStreamHosts", liveStreamHosts) }
+            .apply { if (secrets.isNotEmpty()) put("secrets", JSONObject(secrets)) }
             .toString().toByteArray()
         files[prefix + "plugin.js"] = script.toByteArray()
     }
@@ -391,6 +393,63 @@ class PluginInstallerTest {
         val preview = installer.preview("o/r")
         assertTrue(preview.newLiveStreamHostsAny)
         assertTrue(installer.install(preview).liveStreamHostsAny)
+    }
+
+    private fun installerWithSeal() = PluginInstaller(
+        store, fetcher, probe = { exports(it) }, clock = { now },
+        sealAgreement = TestSealing.agreement, sealRecipient = TestSealing.TEST_PUBLIC,
+    )
+
+    @Test fun `seals for this repo install`() = runBlocking {
+        installer = installerWithSeal()
+        val seal = TestSealing.seal("shh", SealedSecrets.bindingOf(PluginAddress("o", "r")), "apiKey")
+        publish(api = 4, secrets = mapOf("apiKey" to seal))
+        val preview = installer.preview("o/r")
+        assertTrue(preview.newSealedSecrets)
+        assertTrue(installer.install(preview).sealedSecrets)
+    }
+
+    @Test fun `seals bound to another repo refuse the install`() {
+        installer = installerWithSeal()
+        val seal = TestSealing.seal("shh", SealedSecrets.bindingOf(PluginAddress("owner", "repo")), "apiKey")
+        publish(api = 4, secrets = mapOf("apiKey" to seal), prefix = "https://raw.githubusercontent.com/fork/repo/HEAD/")
+        val e = assertThrows(InstallException::class.java) { runBlocking { installer.preview("fork/repo") } }
+        assertEquals("Los datos sellados de este plugin no son para este repositorio o están dañados", e.message)
+    }
+
+    @Test fun `a branch change keeps seals valid`() = runBlocking {
+        installer = installerWithSeal()
+        val seal = TestSealing.seal("shh", SealedSecrets.bindingOf(PluginAddress("o", "r")), "apiKey")
+        publish(api = 4, secrets = mapOf("apiKey" to seal), prefix = "https://raw.githubusercontent.com/o/r/dev/")
+        val preview = installer.preview("o/r@dev")
+        assertTrue(preview.newSealedSecrets)
+    }
+
+    @Test fun `no agreement means no install`() {
+        val seal = TestSealing.seal("shh", SealedSecrets.bindingOf(PluginAddress("o", "r")), "apiKey")
+        publish(api = 4, secrets = mapOf("apiKey" to seal))
+        val e = assertThrows(InstallException::class.java) { runBlocking { installer.preview("o/r") } }
+        assertEquals("Este Kino no puede abrir datos sellados", e.message)
+    }
+
+    @Test fun `an update that adds secrets needs approval again, and keeping them doesn't ask twice`() = runBlocking {
+        installer = installerWithSeal()
+        publish("1.0.0"); installFresh()
+        assertEquals(false, store.get("demo")!!.record.sealedSecrets)
+        val seal = TestSealing.seal("shh", SealedSecrets.bindingOf(PluginAddress("o", "r")), "apiKey")
+        publish("1.1.0", api = 4, secrets = mapOf("apiKey" to seal))
+        val outcome = installer.checkUpdate("demo") as UpdateOutcome.NeedsApproval
+        assertTrue(outcome.preview.newSealedSecrets)
+        assertTrue(store.get("demo")!!.record.pendingSealedSecrets)
+        installer.install(outcome.preview)
+        assertTrue(store.get("demo")!!.record.sealedSecrets)
+        assertEquals(false, store.get("demo")!!.record.pendingSealedSecrets)
+        val record = store.get("demo")!!.record
+        assertEquals(record, InstalledRecord.fromJson(record.toJson()))
+        // Already approved: a later update keeping the same secret applies without asking again.
+        publish("1.2.0", api = 4, secrets = mapOf("apiKey" to seal))
+        assertEquals(UpdateOutcome.Applied("1.2.0"), installer.checkUpdate("demo"))
+        assertTrue(store.get("demo")!!.record.sealedSecrets)
     }
 
     // manifestJson must be the SAME json the manifest was parsed from (not a stand-in like "{}"):
