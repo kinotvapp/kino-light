@@ -37,6 +37,13 @@
     android.media.metrics.LogSessionId *;
 }
 
+# quickjs-kt's native bridge recognizes a binding's `Unit` return by the class NAME "kotlin.Unit"
+# (it's a string in libquickjs.so) and its consumer rules don't keep it. Renamed by R8 (0.9.43:
+# kotlin.Unit -> l7.s), every plugin call to a Unit-returning native (console.log, kino.log,
+# kino.storage.set/remove, kino.cookies.clear) threw "Cannot convert java type 'l7.s' to a js
+# value" in release builds only; debug builds aren't minified, so no test or debug run saw it.
+-keep class kotlin.Unit { *; }
+
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefile MyApplication
