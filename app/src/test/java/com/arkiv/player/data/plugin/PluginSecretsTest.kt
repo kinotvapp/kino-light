@@ -65,6 +65,32 @@ class PluginSecretsTest {
         assertEquals(2, opens.get())
     }
 
+    @Test fun `each context gets its own encoding of the value`() {
+        val s = PluginSecrets(
+            mapOf("apiKey" to TestSealing.seal("a b/c&d=é\"\\\n", binding, "apiKey")), binding, TestSealing.agreement,
+            listOf("api.example.com"), recipient = TestSealing.TEST_PUBLIC,
+        )
+        val m = s.marker("apiKey")!!
+        assertEquals("[a b/c&d=é\"\\\n]", s.substitute("[$m]"))
+        assertEquals("[a%20b%2Fc%26d%3D%C3%A9%22%5C%0A]", s.substitute("[$m]", PluginSecrets.Encoding.URL_COMPONENT))
+        assertEquals("[a b/c&d=é\\\"\\\\\\n]", s.substitute("[$m]", PluginSecrets.Encoding.JSON_STRING))
+        assertEquals("-._~AZaz09", PluginSecrets.encode("-._~AZaz09", PluginSecrets.Encoding.URL_COMPONENT))
+        assertEquals("\\u0001", PluginSecrets.encode("\u0001", PluginSecrets.Encoding.JSON_STRING))
+        // Every form written is a form redacted.
+        for (e in PluginSecrets.Encoding.entries) assertEquals("[$m]", s.redact(s.substitute("[$m]", e)))
+    }
+
+    @Test fun `redact replaces the longest value first`() {
+        val s = PluginSecrets(
+            mapOf("short" to TestSealing.seal("abc", binding, "short"), "long" to TestSealing.seal("abcdef", binding, "long")),
+            binding, TestSealing.agreement, listOf("api.example.com"), recipient = TestSealing.TEST_PUBLIC,
+        )
+        val short = s.marker("short")!!
+        val long = s.marker("long")!!
+        s.substitute(short + long)
+        assertEquals("x $long y $short z", s.redact("x abcdef y abc z"))
+    }
+
     @Test fun `redact puts the marker back in place of an opened value`() {
         val s = secrets()
         val a = s.marker("apiKey")!!

@@ -35,20 +35,40 @@ class PluginSecrets(
 
     fun containsMarker(text: String): Boolean = markers.values.any { it in text }
 
+    /** How a plain value is written where its marker was: its context's own encoding, so it stays ONE value there. */
+    enum class Encoding {
+        /** As is: a header value, a text body, a form field (FormBody encodes those itself). */
+        RAW,
+        /** A URL path segment or query component: every byte outside RFC 3986 unreserved percent-encoded (UTF-8, uppercase hex). */
+        URL_COMPONENT,
+        /** Inside a JSON string: JSON escaping, without the quotes. */
+        JSON_STRING,
+    }
+
     /** [text] with every marker of this runtime replaced by its plain value (opening the seal on first use). */
-    fun substitute(text: String): String {
+    fun substitute(text: String): String = substitute(text, Encoding.RAW)
+
+    /** [substitute], each value written in [encoding]. [redact] knows every form written here. */
+    fun substitute(text: String, encoding: Encoding): String {
         var out = text
-        for ((name, marker) in markers) if (marker in out) out = out.replace(marker, plainOf(name))
+        for ((name, marker) in markers) if (marker in out) out = out.replace(marker, encode(plainOf(name), encoding))
         return out
     }
 
-    /** [text] with every opened plain value replaced by its marker. */
+    /**
+     * [text] with every opened plain value -- as is, and in every [Encoding] [substitute] writes --
+     * replaced by its marker. One pass, longest form first at each position: a value that is a
+     * prefix of another leaves no tail, and a marker just put in is never scanned again.
+     */
     fun redact(text: String): String {
-        var out = text
+        val forms = HashMap<String, String>()
         for ((name, plain) in synchronized(opened) { opened.toMap() }) {
-            if (plain.isNotEmpty()) out = out.replace(plain, markers.getValue(name))
+            if (plain.isEmpty()) continue
+            for (e in Encoding.entries) forms.putIfAbsent(encode(plain, e), markers.getValue(name))
         }
-        return out
+        if (forms.isEmpty()) return text
+        val pattern = Regex(forms.keys.sortedByDescending { it.length }.joinToString("|") { Regex.escape(it) })
+        return pattern.replace(text) { forms.getValue(it.value) }
     }
 
     private fun plainOf(name: String): String = synchronized(opened) {
@@ -57,6 +77,37 @@ class PluginSecrets(
 
     companion object {
         private val random = SecureRandom()
+        private const val HEX = "0123456789ABCDEF"
+
+        fun encode(value: String, encoding: Encoding): String = when (encoding) {
+            Encoding.RAW -> value
+            Encoding.URL_COMPONENT -> buildString {
+                for (b in value.toByteArray(Charsets.UTF_8)) {
+                    val c = b.toInt() and 0xFF
+                    val ch = c.toChar()
+                    if (ch in 'A'..'Z' || ch in 'a'..'z' || ch in '0'..'9' || ch == '-' || ch == '.' || ch == '_' || ch == '~') {
+                        append(ch)
+                    } else {
+                        append('%').append(HEX[c shr 4]).append(HEX[c and 0xF])
+                    }
+                }
+            }
+            Encoding.JSON_STRING -> buildString {
+                for (ch in value) {
+                    when {
+                        ch == '"' -> append("\\\"")
+                        ch == '\\' -> append("\\\\")
+                        ch == '\n' -> append("\\n")
+                        ch == '\r' -> append("\\r")
+                        ch == '\t' -> append("\\t")
+                        ch == '\b' -> append("\\b")
+                        ch == '\u000C' -> append("\\f")
+                        ch < ' ' -> append("\\u00").append(HEX[ch.code shr 4]).append(HEX[ch.code and 0xF])
+                        else -> append(ch)
+                    }
+                }
+            }
+        }
 
         /** 16 lowercase hex characters (64 random bits). */
         fun randomNonce(): String {

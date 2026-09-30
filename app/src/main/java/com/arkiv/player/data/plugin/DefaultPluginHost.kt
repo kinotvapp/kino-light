@@ -22,7 +22,7 @@ import java.util.Base64
  * [secrets] (a plugin whose manifest declares sealed ones, see [PluginSecrets]): `kino.secret`
  * answers a marker, and [fetch] swaps markers for the plain values in the URL's path and query,
  * every header value and a text/JSON/form body, then sends that request toward the manifest's own
- * hosts only ([PluginHttp.Request.sealedTo]). What goes back to the plugin -- the final URL,
+ * hosts only, over https only ([PluginHttp.Request.sealedTo]). What goes back to the plugin -- the final URL,
  * headers, text body, an error message -- has any opened value swapped back for its marker.
  */
 class DefaultPluginHost(
@@ -84,8 +84,8 @@ class DefaultPluginHost(
      * error, logged -- and the fragment, which never leaves the device, keeps its marker too.
      */
     private fun sealed(request: PluginHttp.Request, s: PluginSecrets): PluginHttp.Request? {
-        val url = request.url.toHttpUrlOrNull()
-        val inUrl = url != null && (s.containsMarker(url.encodedPath) || url.encodedQuery?.let(s::containsMarker) == true)
+        val parsed = request.url.toHttpUrlOrNull()
+        val inUrl = parsed != null && (s.containsMarker(parsed.encodedPath) || parsed.encodedQuery?.let(s::containsMarker) == true)
         val inHeaders = request.headers.values.any(s::containsMarker)
         val inBody = when (val b = request.body) {
             is PluginHttp.Body.Text -> s.containsMarker(b.text)
@@ -94,9 +94,14 @@ class DefaultPluginHost(
             is PluginHttp.Body.Bytes, null -> false
         }
         if (!inUrl && !inHeaders && !inBody) return null
-        val sealedUrl = if (inUrl && url != null) {
-            url.newBuilder().encodedPath(s.substitute(url.encodedPath))
-                .apply { url.encodedQuery?.let { encodedQuery(s.substitute(it)) } }
+        // Each value in its context's encoding, so it arrives as exactly ONE value: percent-encoded
+        // in the path and the query (a `/`, `&`, `=`, `+` or `#` in it can't split a segment or add a
+        // parameter), JSON-escaped in a JSON body (a `"` or `\` can't end the string). PluginSecrets
+        // redacts these same forms, so the final URL handed back to the plugin shows markers only.
+        val component = PluginSecrets.Encoding.URL_COMPONENT
+        val sealedUrl = if (inUrl && parsed != null) {
+            parsed.newBuilder().encodedPath(s.substitute(parsed.encodedPath, component))
+                .apply { parsed.encodedQuery?.let { encodedQuery(s.substitute(it, component)) } }
                 .build().toString()
         } else {
             request.url
@@ -106,7 +111,7 @@ class DefaultPluginHost(
             headers = request.headers.mapValues { s.substitute(it.value) },
             body = when (val b = request.body) {
                 is PluginHttp.Body.Text -> PluginHttp.Body.Text(s.substitute(b.text))
-                is PluginHttp.Body.Json -> PluginHttp.Body.Json(s.substitute(b.json))
+                is PluginHttp.Body.Json -> PluginHttp.Body.Json(s.substitute(b.json, PluginSecrets.Encoding.JSON_STRING))
                 is PluginHttp.Body.Form -> PluginHttp.Body.Form(b.fields.map { (k, v) -> s.substitute(k) to s.substitute(v) })
                 is PluginHttp.Body.Bytes, null -> b
             },

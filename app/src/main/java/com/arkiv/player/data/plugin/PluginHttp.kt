@@ -273,8 +273,8 @@ class PluginHttp(
         val timeoutMs: Long = 0,
         /**
          * Set when a sealed secret was substituted into this request ([PluginSecrets]): the ONLY host
-         * patterns it may reach, on every hop -- the manifest's own `hosts`, never a host approved
-         * reactively, a typed server or the broad video permission. Checked before the ordinary gate,
+         * patterns it may reach, on every hop and over https only -- the manifest's own `hosts`, never
+         * a host approved reactively, a typed server or the broad video permission. Checked before the ordinary gate,
          * which still applies on top, so a refusal here never becomes a host question.
          */
         val sealedTo: List<String>? = null,
@@ -407,12 +407,7 @@ class PluginHttp(
         var previous: HttpUrl? = null
         repeat(MAX_REDIRECTS + 1) {
             val from = previous
-            req.sealedTo?.let { allowed ->
-                if (!HostRules.matches(url.host, allowed)) {
-                    log("[$pluginId] fetch with sealed data to ${url.host} refused: not a host its manifest declares")
-                    throw PluginFetchException("host_not_allowed", "este plugin no puede enviar datos sellados a ${url.host.take(100)}")
-                }
-            }
+            req.sealedTo?.let { allowed -> checkSealed(url, allowed) }
             ensureHostAllowed(from, url, trace)
             if (requests.incrementAndGet() > MAX_REQUESTS_PER_CALL) {
                 throw invalid("demasiadas solicitudes en una sola llamada (máximo $MAX_REQUESTS_PER_CALL)")
@@ -433,6 +428,22 @@ class PluginHttp(
             }
         }
         throw PluginFetchException("network", "demasiadas redirecciones")
+    }
+
+    /**
+     * One hop of a request carrying a sealed value ([Request.sealedTo]): only to a host the manifest
+     * declares, and only over https -- never plain http, not even to a host declared `insecureHttp`.
+     * The one exception is this class's MockWebServer-only [allowInsecureLocalhost] on `localhost`.
+     */
+    private fun checkSealed(url: HttpUrl, allowed: List<String>) {
+        if (!HostRules.matches(url.host, allowed)) {
+            log("[$pluginId] fetch with sealed data to ${url.host} refused: not a host its manifest declares")
+            throw PluginFetchException("host_not_allowed", "este plugin no puede enviar datos sellados a ${url.host.take(100)}")
+        }
+        if (url.scheme != "https" && !(allowInsecureLocalhost && url.host == "localhost")) {
+            log("[$pluginId] fetch with sealed data to ${url.host} refused: not https")
+            throw PluginFetchException("host_not_allowed", "este plugin no puede enviar datos sellados sin https a ${url.host.take(100)}")
+        }
     }
 
     /** One request, on [trace] as waiting while it is out, and as a failed site if it never answers. */
