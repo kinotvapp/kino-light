@@ -204,17 +204,37 @@ class PluginCryptoApiTest {
         assertEquals(want.toString(), out)
     }
 
-    @Test fun `sealed key plus sealed iv or aad works`() {
+    @Test fun `a sealed iv or aad is refused under a sealed key too`() {
         val out = sealedHome(
             """
-            return [kino.crypto.encrypt('aes-128-cbc', { key: s('aesKey'), iv: s('aesIv'), data: 'hola' }),
-              kino.crypto.encrypt('aes-128-gcm', { key: s('aesKey'), iv: '000102030405060708090a0b', ivEncoding: 'hex', aad: s('aesIv'), data: 'hola' })];
+            const tries = [
+              () => kino.crypto.encrypt('aes-128-cbc', { key: s('aesKey'), iv: s('aesIv'), data: 'hola' }),
+              () => kino.crypto.decrypt('aes-128-cbc', { key: s('aesKey'), iv: s('aesKey'), data: 'AAAAAAAAAAAAAAAAAAAAAA==' }),
+              () => kino.crypto.encrypt('aes-128-gcm', { key: s('aesKey'), iv: '000102030405060708090a0b', ivEncoding: 'hex', aad: s('aesIv'), data: 'hola' }),
+              () => kino.crypto.encrypt('aes-128-gcm', { key: s('aesKey'), iv: 'x' + s('aesIv'), data: 'hola' }),
+            ];
+            return tries.map((f) => { try { return ['no throw', f()] } catch (e) { return [e.code, e.message] } });
             """,
         )
-        val want = org.json.JSONArray()
-            .put(expected(JSONObject().put("op", "encrypt").put("alg", "aes-128-cbc").put("key", plain["aesKey"]).put("iv", plain["aesIv"]).put("data", "hola")))
-            .put(expected(JSONObject().put("op", "encrypt").put("alg", "aes-128-gcm").put("key", plain["aesKey"]).put("iv", "000102030405060708090a0b").put("ivEnc", "hex").put("aad", plain["aesIv"]).put("data", "hola")))
-        assertEquals(want.toString(), out)
+        assertEquals(List(4) { "[\"crypto_error\",\"$refused\"]" }.joinToString(",", "[", "]"), out)
+    }
+
+    // Regression: when a sealed iv was allowed under a sealed key, the plugin got the key back in two
+    // calls -- D_K(X) XOR K from CBC with the key's own marker as the iv, D_K(X) from ECB, XORed.
+    @Test fun `a sealed key can't be computed back through the iv`() {
+        val out = sealedHome(
+            """
+            const k = s('aesKey'), x = 'AAAAAAAAAAAAAAAAAAAAAA==';
+            let a;
+            try { a = kino.crypto.decrypt('aes-128-cbc', { key: k, iv: k, data: x, padding: 'none', outputEncoding: 'hex' }); } catch (e) { return [e.code, e.message] }
+            const b = kino.crypto.decrypt('aes-128-ecb', { key: k, data: x, padding: 'none', outputEncoding: 'hex' });
+            let recovered = '';
+            for (let i = 0; i < 32; i += 2) recovered += String.fromCharCode(parseInt(a.substr(i, 2), 16) ^ parseInt(b.substr(i, 2), 16));
+            return ['recovered', recovered];
+            """,
+        )
+        assertEquals("[\"crypto_error\",\"$refused\"]", out)
+        assertTrue(out, plain.getValue("aesKey") !in out)
     }
 
     @Test fun `sealed iv under a plain key is refused`() {

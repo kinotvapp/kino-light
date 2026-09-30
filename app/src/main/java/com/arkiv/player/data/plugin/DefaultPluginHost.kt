@@ -42,15 +42,14 @@ class DefaultPluginHost(
 
     /**
      * `kino.crypto` with sealed values (spec §5): a marker is swapped for its value only in what an
-     * op reads as a key -- `key` (encrypt, decrypt, hmac), pbkdf2's `password` and `salt` -- and in
-     * `iv` and `aad` only when the key carries one too. A marker in `data`, or in iv/aad under a
-     * plain key, is refused with [PluginCrypto.SEALED_REFUSED]: with a known key the ciphertext gives
-     * a sealed iv back (CBC's first block), and a guessable aad falls to the tag. A marker anywhere
-     * else stays text. The answer is redacted like everything else that returns to the plugin.
-     *
-     * Known gap, pending a spec decision: under a sealed key the plugin can still compute a sealed
-     * iv back -- the same block decrypted under that iv and under a zero one, XORed -- and with the
-     * key's own marker as the iv, that is the key.
+     * op reads as a key -- `key` (encrypt, decrypt), the HMAC `key`, pbkdf2's `password` and `salt`.
+     * A marker in `data`, `iv` or `aad` is refused with [PluginCrypto.SEALED_REFUSED], whatever the
+     * key is: those are paths that hand the value back or let it be computed. Data comes straight
+     * back out of a decrypt. An iv or aad does too, even under a sealed key, because the plugin can
+     * use that key as a block cipher: the same block decrypted with CBC under the sealed iv and with
+     * ECB, XORed, is the iv -- and with the key's own marker as the iv, that is the key; the aad
+     * falls the same way to GHASH, whose key E_K(0) ECB also gives. A marker anywhere else stays
+     * text. The answer is redacted like everything else that returns to the plugin.
      */
     override fun crypto(opJson: String): String {
         val s = secrets ?: return PluginCrypto.run(opJson)
@@ -59,15 +58,12 @@ class DefaultPluginHost(
         } catch (e: org.json.JSONException) {
             return PluginCrypto.run(opJson)
         }
-        val op = o.optString("op")
         fun hasMarker(field: String) = (o.opt(field) as? String)?.let(s::containsMarker) == true
-        val keySealed = hasMarker(if (op == "pbkdf2") "password" else "key")
-        if (hasMarker("data") || (!keySealed && (hasMarker("iv") || hasMarker("aad")))) {
+        if (hasMarker("data") || hasMarker("iv") || hasMarker("aad")) {
             return JSONObject().put("error", PluginCrypto.SEALED_REFUSED).toString()
         }
-        val keyLike = when (op) {
-            "hmac" -> listOf("key")
-            "encrypt", "decrypt" -> listOf("key", "iv", "aad")
+        val keyLike = when (o.optString("op")) {
+            "hmac", "encrypt", "decrypt" -> listOf("key")
             "pbkdf2" -> listOf("password", "salt")
             else -> emptyList()
         }
