@@ -382,8 +382,11 @@ private fun PluginsHeader(
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         LazyRow(
             modifier = Modifier.weight(1f),
-            // Room for the zoom and the focus border: without this the focused tab gets clipped against its own row's bounds.
-            contentPadding = PaddingValues(vertical = 8.dp),
+            // Room for the zoom and the focus border on every side, the FIRST chip's left edge included: a
+            // LazyRow clips to its own bounds, and with no horizontal padding the first chip's focus ring
+            // bled past x=0 of the row (the screen's own edge, once this header sits in the full-screen
+            // "Plugins" route with nothing left of it) and got clipped there. Measured on the KALLEY TV.
+            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             items(PluginsTab.entries.size) { i ->

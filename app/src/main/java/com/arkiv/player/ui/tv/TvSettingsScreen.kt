@@ -177,9 +177,9 @@ private fun TvSettingsChrome(
         Text("Ajustes", style = MaterialTheme.typography.headlineMedium, color = Color.White)
         LazyRow(
             modifier = Modifier.fillMaxWidth(),
-            // Room for the zoom and the focus border: without this the focused tab gets clipped
-            // against its own row's bounds.
-            contentPadding = PaddingValues(vertical = 8.dp),
+            // Room for the zoom and the focus border on every side, the first chip's left edge included
+            // (see PluginsHeader's own copy of this fix, measured on the KALLEY TV).
+            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             items(TvSettingsTab.entries.size) { i ->

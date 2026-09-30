@@ -84,11 +84,11 @@ internal fun tvSearchStep(query: String, event: TvSearchEvent): TvSearchStep = w
 /** Longest query the collapsed button repeats before cutting it with an ellipsis. */
 private const val MAX_BUTTON_QUERY = 16
 
-/** The search button's words: "Buscar plugins", or while a query filters the list "Buscar: xuper". */
-internal fun tvSearchButtonLabel(query: String): String {
+/** The search button's words: [baseLabel] ("Buscar plugins" by default), or while a query filters the list "Buscar: xuper". */
+internal fun tvSearchButtonLabel(query: String, baseLabel: String = "Buscar plugins"): String {
     val q = query.trim()
     return when {
-        q.isEmpty() -> "Buscar plugins"
+        q.isEmpty() -> baseLabel
         q.length > MAX_BUTTON_QUERY -> "Buscar: ${q.take(MAX_BUTTON_QUERY).trimEnd()}…"
         else -> "Buscar: $q"
     }
@@ -103,6 +103,9 @@ internal fun tvSearchButtonLabel(query: String): String {
  * opens the field again to edit it, and "Quitar" beside it drops the query. See [tvSearchStep].
  *
  * [upFocus] is where Up leads (the host's tab row) and [downTarget] where Down leads (the first card).
+ * [baseLabel] is what the collapsed button and the field's placeholder say with no query yet -- "Buscar
+ * plugins" for the Recomendados tab (the default, unchanged), "Buscar" for
+ * [com.arkiv.player.ui.tv.TvNuvioScraperPickerScreen] (it searches this repo's own scrapers, not plugins).
  */
 @Composable
 internal fun TvPluginSearch(
@@ -110,6 +113,7 @@ internal fun TvPluginSearch(
     onQueryChange: (String) -> Unit,
     upFocus: FocusRequester?,
     downTarget: FocusRequester?,
+    baseLabel: String = "Buscar plugins",
 ) {
     val focusManager = LocalFocusManager.current
     var expanded by remember { mutableStateOf(false) }
@@ -140,7 +144,7 @@ internal fun TvPluginSearch(
             OutlinedTextField(
                 value = query,
                 onValueChange = onQueryChange,
-                placeholder = { Text("Buscar plugins") },
+                placeholder = { Text(baseLabel) },
                 singleLine = true,
                 // `Done` just leaves the field for the results (the list filters as you type).
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
@@ -169,7 +173,7 @@ internal fun TvPluginSearch(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             TvCompactAction(
-                label = tvSearchButtonLabel(query),
+                label = tvSearchButtonLabel(query, baseLabel),
                 icon = Icons.Filled.Search,
                 modifier = Modifier
                     .focusRequester(buttonFocus)

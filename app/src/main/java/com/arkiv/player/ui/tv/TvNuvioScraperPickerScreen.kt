@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -195,7 +196,13 @@ internal fun TvNuvioScraperPickerScreen(
                 // inside a LazyRow each chip is measured to its own content, but a plain Row would hand the
                 // FIRST one the whole remaining width and leave nothing for the rest -- the same reason
                 // every other TvTab row in this app (Ajustes' own tabs, the Plugins header) is a LazyRow.
-                LazyRow(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                LazyRow(
+                    modifier = Modifier.weight(1f),
+                    // Room for the first chip's own focus ring (see PluginsHeader's identical fix): a LazyRow
+                    // clips to its own bounds, and with none here "Todas" is flush against them.
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
                     items(NuvioTypeFilter.entries.size) { index ->
                         val f = NuvioTypeFilter.entries[index]
                         TvTab(
@@ -215,7 +222,10 @@ internal fun TvNuvioScraperPickerScreen(
                         }
                     }
                 }
-                TvPluginSearch(query = query, onQueryChange = { query = it }, upFocus = null, downTarget = focusedId?.let { rowFocus[it] })
+                TvPluginSearch(
+                    query = query, onQueryChange = { query = it }, upFocus = null,
+                    downTarget = focusedId?.let { rowFocus[it] }, baseLabel = "Buscar",
+                )
             }
 
             Spacer(Modifier.height(16.dp))
@@ -306,7 +316,10 @@ private fun NuvioListRow(scraper: NuvioScraperEntry, action: NuvioCardAction, se
             Box(Modifier.size(28.dp).clip(CircleShape).background(Color(tile)), contentAlignment = Alignment.Center) {
                 Text(cardInitial(scraper.name), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Black, color = Color(onTileColor(tile)))
             }
-            Text(scraper.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Text(
+                scraper.name, style = MaterialTheme.typography.bodyLarge, color = Color.White,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+            )
             if (action == NuvioCardAction.INSTALLED) {
                 Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White)
             }
@@ -342,7 +355,7 @@ private fun NuvioDetailPanel(scraper: NuvioScraperEntry?, action: NuvioCardActio
         nuvioScraperVersionAuthorLine(scraper)?.let {
             Text(it, style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary, modifier = Modifier.padding(top = 8.dp))
         }
-        Spacer(Modifier.weight(1f))
+        Spacer(Modifier.height(20.dp))
         TvCompactAction(
             label = nuvioCardActionLabel(action),
             icon = if (action == NuvioCardAction.INSTALLED) Icons.Filled.Check else null,
