@@ -54,7 +54,7 @@ object ManifestParser {
      * ([CAPABILITY_API_VERSIONS], [INSECURE_HOST_API_VERSION], [NO_HOSTS_API_VERSION],
      * `PluginOutput.LIVE_API_VERSION`), never on this one: raising it must not move an older gate.
      */
-    const val SUPPORTED_API = 3
+    const val SUPPORTED_API = 4
     /** The `{ "host", "insecureHttp": true }` host object arrived with apiVersion 2. */
     const val INSECURE_HOST_API_VERSION = 2
     /** apiVersion 3: the plugin adds channels to the En vivo module (see `data/live/PluginLiveProvider`). */
@@ -214,7 +214,7 @@ object ManifestParser {
         if (o.has("settings") && o.optJSONArray("settings") == null) {
             return invalid("settings", "El campo \"settings\" debe ser una lista")
         }
-        val settings = when (val p = PluginSettings.parseSettings(o.optJSONArray("settings"))) {
+        val settings = when (val p = PluginSettings.parseSettings(o.optJSONArray("settings"), api)) {
             is PluginSettings.Parsed.Error -> return invalid("settings", p.message)
             is PluginSettings.Parsed.Ok -> p.value
         }

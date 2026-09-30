@@ -26,7 +26,7 @@ const manifest = (extra = {}) => JSON.stringify({
 });
 
 test("contract.json is the one the app pins", () => {
-  assert.equal(contract.apiVersion, 3);
+  assert.equal(contract.apiVersion, 4);
   assert.deepEqual(contract.capabilities.names, ["search", "home", "browse", "episodes", "resolve", "download", "drm", "channels"]);
   assert.deepEqual(contract.capabilities.declarative, ["download", "drm"]);
   assert.deepEqual(contract.permissions, []);
@@ -1199,4 +1199,23 @@ test("validate --run liveChannels follows the first ref through resolve as a liv
     rmSync(ok, { recursive: true, force: true });
     rmSync(local, { recursive: true, force: true });
   }
+});
+
+const listSetting = (extra = {}) => ({ key: "sources", label: "Direcciones", type: "list", fields: [{ key: "url", label: "Dirección", type: "url", required: true }, { key: "category", label: "Categoría", type: "text" }], ...extra });
+
+test("a list setting needs apiVersion 4 and valid fields, like the app", () => {
+  const m = (api, s) => validateManifest(JSON.stringify({ ...JSON.parse(manifest()), apiVersion: api, settings: [s] }));
+  assert.equal(m(4, listSetting()).ok, true);
+  assert.equal(m(3, listSetting()).message, 'El ajuste "sources" es una lista: necesita apiVersion 4');
+  assert.equal(m(4, listSetting({ max: 51 })).message, '"max" del ajuste "sources" va de 1 a 50');
+  assert.equal(m(4, listSetting({ fields: [] })).message, 'El ajuste "sources" necesita de 1 a 4 campos');
+  assert.equal(m(4, { key: "k", label: "x", type: "text", fields: [] }).message, 'Solo un ajuste de tipo list tiene "fields"');
+});
+
+test("the url fields of a list are the servers the plugin may reach", async () => {
+  const { createKino } = await import("../kino-shim.mjs");
+  const mf = { ...JSON.parse(manifest()), apiVersion: 4, hosts: [], settings: [listSetting()] };
+  const { kino, servers } = createKino(mf, { config: { sources: [{ url: " https://my.server:8443/x ", category: " A ", extra: "z" }, { url: "", category: "" }] } });
+  assert.deepEqual(kino.config.get("sources"), [{ url: "https://my.server:8443/x", category: "A" }]);
+  assert.deepEqual(servers, ["https://my.server:8443/x"]);
 });

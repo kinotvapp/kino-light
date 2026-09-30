@@ -65,9 +65,14 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", stora
   for (const s of manifest.settings || []) {
     // A url setting never takes a manifest default (the app refuses one): only a typed server counts.
     const v = config[s.key] !== undefined ? config[s.key] : s.default !== undefined && contract.settings.types[s.type]?.canHaveDefault !== false ? s.default : s.type === "toggle" ? false : s.type === "select" ? s.options[0].value : undefined;
-    if (v !== undefined && v !== "") values[s.key] = s.type === "toggle" ? v === true || v === "true" : String(v);
+    if (s.type === "list") {
+      // Entries with only their own fields, trimmed, all-blank ones dropped (what the app stores).
+      const entries = (Array.isArray(v) ? v : []).map((e) => Object.fromEntries((s.fields || []).map((f) => [f.key, String(e?.[f.key] ?? "").trim()]))).filter((e) => Object.values(e).some(Boolean));
+      if (entries.length) values[s.key] = entries;
+    } else if (v !== undefined && v !== "") values[s.key] = s.type === "toggle" ? v === true || v === "true" : String(v);
   }
-  const servers = (manifest.settings || []).filter((s) => s.type === "url" && typeof values[s.key] === "string" && isUserServer(values[s.key])).map((s) => new URL(values[s.key].trim()));
+  const typedUrls = (manifest.settings || []).flatMap((s) => s.type === "url" ? [values[s.key]] : s.type === "list" ? (values[s.key] || []).flatMap((e) => (s.fields || []).filter((f) => f.type === "url").map((f) => e[f.key])) : []);
+  const servers = typedUrls.filter((u) => typeof u === "string" && isUserServer(u)).map((u) => new URL(u.trim()));
   const port = (u) => u.port || (u.protocol === "https:" ? "443" : "80");
   const serverOf = (u) => servers.find((s) => s.protocol === u.protocol && s.hostname === u.hostname && port(s) === port(u));
 

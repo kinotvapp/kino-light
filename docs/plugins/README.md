@@ -149,7 +149,7 @@ names the field.
 | `id` | Required. `^[a-z0-9][a-z0-9-]{1,39}$` (2 to 40 lowercase letters, digits or hyphens, not starting with a hyphen). Not one of `magis`, `ditu`, `live`, `local`, `unknown`, `plugin`. It is the plugin's identity: never change it once people have installed it. |
 | `name` | Required. 1 to 40 characters. |
 | `version` | Required. `MAJOR.MINOR.PATCH` and nothing else (no `-beta`, no `+build`), each number up to 6 digits and without leading zeros. |
-| `apiVersion` | Required. `1`, `2` or `3`. A higher number than Kino supports is refused with "Este plugin necesita una versión más nueva de Kino". Declare `2` only if you use something that needs it (below); otherwise stay on `1` so your plugin also runs on older Kino builds. |
+| `apiVersion` | Required. `1`, `2`, `3` or `4`. A higher number than Kino supports is refused with "Este plugin necesita una versión más nueva de Kino". Declare `2` only if you use something that needs it (below); otherwise stay on `1` so your plugin also runs on older Kino builds. |
 | `entry` | Required. Relative path of the JavaScript file: letters, digits, `.`, `_`, `-` and `/` only, no `..`, at most 200 characters, ends in `.js`. The file is at most 1 MB. |
 | `hosts` | Required. 1 to 20 entries (from apiVersion 2 it may be empty, `[]`, when the plugin has a `url` setting: see [The person's own servers](#the-persons-own-servers)); each a lowercase DNS name (`archive.org`), `*.` plus a DNS name (`*.archive.org`), or (apiVersion 2 only) an object `{ "host": "…", "insecureHttp": true }` (below). Host names only: no scheme, port or path. No bare `*`, no IP addresses, no `localhost`, nothing ending in `.local`, `.lan`, `.internal`, `.localhost` or `.home.arpa`, and at least one dot. **`*.x` covers subdomains only, not `x` itself**: if you need both, list both. |
 | `capabilities` | Required. A subset of `search`, `home`, `browse`, `episodes`, `resolve`, `download`, `drm`, `channels`. Must include `resolve` and at least one of `search` or `home`. `search`, `home`, `browse`, `episodes` and `resolve` must each be an exported function of the entry file, or the install fails with "El plugin no carga: le falta ...". `download` and `drm` need `apiVersion: 2` and are declarative flags instead — the app acts on them, not your code, so nothing extra to export; declaring one shows its consent line ("Puede descargar videos para verlos sin conexión" / "Reproduce video protegido (DRM)") and needs approval again on an update that adds it. `download` gives your titles offline downloads (see [Downloads](#downloads-apiversion-2)); `drm` lets a `Stream` carry a Widevine license (see [A Widevine-protected stream](#a-widevine-protected-stream-apiversion-2)). `channels` needs `apiVersion: 3` and the exports `liveCategories` and `liveChannels` (see [Channels in the En vivo tab](#channels-in-the-en-vivo-tab-apiversion-3)). |
@@ -188,12 +188,25 @@ screen (Ajustes ▸ Plugins), and your code reads its value with `kino.config.ge
 | `password` | text | yes | yes | 500 characters |
 | `toggle` | `true` / `false` | no (always has a value) | yes | — |
 | `select` | one of the `options` values | no (always has a value) | yes | — |
+| `list` | a list of entries, each an object of the list's `fields` | yes | no | — |
 <!-- contract:settings:end -->
 
 - `key` matches `^[a-z][a-zA-Z0-9_]{0,31}$` and is unique; `label` is 1 to 40 characters; `hint`
   (the example under the field) at most 80.
 - `select` needs `options` (1 to 20, each a `value` and a `label` of at most 40 characters); its
   `default` must be one of the values. A `toggle` default is `true` or `false`.
+- `list` (apiVersion 4) is a list the person builds with an "Agregar" button: each entry is a
+  text line with an "Editar" button, and the dialog to add or edit one shows the list's `fields`
+  (1 to 4, each with a `key`, `label`, a `type` of `text` or `url`, and optionally `hint` and
+  `required`; no `default`). `max` (1 to 50, default 20) caps the entries. `kino.config.get(key)`
+  returns an array of objects `{ [field.key]: string }`, trimmed, without all-blank entries; an
+  empty list is `undefined`. A `required` list needs at least one entry. The `url` fields of the
+  entries become hosts your plugin may reach, exactly like a `url` setting (so `hosts` may be `[]`).
+  ```json
+  { "key": "sources", "label": "Direcciones", "type": "list", "max": 30,
+    "fields": [ { "key": "url", "label": "Dirección", "type": "url", "required": true },
+                { "key": "category", "label": "Categoría", "type": "text" } ] }
+  ```
 - **A `url` setting has no `default`**: a server the person types becomes a host your plugin may
   reach, so only the person can choose it. A manifest with a `default` on a `url` setting is
   refused; put an example address in `hint` instead.

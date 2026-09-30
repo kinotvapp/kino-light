@@ -18,13 +18,14 @@ data class PluginConfigDraft(
     val saving: Boolean = false,
 ) {
     fun text(key: String): String = values[key] as? String ?: ""
+    fun entries(key: String): List<Map<String, String>> = PluginSettings.entriesOf(values[key]).orEmpty()
     fun toggle(key: String): Boolean = values[key] as? Boolean ?: false
     fun with(key: String, value: Any?): PluginConfigDraft = copy(values = values + (key to value), error = null)
 
     /** The first reason the values can't be saved, or null. */
     fun problem(): String? = settings.firstNotNullOfOrNull { s ->
         val v = values[s.key]
-        val blank = v == null || (v is String && v.isBlank())
+        val blank = v == null || (v is String && v.isBlank()) || (s.type == SettingType.LIST && entries(s.key).none { e -> e.values.any { it.isNotBlank() } })
         when {
             blank && s.required -> "Completa \"${s.label}\""
             blank -> null
@@ -37,7 +38,7 @@ data class PluginConfigDraft(
         fun of(pluginId: String, pluginName: String, settings: List<PluginSetting>, stored: Map<String, Any>): PluginConfigDraft =
             PluginConfigDraft(
                 pluginId, pluginName, settings,
-                settings.associate { s -> s.key to (stored[s.key] ?: s.default ?: if (s.type == SettingType.TOGGLE) false else "") },
+                settings.associate { s -> s.key to (stored[s.key] ?: s.default ?: when (s.type) { SettingType.TOGGLE -> false; SettingType.LIST -> emptyList<Map<String, String>>(); else -> "" }) },
             )
     }
 }

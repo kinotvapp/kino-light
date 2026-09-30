@@ -1,7 +1,7 @@
 {
-  "$comment": "Kino plugin contract, apiVersion 1, 2 and 3. The single source of truth for every number and rule a plugin meets. The app checks each value against its own code, and a test in the app pins this file to it; sdk/validate.mjs, sdk/run.mjs and the guide's tables read this file.",
-  "apiVersion": 3,
-  "maxApiVersion": 3,
+  "$comment": "Kino plugin contract, apiVersion 1, 2, 3 and 4. The single source of truth for every number and rule a plugin meets. The app checks each value against its own code, and a test in the app pins this file to it; sdk/validate.mjs, sdk/run.mjs and the guide's tables read this file.",
+  "apiVersion": 4,
+  "maxApiVersion": 4,
   "capabilities": {
     "names": ["search", "home", "browse", "episodes", "resolve", "download", "drm", "channels"],
     "required": ["resolve"],
@@ -52,8 +52,10 @@
       "url": { "maxChars": 2048, "canBeRequired": true, "canHaveDefault": false },
       "password": { "maxChars": 500, "canBeRequired": true, "canHaveDefault": true },
       "toggle": { "canBeRequired": false, "canHaveDefault": true },
-      "select": { "canBeRequired": false, "canHaveDefault": true }
-    }
+      "select": { "canBeRequired": false, "canHaveDefault": true },
+      "list": { "canBeRequired": true, "canHaveDefault": false }
+    },
+    "list": { "apiVersion": 4, "defaultMaxEntries": 20, "maxEntries": 50, "maxFields": 4, "fieldTypes": ["text", "url"] }
   },
   "output": {
     "itemIdPattern": "^[A-Za-z0-9._~-]{1,128}$",

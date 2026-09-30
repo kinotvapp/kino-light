@@ -15,6 +15,12 @@ enum class SettingType(val wire: String, val maxChars: Int, val canBeRequired: B
     PASSWORD("password", 500, true),
     TOGGLE("toggle", 0, false),
     SELECT("select", 0, false),
+
+    /**
+     * A growing list of entries (apiVersion 4), each made of the [PluginSetting.fields] the manifest names; the plugin reads
+     * it as an array of objects. Required means at least one entry. Never a default: the entries are the person's own.
+     */
+    LIST("list", 0, true, canHaveDefault = false),
     ;
 
     companion object {
@@ -37,6 +43,10 @@ data class PluginSetting(
     val hint: String = "",
     val default: Any? = null,
     val options: List<SettingOption> = emptyList(),
+    /** A [SettingType.LIST]'s fields (text or url), in the order the form shows them; empty for every other type. */
+    val fields: List<PluginSetting> = emptyList(),
+    /** A [SettingType.LIST]'s most entries; 0 for every other type. */
+    val max: Int = 0,
 )
 
 /**
@@ -50,6 +60,12 @@ object PluginSettings {
     const val MAX_OPTIONS = 20
     const val MAX_OPTION_VALUE_CHARS = 40
     const val MAX_OPTION_LABEL_CHARS = 40
+
+    /** The apiVersion that brought the `list` type: an older Kino does not know it and refuses the manifest. */
+    const val LIST_API_VERSION = 4
+    const val DEFAULT_LIST_ENTRIES = 20
+    const val MAX_LIST_ENTRIES = 50
+    const val MAX_LIST_FIELDS = 4
     val KEY = Regex("^[a-z][a-zA-Z0-9_]{0,31}$")
 
     /** The closed list of permissions a manifest may ask for. Empty in SDK v1: live adds names. */
@@ -72,7 +88,7 @@ object PluginSettings {
         return Parsed.Ok(out)
     }
 
-    fun parseSettings(array: JSONArray?): Parsed<List<PluginSetting>> {
+    fun parseSettings(array: JSONArray?, apiVersion: Int = ManifestParser.SUPPORTED_API): Parsed<List<PluginSetting>> {
         if (array == null) return Parsed.Ok(emptyList())
         if (array.length() > MAX_SETTINGS) return Parsed.Error("El plugin pide más de $MAX_SETTINGS ajustes")
         val out = ArrayList<PluginSetting>()
@@ -84,6 +100,8 @@ object PluginSettings {
             val label = (o.opt("label") as? String).orEmpty().trim()
             if (label.isEmpty() || label.length > MAX_LABEL_CHARS) return Parsed.Error("El ajuste \"$key\" necesita un nombre de 1 a $MAX_LABEL_CHARS caracteres")
             val type = SettingType.of(o.opt("type") as? String ?: "") ?: return Parsed.Error("El ajuste \"$key\" tiene un tipo desconocido")
+            if (type == SettingType.LIST && apiVersion < LIST_API_VERSION) return Parsed.Error("El ajuste \"$key\" es una lista: necesita apiVersion $LIST_API_VERSION")
+            if (type != SettingType.LIST && o.has("fields")) return Parsed.Error("Solo un ajuste de tipo list tiene \"fields\" (\"$key\")")
             val hint = (o.opt("hint") as? String).orEmpty().trim()
             if (hint.length > MAX_HINT_CHARS) return Parsed.Error("La ayuda del ajuste \"$key\" pasa de $MAX_HINT_CHARS caracteres")
             val required = o.opt("required")
@@ -101,7 +119,44 @@ object PluginSettings {
                 is Parsed.Error -> return parsed
                 is Parsed.Ok -> parsed.value
             }
-            out += PluginSetting(key, label, type, required == true, hint, default, options)
+            var fields = emptyList<PluginSetting>()
+            var max = 0
+            if (type == SettingType.LIST) {
+                fields = when (val parsed = parseListFields(key, o.optJSONArray("fields"))) {
+                    is Parsed.Error -> return parsed
+                    is Parsed.Ok -> parsed.value
+                }
+                max = when (val raw = o.opt("max")) {
+                    null, JSONObject.NULL -> DEFAULT_LIST_ENTRIES
+                    is Int -> if (raw in 1..MAX_LIST_ENTRIES) raw else return Parsed.Error("\"max\" del ajuste \"$key\" va de 1 a $MAX_LIST_ENTRIES")
+                    else -> return Parsed.Error("\"max\" del ajuste \"$key\" debe ser un número entero")
+                }
+            }
+            out += PluginSetting(key, label, type, required == true, hint, default, options, fields, max)
+        }
+        return Parsed.Ok(out)
+    }
+
+    /** The fields of a list: one to [MAX_LIST_FIELDS] of type text or url, each with its own key and name, and no default. */
+    private fun parseListFields(listKey: String, array: JSONArray?): Parsed<List<PluginSetting>> {
+        if (array == null || array.length() == 0) return Parsed.Error("El ajuste \"$listKey\" necesita \"fields\"")
+        if (array.length() > MAX_LIST_FIELDS) return Parsed.Error("El ajuste \"$listKey\" tiene más de $MAX_LIST_FIELDS campos")
+        val out = ArrayList<PluginSetting>()
+        for (i in 0 until array.length()) {
+            val o = array.optJSONObject(i) ?: return Parsed.Error("El campo #${i + 1} del ajuste \"$listKey\" no es válido")
+            val key = o.opt("key") as? String ?: ""
+            if (!KEY.matches(key)) return Parsed.Error("El campo #${i + 1} del ajuste \"$listKey\" tiene una clave inválida")
+            if (out.any { it.key == key }) return Parsed.Error("El ajuste \"$listKey\" repite el campo \"$key\"")
+            val label = (o.opt("label") as? String).orEmpty().trim()
+            if (label.isEmpty() || label.length > MAX_LABEL_CHARS) return Parsed.Error("El campo \"$key\" de \"$listKey\" necesita un nombre de 1 a $MAX_LABEL_CHARS caracteres")
+            val type = SettingType.of(o.opt("type") as? String ?: "")
+            if (type != SettingType.TEXT && type != SettingType.URL) return Parsed.Error("El campo \"$key\" de \"$listKey\" debe ser de tipo text o url")
+            val hint = (o.opt("hint") as? String).orEmpty().trim()
+            if (hint.length > MAX_HINT_CHARS) return Parsed.Error("La ayuda del campo \"$key\" de \"$listKey\" pasa de $MAX_HINT_CHARS caracteres")
+            val required = o.opt("required")
+            if (required != null && required !is Boolean) return Parsed.Error("\"required\" del campo \"$key\" de \"$listKey\" debe ser true o false")
+            if (o.has("default")) return Parsed.Error("El campo \"$key\" de \"$listKey\" no puede tener valor por defecto")
+            out += PluginSetting(key, label, type, required == true, hint)
         }
         return Parsed.Ok(out)
     }
@@ -149,6 +204,7 @@ object PluginSettings {
      * "unset" (required-ness is checked by [missingRequired], not here).
      */
     fun validateValue(setting: PluginSetting, value: Any?): String? = when (setting.type) {
+        SettingType.LIST -> validateList(setting, value)
         SettingType.TOGGLE -> if (value is Boolean) null else "\"${setting.label}\" debe estar activado o desactivado"
         SettingType.SELECT -> if (value is String && setting.options.any { it.value == value }) null else "Elige una opción de \"${setting.label}\""
         else -> when {
@@ -160,9 +216,29 @@ object PluginSettings {
         }
     }
 
+    /** The entries of a list value ([SettingType.LIST]): each a map of the list's field keys to text. */
+    @Suppress("UNCHECKED_CAST")
+    fun entriesOf(value: Any?): List<Map<String, String>>? =
+        (value as? List<*>)?.map { (it as? Map<*, *>)?.let { m -> m as Map<String, String> } ?: return null }
+
+    private fun validateList(setting: PluginSetting, value: Any?): String? {
+        val entries = entriesOf(value) ?: return "\"${setting.label}\" no es una lista"
+        val filled = entries.filter { e -> setting.fields.any { !e[it.key].isNullOrBlank() } }
+        if (filled.size > setting.max) return "\"${setting.label}\" admite hasta ${setting.max} elementos"
+        for (e in filled) for (f in setting.fields) {
+            val v = e[f.key]
+            if (v.isNullOrBlank()) {
+                if (f.required) return "Completa \"${f.label}\" en \"${setting.label}\""
+                continue
+            }
+            validateValue(f, v)?.let { return it }
+        }
+        return null
+    }
+
     /** The required settings that have no usable value in [values] (defaults already applied). */
     fun missingRequired(settings: List<PluginSetting>, values: Map<String, Any?>): List<PluginSetting> =
-        settings.filter { it.required && (values[it.key] as? String).isNullOrBlank() }
+        settings.filter { it.required && if (it.type == SettingType.LIST) (values[it.key] as? List<*>).isNullOrEmpty() else (values[it.key] as? String).isNullOrBlank() }
 }
 
 /**
@@ -263,9 +339,14 @@ object PluginHosts {
     fun effective(declared: List<String>, settings: List<PluginSetting>, config: Map<String, Any?>): EffectiveHosts =
         EffectiveHosts(
             declared,
-            settings.filter { it.type == SettingType.URL }
-                .mapNotNull { (config[it.key] as? String)?.let(::userHostOf) }
-                .distinct(),
+            (
+                settings.filter { it.type == SettingType.URL }.mapNotNull { (config[it.key] as? String)?.let(::userHostOf) } +
+                    // The addresses inside a list are typed servers too.
+                    settings.filter { it.type == SettingType.LIST }.flatMap { list ->
+                        val urlFields = list.fields.filter { it.type == SettingType.URL }
+                        (PluginSettings.entriesOf(config[list.key]) ?: emptyList()).flatMap { e -> urlFields.mapNotNull { f -> e[f.key]?.let(::userHostOf) } }
+                    }
+                ).distinct(),
         )
 
     /** Parses a typed server address; null if it isn't one or points at the device itself. */

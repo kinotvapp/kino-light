@@ -140,15 +140,15 @@ export function validateManifest(text, { knownPermissions = contract.permissions
     if (!knownPermissions.includes(p)) return bad("permissions", `permiso desconocido: ${p.slice(0, 40)}`);
   }
   if (o.settings !== undefined && !Array.isArray(o.settings)) return bad("settings", 'El campo "settings" debe ser una lista');
-  const settingsError = validateSettings(o.settings || []);
+  const settingsError = validateSettings(o.settings || [], o.apiVersion);
   if (settingsError) return bad("settings", settingsError);
-  if (hosts.length === 0 && !(o.settings || []).some((x) => x.type === "url")) {
+  if (hosts.length === 0 && !(o.settings || []).some((x) => x.type === "url" || (x.type === "list" && Array.isArray(x.fields) && x.fields.some((f) => f.type === "url")))) {
     return bad("hosts", 'El campo "hosts" solo puede estar vacío si el plugin tiene un ajuste de tipo "url"');
   }
   return { ok: true, manifest: { ...o, hosts: [...new Set(hosts)], capabilities: caps, permissions: o.permissions || [], settings: o.settings || [], insecureHosts, liveStreamHostsAny, discoverable } };
 }
 
-function validateSettings(list) {
+function validateSettings(list, apiVersion = contract.maxApiVersion) {
   const s = contract.settings;
   if (list.length > s.max) return `El plugin pide más de ${s.max} ajustes`;
   const keys = new Set();
@@ -166,6 +166,25 @@ function validateSettings(list) {
     if (typeof o.hint === "string" && o.hint.trim().length > s.hintMaxChars) return `La ayuda del ajuste "${key}" pasa de ${s.hintMaxChars} caracteres`;
     if (o.required !== undefined && typeof o.required !== "boolean") return `"required" del ajuste "${key}" debe ser true o false`;
     if (o.required === true && !type.canBeRequired) return `El ajuste "${key}" no puede ser obligatorio`;
+    if (o.fields !== undefined && o.type !== "list") return `Solo un ajuste de tipo list tiene "fields"`;
+    if (o.type === "list") {
+      const L = s.list;
+      if (apiVersion < L.apiVersion) return `El ajuste "${key}" es una lista: necesita apiVersion ${L.apiVersion}`;
+      if (o.max !== undefined && !(Number.isInteger(o.max) && o.max >= 1 && o.max <= L.maxEntries)) return `"max" del ajuste "${key}" va de 1 a ${L.maxEntries}`;
+      if (!Array.isArray(o.fields) || o.fields.length === 0 || o.fields.length > L.maxFields) return `El ajuste "${key}" necesita de 1 a ${L.maxFields} campos`;
+      const fkeys = new Set();
+      for (const f of o.fields) {
+        const fk = f && typeof f.key === "string" ? f.key : "";
+        if (!re(s.keyPattern).test(fk) || fkeys.has(fk)) return `Un campo del ajuste "${key}" tiene una clave inválida o repetida`;
+        fkeys.add(fk);
+        const fl = typeof f.label === "string" ? f.label.trim() : "";
+        if (!fl || fl.length > s.labelMaxChars) return `Un campo del ajuste "${key}" necesita un nombre de 1 a ${s.labelMaxChars} caracteres`;
+        if (!L.fieldTypes.includes(f.type)) return `Un campo del ajuste "${key}" debe ser de tipo ${L.fieldTypes.join(" o ")}`;
+        if (typeof f.hint === "string" && f.hint.trim().length > s.hintMaxChars) return `La ayuda de un campo del ajuste "${key}" pasa de ${s.hintMaxChars} caracteres`;
+        if (f.required !== undefined && typeof f.required !== "boolean") return `"required" de un campo del ajuste "${key}" debe ser true o false`;
+        if (f.default !== undefined && f.default !== null) return `Un campo del ajuste "${key}" no puede tener valor por defecto`;
+      }
+    }
     if (o.type === "select") {
       if (!Array.isArray(o.options) || o.options.length === 0) return `El ajuste "${key}" necesita opciones`;
       if (o.options.length > s.maxOptions) return `El ajuste "${key}" tiene más de ${s.maxOptions} opciones`;

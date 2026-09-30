@@ -21,6 +21,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,6 +45,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.arkiv.player.data.plugin.PluginSetting
+import com.arkiv.player.data.plugin.PluginSettings
 import com.arkiv.player.data.plugin.SettingType
 import com.arkiv.player.ui.rememberGraph
 import com.arkiv.player.ui.settings.PasswordField
@@ -123,6 +126,7 @@ private fun SettingField(s: PluginSetting, draft: PluginConfigDraft, modifier: M
             Text(s.label, color = Color.White, modifier = Modifier.weight(1f))
             Switch(checked = draft.toggle(s.key), onCheckedChange = null)
         }
+        SettingType.LIST -> ListField(s, draft.entries(s.key), modifier, firstFocus) { onChange(s.key, it) }
         SettingType.SELECT -> Column(modifier) {
             Text(s.label, color = Color.White)
             s.options.forEachIndexed { i, o ->
@@ -133,6 +137,70 @@ private fun SettingField(s: PluginSetting, draft: PluginConfigDraft, modifier: M
                 ) {
                     RadioButton(selected = draft.text(s.key) == o.value, onClick = null)
                     Text(o.label, color = Color.White, modifier = Modifier.padding(start = 8.dp))
+                }
+            }
+        }
+    }
+}
+
+/**
+ * A [SettingType.LIST]: the entries as text lines, each with "Editar", and "+ Agregar" below (until `max`).
+ * Adding and editing share one dialog with the list's fields; editing also offers "Quitar".
+ */
+@Composable
+private fun ListField(s: PluginSetting, entries: List<Map<String, String>>, modifier: Modifier, firstFocus: FocusRequester?, onChange: (List<Map<String, String>>) -> Unit) {
+    // -1 = adding, >= 0 = editing that entry, null = closed.
+    var editing by remember { mutableStateOf<Int?>(null) }
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(s.label + if (s.required) " *" else "", color = Color.White)
+        entries.forEachIndexed { i, e ->
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(s.fields.mapNotNull { f -> e[f.key]?.takeIf { it.isNotBlank() } }.joinToString("  ·  "), color = Color.White, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                TextButton(onClick = { editing = i }, modifier = Modifier.focusRing()) { Text("Editar") }
+            }
+        }
+        val full = entries.size >= s.max
+        Text("${entries.size} de ${s.max}", style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary)
+        Button(onClick = { editing = -1 }, enabled = !full, modifier = Modifier.focusRing().let { if (firstFocus != null) it.focusRequester(firstFocus) else it }) { Text("+ Agregar") }
+    }
+    editing?.let { index ->
+        ListEntryDialog(
+            s, entries.getOrNull(index), adding = index < 0,
+            onSave = { entry -> onChange(if (index < 0) entries + entry else entries.mapIndexed { i, e -> if (i == index) entry else e }); editing = null },
+            onRemove = { onChange(entries.filterIndexed { i, _ -> i != index }); editing = null },
+            onCancel = { editing = null },
+        )
+    }
+}
+
+@Composable
+private fun ListEntryDialog(s: PluginSetting, entry: Map<String, String>?, adding: Boolean, onSave: (Map<String, String>) -> Unit, onRemove: () -> Unit, onCancel: () -> Unit) {
+    var values by remember { mutableStateOf(s.fields.associate { it.key to entry?.get(it.key).orEmpty() }) }
+    val problem = s.fields.firstNotNullOfOrNull { f ->
+        val v = values[f.key].orEmpty().trim()
+        if (v.isEmpty()) "Completa \"${f.label}\"".takeIf { f.required } else PluginSettings.validateValue(f, v)
+    }
+    val initialFocus = remember { FocusRequester() }
+    FocusWhenReady(initialFocus)
+    Dialog(onDismissRequest = onCancel) {
+        Surface(color = ArkivBlack, shape = MaterialTheme.shapes.large) {
+            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(if (adding) "Agregar a ${s.label}" else "Editar", style = MaterialTheme.typography.titleMedium, color = Color.White)
+                s.fields.forEachIndexed { i, f ->
+                    val focus = if (i == 0) Modifier.focusRequester(initialFocus) else Modifier
+                    OutlinedTextField(
+                        value = values.getValue(f.key), onValueChange = { values = values + (f.key to it) },
+                        label = { Text(f.label + if (f.required) " *" else "") },
+                        placeholder = f.hint.takeIf { it.isNotEmpty() }?.let { { Text(it) } }, singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = if (f.type == SettingType.URL) KeyboardType.Uri else KeyboardType.Text),
+                        modifier = Modifier.fillMaxWidth().then(focus),
+                    )
+                }
+                if (problem != null && values.values.any { it.isNotBlank() }) Text(problem, color = ArkivRed, style = MaterialTheme.typography.bodySmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = onCancel, modifier = Modifier.focusRing()) { Text("Cancelar") }
+                    if (!adding) TextButton(onClick = onRemove, modifier = Modifier.focusRing()) { Text("Quitar") }
+                    Button(onClick = { onSave(values.mapValues { it.value.trim() }) }, enabled = problem == null, modifier = Modifier.focusRing()) { Text(if (adding) "Agregar" else "Guardar") }
                 }
             }
         }

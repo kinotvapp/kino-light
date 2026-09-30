@@ -84,6 +84,12 @@ class PluginContractParityTest {
         assertEquals(PluginSettings.MAX_OPTIONS, s.getInt("maxOptions"))
         assertEquals(PluginSettings.MAX_OPTION_VALUE_CHARS, s.getInt("optionValueMaxChars"))
         assertEquals(PluginSettings.MAX_OPTION_LABEL_CHARS, s.getInt("optionLabelMaxChars"))
+        val l = s.getJSONObject("list")
+        assertEquals(PluginSettings.LIST_API_VERSION, l.getInt("apiVersion"))
+        assertEquals(PluginSettings.DEFAULT_LIST_ENTRIES, l.getInt("defaultMaxEntries"))
+        assertEquals(PluginSettings.MAX_LIST_ENTRIES, l.getInt("maxEntries"))
+        assertEquals(PluginSettings.MAX_LIST_FIELDS, l.getInt("maxFields"))
+        assertEquals(listOf("text", "url"), l.strings("fieldTypes"))
         val types = s.getJSONObject("types")
         assertEquals(SettingType.entries.map { it.wire }.toSet(), types.keys().asSequence().toSet())
         SettingType.entries.forEach { t ->

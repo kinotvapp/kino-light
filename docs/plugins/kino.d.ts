@@ -367,9 +367,9 @@ declare namespace kino {
   }
 
   namespace config {
-    /** A setting's value (string, or boolean for a toggle); undefined when unset with no default (a `url` setting never has one). Read-only. */
-    function get(key: string): string | boolean | undefined;
-    function all(): Record<string, string | boolean>;
+    /** A setting's value (string; boolean for a toggle; an array of `{ [field.key]: string }` for a `list`, apiVersion 4); undefined when unset with no default (a `url` setting never has one). Read-only. */
+    function get(key: string): string | boolean | Array<Record<string, string>> | undefined;
+    function all(): Record<string, string | boolean | Array<Record<string, string>>>;
   }
 
   namespace cookies {
