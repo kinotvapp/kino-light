@@ -206,16 +206,16 @@ class PluginDownloadStrategyTest {
 
     @Test fun `an HLS VOD stream is saved as one TS file with the Stream's headers on every request`() = runBlocking {
         server.enqueue(MockResponse().setBody("#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4,\nseg0.ts\n#EXTINF:4,\nseg1.ts\n#EXT-X-ENDLIST\n"))
-        // Fetched concurrently, so both answer the same bytes (the queue has no path routing).
-        server.enqueue(MockResponse().setBody(okio.Buffer().write(ts(5))))
-        server.enqueue(MockResponse().setBody(okio.Buffer().write(ts(5))))
+        // The first segment's head (the resume fingerprint), then both fetched concurrently, so
+        // every answer is the same bytes (the queue has no path routing).
+        repeat(3) { server.enqueue(MockResponse().setBody(okio.Buffer().write(ts(5)))) }
         val source = FakeSource { playable("/hls/index.m3u8", headers = mapOf("Referer" to "https://site.example/")) }
 
         val done = strategy(source).run() as DownloadOutcome.Done
 
         assertEquals(File(tmp.root, "${LocalFilePaths.sanitize(episodeId)}.ts"), done.file)
         assertArrayEquals(ts(5) + ts(5), done.file.readBytes())
-        repeat(3) { assertEquals("https://site.example/", server.takeRequest().getHeader("Referer")) }
+        repeat(4) { assertEquals("https://site.example/", server.takeRequest().getHeader("Referer")) }
         assertEquals("only the final file is left", listOf(done.file.name), tmp.root.list()!!.filter { it.startsWith(LocalFilePaths.sanitize(episodeId)) })
     }
 
@@ -225,6 +225,23 @@ class PluginDownloadStrategyTest {
         assertEquals(PluginDownloadEligibility.NOT_DOWNLOADABLE, failed.reason)
         assertTrue(failed.permanent)
         assertEquals(1, server.requestCount)
+    }
+
+    @Test fun `an HLS failure reads in Spanish, and a key of the wrong size is final`() = runBlocking {
+        server.enqueue(MockResponse().setBody("#EXTM3U\n#EXTINF:4,\nseg0.ts\n#EXT-X-ENDLIST\n"))
+        server.enqueue(MockResponse().setBody(okio.Buffer().write(ts(5)))) // head probe
+        server.enqueue(MockResponse().setResponseCode(404))
+        val missing = strategy(FakeSource { playable("/gone/index.m3u8") }).run() as DownloadOutcome.Failed
+        assertEquals("El servidor ya no tiene este video (HTTP 404).", missing.reason)
+        assertFalse(missing.permanent)
+
+        server.enqueue(MockResponse().setBody("#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"k\"\n#EXTINF:4,\nseg0.ts\n#EXT-X-ENDLIST\n"))
+        server.enqueue(MockResponse().setBody(okio.Buffer().write(ts(5)))) // head probe
+        server.enqueue(MockResponse().setBody(okio.Buffer().write(ts(5)))) // the segment
+        server.enqueue(MockResponse().setBody("<html>no</html>")) // the "key"
+        val badKey = strategy(FakeSource { playable("/key/index.m3u8") }).run() as DownloadOutcome.Failed
+        assertEquals(PluginDownloadEligibility.NOT_DOWNLOADABLE, badKey.reason)
+        assertTrue("no Reintentar that would fail the same way", badKey.permanent)
     }
 
     @Test fun `a SAMPLE-AES playlist is refused permanently`() = runBlocking {
@@ -247,7 +264,7 @@ class PluginDownloadStrategyTest {
         val playlist = "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:10,\nseg0.ts\n#EXT-X-ENDLIST\n"
         server.enqueue(MockResponse().setBody(playlist))
         server.enqueue(MockResponse().setBody(playlist)) // the HLS downloader fetches it again
-        server.enqueue(MockResponse().setBody(okio.Buffer().write(ts(7))))
+        repeat(2) { server.enqueue(MockResponse().setBody(okio.Buffer().write(ts(7)))) } // head probe + segment
         val done = strategy(FakeSource { playable("/hls/index") }).run() as DownloadOutcome.Done
         assertArrayEquals(ts(7), done.file.readBytes())
         val target = File(tmp.root, LocalFilePaths.fileNameFor(episodeId, "plugin.mp4"))

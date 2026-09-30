@@ -286,14 +286,18 @@ What downloads, and what does not:
 - An HLS VOD stream (`.m3u8`, an `mpegurl` `mime`, or a response that turns out to be a playlist)
   downloads too, saved as one file: MPEG-TS segments become a `.ts`, fMP4 ones (`EXT-X-MAP`) an
   `.mp4`. From a master playlist Kino takes the highest variant up to 1080p whose audio is inside the
-  video; AES-128 keys, byte ranges and discontinuities are handled, and your `headers` go on the
-  playlists, the key and every segment. A retry resumes at the first missing segment.
+  video; AES-128 keys and byte ranges are handled, and your `headers` go on the playlists, the key
+  and every segment. At an `EXT-X-DISCONTINUITY` the segments are kept as they are (the timestamps
+  restart there and the player follows; seeking right at the splice may land a little off), unless
+  the video or audio format changes at it (e.g. H.264 → HEVC, a track added or gone): that is
+  refused like below. A retry resumes at the first missing segment when it gets the same content
+  (same variant, same first bytes), even from another CDN; different content starts over.
 - What cannot be saved ends as "Este video no se puede descargar", a final state with no
   "Reintentar" (it would refuse the same way) that the person can only remove: a DASH or Smooth
   manifest (`.mpd`, `application/dash+xml`, …), a live HLS playlist (no `EXT-X-ENDLIST`), SAMPLE-AES
-  or any DRM key, a master whose every video variant needs a separate audio rendition (Kino does not
-  save a silent video), a DRM-protected stream and a live channel. Subtitle renditions inside the
-  playlist are not saved (your `subtitles` are). There is no separate "resolve for download" call.
+  or any DRM key, a key that is not 16 bytes or does not decrypt, an empty segment, a master whose
+  every video variant needs a separate audio rendition (Kino does not save a silent video), a
+  DRM-protected stream and a live channel. Subtitle renditions inside the playlist are not saved (your `subtitles` are). There is no separate "resolve for download" call.
 - The queue downloads one title at a time, so a `ref` may wait a while before `resolve` is called:
   keep something stable in it and look the fresh link up inside `resolve` (as recommended above). A
   retry resumes the partial file even when your URL changed. A `resolve` the queue makes that times

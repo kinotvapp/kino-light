@@ -105,7 +105,9 @@ class PluginDownloadStrategy(
                 android.util.Log.i(TAG, "HLS download of $episodeId refused: ${it.detail}")
                 DownloadOutcome.Failed(PluginDownloadEligibility.NOT_DOWNLOADABLE, permanent = true)
             } else {
-                failed(it)
+                android.util.Log.w(TAG, "HLS download of $episodeId failed: $it")
+                // The row shows a Spanish sentence, never the JVM's or the server's own words.
+                DownloadOutcome.Failed(HlsFailureText.of(it), transient = DownloadRetryPolicy.isTransient(it))
             }
         },
     )

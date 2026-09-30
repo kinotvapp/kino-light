@@ -162,10 +162,12 @@ object HlsPlaylistParser {
         return HlsKey(resolve(base, uri), a["IV"]?.let(::iv))
     }
 
-    /** `0x…` → 16 bytes (left-padded). */
+    /** `0x…` → 16 bytes (left-padded); not hex, or longer than 128 bits, is a refusal (it never decrypts). */
     private fun iv(hex: String): ByteArray {
-        val digits = hex.removePrefix("0x").removePrefix("0X").padStart(32, '0').takeLast(32)
-        return ByteArray(16) { i -> digits.substring(i * 2, i * 2 + 2).toInt(16).toByte() }
+        val digits = hex.trim().removePrefix("0x").removePrefix("0X")
+        if (digits.isEmpty() || digits.length > 32 || digits.any { Character.digit(it, 16) < 0 }) throw HlsRefusedException("bad IV $hex")
+        val padded = digits.padStart(32, '0')
+        return ByteArray(16) { i -> padded.substring(i * 2, i * 2 + 2).toInt(16).toByte() }
     }
 
     /** `n[@o]`. */

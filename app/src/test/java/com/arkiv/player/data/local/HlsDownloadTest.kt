@@ -279,8 +279,188 @@ class HlsDownloadTest {
         val file = downloader(concurrency = 2).run("/r.m3u8").getOrThrow()
 
         assertArrayEquals((0 until 5).map { ts(it) }.reduce { a, b -> a + b }, file.readBytes())
-        assertEquals("segments 0-1 were kept", listOf("/r.m3u8", "/r2.ts", "/r3.ts", "/r4.ts"), requests.mapNotNull { it.path }.sorted())
+        assertEquals("segments 0-1 were kept", listOf("/r.m3u8", "/r0.ts", "/r2.ts", "/r3.ts", "/r4.ts"), requests.mapNotNull { it.path }.sorted())
+        assertEquals("segment 0 is only probed for the fingerprint", "bytes=0-16383", requests.single { it.path == "/r0.ts" }.getHeader("Range"))
         assertEquals(listOf("ep.ts"), tmp.root.list()!!.toList())
+    }
+
+    @Test fun `the same content from another CDN still resumes`() {
+        val cdn = { host: String -> "#EXTM3U\n" + (0 until 4).joinToString("") { "#EXTINF:4,\n$host/s$it.ts\n" } + "#EXT-X-ENDLIST\n" }
+        (0 until 4).forEach { i -> routes["/a/s$i.ts"] = { body(ts(i)) }; routes["/b/s$i.ts"] = { body(ts(i)) } }
+        routes["/a/s2.ts"] = { MockResponse().setResponseCode(503) }
+        routes["/p.m3u8"] = { text(cdn("a")) }
+        assertTrue(downloader(concurrency = 2).run("/p.m3u8").isFailure)
+        routes["/p.m3u8"] = { text(cdn("b")) }
+        requests.clear()
+        val file = downloader(concurrency = 2).run("/p.m3u8").getOrThrow()
+        assertArrayEquals((0 until 4).map { ts(it) }.reduce { a, b -> a + b }, file.readBytes())
+        assertTrue("segment 1 was not fetched again", requests.none { it.path == "/b/s1.ts" })
+    }
+
+    @Test fun `another TS encode with the same count and duration starts over instead of splicing`() {
+        routes["/e.m3u8"] = { text("#EXTM3U\n" + (0 until 4).joinToString("") { "#EXTINF:4,\ne$it.ts\n" } + "#EXT-X-ENDLIST\n") }
+        (0 until 4).forEach { i -> routes["/e$i.ts"] = { body(ts(i)) } }
+        routes["/e2.ts"] = { MockResponse().setResponseCode(503) }
+        assertTrue(downloader(concurrency = 2).run("/e.m3u8").isFailure)
+        // The retry resolved to another mirror: same playlist shape, other bytes.
+        (0 until 4).forEach { i -> routes["/e$i.ts"] = { body(ts(i + 10)) } }
+        val file = downloader(concurrency = 2).run("/e.m3u8").getOrThrow()
+        assertArrayEquals((10 until 14).map { ts(it) }.reduce { a, b -> a + b }, file.readBytes())
+    }
+
+    @Test fun `another fMP4 init or another variant starts over instead of splicing`() {
+        routes["/f.m3u8"] = { text("#EXTM3U\n#EXT-X-MAP:URI=\"init.mp4\"\n#EXTINF:4,\nf0.m4s\n#EXTINF:4,\nf1.m4s\n#EXT-X-ENDLIST\n") }
+        routes["/init.mp4"] = { body("INIT-A".toByteArray()) }
+        routes["/f0.m4s"] = { body("OLD0".toByteArray()) }
+        assertTrue(downloader(concurrency = 1).run("/f.m3u8").isFailure) // f1 missing
+        routes["/init.mp4"] = { body("INIT-B".toByteArray()) }
+        routes["/f0.m4s"] = { body("NEW0".toByteArray()) }
+        routes["/f1.m4s"] = { body("NEW1".toByteArray()) }
+        val bytes = downloader(concurrency = 1).run("/f.m3u8").getOrThrow().readBytes()
+        assertArrayEquals("INIT-B".toByteArray(), bytes.copyOf(6))
+        assertArrayEquals("NEW0NEW1".toByteArray(), bytes.copyOfRange(6 + Mp4Sidx.size(2), bytes.size))
+
+        val media = (HlsPlaylistParser.parse("#EXTM3U\n#EXTINF:4,\na.ts\n#EXT-X-ENDLIST\n", "https://c/i.m3u8") as HlsPlaylist.Media).playlist
+        val hd = HlsVariant("https://c/hd.m3u8", 4_000_000, 1080, "avc1.640028,mp4a.40.2", null)
+        val h = HlsResumeState.contentHash(byteArrayOf(1, 2, 3))
+        assertEquals(HlsResumeState.fingerprint(media, hd, h), HlsResumeState.fingerprint(media, hd.copy(uri = "https://other/hd.m3u8"), h))
+        assertTrue(HlsResumeState.fingerprint(media, hd, h) != HlsResumeState.fingerprint(media, hd.copy(height = 720, bandwidth = 2_000_000), h))
+        assertTrue(HlsResumeState.fingerprint(media, hd, h) != HlsResumeState.fingerprint(media, hd.copy(codecs = "hvc1.1.6.L120,mp4a.40.2"), h))
+        assertTrue(HlsResumeState.fingerprint(media, hd, h) != HlsResumeState.fingerprint(media, hd, HlsResumeState.contentHash(byteArrayOf(9))))
+    }
+
+    // ---- bounded reads (I1) -------------------------------------------------------------------
+
+    @Test fun `a byte-range init on a server that ignores Range reads only its slice of a huge file`() {
+        val init = "INITINIT".toByteArray()
+        val huge = ByteArray(4) { 'x'.code.toByte() } + init + ByteArray((HlsDownloader.MAX_INIT_BYTES + 1024).toInt())
+        routes["/h.m3u8"] = { text("#EXTM3U\n#EXT-X-MAP:URI=\"big.mp4\",BYTERANGE=\"8@4\"\n#EXTINF:4,\nh0.m4s\n#EXT-X-ENDLIST\n") }
+        // 200 with the whole resource, trickled: reading all of it would take minutes, the slice is instant.
+        routes["/big.mp4"] = { body(huge).throttleBody(64 * 1024, 1, java.util.concurrent.TimeUnit.SECONDS) }
+        routes["/h0.m4s"] = { body("FRAG".toByteArray()) }
+        val bytes = downloader().run("/h.m3u8").getOrThrow().readBytes()
+        assertArrayEquals(init, bytes.copyOf(8))
+        assertEquals(8 + Mp4Sidx.size(1) + 4, bytes.size)
+    }
+
+    @Test fun `an init section over the cap and an init byte range over the cap are refused`() {
+        routes["/i1.m3u8"] = { text("#EXTM3U\n#EXT-X-MAP:URI=\"big.mp4\"\n#EXTINF:4,\na.m4s\n#EXT-X-ENDLIST\n") }
+        routes["/big.mp4"] = { MockResponse().setChunkedBody(Buffer().write(ByteArray((HlsDownloader.MAX_INIT_BYTES + 1).toInt())), 1 shl 20) }
+        assertTrue(downloader().run("/i1.m3u8").exceptionOrNull() is HlsRefusedException)
+        routes["/i2.m3u8"] = { text("#EXTM3U\n#EXT-X-MAP:URI=\"big.mp4\",BYTERANGE=\"99999999@0\"\n#EXTINF:4,\na.m4s\n#EXT-X-ENDLIST\n") }
+        requests.clear()
+        assertTrue(downloader().run("/i2.m3u8").exceptionOrNull() is HlsRefusedException)
+        assertTrue("refused before asking for it", requests.none { it.path == "/big.mp4" })
+    }
+
+    @Test fun `a chunked playlist over 8 MB is refused though it declares no length`() {
+        val big = "#EXTM3U\n" + "#EXTINF:4,\na.ts\n".repeat(600_000) + "#EXT-X-ENDLIST\n"
+        routes["/big.m3u8"] = { MockResponse().setChunkedBody(big, 64 * 1024) }
+        assertTrue(big.length > 8 * 1024 * 1024)
+        assertTrue(downloader().run("/big.m3u8").exceptionOrNull() is HlsRefusedException)
+    }
+
+    @Test fun `a key that is not exactly 16 bytes is refused permanently`() {
+        routes["/k.m3u8"] = { text("#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"k.bin\"\n#EXTINF:4,\na.ts\n#EXT-X-ENDLIST\n") }
+        routes["/a.ts"] = { body(ts(1)) }
+        for (key in listOf("<html>error page</html>".toByteArray(), ByteArray(15), ByteArray(10_000_000))) {
+            routes["/k.bin"] = { body(key) }
+            val e = downloader().run("/k.m3u8").exceptionOrNull()
+            assertTrue("${key.size} bytes", e is HlsRefusedException)
+            assertFalse(DownloadRetryPolicy.isTransient(e!!))
+        }
+    }
+
+    // ---- permanent failures found early (M2) --------------------------------------------------
+
+    @Test fun `a key that does not decrypt and a bad IV are refusals`() {
+        routes["/w.m3u8"] = { text("#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"k.bin\"\n#EXTINF:4,\na.ts\n#EXT-X-ENDLIST\n") }
+        routes["/k.bin"] = { body(ByteArray(16) { 7 }) }
+        val right = ByteArray(16) { it.toByte() }
+        routes["/a.ts"] = {
+            body(Cipher.getInstance("AES/CBC/PKCS5Padding").apply { init(Cipher.ENCRYPT_MODE, SecretKeySpec(right, "AES"), IvParameterSpec(ByteArray(16))) }.doFinal(ts(1)))
+        }
+        assertTrue(downloader().run("/w.m3u8").exceptionOrNull() is HlsRefusedException)
+        assertThrows(HlsRefusedException::class.java) {
+            HlsPlaylistParser.parse("#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"k\",IV=0xZZ\n#EXTINF:4,\na.ts\n", "https://c/i.m3u8")
+        }
+        assertThrows(HlsRefusedException::class.java) {
+            HlsPlaylistParser.parse("#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"k\",IV=0x${"1".repeat(33)}\n#EXTINF:4,\na.ts\n", "https://c/i.m3u8")
+        }
+    }
+
+    @Test fun `an empty segment is refused as it arrives, not after the whole download`() {
+        routes["/z.m3u8"] = { text("#EXTM3U\n#EXT-X-MAP:URI=\"init.mp4\"\n" + (0 until 4).joinToString("") { "#EXTINF:4,\nz$it.m4s\n" } + "#EXT-X-ENDLIST\n") }
+        routes["/init.mp4"] = { body("INIT".toByteArray()) }
+        (0 until 4).forEach { i -> routes["/z$i.m4s"] = { body("F$i".toByteArray()) } }
+        routes["/z1.m4s"] = { MockResponse().setBody("") }
+        val e = downloader(concurrency = 1).run("/z.m3u8").exceptionOrNull()
+        assertTrue(e is HlsRefusedException)
+        assertTrue(requests.none { it.path == "/z2.m4s" || it.path == "/z3.m4s" })
+        // TS too: an empty answer is a hole in the video.
+        routes["/t.m3u8"] = { text("#EXTM3U\n#EXTINF:4,\nt0.ts\n#EXTINF:4,\nt1.ts\n#EXT-X-ENDLIST\n") }
+        routes["/t0.ts"] = { body(ts(0)) }
+        routes["/t1.ts"] = { MockResponse().setBody("") }
+        assertTrue(downloader().run("/t.m3u8").exceptionOrNull() is HlsRefusedException)
+    }
+
+    @Test fun `every non-refusal failure reads as a Spanish sentence`() {
+        assertEquals("El servidor ya no tiene este video (HTTP 404).", HlsFailureText.of(HttpStatusException(404)))
+        assertEquals("El servidor del video no dio acceso (HTTP 403).", HlsFailureText.of(HttpStatusException(403)))
+        assertEquals("El servidor del video respondió con un error (HTTP 503).", HlsFailureText.of(HttpStatusException(503)))
+        assertEquals("No se pudo conectar con el servidor del video. Revisa tu conexión.", HlsFailureText.of(java.net.UnknownHostException("cdn.example")))
+        assertEquals("No se pudo conectar con el servidor del video. Revisa tu conexión.", HlsFailureText.of(java.net.SocketTimeoutException("timeout")))
+        assertEquals("La conexión se cortó a mitad de la descarga.", HlsFailureText.of(IncompleteDownloadException(1, 2)))
+        assertEquals(InsufficientSpaceException(0).message, HlsFailureText.of(InsufficientSpaceException(0)))
+        assertEquals("Falló la conexión con el servidor del video.", HlsFailureText.of(java.io.IOException("unexpected end of stream")))
+        assertEquals("Falló la descarga del video.", HlsFailureText.of(IllegalStateException("boom")))
+    }
+
+    // ---- discontinuities (M1) -----------------------------------------------------------------
+
+    /** A TS packet on [pid] starting a PSI section: pointer 0, [section], 0xFF stuffing. */
+    private fun psi(pid: Int, section: ByteArray): ByteArray =
+        (byteArrayOf(0x47, (0x40 or (pid shr 8)).toByte(), pid.toByte(), 0x10, 0) + section).copyOf(188).also { it.fill(0xFF.toByte(), 5 + section.size, 188) }
+
+    /** PAT (program 1 on PID 0x100) + PMT with [types], then [packets] payload packets. */
+    private fun tsProgram(types: List<Int>, n: Int, packets: Int = 3): ByteArray {
+        val pat = byteArrayOf(0x00, 0xB0.toByte(), 13, 0, 1, 0xC1.toByte(), 0, 0, 0, 1, 0xE1.toByte(), 0x00, 0, 0, 0, 0)
+        val streams = types.flatMapIndexed { i, t -> listOf(t.toByte(), 0xE1.toByte(), (0x01 + i).toByte(), 0xF0.toByte(), 0) }.toByteArray()
+        val pmt = byteArrayOf(0x02, 0xB0.toByte(), (13 + streams.size).toByte(), 0, 1, 0xC1.toByte(), 0, 0, 0xE1.toByte(), 0x01, 0xF0.toByte(), 0) + streams + ByteArray(4)
+        return psi(0, pat) + psi(0x100, pmt) + ts(n, packets)
+    }
+
+    @Test fun `the PMT's stream types are read from a segment head`() {
+        assertEquals(listOf(0x0F, 0x1B), TsProgram.streamTypes(tsProgram(listOf(0x1B, 0x0F), 1)))
+        assertEquals(listOf(0x0F, 0x24), TsProgram.streamTypes(byteArrayOf(1, 2, 3) + tsProgram(listOf(0x24, 0x0F), 1)))
+        assertNull("no PAT/PMT: nothing concluded", TsProgram.streamTypes(ts(1)))
+    }
+
+    @Test fun `a TS discontinuity with the same streams is kept, one that changes them is refused`() {
+        val h264 = listOf(0x1B, 0x0F)
+        routes["/d.m3u8"] = { text("#EXTM3U\n#EXTINF:4,\nd0.ts\n#EXT-X-DISCONTINUITY\n#EXTINF:4,\nd1.ts\n#EXTINF:4,\nd2.ts\n#EXT-X-ENDLIST\n") }
+        routes["/d0.ts"] = { body(tsProgram(h264, 0)) }
+        routes["/d1.ts"] = { body(tsProgram(h264, 1)) }
+        routes["/d2.ts"] = { body(tsProgram(h264, 2)) }
+        val file = downloader().run("/d.m3u8").getOrThrow()
+        assertArrayEquals(tsProgram(h264, 0) + tsProgram(h264, 1) + tsProgram(h264, 2), file.readBytes())
+
+        file.delete()
+        routes["/d1.ts"] = { body(tsProgram(listOf(0x24, 0x0F), 1)) } // HEVC after the splice
+        val e = downloader().run("/d.m3u8").exceptionOrNull()
+        assertTrue(e is HlsRefusedException)
+        // A change WITHOUT a discontinuity tag is not looked for (the player would not reset either).
+        routes["/d.m3u8"] = { text("#EXTM3U\n#EXTINF:4,\nd0.ts\n#EXTINF:4,\nd1.ts\n#EXT-X-ENDLIST\n") }
+        tmp.root.listFiles()!!.forEach { it.delete() }
+        assertTrue(downloader().run("/d.m3u8").isSuccess)
+    }
+
+    @Test fun `a resumed TS download still compares a discontinuity with the first segment's streams`() {
+        routes["/q.m3u8"] = { text("#EXTM3U\n#EXTINF:4,\nq0.ts\n#EXT-X-DISCONTINUITY\n#EXTINF:4,\nq1.ts\n#EXT-X-ENDLIST\n") }
+        routes["/q0.ts"] = { body(tsProgram(listOf(0x1B, 0x0F), 0)) }
+        assertTrue(downloader(concurrency = 1).run("/q.m3u8").isFailure) // q1 missing
+        routes["/q1.ts"] = { body(tsProgram(listOf(0x24, 0x0F), 1)) }
+        assertTrue(downloader(concurrency = 1).run("/q.m3u8").exceptionOrNull() is HlsRefusedException)
     }
 
     @Test fun `a changed playlist starts over instead of resuming`() {
