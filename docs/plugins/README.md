@@ -149,7 +149,7 @@ names the field.
 | `id` | Required. `^[a-z0-9][a-z0-9-]{1,39}$` (2 to 40 lowercase letters, digits or hyphens, not starting with a hyphen). Not one of `magis`, `ditu`, `live`, `local`, `unknown`, `plugin`. It is the plugin's identity: never change it once people have installed it. |
 | `name` | Required. 1 to 40 characters. |
 | `version` | Required. `MAJOR.MINOR.PATCH` and nothing else (no `-beta`, no `+build`), each number up to 6 digits and without leading zeros. |
-| `apiVersion` | Required. `1`, `2` or `3`. A higher number than Kino supports is refused with "Este plugin necesita una versión más nueva de Kino". Declare `2` only if you use something that needs it (below); otherwise stay on `1` so your plugin also runs on older Kino builds. |
+| `apiVersion` | Required. `1`, `2`, `3` or `4`. A higher number than Kino supports is refused with "Este plugin necesita una versión más nueva de Kino". Declare the lowest number that has what you use, so your plugin also runs on older Kino builds. |
 | `entry` | Required. Relative path of the JavaScript file: letters, digits, `.`, `_`, `-` and `/` only, no `..`, at most 200 characters, ends in `.js`. The file is at most 1 MB. |
 | `hosts` | Required. 1 to 20 entries (from apiVersion 2 it may be empty, `[]`, when the plugin has a `url` setting: see [The person's own servers](#the-persons-own-servers)); each a lowercase DNS name (`archive.org`), `*.` plus a DNS name (`*.archive.org`), or (apiVersion 2 only) an object `{ "host": "…", "insecureHttp": true }` (below). Host names only: no scheme, port or path. No bare `*`, no IP addresses, no `localhost`, nothing ending in `.local`, `.lan`, `.internal`, `.localhost` or `.home.arpa`, and at least one dot. **`*.x` covers subdomains only, not `x` itself**: if you need both, list both. |
 | `capabilities` | Required. A subset of `search`, `home`, `browse`, `episodes`, `resolve`, `download`, `drm`, `channels`. Must include `resolve` and at least one of `search` or `home`. `search`, `home`, `browse`, `episodes` and `resolve` must each be an exported function of the entry file, or the install fails with "El plugin no carga: le falta ...". `download` and `drm` need `apiVersion: 2` and are declarative flags instead — the app acts on them, not your code, so nothing extra to export; declaring one shows its consent line ("Puede descargar videos para verlos sin conexión" / "Reproduce video protegido (DRM)") and needs approval again on an update that adds it. `download` gives your titles offline downloads (see [Downloads](#downloads-apiversion-2)); `drm` lets a `Stream` carry a Widevine license (see [A Widevine-protected stream](#a-widevine-protected-stream-apiversion-2)). `channels` needs `apiVersion: 3` and the exports `liveCategories` and `liveChannels` (see [Channels in the En vivo tab](#channels-in-the-en-vivo-tab-apiversion-3)). |
@@ -390,6 +390,96 @@ What it never allows:
 
 The consent sheet shows it in red, "Puede reproducir canales desde cualquier servidor que indique su
 lista", and an update that newly adds it waits for the person's approval, like a new host.
+
+### Sealed secrets (apiVersion 4)
+
+A plugin that ships a fixed key (an API token baked into a site's own client, a per-tenant secret its
+author owns) can seal it instead of writing it into the manifest as plain text:
+
+```
+node sdk/seal.mjs --repo owner/repo --name apiKey
+```
+
+(`owner/repo/path` for a plugin that lives in a subfolder.) The value is read from a hidden prompt or
+piped on stdin — never as a command-line argument, which would land in shell history. It must be 1 to
+4,096 bytes; the tool prints one line, `kino-sealed:v1:...`, to paste into the manifest:
+
+```json
+"apiVersion": 4,
+"secrets": { "apiKey": "kino-sealed:v1:AbC123..." }
+```
+
+- Up to 16 secrets; each name matches `^[A-Za-z][A-Za-z0-9_]{0,31}$`. `secrets` needs
+  `"apiVersion": 4`; on an older manifest the field is refused like any unknown one, and a device
+  running an older Kino refuses the whole install with "Este plugin necesita una versión más nueva de
+  Kino" — the release that includes sealed secrets (apiVersion 4).
+- A seal is bound to the repository (and subfolder) you passed `seal.mjs`, lowercased, **never to a
+  branch or tag**: moving the same plugin to a different branch keeps its seals valid. Kino opens
+  every seal against the address the person is installing or updating at install/update time, never
+  at any other moment. A seal made for a different repository, path or name, or one that was
+  corrupted, is refused with "Los datos sellados de este plugin no son para este repositorio o están
+  dañados"; a build that cannot open seals at all (no native X25519) refuses with "Este Kino no puede
+  abrir datos sellados".
+- Declaring any secret adds "Usa datos sellados por su autor" to the consent sheet; an update that
+  adds a secret the person had not already approved asks again, exactly like a new host.
+
+**What this protects, and what it does not.** This is obfuscation, not secrecy: the private key that
+opens a seal ships inside every copy of Kino. Sealing a value keeps it out of your manifest and your
+repository's history — it does not stop someone from pulling Kino's key apart and opening the seal
+themselves, any more than it stops the site you call from seeing the plain value on its own end.
+Don't bother sealing a value that is already public: a key already sitting in that site's own player
+JavaScript gains nothing from being sealed in yours.
+
+**`kino.secret(name)`** answers a marker string for a name your manifest declares (any other name
+throws). Carry the marker wherever you would carry the value — it is not the value itself, just a
+placeholder Kino recognizes later:
+
+```js
+const key = kino.secret("apiKey");
+await kino.fetch(`https://api.example.org/v1/list?key=${key}`);
+```
+
+Kino swaps a marker for the real value **only inside `kino.fetch`**: in the URL's path and query
+(percent-encoded, so the value can't split a segment or add a parameter), inside a JSON body
+(JSON-escaped), and as is in headers, a text body or a form field. A marker in the URL's scheme,
+userinfo, host, port or fragment is left as text — a value never becomes part of the host Kino
+connects to. A header whose value would carry a control character once the secret is in it is
+refused rather than sent.
+
+**The request then reaches only a host your manifest's `hosts` lists, over `https`, on every redirect
+hop** — never a host approved reactively while the plugin runs, never a server the person typed into
+your settings, and the broad `liveStreamHosts: "any"` permission does not extend to it either. A hop
+anywhere else fails as `host_not_allowed`: "este plugin no puede enviar datos sellados a `<host>`" for
+a host you did not declare, "... sin https a `<host>`" for plain `http` even on a declared one.
+
+**`kino.crypto`.** A secret's marker may be the *entire* `key` of `encrypt`/`decrypt` — exactly one
+marker, nothing else in the string — or be part of a longer HMAC `key` or PBKDF2 `password`/`salt`.
+It is always refused, with "no se puede usar un dato sellado aquí", as `data`, `iv` or `aad`, or as
+part of a longer cipher `key`. That is not an arbitrary line: a known `iv` or `aad` under a sealed key
+lets a cipher be turned into a way to compute the key back (the same block decrypted under CBC with
+the known iv, XORed with the same block under ECB, is the iv itself — and with the key's own marker
+used as the iv, that recovers the key), and a key padded out with known bytes shrinks the search down
+to the unknown part alone. HMAC and PBKDF2 mix their whole input through a hash before anything comes
+out, so a known prefix or suffix next to the secret never splits it back out.
+
+**Redaction.** Anything Kino hands back to your code that could carry an opened value — `r.text()`,
+`r.url`, header values, `kino.cookies.get`, an error message, a `kino.crypto` answer, and every
+`kino.log` line — has the value swapped back for its marker first, in its raw form, in URL
+percent-encoding (strict, the `+`-for-space form, and the `%20`-for-space form), JSON-escaped, and
+base64/base64url. What it does **not** catch: a binary response (`r.base64()` of something that was
+never text) is not scanned, a response header's *name* is not checked (only its value), a lowercase
+`%xx` a server happens to echo is not one of the forms above, and a server that transforms the value
+on purpose (hashes it, reverses it, ...) leaves nothing left to recognize. A `kino.crypto` error can
+still say how many bytes a sealed key was, or whether it was valid hex or base64 — metadata, never the
+value. Prefer values of at least 8 bytes: a shorter one is still masked wherever it shows up inside
+unrelated text, which gets noisier the shorter it is.
+
+**Testing.** The Node kit can never open a seal — it has no private key — so it reads the plain value
+straight from `.kino-secrets.json` next to your manifest (`{ "apiKey": "..." }`; the scaffold's
+`.gitignore` already keeps it out of git) and simulates every rule above: markers, substitution, the
+host-and-https check, the `kino.crypto` restrictions and redaction. `--record` never writes the plain
+value to a fixtures file either — a canonical placeholder stands in for it, so a committed recording
+never carries a secret however it is replayed later. See [section 7](#7-test-it-locally).
 
 ## 4. The contract (apiVersion 1, 2 and 3)
 
@@ -778,6 +868,23 @@ seconds of your call's time. Ask for the form the content is.
   never reaches your code) and sends it back on later requests, following the usual rules (domain,
   path, `Secure`, expiry). The jar is saved on the device, so a login survives the sandbox and the app
   restarting; it is deleted when the person changes your settings or uninstalls the plugin.
+- **A marker from `kino.secret`** in the URL, a header, or the body is swapped for its real value
+  right before the request goes out, and that request is then held to a stricter rule than the one
+  above: only your manifest's `hosts`, over `https`, on every hop — see
+  [Sealed secrets](#sealed-secrets-apiversion-4).
+
+### `kino.secret(name)` (apiVersion 4)
+
+```js
+const key = kino.secret("apiKey");   // a marker, not the value; any other name throws
+await kino.fetch(`https://api.example.org/v1/list?key=${key}`);
+```
+
+A placeholder for a value sealed in your manifest's `secrets` field. Kino opens the seal once per
+run and swaps the marker for the plain value only where `kino.fetch` sends it (and inside
+`kino.crypto`'s key-like fields); nowhere else in your code ever sees it, and anything that comes
+back — the response, an error, a log line — has it swapped back for the marker. Full rules, the
+`seal.mjs` tool and the security level: [Sealed secrets](#sealed-secrets-apiversion-4).
 
 ### `kino.cookies`
 
@@ -809,6 +916,9 @@ kino.crypto.uuid()
 - CBC and ECB use PKCS#7 padding unless you pass `padding: "none"`. GCM appends its 16-byte tag to
   the ciphertext, and expects it there to decrypt (as most sites send it).
 - A wrong key size, a bad padding or a failed GCM tag throws; it never returns garbage silently.
+- A `kino.secret` marker is only accepted as the whole `key` of `encrypt`/`decrypt`, or as part of an
+  HMAC `key` or `pbkdf2`'s `password`/`salt` — never in `data`, `iv` or `aad`. See
+  [Sealed secrets](#sealed-secrets-apiversion-4) for why.
 
 <!-- contract:crypto:start -->
 | Function | Algorithms |
@@ -968,6 +1078,7 @@ does anything with season numbers or ordering: how a backend spells "season 2" i
 | Settings | at most 12; `text` 500, `url` 2,048, `password` 500 characters |
 | Error messages | your `kino.error` message is shown as a detail, cut at 200 characters |
 | `hosts` | 1 to 20 entries; from apiVersion 2, none (`[]`) when a `url` setting exists |
+| `secrets` (apiVersion 4) | at most 16; names match `^[A-Za-z][A-Za-z0-9_]{0,31}$`; a value is 1..4,096 bytes |
 <!-- contract:limits:end -->
 
 ### How your code lives
@@ -1097,7 +1208,10 @@ throws and 2 when the command is wrong. The runner only runs functions your mani
   (`season`, `episode`, `tmdbId` and `year` are `0` otherwise).
 - Under the Node kit `kino.storage` is a file named `.kino-storage.json` and the cookie jar
   `.kino-cookies.json`, both next to your manifest. Add them to your `.gitignore`. Delete them to
-  start from scratch.
+  start from scratch. A plugin with `secrets` also reads `.kino-secrets.json`
+  (`{ "<name>": "<plain value>" }`) from the same folder: see
+  [Sealed secrets](#sealed-secrets-apiversion-4). `node sdk/init.mjs` already lists all three in the
+  scaffold's `.gitignore`.
 - `node sdk/validate.mjs <folder>` checks the manifest with every rule of section 3 (the same
   Spanish messages the app shows) and that each declared capability is exported, and prints the
   consent sheet's extra lines as the person will read them (the red ones, an `insecureHttp` host or

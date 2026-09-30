@@ -32,6 +32,7 @@ export const TABLES = {
     ["Settings", `at most ${c.settings.max}; \`text\` ${c.settings.types.text.maxChars}, \`url\` ${n(c.settings.types.url.maxChars)}, \`password\` ${c.settings.types.password.maxChars} characters`],
     ["Error messages", `your \`kino.error\` message is shown as a detail, cut at ${c.errors.maxMessageChars} characters`],
     ["`hosts`", `${c.manifest.minHosts} to ${c.manifest.maxHosts} entries; from apiVersion ${c.manifest.noHostsApiVersion}, none (\`[]\`) when a \`url\` setting exists`],
+    [`\`secrets\` (apiVersion ${c.manifest.secrets.apiVersion})`, `at most ${c.manifest.secrets.maxSecrets}; names match \`${c.manifest.secrets.namePattern}\`; a value is 1..${n(c.manifest.secrets.maxValueBytes)} bytes`],
   ]),
   settings: () => table(["type", "value", "can be `required`", "can have a `default`", "longest value"], Object.entries(c.settings.types).map(([t, v]) => [
     `\`${t}\``,
