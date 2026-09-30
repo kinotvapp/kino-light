@@ -8,7 +8,7 @@ for plugin authors: one manifest, one JavaScript file, no build step.
 
 | Capability | How |
 | --- | --- |
-| `search` | Titles in both the `feature_films` (movies) and `classic_tv` (series) collections, most downloaded first, up to 25 from each; an item in both is listed once. The `type` Kino sends is only an ordering preference (the collection that matches it comes first), never a filter, because TMDB's movie/tv split does not line up with archive.org's: public-domain films and classic TV are mixed, and a title can exist as both. Characters and words that are query syntax to archive.org (`/`, `-`, `&`, `AND`, `OR`, `NOT`) are cleaned out of what the person typed. |
+| `search` | Titles in both the `feature_films` (movies) and `classic_tv` (series) collections, up to 25 from each. Besides what was typed (`q`), it asks for the `originalTitle` and up to two of the `altTitles` Kino sends (at most four distinct titles, each cut to its head with `kino.rank.shortQuery`, all asked at once), so a Spanish title finds a film archive.org lists under its original one ("Asalto y robo de un tren" finds *The Great Train Robbery*). An item found more than once is listed once; the rest are ranked with `kino.rank.sortBySimilarity` against every title, near-misses are dropped with `kino.rank.filterRelevant` (an item whose identifier is the title itself always stays), and when Kino knows the `year`, what is from that year (±1) comes first among equals. The `type` Kino sends is only an ordering preference (the collection that matches it comes first), never a filter, because TMDB's movie/tv split does not line up with archive.org's: public-domain films and classic TV are mixed, and a title can exist as both. Characters and words that are query syntax to archive.org (`/`, `-`, `&`, `AND`, `OR`, `NOT`) are cleaned out of what the person typed. |
 | `home` | Three rows: public-domain films, classic TV and classic animation, by downloads, 30 titles each, after the person's own rows if they set addresses (see below). Each row carries a `ref`, so Kino ends it with a "Ver más" card. |
 | `browse` | "Ver más" on a Home row: the same query as the row, 50 titles per page, the page number as the cursor (`"2"`, `"3"`, …). |
 | `episodes` | The video files of an item, in natural order. Files named `S01E02` get that season and number; otherwise they are numbered 1, 2, 3 in order. |
@@ -36,7 +36,7 @@ Each address becomes a Home row of its own, before the three built-in ones, newe
 (`addeddate desc`), with the same "Ver más" paging. Addresses that share a category name (capitals
 do not matter; the row keeps the first spelling) are merged into one row for that name, asked of
 archive.org as a single `OR` query. A category with no valid address behind it makes no row. What is
-inside the addresses is also searched, and comes first in Kino's search results. Anything that is not
+inside the addresses is also searched (by every title asked, in one request), and comes first in Kino's search results, unranked. Anything that is not
 archive.org, or not one of the three forms above, is ignored: the plugin only ever talks to
 archive.org. With no addresses the plugin behaves exactly as before.
 

@@ -1,7 +1,7 @@
 {
   "id": "archive-org",
   "name": "Internet Archive",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "apiVersion": 4,
   "entry": "plugin.js",
   "description": "Películas de dominio público y televisión clásica de archive.org",

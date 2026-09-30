@@ -229,3 +229,85 @@ test("a search finds a video by its own title inside a multi-video item address"
   const out = await run("search", ["gran final"], { url1: "https://archive.org/details/serie" }, fetchImpl);
   assert.deepEqual(out.items.map((i) => i.ref), ["serie|El gran final.mp4"]);
 });
+
+// ---- Searching by every title Kino knows for the work ---------------------------------------------------
+const searchOf = (fields) => JSON.stringify({ q: "", type: "any", year: 0, originalTitle: "", altTitles: [], ...fields });
+const doy = (id, title, year) => ({ identifier: id, title, year, description: "d" });
+const searches = (asked) => asked.filter((u) => u.includes("/advancedsearch.php")).map((u) => new URL(u).searchParams.get("q"));
+
+test("a Spanish title archive.org does not know finds the film by its original title", async () => {
+  const { fetchImpl, asked } = archive({
+    answers: { "title:(The Great Train Robbery) AND collection:(feature_films)": [doy("TheGreatTrainRobbery_555", "The Great Train Robbery", "1903")] },
+  });
+  const out = await run("search", [searchOf({ q: "Asalto y robo de un tren", originalTitle: "The Great Train Robbery", year: 1903 })], {}, fetchImpl);
+  assert.deepEqual(out.items.map((i) => i.id), ["TheGreatTrainRobbery_555"]);
+  const qs = searches(asked);
+  assert.ok(qs.some((q) => q.startsWith("title:(Asalto y robo de un tren) AND")), "what was typed is still asked");
+  assert.ok(qs.some((q) => q.startsWith("title:(The Great Train Robbery) AND")));
+});
+
+test("each title is asked by its head, so a subtitle archive.org lacks does not hide the film", async () => {
+  const { fetchImpl, asked } = archive({ answers: { "title:(Nosferatu) AND": [doy("nosferatu-1922_202504", "Nosferatu (1922)", "1922")] } });
+  const out = await run("search", [searchOf({ q: "Nosferatu, el vampiro", originalTitle: "Nosferatu, eine Symphonie des Grauens" })], {}, fetchImpl);
+  assert.deepEqual(out.items.map((i) => i.id), ["nosferatu-1922_202504"]);
+  // Both heads are "Nosferatu": one form, asked once per collection.
+  assert.deepEqual(searches(asked).map((q) => q.split(" AND ")[0]), ["title:(Nosferatu)", "title:(Nosferatu)"]);
+});
+
+test("with the year known, the film from that year (give or take one) comes first", async () => {
+  const { fetchImpl } = archive({
+    answers: {
+      "title:(Nosferatu) AND collection:(feature_films)": [
+        doy("nosferatu-1979", "Nosferatu the Vampyre", "1979"),
+        doy("nosferatu-noyear", "Nosferatu", undefined),
+        doy("nosferatu-1923", "Nosferatu", "1923"),
+        doy("nosferatu-1922", "Nosferatu", "1922"),
+      ],
+    },
+  });
+  const out = await run("search", [searchOf({ q: "Nosferatu", year: 1922 })], {}, fetchImpl);
+  assert.deepEqual(out.items.map((i) => i.id), ["nosferatu-1923", "nosferatu-1922", "nosferatu-noyear", "nosferatu-1979"]);
+});
+
+test("an item found by several titles, or in both collections, is listed once", async () => {
+  const same = doy("the-kid-1921", "The Kid", "1921");
+  const { fetchImpl, asked } = archive({ answers: { "title:(El chico)": [same], "title:(The Kid)": [same, doy("the-kid-tv", "The Kid", "1921")] } });
+  // "Metrópolis" and "Metropolis" are one title: asked once.
+  const out = await run("search", [searchOf({ q: "El chico", originalTitle: "The Kid", altTitles: ["Metrópolis", "Metropolis"] })], {}, fetchImpl);
+  assert.deepEqual(out.items.map((i) => i.id), ["the-kid-1921", "the-kid-tv"]);
+  assert.equal(searches(asked).filter((q) => /^title:\(Metr/.test(q)).length, 2);
+});
+
+test("a near-miss is dropped, but an item whose identifier is the title stays", async () => {
+  const { fetchImpl } = archive({
+    answers: {
+      "title:(The General) AND collection:(feature_films)": [doy("general-1926", "The General", "1926"), doy("thegeneral", "Buster Keaton 1926 restored", "1926"), doy("other", "General Motors ad", "1950")],
+    },
+  });
+  const out = await run("search", [searchOf({ q: "El maquinista de la General", originalTitle: "The General" })], {}, fetchImpl);
+  assert.deepEqual(out.items.map((i) => i.id).sort(), ["general-1926", "thegeneral"]);
+});
+
+test("at most four titles are asked, two requests each, however many Kino sends", async () => {
+  const { fetchImpl, asked } = archive({ answers: {} });
+  const altTitles = ["Uno largo", "Dos largo", "Tres largo", "Cuatro largo", "Cinco largo"];
+  await run("search", [searchOf({ q: "Cero largo", originalTitle: "Original largo", altTitles })], {}, fetchImpl);
+  const heads = searches(asked).map((q) => q.split(" AND ")[0]);
+  assert.equal(asked.length, 8);
+  assert.deepEqual([...new Set(heads)], ["title:(Cero largo)", "title:(Original largo)", "title:(Uno largo)", "title:(Dos largo)"]);
+});
+
+test("without an original title a search asks exactly what it always did", async () => {
+  const { fetchImpl, asked } = archive({ answers: { "collection:(feature_films)": [doy("f1", "Casablanca", "1942")], "collection:(classic_tv)": [doy("t1", "Casablanca", "1955")] } });
+  const out = await run("search", [searchOf({ q: "Casablanca" })], {}, fetchImpl);
+  assert.deepEqual(out.items.map((i) => [i.id, i.kind]), [["f1", "movie"], ["t1", "series"]]);
+  assert.deepEqual(searches(asked), ["title:(Casablanca) AND collection:(feature_films) AND mediatype:(movies)", "title:(Casablanca) AND collection:(classic_tv) AND mediatype:(movies)"]);
+});
+
+test("the person's addresses are searched by every title in one request", async () => {
+  const { fetchImpl, asked } = archive({ answers: { "collection:(mis-pelis)": [doy("mine", "The Great Train Robbery", "1903")] } });
+  const out = await run("search", [searchOf({ q: "Asalto y robo de un tren", originalTitle: "The Great Train Robbery" })], { url1: "https://archive.org/details/mis-pelis" }, fetchImpl);
+  assert.equal(out.items[0].id, "mine");
+  const own = searches(asked).find((q) => q.includes("collection:(mis-pelis)") && q.includes("title:"));
+  assert.ok(own.startsWith("(title:(Asalto y robo de un tren) OR title:(The Great Train Robbery)) AND"));
+});

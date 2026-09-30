@@ -184,20 +184,71 @@ async function queryOf(sourceList) {
   return scopesOf.length === 1 ? scopesOf[0] : scopesOf.map((x) => "(" + x + ")").join(" OR ");
 }
 
-export async function search(query) {
-  // Letters, digits and apostrophes inside words only: any other character can be query syntax to
-  // advancedsearch (a stray "/", "-", "&" or "'" makes it answer {"error": ...}). So are the words
-  // and/or/not in any case (a dangling one is an error too); dropping them never changes which
-  // titles match. Word edges are spelled out with \p{} classes: \b is ASCII-only, so it would cut
-  // the "or" out of "Señor".
-  const text = String(query.q || "")
+// Letters, digits and apostrophes inside words only: any other character can be query syntax to
+// advancedsearch (a stray "/", "-", "&" or "'" makes it answer {"error": ...}). So are the words
+// and/or/not in any case (a dangling one is an error too); dropping them never changes which
+// titles match. Word edges are spelled out with \p{} classes: \b is ASCII-only, so it would cut
+// the "or" out of "Señor".
+function cleanTitle(raw) {
+  return String(raw || "")
     .replace(/[^\p{L}\p{M}\p{N}' ]+/gu, " ")
     .replace(/(?<![\p{L}\p{M}\p{N}])'|'(?![\p{L}\p{M}\p{N}])/gu, " ")
     .replace(/(?<![\p{L}\p{M}\p{N}])(and|or|not)(?![\p{L}\p{M}\p{N}])/giu, " ")
     .replace(/\s+/g, " ")
     .trim();
-  if (!text) return [];
-  const title = "title:(" + text + ")";
+}
+
+// Lowercase letters and digits only, accents folded: how a title and an identifier are compared.
+function squash(text) {
+  const lower = String(text || "").toLowerCase();
+  return (typeof lower.normalize === "function" ? lower.normalize("NFKD") : lower).replace(/[^a-z0-9]/g, "");
+}
+
+// How many forms of the title are asked of archive.org: what was typed, the original title and at
+// most two of Kino's other titles. Each form is two requests (films and TV), all sent at once, so a
+// search stays far under the 60 requests and 15 seconds of one call.
+const MAX_FORMS = 4;
+
+// The forms of the title archive.org is asked, best first, one per distinct text: `q`, then
+// `originalTitle`, then `altTitles`. Each is cut to its head (kino.rank.shortQuery: up to the first
+// ":", "," ...), because archive.org's title search wants every word, and a subtitle Kino's title
+// has ("Nosferatu, el vampiro") is rarely in archive.org's.
+function titleForms(query) {
+  const out = [];
+  const seen = new Set();
+  const given = [query.q, query.originalTitle].concat(Array.isArray(query.altTitles) ? query.altTitles : []);
+  for (const raw of given) {
+    if (out.length >= MAX_FORMS) break;
+    if (typeof raw !== "string" || !raw.trim()) continue;
+    const text = cleanTitle(kino.rank.shortQuery(raw));
+    const key = squash(text);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+  }
+  return out;
+}
+
+// With the year known, what is from that year (give or take one) goes first, then what has no
+// year, then the rest. Only an order: archive.org's years are often an upload's, and a remake is
+// still a real answer. Stable, so archive.org's own order (most downloaded) stays among equals.
+function byYear(items, year) {
+  const wanted = Number(year) || 0;
+  if (!wanted) return items;
+  const place = (item) => {
+    const y = parseInt(item.year, 10);
+    if (!y) return 1;
+    return Math.abs(y - wanted) <= 1 ? 0 : 2;
+  };
+  return items.map((item, i) => ({ item, i, p: place(item) })).sort((a, b) => a.p - b.p || a.i - b.i).map((x) => x.item);
+}
+
+export async function search(query) {
+  const forms = titleForms(query);
+  if (!forms.length) return [];
+  const text = forms[0];
+  const titleQuery = (form) => "title:(" + form + ")";
+  const anyTitle = forms.length === 1 ? titleQuery(text) : "(" + forms.map(titleQuery).join(" OR ") + ")";
   // Both collections are always searched: `type` is only a hint. Kino sends it from TMDB's movie/tv
   // split, which does not line up with archive.org's (public-domain films and classic TV are mixed,
   // and a title can be in both), so filtering by it lost real matches. It only decides which group
@@ -209,22 +260,24 @@ export async function search(query) {
   if (query.type === "series") groups.reverse();
   const out = [];
   const seen = new Set();
-  // What is inside the person's own addresses comes first.
+  // What is inside the person's own addresses comes first, as archive.org lists it: the person chose
+  // those addresses, so nothing there is ranked away.
   const mine = sources();
   if (mine.length) {
     try {
-      const hits = (await docs(title + " AND (" + (await queryOf(mine)) + ")", 25)).filter((d) => !seen.has(d.identifier));
+      const hits = (await docs(anyTitle + " AND (" + (await queryOf(mine)) + ")", 25)).filter((d) => !seen.has(d.identifier));
       for (const card of await cardsOf(hits, mine)) {
         if (seen.has(card.id)) continue;
         seen.add(card.id);
         out.push(card);
       }
       // An item address with several videos is also searched by its videos' own titles.
-      const words = text.toLowerCase().split(" ");
+      const wordLists = forms.map((f) => f.toLowerCase().split(" "));
       for (const s of mine) {
         if (s.kind !== "details" || !(await scopeInfo(s)).item) continue;
         for (const card of await videoCards(s.id)) {
-          if (seen.has(card.id) || !words.every((w) => card.title.toLowerCase().includes(w))) continue;
+          const title = card.title.toLowerCase();
+          if (seen.has(card.id) || !wordLists.some((words) => words.every((w) => title.includes(w)))) continue;
           seen.add(card.id);
           out.push(card);
         }
@@ -233,15 +286,48 @@ export async function search(query) {
       kino.log("search in the person's addresses failed", e.message);
     }
   }
+  // Every form in both collections, all at once. A form archive.org fails on is left out; only when
+  // every one fails does the search fail.
+  const asks = [];
   for (const group of groups) {
-    for (const d of await docs(title + " AND " + group.where, 25)) {
-      // An item can be in both collections: it is listed once, as the kind of the group that came first.
-      if (seen.has(d.identifier)) continue;
-      seen.add(d.identifier);
-      out.push(toItem(d, group.kind));
+    for (const form of forms) {
+      asks.push(
+        (async () => {
+          try {
+            return { group, found: await docs(titleQuery(form) + " AND " + group.where, 25) };
+          } catch (e) {
+            return { group, error: e };
+          }
+        })()
+      );
     }
   }
-  return out;
+  const answers = await Promise.all(asks);
+  if (answers.every((a) => a.error)) throw answers[0].error;
+  const found = [];
+  for (const a of answers) {
+    if (a.error) {
+      kino.log("search failed for one title", a.error.message);
+      continue;
+    }
+    for (const d of a.found) {
+      // An item can be in both collections, or be found by several forms: it is listed once, as the
+      // kind of the group that came first.
+      if (seen.has(d.identifier)) continue;
+      seen.add(d.identifier);
+      found.push(toItem(d, a.group.kind));
+    }
+  }
+  // Ranked against every title Kino knows for the work and every form asked: what shares most of
+  // their words first, a near-miss dropped. An item whose identifier is one of those titles exactly
+  // ("nosferatu" for "Nosferatu") always stays.
+  const titles = [query.q, query.originalTitle]
+    .concat(Array.isArray(query.altTitles) ? query.altTitles : [], forms)
+    .filter((t) => typeof t === "string" && t.trim());
+  const exact = new Set(titles.map(squash).filter(Boolean));
+  const relevant = new Set(kino.rank.filterRelevant(found, titles));
+  const kept = found.filter((item) => relevant.has(item) || exact.has(squash(item.id)));
+  return out.concat(kino.rank.sortBySimilarity(byYear(kept, query.year), titles));
 }
 
 // Home rows; each one's id is also its "Ver más" ref (the browse capability).
