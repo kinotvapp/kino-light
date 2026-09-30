@@ -9,15 +9,37 @@ for plugin authors: one manifest, one JavaScript file, no build step.
 | Capability | How |
 | --- | --- |
 | `search` | Titles in both the `feature_films` (movies) and `classic_tv` (series) collections, most downloaded first, up to 25 from each; an item in both is listed once. The `type` Kino sends is only an ordering preference (the collection that matches it comes first), never a filter, because TMDB's movie/tv split does not line up with archive.org's: public-domain films and classic TV are mixed, and a title can exist as both. Characters and words that are query syntax to archive.org (`/`, `-`, `&`, `AND`, `OR`, `NOT`) are cleaned out of what the person typed. |
-| `home` | Three rows: public-domain films, classic TV and classic animation, by downloads, 30 titles each. Each row carries a `ref`, so Kino ends it with a "Ver más" card. |
+| `home` | Three rows: public-domain films, classic TV and classic animation, by downloads, 30 titles each, after the person's own rows if they set addresses (see below). Each row carries a `ref`, so Kino ends it with a "Ver más" card. |
 | `browse` | "Ver más" on a Home row: the same query as the row, 50 titles per page, the page number as the cursor (`"2"`, `"3"`, …). |
 | `episodes` | The video files of an item, in natural order. Files named `S01E02` get that season and number; otherwise they are numbered 1, 2, 3 in order. |
 | `resolve` | The file to play: the item's own mp4/m4v/webm, or the best mp4 archive.org derived from the original (`.avi`, `.mpg`, `.mkv`, `.divx`...). Sibling `.vtt`/`.srt` files become subtitles. |
 
 Two things it does not try to be clever about, so do not copy them as intended behavior:
-an item that bundles several films (a collection) is exposed as a single `movie`, and `resolve`
-plays its first video in natural name order; and episodes numbered `S01E00` (a pilot, a special)
+an item found inside a collection or in the built-in rows that bundles several films is exposed as
+a single `movie`, and `resolve` plays its first video in natural name order (put its own address in
+Configurar to get one card per video); and episodes numbered `S01E00` (a pilot, a special)
 are dropped by Kino, whose episode numbers start at 1.
+
+## Your own addresses (Configurar)
+
+Under Ajustes > Plugins > Internet Archive > Configurar the person can add up to thirty archive.org
+addresses with the "Agregar" button (a dialog with Dirección and an optional Categoría); each one is then listed as a text line with an "Editar" button:
+
+| Address | What it lists |
+| --- | --- |
+| `https://archive.org/details/<collection>` | the videos of that collection |
+| `https://archive.org/details/<item>` | that item (one with no collection filed under it): a single video is one card; an item with several videos is one card per video (`<item>~1`, `<item>~2`, ...), each playing its own file, and a search also looks at their titles |
+| `https://archive.org/search?query=...` | the videos a search returns (movies only) |
+
+Each address becomes a Home row of its own, before the three built-in ones, newest additions first
+(`addeddate desc`), with the same "Ver más" paging. Addresses that share a category name (capitals
+do not matter; the row keeps the first spelling) are merged into one row for that name, asked of
+archive.org as a single `OR` query. A category with no valid address behind it makes no row. What is
+inside the addresses is also searched, and comes first in Kino's search results. Anything that is not
+archive.org, or not one of the three forms above, is ignored: the plugin only ever talks to
+archive.org. With no addresses the plugin behaves exactly as before.
+
+This is one `list` setting (`sources`, apiVersion 4), so it needs a Kino version that supports list settings.
 
 ## Hosts, and why `*.archive.org`
 
@@ -43,7 +65,7 @@ This repository is also the starting point for your own plugin:
 
 - [`GUIDE.md`](GUIDE.md) is the authoring guide: file layout, manifest and settings, the five
   functions your code can export, the `kino` API, every limit, the quirks of the JavaScript engine
-  and three cookbook recipes.
+  and five cookbook recipes.
 - [`contract.json`](contract.json) holds every number and rule Kino enforces, and
   [`kino.d.ts`](kino.d.ts) declares the `kino` API for your editor.
 - [`sdk/`](sdk) lets you run and test a plugin on your computer with Node 18 or newer, using the same
@@ -58,6 +80,10 @@ node sdk/init.mjs ../my-plugin --host example.com
 ```
 
 Copy `plugin.js` and `kino-plugin.json`, change them, and publish your repository the same way.
+
+## License
+
+The code in this repository is licensed under the [Apache License 2.0](LICENSE). Copyright 2026 kinotvapp.
 
 ## License note
 
