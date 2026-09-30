@@ -63,11 +63,9 @@ class SealedSecretsTest {
         assertEquals("owner/repo/plugins/x", SealedSecrets.bindingOf(PluginAddress.parse("owner/repo/plugins/x@v2")!!))
     }
 
-    @Test fun `seals open at HEAD, a branch or a tag, never at a commit`() {
-        for (ref in listOf("HEAD", "main", "v2", "release-1.0", "abc123", "cafe-babe", "0".repeat(41))) {
-            assertTrue(ref, SealedSecrets.opensAt(PluginAddress("o", "r", ref = ref)))
-        }
-        for (ref in listOf("0123abc", "DEADBEEF", "0123456789abcdef0123456789abcdef01234567")) {
+    @Test fun `seals open only at HEAD, never at any explicit ref`() {
+        assertTrue(SealedSecrets.opensAt(PluginAddress("o", "r", ref = PluginAddress.HEAD)))
+        for (ref in listOf("main", "v2", "release-1.0", "abc123", "cafe-babe", "0123abc", "DEADBEEF", "0123456789abcdef0123456789abcdef01234567")) {
             assertFalse(ref, SealedSecrets.opensAt(PluginAddress("o", "r", ref = ref)))
         }
     }

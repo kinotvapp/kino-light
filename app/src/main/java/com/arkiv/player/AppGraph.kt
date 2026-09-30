@@ -666,7 +666,7 @@ class AppGraph(context: Context) {
         // pluginHostFor's KDoc and XuperPrivilege.grants for the gate itself.
         // Sealed secrets (a manifest's `secrets`): markers for kino.secret, opened in this runtime
         // when a request first carries one or the first text is redacted, sent only toward the
-        // manifest's own hosts (PluginSecrets); none at all for an address at a commit ref.
+        // manifest's own hosts (PluginSecrets); none at all for an address with an explicit @ref.
         val secrets = pluginSecretsFor(plugin, sealAgreement)
         val host = pluginHostFor(plugin, http, storage, config, cookies, magisPluginBridge, secrets)
         val runtime = PluginRuntime.open(id, script, host, PluginEnv(appVersion = BuildConfig.VERSION_NAME), calls)

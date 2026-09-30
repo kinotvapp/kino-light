@@ -38,17 +38,17 @@ object SealedSecrets {
     fun bindingOf(address: PluginAddress): String =
         (address.owner + "/" + address.repo + if (address.path.isNotEmpty()) "/" + address.path else "").lowercase()
 
-    /** What a commit SHA (full or abbreviated) looks like as a ref. */
-    private val COMMIT_LIKE = Regex("^[0-9a-fA-F]{7,40}$")
-
     /**
-     * False when [address]'s ref looks like a commit SHA: seals never open there. GitHub serves a
-     * fork's (or a pull request's) commits through the PARENT repo's raw URL, so
-     * `owner/repo@<sha>` can be a manifest someone else wrote -- with their own `hosts` -- while its
-     * binding still reads `owner/repo`. HEAD, a branch or a tag are the repo's own (a fork's branch
-     * isn't served under the parent's name). A branch or tag literally named like hex pays for it.
+     * True only when [address] has no explicit ref at all ([PluginAddress.ref] is
+     * [PluginAddress.HEAD], the repo's own default branch). raw.githubusercontent.com resolves ANY
+     * commit reachable in a repo's fork network -- a fork's or a pull request's -- through the
+     * parent repo's own raw URL, and it isn't only full SHAs: short hex prefixes and git-describe
+     * refs (`v1-0-g<sha>`) resolve the same way. A regex that only rejected SHA-shaped refs missed
+     * those. So `owner/repo@<anything>` can be a manifest someone else wrote -- with their own
+     * `hosts` -- while its binding still reads `owner/repo`; only the ref-less address is guaranteed
+     * to be the repo's own default branch, so seals open there and nowhere else.
      */
-    fun opensAt(address: PluginAddress): Boolean = !COMMIT_LIKE.matches(address.ref)
+    fun opensAt(address: PluginAddress): Boolean = address.ref == PluginAddress.HEAD
 
     fun isWellFormed(seal: String): Boolean = raw(seal) != null
 

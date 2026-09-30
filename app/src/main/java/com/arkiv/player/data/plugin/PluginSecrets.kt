@@ -253,8 +253,8 @@ class PluginSecrets(
  * record's address (the same binding the installer verified them against), allowed toward the
  * manifest's own `hosts` only. Null when it declares none, when its recorded address no longer
  * parses (then `kino.secret` answers "not declared" rather than opening against a wrong binding),
- * or when that address is at a commit ref ([SealedSecrets.opensAt]; the installer refuses those
- * too, this is the runtime's own check).
+ * or when that address has any explicit `@ref` ([SealedSecrets.opensAt]; the installer refuses
+ * those too, this is the runtime's own check).
  */
 internal fun pluginSecretsFor(
     plugin: InstalledPlugin,
