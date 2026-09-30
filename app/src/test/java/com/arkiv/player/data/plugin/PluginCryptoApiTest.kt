@@ -161,22 +161,23 @@ class PluginCryptoApiTest {
     @get:Rule val tmp = TemporaryFolder()
 
     private val plain = mapOf(
-        "aesKey" to "0123456789abcdef", "aesIv" to "fedcba9876543210", "hmacKey" to "hm4c-k3y", "password" to "p4ss", "salt" to "s4lt-v4lue",
+        "aesKey" to "0123456789abcdef", "aesIv" to "fedcba9876543210", "desKey" to "0123456789abcdefghijklmn", "short" to "8bytes!!", "hmacKey" to "hm4c-k3y", "password" to "p4ss", "salt" to "s4lt-v4lue",
     )
+    /** How many seals were opened: a marker left as text opens none. */
+    private val opens = java.util.concurrent.atomic.AtomicInteger()
     private val secrets = PluginSecrets(
-        plain.mapValues { (name, value) -> TestSealing.seal(value, "owner/repo", name) }, "owner/repo", TestSealing.agreement,
+        plain.mapValues { (name, value) -> TestSealing.seal(value, "owner/repo", name) }, "owner/repo",
+        { peer -> opens.incrementAndGet(); TestSealing.agreement.sharedSecret(peer) },
         sealedHosts = listOf("api.example.com"), recipient = TestSealing.TEST_PUBLIC,
     )
     private val refused = "no se puede usar un dato sellado aquí"
 
-    private fun sealedHome(body: String): String {
-        val hosts = EffectiveHosts(listOf("api.example.com"))
-        val host = DefaultPluginHost(
-            "api", PluginHttp(OkHttpClient(), "api", hosts, "9.9.9"), PluginStorage(tmp.root.resolve("s-${System.nanoTime()}.json")),
-            logger = {}, secrets = secrets,
-        )
-        return home("const s = (n) => kino.secret(n);\n$body", host)
-    }
+    private fun sealedHost() = DefaultPluginHost(
+        "api", PluginHttp(OkHttpClient(), "api", EffectiveHosts(listOf("api.example.com")), "9.9.9"),
+        PluginStorage(tmp.root.resolve("s-${System.nanoTime()}.json")), logger = {}, secrets = secrets,
+    )
+
+    private fun sealedHome(body: String): String = home("const s = (n) => kino.secret(n);\n$body", sealedHost())
 
     private fun expected(op: JSONObject): String = JSONObject(PluginCrypto.run(op.toString())).getString("ok")
 
@@ -186,6 +187,77 @@ class PluginCryptoApiTest {
         val ct = expected(JSONObject().put("op", "encrypt").put("alg", "aes-128-cbc").put("key", plain["aesKey"]).put("iv", hexIv).put("ivEnc", "hex").put("data", "hola mundo"))
         val out = sealedHome("return kino.crypto.decrypt('aes-128-cbc', { key: s('aesKey'), iv: '$hexIv', ivEncoding: 'hex', data: '$ct' })")
         assertEquals("\"hola mundo\"", out)
+    }
+
+    // A sealed value inside a longer cipher key leaves the rest of the key known: des-ede3 with
+    // `m + 'A'.repeat(16)` peels down to single DES under the secret's first 8 bytes (2^56).
+    @Test fun `a sealed cipher key must be exactly one marker`() {
+        val out = sealedHome(
+            """
+            const m = s('short'), tries = [
+              () => kino.crypto.encrypt('des-ede3-cbc', { key: m + 'A'.repeat(16), iv: '0001020304050607', ivEncoding: 'hex', data: 'hola' }),
+              () => kino.crypto.encrypt('des-ede3-ecb', { key: m + m + m, data: 'hola' }),
+              () => kino.crypto.encrypt('aes-128-ecb', { key: 'x' + s('aesKey'), data: 'hola' }),
+              () => kino.crypto.decrypt('aes-128-ecb', { key: s('aesKey') + '', data: 'AAAAAAAAAAAAAAAAAAAAAA==', padding: 'none', outputEncoding: 'hex' }),
+              () => kino.crypto.decrypt('aes-256-ecb', { key: s('aesKey') + s('aesIv'), data: 'AAAAAAAAAAAAAAAAAAAAAA==', padding: 'none', outputEncoding: 'hex' }),
+            ];
+            return tries.map((f) => { try { return ['no throw', f()] } catch (e) { return [e.code, e.message] } });
+            """,
+        )
+        val refusal = "[\"crypto_error\",\"$refused\"]"
+        val exact = "[\"no throw\",\"" + expected(
+            JSONObject().put("op", "decrypt").put("alg", "aes-128-ecb").put("key", plain["aesKey"]).put("data", "AAAAAAAAAAAAAAAAAAAAAA==").put("padding", "none").put("out", "hex"),
+        ) + "\"]"
+        // `s('aesKey') + ''` is exactly the marker: it works.
+        assertEquals(listOf(refusal, refusal, refusal, exact, refusal).joinToString(",", "[", "]"), out)
+    }
+
+    @Test fun `exactly one marker works as any cipher's key, and an hmac key may join two`() {
+        val out = sealedHome(
+            """
+            return [kino.crypto.encrypt('des-ede3-ecb', { key: s('desKey'), data: 'hola' }),
+              kino.crypto.hmac('sha1', s('hmacKey') + '&' + s('password'), 'base')];
+            """,
+        )
+        val want = org.json.JSONArray()
+            .put(expected(JSONObject().put("op", "encrypt").put("alg", "des-ede3-ecb").put("key", plain["desKey"]).put("data", "hola")))
+            .put(expected(JSONObject().put("op", "hmac").put("alg", "sha1").put("key", plain["hmacKey"] + "&" + plain["password"]).put("data", "base")))
+        assertEquals(want.toString(), out)
+    }
+
+    @Test fun `a marker in alg, an encoding or an unknown op stays literal`() {
+        val host = sealedHost()
+        val m = secrets.marker("aesKey")!!
+        val plainKey = "2b7e151628aed2a6abf7158809cf4f3c"
+        val answers = listOf(
+            JSONObject().put("op", "hash").put("alg", m).put("data", "x"),
+            JSONObject().put("op", "hmac").put("alg", "sha256").put("key", "k").put("keyEnc", m).put("data", "x"),
+            JSONObject().put("op", "hash").put("alg", "md5").put("data", "x").put("in", m),
+            JSONObject().put("op", "hash").put("alg", "md5").put("data", "x").put("out", m),
+            JSONObject().put("op", "encrypt").put("alg", "aes-128-ecb").put("key", plainKey).put("keyEnc", "hex").put("data", "x").put("out", m),
+            JSONObject().put("op", "nope").put("key", m).put("password", m).put("salt", m),
+        ).map { JSONObject(host.crypto(it.toString())) }
+        assertEquals(
+            listOf(
+                "algoritmo de hash desconocido: ${m.take(20)}", "codificación desconocida: ${m.take(20)}", "codificación desconocida: ${m.take(20)}",
+                "codificación desconocida: ${m.take(20)}", "codificación desconocida: ${m.take(20)}", "operación desconocida",
+            ),
+            answers.map { it.optString("error") },
+        )
+        assertEquals("no seal opened", 0, opens.get())
+        // And through the JS API: the prelude refuses an unknown encoding before anything crosses.
+        assertEquals(
+            "[\"crypto_error\",\"codificación desconocida: ${m.take(20)}\"]",
+            sealedHome("try { kino.crypto.hash('md5', 'x', { outputEncoding: s('aesKey') }) } catch (e) { return [e.code, e.message] }"),
+        )
+        assertEquals("no seal opened", 0, opens.get())
+    }
+
+    @Test fun `pbkdf2 with a sealed salt under a plain password still refuses a marker in data`() {
+        val m = secrets.marker("salt")!!
+        val op = JSONObject().put("op", "pbkdf2").put("hash", "sha256").put("password", "pw").put("salt", m).put("data", m).put("iterations", 10).put("keyLength", 32)
+        assertEquals(JSONObject().put("error", refused).toString(), sealedHost().crypto(op.toString()))
+        assertEquals(0, opens.get())
     }
 
     @Test fun `hmac with a sealed key and pbkdf2 with a sealed password or salt work`() {

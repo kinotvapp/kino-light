@@ -117,6 +117,20 @@ class PluginSecretsTest {
         assertEquals(forms.joinToString(" ") { m }, s.redact(forms.joinToString(" ")))
     }
 
+    @Test fun `redact sees a value opened after its last use, and hands back text with none untouched`() {
+        val s = secrets()
+        val a = s.marker("apiKey")!!
+        val t = s.marker("token")!!
+        s.substitute(a)
+        assertEquals("$a t-456", s.redact("k-123 t-456"))
+        s.substitute(t)
+        assertEquals("$a $t", s.redact("k-123 t-456"))
+        val clean = "nothing to see " + "x".repeat(1000)
+        org.junit.Assert.assertSame(clean, s.redact(clean))
+        assertFalse(s.containsValue(clean))
+        assertTrue(s.containsValue("..t-456.."))
+    }
+
     @Test fun `redact puts the marker back in place of an opened value`() {
         val s = secrets()
         val a = s.marker("apiKey")!!

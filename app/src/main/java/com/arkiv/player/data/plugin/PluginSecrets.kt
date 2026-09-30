@@ -37,6 +37,9 @@ class PluginSecrets(
 
     fun containsMarker(text: String): Boolean = markers.values.any { it in text }
 
+    /** True when [text] is exactly one of this runtime's markers, nothing before or after it. */
+    fun isMarker(text: String): Boolean = text in markers.values
+
     /** How a plain value is written where its marker was: its context's own encoding, so it stays ONE value there. */
     enum class Encoding {
         /** As is: a header value, a text body, a form field (FormBody encodes those itself). */
@@ -61,17 +64,36 @@ class PluginSecrets(
      * [text] with every opened plain value, in every form [echoForms] lists, replaced by its marker.
      * One pass, longest form first at each position: a value that is a prefix of another leaves no
      * tail, and a marker just put in is never scanned again. Exact occurrences only: a server that
-     * transforms the value any other way (case, hashing, another escaping) is not caught.
+     * transforms the value any other way (case, hashing, another escaping) is not caught. [text]
+     * itself comes back when it holds none: the regex runs only after a plain search found a form.
      */
     fun redact(text: String): String {
+        val r = redaction()
+        if (!r.foundIn(text)) return text
+        return r.pattern!!.replace(text) { r.forms.getValue(it.value) }
+    }
+
+    /** True when [text] holds an opened value in any form [redact] replaces. */
+    fun containsValue(text: String): Boolean = redaction().foundIn(text)
+
+    /** Every form of the values opened so far, each mapped to its marker, and one pattern for all of them. */
+    private class Redaction(val openedCount: Int, val forms: Map<String, String>) {
+        val pattern: Regex? = if (forms.isEmpty()) null else Regex(forms.keys.sortedByDescending { it.length }.joinToString("|") { Regex.escape(it) })
+        fun foundIn(text: String): Boolean = forms.keys.any { it in text }
+    }
+
+    /** Built once per set of opened values: values are only ever added, so their count names the set. */
+    @Volatile private var redaction = Redaction(0, emptyMap())
+
+    private fun redaction(): Redaction {
+        val current = redaction
+        val snapshot = synchronized(opened) { if (opened.size == current.openedCount) return current else opened.toMap() }
         val forms = HashMap<String, String>()
-        for ((name, plain) in synchronized(opened) { opened.toMap() }) {
+        for ((name, plain) in snapshot) {
             if (plain.isEmpty()) continue
             for (form in echoForms(plain)) forms.putIfAbsent(form, markers.getValue(name))
         }
-        if (forms.isEmpty()) return text
-        val pattern = Regex(forms.keys.sortedByDescending { it.length }.joinToString("|") { Regex.escape(it) })
-        return pattern.replace(text) { forms.getValue(it.value) }
+        return Redaction(snapshot.size, forms).also { redaction = it }
     }
 
     private fun plainOf(name: String): String = synchronized(opened) {

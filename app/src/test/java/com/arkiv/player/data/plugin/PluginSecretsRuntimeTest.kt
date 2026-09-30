@@ -153,6 +153,36 @@ class PluginSecretsRuntimeTest {
         assertEquals("año $m", String(java.util.Base64.getDecoder().decode(out.getString(1)), Charsets.ISO_8859_1))
     }
 
+    @Test fun `a base64 twin whose bytes don't match the declared charset still hands back no value`() {
+        // Declared UTF-16, sent as UTF-8 (and as Latin-1 bytes for a non-ASCII value): the decoded
+        // text is garbage redaction can't read, while the raw bytes still hold the value.
+        val accented = "clé-sécrète"
+        val s = PluginSecrets(
+            mapOf("apiKey" to TestSealing.seal(tricky, "owner/repo", "apiKey"), "other" to TestSealing.seal(accented, "owner/repo", "other")),
+            "owner/repo", TestSealing.agreement, sealedHosts = listOf("localhost"), recipient = TestSealing.TEST_PUBLIC,
+        )
+        server.enqueue(MockResponse().setHeader("Content-Type", "text/plain; charset=UTF-16").setBody(okio.Buffer().write("año $tricky".toByteArray())))
+        server.enqueue(MockResponse().setHeader("Content-Type", "text/plain; charset=UTF-16").setBody(okio.Buffer().write("año $accented!".toByteArray(Charsets.ISO_8859_1))))
+        val out = JSONArray(
+            home(
+                """
+                const u = 'http://localhost:${server.port}/x?k=' + kino.secret('apiKey') + '&o=' + kino.secret('other');
+                const a = await kino.fetch(u), b = await kino.fetch(u);
+                return [a.text(), a.base64(), b.text(), b.base64()];
+                """,
+                secrets = s,
+            ),
+        )
+        for (i in 0 until out.length()) {
+            val v = out.getString(i)
+            val decoded = if (i % 2 == 1) java.util.Base64.getDecoder().decode(v).let { listOf(String(it, Charsets.UTF_8), String(it, Charsets.ISO_8859_1)) } else listOf(v)
+            for (d in decoded) {
+                assertFalse("$i: $d", tricky in d)
+                assertFalse("$i: $d", accented in d)
+            }
+        }
+    }
+
     @Test fun `errors and logs never carry the value`() {
         server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
             override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): MockResponse = when (request.requestUrl!!.pathSegments[0]) {

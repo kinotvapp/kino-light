@@ -48,8 +48,14 @@ class DefaultPluginHost(
      * back out of a decrypt. An iv or aad does too, even under a sealed key, because the plugin can
      * use that key as a block cipher: the same block decrypted with CBC under the sealed iv and with
      * ECB, XORed, is the iv -- and with the key's own marker as the iv, that is the key; the aad
-     * falls the same way to GHASH, whose key E_K(0) ECB also gives. A marker anywhere else stays
-     * text. The answer is redacted like everything else that returns to the plugin.
+     * falls the same way to GHASH, whose key E_K(0) ECB also gives. A cipher key (encrypt, decrypt)
+     * with a marker must be EXACTLY one marker, nothing before or after it: the rest of a longer key
+     * would be known, and peeling it off shrinks the search to the secret alone (des-ede3 with
+     * `m + 'A'.repeat(16)` is single DES under the secret's first 8 bytes, 2^56). An HMAC key and
+     * pbkdf2's password and salt may join a marker with other text (OAuth 1's
+     * `consumerSecret&tokenSecret`): HMAC mixes its whole key through a hash, so a known part never
+     * splits the unknown one off. A marker anywhere else stays text. The answer is redacted like
+     * everything else that returns to the plugin.
      */
     override fun crypto(opJson: String): String {
         val s = secrets ?: return PluginCrypto.run(opJson)
@@ -59,10 +65,12 @@ class DefaultPluginHost(
             return PluginCrypto.run(opJson)
         }
         fun hasMarker(field: String) = (o.opt(field) as? String)?.let(s::containsMarker) == true
-        if (hasMarker("data") || hasMarker("iv") || hasMarker("aad")) {
+        val op = o.optString("op")
+        val partialCipherKey = (op == "encrypt" || op == "decrypt") && hasMarker("key") && !s.isMarker(o.getString("key"))
+        if (hasMarker("data") || hasMarker("iv") || hasMarker("aad") || partialCipherKey) {
             return JSONObject().put("error", PluginCrypto.SEALED_REFUSED).toString()
         }
-        val keyLike = when (o.optString("op")) {
+        val keyLike = when (op) {
             "hmac", "encrypt", "decrypt" -> listOf("key")
             "pbkdf2" -> listOf("password", "salt")
             else -> emptyList()
@@ -166,12 +174,25 @@ class DefaultPluginHost(
      * charset, so the twin says what the text says and never still holds the value. Only the value's
      * bytes change: the rest of the body is its original bytes, unless it held some the charset
      * can't round-trip.
+     *
+     * The declared charset can be wrong (`charset=UTF-16` over UTF-8 bytes): the text is then garbage
+     * redaction can't read while the bytes still hold the value. So the twin's bytes are also read as
+     * UTF-8 and as Latin-1, and a twin that holds a value either way is dropped -- the prelude then
+     * answers `r.base64()` from the (redacted) text's UTF-8 bytes.
      */
     private fun base64(resp: PluginHttp.Response, redacted: String?): String? {
-        if (redacted == null || redacted == resp.text || resp.bytesBase64 == null) return resp.bytesBase64
-        // No charset to re-encode with (never, as PluginHttp builds it): no twin rather than the raw one.
-        val charset = resp.textCharset ?: return null
-        return Base64.getEncoder().encodeToString(redacted.toByteArray(charset))
+        val raw = resp.bytesBase64
+        if (redacted == null || raw == null) return raw
+        val twin = if (redacted == resp.text) {
+            raw
+        } else {
+            // No charset to re-encode with (never, as PluginHttp builds it): no twin rather than the raw one.
+            val charset = resp.textCharset ?: return null
+            Base64.getEncoder().encodeToString(redacted.toByteArray(charset))
+        }
+        val s = secrets ?: return twin
+        val bytes = Base64.getDecoder().decode(twin)
+        return twin.takeUnless { s.containsValue(String(bytes, Charsets.UTF_8)) || s.containsValue(String(bytes, Charsets.ISO_8859_1)) }
     }
 
     /**
