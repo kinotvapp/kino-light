@@ -52,7 +52,9 @@ class DefaultPluginHost(
      * falls the same way to GHASH, whose key E_K(0) ECB also gives. A cipher key (encrypt, decrypt)
      * with a marker must be EXACTLY one marker, nothing before or after it: the rest of a longer key
      * would be known, and peeling it off shrinks the search to the secret alone (des-ede3 with
-     * `m + 'A'.repeat(16)` is single DES under the secret's first 8 bytes, 2^56). An HMAC key and
+     * `m + 'A'.repeat(16)` is single DES under the secret's first 8 bytes, 2^56). And only for an AES
+     * cipher: a sealed des-ede3 key is refused too, since read under a JS-chosen `keyEncoding` its
+     * bytes can carry little entropy each, which puts the key in reach of a search. An HMAC key and
      * pbkdf2's password and salt may join a marker with other text (OAuth 1's
      * `consumerSecret&tokenSecret`): HMAC mixes its whole key through a hash, so a known part never
      * splits the unknown one off. A marker anywhere else stays text. The answer is redacted like
@@ -67,8 +69,10 @@ class DefaultPluginHost(
         }
         fun hasMarker(field: String) = (o.opt(field) as? String)?.let(s::containsMarker) == true
         val op = o.optString("op")
-        val partialCipherKey = (op == "encrypt" || op == "decrypt") && hasMarker("key") && !s.isMarker(o.getString("key"))
-        if (hasMarker("data") || hasMarker("iv") || hasMarker("aad") || partialCipherKey) {
+        val cipherOp = op == "encrypt" || op == "decrypt"
+        val partialCipherKey = cipherOp && hasMarker("key") && !s.isMarker(o.getString("key"))
+        val nonAesSealedKey = cipherOp && hasMarker("key") && !o.optString("alg").startsWith("aes-")
+        if (hasMarker("data") || hasMarker("iv") || hasMarker("aad") || partialCipherKey || nonAesSealedKey) {
             return JSONObject().put("error", PluginCrypto.SEALED_REFUSED).toString()
         }
         val keyLike = when (op) {

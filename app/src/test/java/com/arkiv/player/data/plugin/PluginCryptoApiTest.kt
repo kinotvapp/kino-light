@@ -212,17 +212,38 @@ class PluginCryptoApiTest {
         assertEquals(listOf(refusal, refusal, refusal, exact, refusal).joinToString(",", "[", "]"), out)
     }
 
-    @Test fun `exactly one marker works as any cipher's key, and an hmac key may join two`() {
+    @Test fun `exactly one marker works as an AES key, and an hmac key may join two`() {
         val out = sealedHome(
             """
-            return [kino.crypto.encrypt('des-ede3-ecb', { key: s('desKey'), data: 'hola' }),
+            return [kino.crypto.encrypt('aes-128-ecb', { key: s('aesKey'), data: 'hola' }),
+              kino.crypto.encrypt('aes-192-cbc', { key: s('desKey'), iv: '$hexIv', ivEncoding: 'hex', data: 'hola' }),
               kino.crypto.hmac('sha1', s('hmacKey') + '&' + s('password'), 'base')];
             """,
         )
         val want = org.json.JSONArray()
-            .put(expected(JSONObject().put("op", "encrypt").put("alg", "des-ede3-ecb").put("key", plain["desKey"]).put("data", "hola")))
+            .put(expected(JSONObject().put("op", "encrypt").put("alg", "aes-128-ecb").put("key", plain["aesKey"]).put("data", "hola")))
+            .put(expected(JSONObject().put("op", "encrypt").put("alg", "aes-192-cbc").put("key", plain["desKey"]).put("iv", hexIv).put("ivEnc", "hex").put("data", "hola")))
             .put(expected(JSONObject().put("op", "hmac").put("alg", "sha1").put("key", plain["hmacKey"] + "&" + plain["password"]).put("data", "base")))
         assertEquals(want.toString(), out)
+    }
+
+    // A 3DES key's bytes can be read under a JS-chosen keyEncoding with little entropy each, which
+    // puts it in reach of a search: a sealed cipher key is for AES only.
+    @Test fun `a sealed key is refused for a non-AES cipher, whole marker or not`() {
+        val out = sealedHome(
+            """
+            const tries = [
+              () => kino.crypto.encrypt('des-ede3-ecb', { key: s('desKey'), data: 'hola' }),
+              () => kino.crypto.decrypt('des-ede3-cbc', { key: s('desKey'), iv: '0001020304050607', ivEncoding: 'hex', data: 'AAAAAAAAAAA=' }),
+              () => kino.crypto.encrypt('des-ede3-ecb', { key: s('desKey'), keyEncoding: 'hex', data: 'hola' }),
+            ];
+            return tries.map((f) => { try { return ['no throw', f()] } catch (e) { return [e.code, e.message] } });
+            """,
+        )
+        assertEquals(List(3) { "[\"crypto_error\",\"$refused\"]" }.joinToString(",", "[", "]"), out)
+        // A plain des-ede3 key still works as always.
+        val plainDes = sealedHome("return kino.crypto.encrypt('des-ede3-ecb', { key: '${plain["desKey"]}', data: 'hola' })")
+        assertEquals("\"" + expected(JSONObject().put("op", "encrypt").put("alg", "des-ede3-ecb").put("key", plain["desKey"]).put("data", "hola")) + "\"", plainDes)
     }
 
     @Test fun `a marker in alg, an encoding or an unknown op stays literal`() {
