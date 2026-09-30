@@ -41,7 +41,26 @@ function require(name) {
 // `.text()` themselves return PROMISES (`response.json().then(fn)`, `await response.json()`) and
 // `response.headers.get(name)` looks a header up by name. This wrapper bridges kino's synchronous
 // response into that shape for scraper code only.
+// `opts.signal` (an AbortSignal, below) is honored here and never reaches kino.fetch: an already
+// aborted signal rejects before any request goes out, and an abort while the request is in flight
+// rejects right away with the signal's reason (an AbortError unless the scraper gave its own); the
+// native request itself runs on and its answer is ignored.
 function fetch(url, opts) {
+  var signal = opts && opts.signal;
+  if (!signal) return __nuvioFetch(url, opts);
+  var rest = {};
+  for (var k in opts) if (k !== "signal") rest[k] = opts[k];
+  return Promise.resolve().then(function () {
+    return __nuvioAbortable(signal, function () {
+      // A timeout signal also bounds the native request, so it doesn't outlive the wait by much.
+      var left = signal.__deadline === undefined ? 0 : signal.__deadline - Date.now();
+      if (left > 0 && !(rest.timeoutMs > 0)) rest.timeoutMs = Math.min(Math.ceil(left), 30000);
+      return __nuvioFetch(url, rest);
+    });
+  });
+}
+
+function __nuvioFetch(url, opts) {
   return kino.fetch(url, opts || {}).then(function (r) {
     // `r.headers`: a plain object, keys already lowercased, repeated headers joined with ", ", never
     // `set-cookie` (see PluginHttp.kt) -- so a case-insensitive `get` only needs to lowercase the ask.
@@ -107,6 +126,134 @@ function setTimeout(fn, ms) {
   return id;
 }
 function clearTimeout(id) { delete __nuvioTimers[id]; }
+
+// --- AbortController / AbortSignal, as browsers and Node have them (QuickJS has neither). ---
+// Scrapers cancel slow hoster checks with them (`new AbortController()` + `setTimeout(() =>
+// c.abort(), 2500)`, `fetch(url, { signal })`, `AbortSignal.timeout(ms)`); without them the first
+// `new AbortController()` is a ReferenceError. There is no EventTarget here, so a signal keeps its own
+// 'abort' listeners. The errors are DOMException-like: an Error named AbortError (code 20) or
+// TimeoutError (code 23). `AbortSignal.timeout(ms)` answers `aborted` from its deadline and only
+// starts a timer while someone listens (fetch does, while its request is in flight): an idle timer
+// would keep the whole call open until it fired (see setTimeout above).
+function __nuvioDomError(name, code, message) {
+  var e = new Error(message);
+  e.name = name;
+  e.code = code;
+  return e;
+}
+function __nuvioAbortError() { return __nuvioDomError("AbortError", 20, "This operation was aborted"); }
+
+function AbortSignal() { throw new TypeError("Illegal constructor"); }
+function __nuvioNewSignal() {
+  var s = Object.create(AbortSignal.prototype);
+  s.__aborted = false;
+  s.__reason = undefined;
+  s.__listeners = [];
+  s.__onabort = null;
+  s.__timer = 0;
+  return s;
+}
+function __nuvioSignalAbort(signal, reason) {
+  if (signal.__aborted) return;
+  signal.__aborted = true;
+  signal.__reason = reason === undefined ? __nuvioAbortError() : reason;
+  if (signal.__timer) { clearTimeout(signal.__timer); signal.__timer = 0; }
+  var event = { type: "abort", target: signal, currentTarget: signal };
+  var handlers = (signal.__onabort ? [signal.__onabort] : []).concat(signal.__listeners.map(function (l) { return l.fn; }));
+  signal.__listeners = [];
+  handlers.forEach(function (fn) {
+    try { fn.call(signal, event); } catch (e) { console.error("Nuvio compat: an abort listener threw", e && e.message ? e.message : String(e)); }
+  });
+}
+// A timeout signal's timer runs only while it has a listener; see the section comment.
+function __nuvioSignalArm(signal) {
+  var wanted = signal.__deadline !== undefined && !signal.__aborted && (signal.__onabort || signal.__listeners.length > 0);
+  if (wanted && !signal.__timer) {
+    signal.__timer = setTimeout(function () {
+      signal.__timer = 0;
+      __nuvioSignalAbort(signal, __nuvioDomError("TimeoutError", 23, "The operation timed out"));
+    }, Math.max(0, signal.__deadline - Date.now()));
+  } else if (!wanted && signal.__timer) {
+    clearTimeout(signal.__timer);
+    signal.__timer = 0;
+  }
+}
+Object.defineProperties(AbortSignal.prototype, {
+  aborted: {
+    get: function () {
+      if (!this.__aborted && this.__deadline !== undefined && Date.now() >= this.__deadline) {
+        __nuvioSignalAbort(this, __nuvioDomError("TimeoutError", 23, "The operation timed out"));
+      }
+      return this.__aborted;
+    },
+  },
+  reason: { get: function () { return this.aborted ? this.__reason : undefined; } },
+  onabort: {
+    get: function () { return this.__onabort; },
+    set: function (fn) { this.__onabort = typeof fn === "function" ? fn : null; __nuvioSignalArm(this); },
+  },
+});
+AbortSignal.prototype.addEventListener = function (type, fn, options) {
+  if (type !== "abort" || typeof fn !== "function" || this.aborted) return;
+  for (var i = 0; i < this.__listeners.length; i++) if (this.__listeners[i].fn === fn) return;
+  this.__listeners.push({ fn: fn });
+  __nuvioSignalArm(this);
+};
+AbortSignal.prototype.removeEventListener = function (type, fn) {
+  if (type !== "abort") return;
+  this.__listeners = this.__listeners.filter(function (l) { return l.fn !== fn; });
+  __nuvioSignalArm(this);
+};
+AbortSignal.prototype.throwIfAborted = function () { if (this.aborted) throw this.__reason; };
+AbortSignal.abort = function (reason) {
+  var s = __nuvioNewSignal();
+  __nuvioSignalAbort(s, reason);
+  return s;
+};
+AbortSignal.timeout = function (ms) {
+  var s = __nuvioNewSignal();
+  s.__deadline = Date.now() + Math.max(0, Number(ms) || 0);
+  return s;
+};
+AbortSignal.any = function (signals) {
+  var s = __nuvioNewSignal();
+  var list = Array.prototype.slice.call(signals || []);
+  for (var i = 0; i < list.length; i++) {
+    if (list[i].aborted) { __nuvioSignalAbort(s, list[i].reason); return s; }
+  }
+  list.forEach(function (source) {
+    source.addEventListener("abort", function () { __nuvioSignalAbort(s, source.reason); });
+  });
+  return s;
+};
+
+function AbortController() {
+  if (!(this instanceof AbortController)) throw new TypeError("Constructor AbortController requires 'new'");
+  this.signal = __nuvioNewSignal();
+}
+AbortController.prototype.abort = function (reason) { __nuvioSignalAbort(this.signal, reason); };
+
+// Runs `start()` (a promise-returning request) under `signal`: rejects at once when the signal is
+// already aborted (start() never runs), or as soon as it aborts while the request is in flight; the
+// request's own late answer is then ignored. The listener is removed once the request settles, so a
+// timeout signal stops its timer with it. The already-aborted case THROWS (callers run this inside a
+// `.then`): a `Promise.reject` handed back from a `.then` callback is still unhandled for a moment,
+// and this sandbox fails the whole call on an unhandled rejection (measured with axios).
+function __nuvioAbortable(signal, start, toError) {
+  var fail = toError || function (reason) { return reason; };
+  if (signal.aborted) throw fail(signal.reason);
+  return new Promise(function (resolve, reject) {
+    function onAbort() { reject(fail(signal.reason)); }
+    signal.addEventListener("abort", onAbort);
+    Promise.resolve().then(start).then(function (value) {
+      signal.removeEventListener("abort", onAbort);
+      resolve(value);
+    }, function (e) {
+      signal.removeEventListener("abort", onAbort);
+      reject(e);
+    });
+  });
+}
 
 // --- The browser Web Crypto API: `crypto.subtle`, `crypto.getRandomValues`, `crypto.randomUUID`. ---
 // Scrapers written for the browser call it directly (PelisPlusHD's Embed69 resolver hashes a proof of
@@ -724,25 +871,36 @@ var __nuvioAxios = (function () {
       if (body !== undefined) opts.body = body;
       var timeout = Math.floor(Number(config.timeout) || 0);
       if (timeout > 0) opts.timeoutMs = Math.min(timeout, 30000);
-      return kino.fetch(urlOf(config), opts).then(function (r) {
-        var text = r.text();
-        var parsed = text;
-        if (config.responseType !== "text" && typeof text === "string" && text.length) {
-          try { parsed = JSON.parse(text); } catch (e) { parsed = text; }
-        }
-        var plainHeaders = {};
-        for (var name in r.headers || {}) plainHeaders[name] = r.headers[name];
-        var response = { data: parsed, status: r.status, statusText: "", headers: plainHeaders, config: config, request: { responseURL: r.url } };
-        var valid = config.validateStatus === null ? true
-          : typeof config.validateStatus === "function" ? config.validateStatus(r.status)
-          : r.status >= 200 && r.status < 300;
-        if (!valid) {
-          throw axiosError("Request failed with status code " + r.status, config, response, r.status >= 500 ? "ERR_BAD_RESPONSE" : "ERR_BAD_REQUEST");
-        }
-        return response;
-      }, function (e) {
-        throw axiosError(e && e.message ? e.message : String(e), config, null, e && e.code === "timeout" ? "ECONNABORTED" : (e && e.code) || "ERR_NETWORK");
-      });
+      // `signal` (an AbortSignal) cancels like fetch's, rejecting with axios's own CanceledError.
+      if (config.signal) return __nuvioAbortable(config.signal, function () { return send(config, opts); }, function () { return canceledError(config); });
+      return send(config, opts);
+    });
+  }
+  function canceledError(config) {
+    var e = axiosError("canceled", config, null, "ERR_CANCELED");
+    e.name = "CanceledError";
+    e.__CANCEL__ = true;
+    return e;
+  }
+  function send(config, opts) {
+    return kino.fetch(urlOf(config), opts).then(function (r) {
+      var text = r.text();
+      var parsed = text;
+      if (config.responseType !== "text" && typeof text === "string" && text.length) {
+        try { parsed = JSON.parse(text); } catch (e) { parsed = text; }
+      }
+      var plainHeaders = {};
+      for (var name in r.headers || {}) plainHeaders[name] = r.headers[name];
+      var response = { data: parsed, status: r.status, statusText: "", headers: plainHeaders, config: config, request: { responseURL: r.url } };
+      var valid = config.validateStatus === null ? true
+        : typeof config.validateStatus === "function" ? config.validateStatus(r.status)
+        : r.status >= 200 && r.status < 300;
+      if (!valid) {
+        throw axiosError("Request failed with status code " + r.status, config, response, r.status >= 500 ? "ERR_BAD_RESPONSE" : "ERR_BAD_REQUEST");
+      }
+      return response;
+    }, function (e) {
+      throw axiosError(e && e.message ? e.message : String(e), config, null, e && e.code === "timeout" ? "ECONNABORTED" : (e && e.code) || "ERR_NETWORK");
     });
   }
   function create(defaults) {
@@ -761,6 +919,7 @@ var __nuvioAxios = (function () {
     });
     instance.create = function (more) { return create(merge(instance.defaults, more)); };
     instance.isAxiosError = function (e) { return !!(e && e.isAxiosError); };
+    instance.isCancel = function (e) { return !!(e && e.__CANCEL__); };
     instance.default = instance;
     return instance;
   }
