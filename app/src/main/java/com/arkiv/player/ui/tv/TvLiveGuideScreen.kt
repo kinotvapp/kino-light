@@ -349,27 +349,30 @@ fun TvLiveGuideScreen(onWatchChannel: (LiveChannel) -> Unit, onBack: () -> Unit)
                     firstKeyFocus = keyboardFocus,
                 )
                 Spacer(Modifier.height(12.dp))
-                Surface(
-                    onClick = { vm.reload() },
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
-                    shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-                    colors = arkivTvSurfaceColors(),
-                    border = arkivTvSurfaceBorder(),
-                ) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("Recargar canales", style = MaterialTheme.typography.bodyMedium)
+                // One row, not two stacked buttons: the keyboard above already takes most of a 720 px screen, and the second button
+                // (this one used to be it) was cut off below the screen edge, so "Mis canales y listas" could not be reached on a TV.
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Surface(
+                        onClick = { vm.reload() },
+                        modifier = Modifier.weight(1f).height(48.dp),
+                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+                        colors = arkivTvSurfaceColors(),
+                        border = arkivTvSurfaceBorder(),
+                    ) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text("Recargar", style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                        }
                     }
-                }
-                Spacer(Modifier.height(12.dp))
-                Surface(
-                    onClick = { ownManager = true },
-                    modifier = Modifier.fillMaxWidth().height(48.dp).focusRequester(ownButtonFocus).onFocusChanged { ownButtonFocused = it.isFocused },
-                    shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-                    colors = arkivTvSurfaceColors(),
-                    border = arkivTvSurfaceBorder(),
-                ) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text(OwnSourcesCopy.MY_SOURCES, style = MaterialTheme.typography.bodyMedium)
+                    Surface(
+                        onClick = { ownManager = true },
+                        modifier = Modifier.weight(1f).height(48.dp).focusRequester(ownButtonFocus).onFocusChanged { ownButtonFocused = it.isFocused },
+                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+                        colors = arkivTvSurfaceColors(),
+                        border = arkivTvSurfaceBorder(),
+                    ) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text(OwnSourcesCopy.MY_SOURCES, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                        }
                     }
                 }
                 if (search.isNotBlank()) {
