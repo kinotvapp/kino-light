@@ -6,6 +6,7 @@ import com.arkiv.player.data.gateway.GatewaySubtitle
 import com.arkiv.player.data.gateway.SearchEvent
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -325,20 +326,36 @@ class PluginContentSourceTest {
         val caller = FakeCaller(mapOf("resolve" to """{"url":"https://cdn.random-tld.xyz/v.mp4"}"""))
         val movie = PluginRef("demo", "m1", PluginRef.MOVIE, "m-1").encode()
         val live = PluginRef("demo", "c1", PluginRef.LIVE, "ch-1").encode()
-        assertEquals("https://cdn.random-tld.xyz/v.mp4", source(caller, any).resolve(movie).url)
+        // A movie's under the one broad-video rule: the player's own resolve.
+        assertEquals("https://cdn.random-tld.xyz/v.mp4", withContext(InteractivePluginCall) { source(caller, any).resolve(movie) }.url)
         assertEquals("https://cdn.random-tld.xyz/v.mp4", source(caller, any).resolve(live).url)
+        // A download's resolve keeps the strict rule, exactly as under the broad video permission.
+        assertTrue(runCatching { withContext(BackgroundPluginCall) { source(caller, any).resolve(movie) } }.exceptionOrNull() is GatewayException)
         // Without the approval it stays strict.
-        assertTrue(runCatching { source(caller, base).resolve(movie) }.exceptionOrNull() is GatewayException)
+        assertTrue(runCatching { withContext(InteractivePluginCall) { source(caller, base).resolve(movie) } }.exceptionOrNull() is GatewayException)
         // Never the LAN, approval or not.
         val lan = FakeCaller(mapOf("resolve" to """{"url":"http://192.168.1.20/v.mp4"}"""))
-        assertTrue(runCatching { source(lan, any).resolve(movie) }.exceptionOrNull() is GatewayException)
+        assertTrue(runCatching { withContext(InteractivePluginCall) { source(lan, any).resolve(movie) } }.exceptionOrNull() is GatewayException)
     }
 
-    @Test fun `streamHosts any leaves the player's gate strict for anything else`() {
-        val hosts = com.arkiv.player.data.plugin.EffectiveHosts(listOf("a.example"))
-        val ready = PluginAccess.Ready("Demo", hosts, liveHosts = hosts.copy(anyPublicLiveHost = true), streamHosts = hosts.copy(anyPublicLiveHost = true))
+    @Test fun `streamHosts any and the broad video permission are one predicate behind the player's VOD gate`() {
+        val base = plugin(caps = setOf("home", "resolve"), apiVersion = 4)
+        val declared = base.copy(record = base.record.copy(streamHostsAny = true))
+        val granted = base.copy(record = base.record.copy(anyVideoHost = true))
         val movie = PluginRef("demo", "m1", PluginRef.MOVIE, "m-1").encode()
-        assertTrue(ready.streamHostsFor("demo", movie).anyPublicLiveHost)
-        assertEquals(false, PluginAccess.Ready("Demo", hosts).streamHostsFor("demo", movie).anyPublicLiveHost)
+        val live = PluginRef("demo", "c1", PluginRef.LIVE, "ch-1").encode()
+        for (p in listOf(declared, granted)) {
+            assertTrue(p.record.videoFromAnyHost)
+            val ready = PluginAccess.Ready("Demo", p.hosts, liveHosts = p.liveHosts, videoHosts = p.videoHosts)
+            assertTrue(ready.streamHostsFor("demo", movie).anyPublicVideoHost)
+            // The plugin's own hosts (kino.fetch, licenses, downloads) never carry it.
+            assertFalse(p.hosts.anyPublicStreamHost)
+        }
+        assertFalse(base.record.videoFromAnyHost)
+        assertFalse(base.videoHosts.anyPublicVideoHost)
+        // A live channel: streamHosts "any" relaxes it (main's rule), the person's broad permission never does.
+        assertTrue(declared.liveHosts.anyPublicLiveHost)
+        assertFalse(granted.liveHosts.anyPublicLiveHost)
+        assertFalse(PluginAccess.Ready("Demo", granted.hosts, liveHosts = granted.liveHosts, videoHosts = granted.videoHosts).streamHostsFor("demo", live).anyPublicStreamHost)
     }
 }
