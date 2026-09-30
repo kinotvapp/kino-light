@@ -3,7 +3,11 @@ import java.io.File
 import java.io.FileOutputStream
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermissions
+import java.security.KeyFactory
+import java.security.spec.PKCS8EncodedKeySpec
+import java.security.spec.X509EncodedKeySpec
 import java.util.Properties
+import javax.crypto.KeyAgreement
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -336,6 +340,37 @@ configurations.configureEach {
     }
 }
 
+/**
+ * Kino's v1 plugin-seal public key, hex. MUST equal `SealedSecrets.KINO_PUBLIC_KEY_V1`
+ * (app/src/main/java/com/arkiv/player/data/plugin/SealedSecrets.kt) and seal.mjs's
+ * PRODUCTION_PUBLIC_KEY_HEX: duplicated here because this script can't read Kotlin sources, and
+ * pinned equal by SealedSecretsTest ("the build script checks the seal key ...").
+ */
+val pluginSealPublicKeyV1Hex = "b13ecf6d231a75bf57ca21d977075c74f914b4416653cf89940897a29393e65c"
+
+/**
+ * Fails the build unless [key] (PLUGIN_SEAL_PRIVATE_KEY's bytes) is empty -- a build without seal
+ * support, which the app reports as such -- or the 32-byte X25519 private half of
+ * [pluginSealPublicKeyV1Hex]. Releases are built from another checkout's .env: a wrong key would
+ * ship and every sealed plugin would fail to install with "not for this repository". Neither
+ * message ever shows the key.
+ */
+fun checkPluginSealKey(key: ByteArray) {
+    if (key.isEmpty()) return
+    require(key.size == 32) { "PLUGIN_SEAL_PRIVATE_KEY in .env must be 32 bytes (64 hex digits); it has ${key.size} bytes (value not shown)" }
+    fun hex(s: String) = ByteArray(s.length / 2) { i -> s.substring(i * 2, i * 2 + 2).toInt(16).toByte() }
+    // RFC 8410 DER prefixes for a raw X25519 private key (PKCS#8) and public key (SPKI).
+    val kf = KeyFactory.getInstance("X25519")
+    val priv = kf.generatePrivate(PKCS8EncodedKeySpec(hex("302e020100300506032b656e04220420") + key))
+    // X25519(private, basepoint u=9) is the public key.
+    val basepoint = kf.generatePublic(X509EncodedKeySpec(hex("302a300506032b656e032100") + ByteArray(32).also { it[0] = 9 }))
+    val pub = KeyAgreement.getInstance("X25519").run { init(priv); doPhase(basepoint, true); generateSecret() }
+    require(pub.joinToString("") { "%02x".format(it) } == pluginSealPublicKeyV1Hex) {
+        "PLUGIN_SEAL_PRIVATE_KEY in .env is not the private half of SealedSecrets.KINO_PUBLIC_KEY_V1: " +
+            "every sealed plugin would fail to install (value not shown)"
+    }
+}
+
 fun writeSecretsHeader(bindCert: Boolean, outputDir: File) {
     outputDir.mkdirs()
     val certHash = if (bindCert) releaseCertSha256Bytes() else ByteArray(0)
@@ -378,7 +413,9 @@ fun writeSecretsHeader(bindCert: Boolean, outputDir: File) {
         append(field("GEN_NATIVE_FALLBACK_EMAIL", nativeHalf(readEnv("MAGIS_FALLBACK_EMAIL")), true))
         append(field("GEN_NATIVE_FALLBACK_PASSWORD", nativeHalf(readEnv("MAGIS_FALLBACK_PASSWORD")), true))
         // X25519 private key that opens plugin seals (spec 2026-09-29-plugin-sealed-secrets §3).
-        append(field("GEN_PLUGIN_SEAL_KEY", hexToBytes(readEnv("PLUGIN_SEAL_PRIVATE_KEY")), bindThisField = true))
+        val sealKey = hexToBytes(readEnv("PLUGIN_SEAL_PRIVATE_KEY"))
+        checkPluginSealKey(sealKey)
+        append(field("GEN_PLUGIN_SEAL_KEY", sealKey, bindThisField = true))
     }
     outputDir.resolve("generated_secrets.h").writeText(content)
 }

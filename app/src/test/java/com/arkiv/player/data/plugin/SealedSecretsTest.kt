@@ -72,6 +72,14 @@ class SealedSecretsTest {
         }
     }
 
+    // The build refuses a PLUGIN_SEAL_PRIVATE_KEY whose public half isn't this one; the script keeps
+    // its own copy of the constant (it can't read Kotlin sources), pinned equal here.
+    @Test fun `the build script checks the seal key against KINO_PUBLIC_KEY_V1`() {
+        val script = listOf(java.io.File("build.gradle.kts"), java.io.File("app/build.gradle.kts")).first { it.exists() }.readText()
+        val pinned = Regex("""val pluginSealPublicKeyV1Hex = "([0-9a-f]{64})"""").find(script)?.groupValues?.get(1)
+        assertEquals(SealedSecrets.KINO_PUBLIC_KEY_V1.joinToString("") { "%02x".format(it) }, pinned)
+    }
+
     @Test fun `names follow the pattern`() {
         assertTrue(SealedSecrets.NAME.matches("apiKey_2"))
         assertFalse(SealedSecrets.NAME.matches("2key"))
