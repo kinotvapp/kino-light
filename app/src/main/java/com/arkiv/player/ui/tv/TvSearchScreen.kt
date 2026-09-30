@@ -124,6 +124,8 @@ fun TvSearchScreen(
     shortcutAnilistId: Long? = null,
     /** "Ver más resultados" of a plugin whose search page carried a cursor. */
     onBrowsePlugin: ((com.arkiv.player.ui.plugin.PluginMoreTarget) -> Unit)? = null,
+    /** A title whose sources to list on entry (the player's "Ver otras fuentes", see `otherSourcesRoute`). */
+    shortcutText: String? = null,
 ) {
     val graph = rememberGraph()
     val fixedRows = remember { buildRowSpecs(emptyList(), emptyList(), emptyList()) }
@@ -291,9 +293,9 @@ fun TvSearchScreen(
     }
 
     // Shortcut from the home: enters already positioned on a title (same pattern as the phone).
-    LaunchedEffect(shortcutKind, shortcutTmdbId, shortcutAnilistId) {
-        val k = shortcutKind ?: return@LaunchedEffect
-        vm.startFromShortcut(k, shortcutTmdbId, shortcutAnilistId)
+    LaunchedEffect(shortcutKind, shortcutTmdbId, shortcutAnilistId, shortcutText) {
+        if (shortcutKind == null && shortcutText.isNullOrBlank()) return@LaunchedEffect
+        vm.startFromShortcut(shortcutKind, shortcutTmdbId, shortcutAnilistId, shortcutText)
     }
 
     // Initial focus on the keyboard's first key. Keyed on `phase` (not `Unit`): REFINE/RESULTS/

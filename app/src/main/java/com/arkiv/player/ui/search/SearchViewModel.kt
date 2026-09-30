@@ -163,11 +163,19 @@ class SearchViewModel(
         }
     }
 
-    /** Entry from the home: starts already on a title, skipping the typing phase. */
-    fun startFromShortcut(kind: String, tmdbId: Int?, anilistId: Long?) {
+    /**
+     * Entry from the home: starts already on a title, skipping the typing phase.
+     *
+     * [text] is the title to fall back on: with no catalog id ([kind] null), or when the catalog
+     * can't be reached, its sources are searched by that text ([searchSourcesByText]) instead of
+     * leaving an empty screen. The player's "Ver otras fuentes" always sends it (see
+     * `otherSourcesRoute`).
+     */
+    fun startFromShortcut(kind: String?, tmdbId: Int?, anilistId: Long?, text: String? = null) {
         if (selected.value != null) return   // already started (don't repeat on recomposition)
         viewModelScope.launch {
             val card = when {
+                kind == null -> null
                 kind == "anime" && anilistId != null ->
                     runCatching { aniListApi.details(anilistId) }.getOrNull()?.toTitleCard()
                 tmdbId != null -> {
@@ -181,7 +189,11 @@ class SearchViewModel(
                     }
                 }
                 else -> null
-            } ?: return@launch
+            }
+            if (card == null) {
+                text?.takeIf { it.isNotBlank() && selected.value == null }?.let { searchSourcesByText(it) }
+                return@launch
+            }
             pickTitle(card)   // movie -> RESULTS; series/anime -> REFINE
         }
     }

@@ -179,11 +179,12 @@ fun ArkivTvRoot(
             )
         }
         composable(
-            "search?kind={kind}&tmdbId={tmdbId}&anilistId={anilistId}",
+            "search?kind={kind}&tmdbId={tmdbId}&anilistId={anilistId}&text={text}",
             arguments = listOf(
                 navArgument("kind") { nullable = true; type = NavType.StringType; defaultValue = null },
                 navArgument("tmdbId") { nullable = true; type = NavType.StringType; defaultValue = null },
                 navArgument("anilistId") { nullable = true; type = NavType.StringType; defaultValue = null },
+                navArgument("text") { nullable = true; type = NavType.StringType; defaultValue = null },
             ),
         ) { entry ->
             TvSearchScreen(
@@ -197,6 +198,7 @@ fun ArkivTvRoot(
                 shortcutTmdbId = entry.arguments?.getString("tmdbId")?.toIntOrNull(),
                 shortcutAnilistId = entry.arguments?.getString("anilistId")?.toLongOrNull(),
                 onBrowsePlugin = { navController.navigate(com.arkiv.player.ui.plugin.PluginMoreTarget.route(it)) },
+                shortcutText = entry.arguments?.getString("text"),
             )
         }
         composable("categorias") {
@@ -339,6 +341,12 @@ fun ArkivTvRoot(
                         navController.navigate("plugin_config/${Uri.encode(id)}") {
                             popUpTo("player/{episodeId}") { inclusive = true }
                         }
+                    }
+                },
+                // The player leaves too: Back from the sources returns to where the title was.
+                onOpenOtherSources = { title ->
+                    navController.navigate(com.arkiv.player.ui.search.otherSourcesRoute(title)) {
+                        popUpTo("player/{episodeId}") { inclusive = true }
                     }
                 },
             )

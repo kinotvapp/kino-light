@@ -462,12 +462,13 @@ fun ArkivRoot(
                 }
             }
             composable(
-                "search?kind={kind}&tmdbId={tmdbId}&anilistId={anilistId}&query={query}",
+                "search?kind={kind}&tmdbId={tmdbId}&anilistId={anilistId}&query={query}&text={text}",
                 arguments = listOf(
                     navArgument("kind") { nullable = true; type = NavType.StringType; defaultValue = null },
                     navArgument("tmdbId") { nullable = true; type = NavType.StringType; defaultValue = null },
                     navArgument("anilistId") { nullable = true; type = NavType.StringType; defaultValue = null },
                     navArgument("query") { nullable = true; type = NavType.StringType; defaultValue = null },
+                    navArgument("text") { nullable = true; type = NavType.StringType; defaultValue = null },
                 ),
             ) { entry ->
                 Box(Modifier.fillMaxSize().padding(padding)) {
@@ -483,6 +484,7 @@ fun ArkivRoot(
                         shortcutAnilistId = entry.arguments?.getString("anilistId")?.toLongOrNull(),
                         shortcutQuery = entry.arguments?.getString("query"),
                         onBrowsePlugin = { navController.navigate(com.arkiv.player.ui.plugin.PluginMoreTarget.route(it)) },
+                        shortcutText = entry.arguments?.getString("text"),
                     )
                 }
             }
@@ -574,6 +576,12 @@ fun ArkivRoot(
                             navController.navigate("plugin_config/${Uri.encode(id)}") {
                                 popUpTo("player/{episodeId}") { inclusive = true }
                             }
+                        }
+                    },
+                    // The player leaves too: Back from the sources returns to where the title was.
+                    onOpenOtherSources = { title ->
+                        navController.navigate(com.arkiv.player.ui.search.otherSourcesRoute(title)) {
+                            popUpTo("player/{episodeId}") { inclusive = true }
                         }
                     },
                 )

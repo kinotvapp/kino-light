@@ -41,6 +41,7 @@ class FrameCapturerWatchedTest {
 
         override suspend fun upsert(playback: PlaybackEntity) { rows[playback.episodeId] = playback }
         override suspend fun get(episodeId: String): PlaybackEntity? = rows[episodeId]
+        override suspend fun delete(episodeId: String) { rows.remove(episodeId) }
         override fun observe(episodeId: String): Flow<PlaybackEntity?> = MutableStateFlow(rows[episodeId])
         override fun observeProgressWithNext(): Flow<List<ProgressWithNextRow>> =
             MutableStateFlow(emptyList())

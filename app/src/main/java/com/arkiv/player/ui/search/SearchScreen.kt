@@ -115,6 +115,8 @@ fun SearchScreen(
     shortcutQuery: String? = null,
     /** "Ver más resultados" of a plugin whose search page carried a cursor. */
     onBrowsePlugin: ((com.arkiv.player.ui.plugin.PluginMoreTarget) -> Unit)? = null,
+    /** A title whose sources to list on entry (the player's "Ver otras fuentes", see `otherSourcesRoute`). */
+    shortcutText: String? = null,
 ) {
     val graph = rememberGraph()
     // Fixed rows always available (no API): anime, cartelera, tendencias, series, etc.
@@ -161,9 +163,9 @@ fun SearchScreen(
     // Shortcut from the home: enters already positioned on a title. Fires only once per arg
     // combination (LaunchedEffect doesn't re-run on recompositions with no changes), and
     // startFromShortcut() is also guarded by selected.value != null.
-    LaunchedEffect(shortcutKind, shortcutTmdbId, shortcutAnilistId) {
-        val k = shortcutKind ?: return@LaunchedEffect
-        vm.startFromShortcut(k, shortcutTmdbId, shortcutAnilistId)
+    LaunchedEffect(shortcutKind, shortcutTmdbId, shortcutAnilistId, shortcutText) {
+        if (shortcutKind == null && shortcutText.isNullOrBlank()) return@LaunchedEffect
+        vm.startFromShortcut(shortcutKind, shortcutTmdbId, shortcutAnilistId, shortcutText)
     }
 
     // (The plain-title entry from a Kinobot suggestion chip is handled inside QueryContent, via its

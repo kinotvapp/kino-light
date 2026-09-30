@@ -63,6 +63,38 @@ class SearchViewModelSourcesTest {
         searchHistory = SearchHistoryRepo(EmptyHistory(), EmptyRecents()),
     )
 
+    private val deadpool = listOf(
+        SearchEvent.SourceStart("plugin:demo"),
+        SearchEvent.ResultEvent("plugin:demo", GatewayResult(source = "plugin:demo", title = "Deadpool & Wolverine", ref = "plg1:demo:1")),
+        SearchEvent.SourceDone("plugin:demo", 1, 5),
+        SearchEvent.Done(10),
+    )
+
+    /** The player's "Ver otras fuentes" for a library title with no TMDB id. */
+    @Test fun `a shortcut with only a title lists that title's sources`() = runTest {
+        val vm = vm(TestSource { deadpool })
+        vm.startFromShortcut(kind = null, tmdbId = null, anilistId = null, text = "Deadpool & Wolverine")
+        advanceUntilIdle()
+        assertEquals("Deadpool & Wolverine", vm.selected.value?.title)
+        assertEquals(listOf("Deadpool & Wolverine"), vm.sources.value.map { (it as PlaySource.Plugin).result.title })
+    }
+
+    /** With a TMDB id but TMDB unreachable, the title still gets its sources instead of a blank screen. */
+    @Test fun `a TMDB shortcut that can't reach TMDB falls back to the title`() = runTest {
+        val vm = SearchViewModel(
+            tmdbApi = TmdbApi(apiKey = "x", baseUrl = "http://127.0.0.1:1/"),
+            aniListApi = AniListApi(),
+            settings = SettingsStore(TestContext()),
+            arkivApiClient = TestSource { deadpool },
+            searchHistory = SearchHistoryRepo(EmptyHistory(), EmptyRecents()),
+        )
+        vm.startFromShortcut(kind = "movie", tmdbId = 533535, anilistId = null, text = "Deadpool & Wolverine")
+        // The TMDB call is real IO (refused at once): wait for it off the test clock.
+        repeat(100) { if (vm.selected.value == null) { advanceUntilIdle(); Thread.sleep(20) } }
+        advanceUntilIdle()
+        assertEquals("Deadpool & Wolverine", vm.selected.value?.title)
+    }
+
     @Test fun `if caracol goes down, a plugin's results show and caracol's failure stays exposed`() = runTest {
         val noNetwork = java.net.UnknownHostException("sin red")
         val vm = vm(TestSource {

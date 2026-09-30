@@ -794,6 +794,7 @@ class ArkivRepository(
         val existing = itemDao.getItem(itemId)
         val (item, ep) = PluginEntities.buildMovie(ref, title, posterUrl, clock(), existing, tmdbId) ?: return null
         itemDao.replaceItem(item, listOf(ep))
+        rememberPick(itemId, existing)
         saveMagisBackdrop(itemId, backdropUrl)
         return ep.id
     }
@@ -823,6 +824,7 @@ class ArkivRepository(
         ) ?: return null
         itemDao.upsertItem(series.item)
         itemDao.upsertEpisodes(series.episodes)
+        rememberPick(itemId, existing)
         saveMagisBackdrop(itemId, backdropUrl)
         return series.chosenId
     }
@@ -1080,6 +1082,19 @@ class ArkivRepository(
         return PlayerHeaderInfo(item.title, label)
     }
 
+    /** The title of [episodeId]'s item, to look for it in every source; null when it isn't in the library. */
+    suspend fun sourceSearchTitle(episodeId: String): SourceSearchTitle? {
+        val ep = itemDao.getEpisode(episodeId) ?: return null
+        val item = itemDao.getItem(ep.itemId) ?: return null
+        val isMovie = when (item.categoryOverride) {
+            "movie" -> true
+            "series" -> false
+            else -> itemDao.getEpisodesOf(ep.itemId).size <= 1
+        }
+        val title = item.tituloCanonico?.takeIf { it.isNotBlank() } ?: item.title
+        return SourceSearchTitle(isMovie, item.tmdbId?.takeIf { it > 0 }, title)
+    }
+
     suspend fun removeItem(identifier: String) {
         // Chapters are read BEFORE the soft-delete: `getEpisodesOf` filters `deleted = 0`, so
         // after the tombstone there would be nowhere left to get the ids from.
@@ -1232,19 +1247,54 @@ class ArkivRepository(
      * `false`. So yes, reopening a finished chapter and closing it a few seconds later still bumps
      * that item to the top of "Mi biblioteca" as soon as the duration is known — that's intentional,
      * not a bug in this cutoff.
+     *
+     * Returns what it wrote and what was there before (null when it wrote nothing), so an attempt
+     * that never really starts can take it back with [undoInProgress]: without that, every source
+     * that failed to open left a row stamped "just watched".
      */
-    suspend fun markInProgress(episodeId: String) {
+    suspend fun markInProgress(episodeId: String): InProgressMark? {
         val existing = playbackDao.get(episodeId)
-        if (existing?.watched == true) return
-        playbackDao.upsert(
-            PlaybackEntity(
-                episodeId = episodeId,
-                positionMs = existing?.positionMs ?: 0L,
-                durationMs = existing?.durationMs ?: 0L,
-                watched = false,
-                lastPlayedAt = clock(),
-            ),
+        val written = inProgressRow(episodeId, existing, clock()) ?: return null
+        playbackDao.upsert(written)
+        return InProgressMark(episodeId, existing, written)
+    }
+
+    /**
+     * Takes back a [markInProgress] whose attempt ended without ever playing: the row before it comes
+     * back byte for byte, or the row goes if there was none. A row something else wrote after the
+     * mark (the player's save, "visto" by hand) is left alone -- see [undoAgainst].
+     *
+     * When the row goes, the library item a plugin pick created for this attempt goes with it
+     * ([dropsUnplayedPick]): that card is the other half of what a failed source left behind.
+     */
+    suspend fun undoInProgress(mark: InProgressMark) {
+        when (val undo = mark.undoAgainst(playbackDao.get(mark.episodeId))) {
+            InProgressUndo.Keep -> return
+            InProgressUndo.Delete -> playbackDao.delete(mark.episodeId)
+            is InProgressUndo.Restore -> playbackDao.upsert(undo.row)
+        }
+        val itemId = itemDao.getEpisode(mark.episodeId)?.itemId ?: return
+        val episodes = itemDao.getEpisodesOf(itemId)
+        val drop = dropsUnplayedPick(
+            createdByPick = itemId in unplayedPicks,
+            previous = mark.previous,
+            itemHistoryRows = playbackForItem(itemId).values.count { !it.deleted },
+            itemDownloads = episodes.count { downloadDao.get(it.id) != null },
         )
+        if (!drop) return
+        unplayedPicks -= itemId
+        removeItem(itemId)
+    }
+
+    /**
+     * Plugin items a pick brought into the library in this process (absent or removed before), see
+     * [dropsUnplayedPick]. In memory on purpose: it only has to outlive the few seconds between the
+     * pick and the player's first resolve, and a card from an earlier run is never guessed at.
+     */
+    private val unplayedPicks: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+    private fun rememberPick(itemId: String, existing: com.arkiv.player.data.db.ItemEntity?) {
+        if (existing == null || existing.deleted) unplayedPicks += itemId
     }
 
     /** Persists playback position. Marks watched per [WatchedThreshold]. */

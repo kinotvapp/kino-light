@@ -314,6 +314,10 @@ interface PlaybackDao {
     @Query("SELECT * FROM playback WHERE episodeId = :episodeId")
     suspend fun get(episodeId: String): PlaybackEntity?
 
+    /** Only for taking back an early mark that had no row before it (`ArkivRepository.undoInProgress`). */
+    @Query("DELETE FROM playback WHERE episodeId = :episodeId")
+    suspend fun delete(episodeId: String)
+
     @Query("SELECT * FROM playback WHERE episodeId = :episodeId")
     fun observe(episodeId: String): Flow<PlaybackEntity?>
 

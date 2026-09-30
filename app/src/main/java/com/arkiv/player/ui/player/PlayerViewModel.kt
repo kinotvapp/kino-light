@@ -36,6 +36,7 @@ import com.arkiv.player.ui.live.pluginLivePlay
 import com.arkiv.player.ui.live.providerGone
 import com.arkiv.player.ui.live.zappingListFor
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -394,6 +395,12 @@ class PlayerViewModel internal constructor(
      * never declared (`AppGraph.streamHostApproval`). Null (tests): such a refusal is a plain error.
      */
     hostDecider: com.arkiv.player.data.plugin.StreamHostDecider? = null,
+    /**
+     * Outlives this ViewModel (`AppGraph.applicationScope`): where the early history mark of an
+     * attempt that never played is taken back once the player has closed (see [PlaybackAttempts]).
+     */
+    private val historyScope: kotlinx.coroutines.CoroutineScope =
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO),
 ) : ViewModel() {
 
     /** One question per host per playback attempt; see [onPluginHostRefused]. */
@@ -433,6 +440,7 @@ class PlayerViewModel internal constructor(
                     val ready = plugins?.accessFor(pluginId) as? com.arkiv.player.data.plugin.PluginAccess.Ready
                     if (ready == null) {
                         _error.value = "$name: el video no se pudo cargar desde $host"
+                        offerOtherSources(item)
                         return@launch
                     }
                     Log.w(PLAY, "plugin playback: $host approved -> rebuilding at ${positionMs}ms")
@@ -442,6 +450,7 @@ class PlayerViewModel internal constructor(
                 is com.arkiv.player.data.plugin.PlaybackHostOutcome.Fail -> {
                     Log.w(PLAY, "plugin playback: $host -> ${outcome.message}")
                     _error.value = outcome.message
+                    offerOtherSources(item)
                 }
             }
         }
@@ -568,12 +577,17 @@ class PlayerViewModel internal constructor(
         hostPromptJob?.cancel()
         // What the live gate asks about (see [xuperLiveStopMessage]): only a `live:` id is stoppable.
         loadedEpisodeId = episodeId
+        _otherSources.value = null
+        // A new attempt from this instant: the previous one's early mark is settled by `begin`
+        // below (taken back if it never played), in order, before this one's is written.
+        val attempt = attempts.open(episodeId)
         // Live mode (Task 14): CUTS OFF HERE, before touching anything on the VOD path below --
         // neither markInProgress nor localLibrary. It's the flag that isolates ALL of the different
         // behavior: a live channel has no duration to poll (see LiveZapping/LiveController's KDoc
         // -- polling it is what broke Magis VOD), no progress to save, and no "next chapter" for
         // series -- the only "next" that exists in live is zapping.
         if (PlayerSource.kindFor(episodeId) == SourceKind.LIVE) {
+            viewModelScope.launch { withContext(NonCancellable) { attempts.begin(attempt, writeMark = false) } }
             loadLive(episodeId.removePrefix(PlayerSource.LIVE_PREFIX))
             return
         }
@@ -595,9 +609,12 @@ class PlayerViewModel internal constructor(
             // point is the ephemeral pending item, which the screen left before navigating.
             //
             // A Caracol live channel isn't marked either: see [shouldMarkInProgress].
-            if (shouldMarkInProgress(episodeId, MagisEphemeral.take(episodeId)?.adulto)) {
-                runCatching { repo.markInProgress(episodeId) }
-            }
+            //
+            // The mark belongs to this attempt ([attempts]): if the attempt ends without ever playing
+            // -- the source failed, the person left while it resolved -- it's taken back. Not
+            // cancellable: leaving mid-write must not leave a mark nobody knows to take back.
+            val mark = shouldMarkInProgress(episodeId, MagisEphemeral.take(episodeId)?.adulto)
+            withContext(NonCancellable) { attempts.begin(attempt, writeMark = mark) }
             _error.value = null
             _needsMagisAccount.value = false
             _magisItem.value = null
@@ -638,8 +655,51 @@ class PlayerViewModel internal constructor(
                 // Unreachable: live channels return before this launch (see the guard above).
                 SourceKind.LIVE -> Unit
             }
+            // Nothing to play came out of it (resolve failed, a blocked plugin, a missing ref, a
+            // refused host): the attempt is over now. A plugin title also offers its other sources,
+            // read before the undo, which may take a card the pick just created with it.
+            if (!publishedFor(episodeId, kind)) {
+                if (kind == SourceKind.PLUGIN && !com.arkiv.player.data.plugin.PluginIds.isLiveEpisode(episodeId) &&
+                    attempts.isCurrent(attempt)
+                ) {
+                    _otherSources.value = runCatching { repo.sourceSearchTitle(episodeId) }.getOrNull()
+                }
+                withContext(NonCancellable) { attempts.failed(attempt) }
+            }
         }
     }
+
+    /** Whether the load of [episodeId] published something for a player to open. */
+    private fun publishedFor(episodeId: String, kind: SourceKind): Boolean = when (kind) {
+        SourceKind.MAGIS, SourceKind.PLUGIN -> _magisItem.value?.episodeId == episodeId
+        SourceKind.DITU -> ditu.current.value?.episodeId == episodeId
+        SourceKind.UNKNOWN, SourceKind.LOCAL, SourceKind.LIVE -> false
+    }
+
+    /**
+     * This player's play attempts and the early history mark each one writes; see [PlaybackAttempts].
+     * The undo runs in [historyScope] when the player closes, since this ViewModel's scope is dead by then.
+     */
+    private val attempts = PlaybackAttempts(
+        mark = { id -> runCatching { repo.markInProgress(id) }.getOrNull() },
+        undo = { written ->
+            Log.w(PLAY, "history: ${written.episodeId} never played -> taking back its early mark (had a row before: ${written.previous != null})")
+            runCatching { repo.undoInProgress(written) }.onFailure { Log.w(PLAY, "history: undo failed: ${it.message}") }
+        },
+    )
+
+    /**
+     * A plugin title whose source didn't open: the title to look up in every source ("Ver otras
+     * fuentes" on the error), or null. Reset on every [load].
+     */
+    private val _otherSources = MutableStateFlow<com.arkiv.player.data.SourceSearchTitle?>(null)
+    val otherSources: StateFlow<com.arkiv.player.data.SourceSearchTitle?> = _otherSources.asStateFlow()
+
+    /**
+     * The player is playing [episodeId] with a known duration: its attempt really started, and its
+     * early mark stays. Called on every tick while that's true; cheap and idempotent.
+     */
+    fun onPlaybackStarted(episodeId: String) = attempts.started(episodeId)
 
     /** The previous episode's can't stay on screen with the next one's. */
     private fun clearTrivia() {
@@ -1165,6 +1225,17 @@ class PlayerViewModel internal constructor(
             "Xuper"
         }
         _error.value = "$label: $message"
+        if (item != null) offerOtherSources(item)
+    }
+
+    /** A plugin title's stream failed for good: its error offers the title's other sources. */
+    private fun offerOtherSources(item: PlayerData) {
+        if (item.kind != SourceKind.PLUGIN || com.arkiv.player.data.plugin.PluginIds.isLiveEpisode(item.episodeId)) return
+        viewModelScope.launch {
+            val title = runCatching { repo.sourceSearchTitle(item.episodeId) }.getOrNull()
+            // A new title may have loaded meanwhile: its own load decides.
+            if (_magisItem.value === item) _otherSources.value = title
+        }
     }
 
     /** The reopen budget of the plugin live channel on screen ([PluginLiveReopens]); fresh on every [load]. */
@@ -1723,6 +1794,9 @@ class PlayerViewModel internal constructor(
 
     override fun onCleared() {
         preheatJob?.cancel()
+        // The person left: an attempt that never played takes its early mark back. Not in
+        // viewModelScope, which is cancelled right here.
+        historyScope.launch { attempts.close() }
         super.onCleared()
     }
 
@@ -1776,6 +1850,8 @@ class PlayerViewModel internal constructor(
 
     fun saveProgress(episodeId: String, positionMs: Long, durationMs: Long) {
         if (durationMs <= 0) return
+        // A save with a duration is a player that really opened this chapter: its early mark stays.
+        attempts.started(episodeId)
         // Adult content progress is NOT written. "Continue watching" comes straight out of
         // `playback`, and it's drawn on this device's home screen and in the library too -- a row
         // here doesn't stay hidden, even though (unlike until Task 5) it no longer travels through

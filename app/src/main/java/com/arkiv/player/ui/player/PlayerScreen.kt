@@ -349,6 +349,8 @@ fun PlayerScreen(
     isTv: Boolean = false,
     /** A plugin title whose plugin needs configuring: opens that plugin's Configurar screen. */
     onOpenPluginSettings: (pluginId: String) -> Unit = {},
+    /** A plugin title's source didn't play: "Ver otras fuentes" opens the search on that title. */
+    onOpenOtherSources: ((com.arkiv.player.data.SourceSearchTitle) -> Unit)? = null,
 ) {
     val controller = rememberMediaController()
     // The service's ExoPlayer, used only to bind the local video surface (see PlaybackEngine).
@@ -360,7 +362,7 @@ fun PlayerScreen(
         }
         return
     }
-    PlayerContent(episodeId, onBack, onOpenEpisodes, onNextEpisode, controller, serviceExo, isTv, onOpenPluginSettings)
+    PlayerContent(episodeId, onBack, onOpenEpisodes, onNextEpisode, controller, serviceExo, isTv, onOpenPluginSettings, onOpenOtherSources)
 }
 
 @OptIn(UnstableApi::class, androidx.compose.material3.ExperimentalMaterial3Api::class)
@@ -374,6 +376,7 @@ private fun PlayerContent(
     serviceExo: ExoPlayer,
     isTv: Boolean,
     onOpenPluginSettings: (pluginId: String) -> Unit,
+    onOpenOtherSources: ((com.arkiv.player.data.SourceSearchTitle) -> Unit)?,
 ) {
     val graph = rememberGraph()
     val subtitleStyle by graph.subtitlePrefs.prefs.collectAsStateWithLifecycle()
@@ -409,6 +412,7 @@ private fun PlayerContent(
                     xuperLiveBlocked = graph.xuperLiveBlocked,
                     liveModule = graph.liveModule,
                     hostDecider = graph.streamHostApproval,
+                    historyScope = graph.applicationScope,
                 )
             }
         },
@@ -464,6 +468,21 @@ private fun PlayerContent(
             isAlreadyFocused = { linkAccountFocused },
             wait = { delay(WAIT_BETWEEN_FOCUS_ATTEMPTS_MS) },
             request = { linkAccountFocus.requestFocus() },
+        )
+    }
+    // A plugin title's source didn't play: the error offers the title's other sources. TV: same
+    // focus situation as "Vincular cuenta" above -- nothing else on screen can take the D-pad, and
+    // the button only opens a list, so it's safe to land on.
+    val otherSources by vm.otherSources.collectAsStateWithLifecycle()
+    val offerOtherSources = otherSources != null && onOpenOtherSources != null
+    val otherSourcesFocus = remember { FocusRequester() }
+    var otherSourcesFocused by remember { mutableStateOf(false) }
+    LaunchedEffect(offerOtherSources, loadError, isTv) {
+        if (!isTv || !offerOtherSources || loadError == null) return@LaunchedEffect
+        retryFocus(
+            isAlreadyFocused = { otherSourcesFocused },
+            wait = { delay(WAIT_BETWEEN_FOCUS_ATTEMPTS_MS) },
+            request = { otherSourcesFocus.requestFocus() },
         )
     }
     val blocked by vm.blocked.collectAsStateWithLifecycle()
@@ -2092,6 +2111,11 @@ private fun PlayerContent(
             // !isLive (Task 14): live has no "where you were" to save -- no "continue watching",
             // no progress bar to resume. Polling/saving position on a live stream was exactly
             // what broke Magis VOD (see LiveController's KDoc).
+            // Playing with a known duration: this chapter's attempt really started, so the history
+            // mark written on opening stays even if the person leaves before the first save below.
+            if (!isLive && epId != null && (isExo || mediaId == epId) && ready && activePlayer.isPlaying && dur > 0) {
+                vm.onPlaybackStarted(epId)
+            }
             // ExoPlayer doesn't expose mediaId matching the episodeId → the comparison is skipped for isExo.
             if (!isLive && tick % 10 == 0 && epId != null &&
                 (isExo || mediaId == epId) && ready && activePlayer.isPlaying &&
@@ -3283,6 +3307,19 @@ private fun PlayerContent(
                         colors = ButtonDefaults.buttonColors(containerColor = Color.White),
                     ) {
                         Text("Vincular cuenta", color = Color(0xFFB00020))
+                    }
+                }
+                val title = otherSources
+                if (title != null && onOpenOtherSources != null) {
+                    Button(
+                        onClick = { onOpenOtherSources(title) },
+                        modifier = Modifier
+                            .padding(top = 12.dp)
+                            .focusRequester(otherSourcesFocus)
+                            .onFocusChanged { otherSourcesFocused = it.isFocused },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.White),
+                    ) {
+                        Text("Ver otras fuentes", color = Color(0xFFB00020))
                     }
                 }
             }
