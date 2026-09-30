@@ -105,7 +105,7 @@ class NuvioPluginInstaller(
         } catch (e: FileNotFoundException) {
             throw failed("scraper_fetch", "No encontré ${scraper.filename} en ${address.canonical}", mapOf("error" to "not_found"))
         } catch (e: IOException) {
-            throw failed("scraper_fetch", installReadFailureMessage(e), mapOf("error" to e.javaClass.simpleName))
+            throw failed("scraper_fetch", installReadFailureMessage(e), mapOf("error" to PluginTelemetry.errorName(e)))
         }
 
         val domainsUrl = NuvioHostExtractor.findDomainsJsonUrl(scraperSource)
@@ -119,7 +119,7 @@ class NuvioPluginInstaller(
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
-            throw failed("convert", "No se pudo convertir \"${scraper.name}\" a un plugin de Kino", mapOf("error" to e.javaClass.simpleName))
+            throw failed("convert", "No se pudo convertir \"${scraper.name}\" a un plugin de Kino", mapOf("error" to PluginTelemetry.errorName(e)))
         }
         if (conversion.scraperHosts.isEmpty()) {
             throw failed("no_domains", "No encontré ningún dominio en el código de \"${scraper.name}\": no se puede convertir a un plugin de Kino")

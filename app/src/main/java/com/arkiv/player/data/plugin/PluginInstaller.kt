@@ -170,7 +170,7 @@ class PluginInstaller(
             reportInstall(preview, "download", mapOf("error" to "not_found"))
             throw InstallException("No encontré ${m.entry} en ${preview.address.canonical}")
         } catch (e: IOException) {
-            reportInstall(preview, "download", mapOf("error" to e.javaClass.simpleName))
+            reportInstall(preview, "download", mapOf("error" to PluginTelemetry.errorName(e)))
             throw InstallException("No se pudo descargar el plugin: ${e.message}")
         }
         // A Nuvio-origin preview has no icon of its own to fetch (yet): NuvioPluginConverter
@@ -229,7 +229,7 @@ class PluginInstaller(
             store.writeFiles(staging, preview.manifestJson, m.entry, script, icon, buildRecord(null))
             return store.finishInstall(staging, m.id, isUpdate = preview.isUpdate) { previous -> buildRecord(previous) }
         } catch (e: IOException) {
-            reportInstall(preview, "save", mapOf("error" to e.javaClass.simpleName))
+            reportInstall(preview, "save", mapOf("error" to PluginTelemetry.errorName(e)))
             throw InstallException("No se pudo guardar el plugin: ${e.message}")
         } finally {
             if (staging.exists()) staging.deleteRecursively()
