@@ -66,7 +66,8 @@ export async function validate(dirArg, { run = null, args = [], config = {}, rep
   try {
     // Inside the try too: an invalid --replay path (or any other setup failure) must become a
     // problem, not an uncaught rejection.
-    const { kino, servers } = createKino(m, { config, replay: replay && resolve(replay), fetchImpl });
+    // The same local stand-in run.mjs reads: a plugin with `secrets` gets its plain values from it.
+    const { kino, servers } = createKino(m, { config, replay: replay && resolve(replay), fetchImpl, secretsFile: join(dir, ".kino-secrets.json") });
     globalThis.kino = kino;
     const copy = join(scratch, "plugin.mjs");
     writeFileSync(copy, readFileSync(entry));

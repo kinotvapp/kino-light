@@ -51,23 +51,34 @@ function encodeUrlComponent(value) {
   return out;
 }
 
-/** Inside a JSON string, without the surrounding quotes. */
-function encodeJsonStringBody(value) {
+/**
+ * [value] inside a JSON string, without the quotes -- the app's PluginSecrets.jsonEscape: `"` and
+ * `\\` escaped, the short escapes for the usual control characters and `\\u00XX` for the rest; `/`
+ * too when [slash], and every UTF-16 unit past ASCII as `\\uXXXX` when [nonAscii] (a character past
+ * the BMP as its two surrogates). [upper] picks the hex digits' case.
+ */
+function jsonEscape(value, { slash = false, nonAscii = false, upper = true } = {}) {
+  const hex4 = (code) => { const h = code.toString(16).padStart(4, "0"); return "\\u" + (upper ? h.toUpperCase() : h); };
   let out = "";
-  for (const ch of value) {
-    const code = ch.codePointAt(0);
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    const code = value.charCodeAt(i);
     if (ch === '"') out += '\\"';
     else if (ch === "\\") out += "\\\\";
+    else if (ch === "/" && slash) out += "\\/";
     else if (ch === "\n") out += "\\n";
     else if (ch === "\r") out += "\\r";
     else if (ch === "\t") out += "\\t";
     else if (ch === "\b") out += "\\b";
     else if (ch === "\f") out += "\\f";
-    else if (code < 0x20) out += "\\u00" + code.toString(16).padStart(2, "0");
+    else if (code < 0x20 || (nonAscii && code > 0x7f)) out += hex4(code);
     else out += ch;
   }
   return out;
 }
+
+/** Inside a JSON string, without the surrounding quotes: what the app substitutes into a JSON body. */
+const encodeJsonStringBody = (value) => jsonEscape(value);
 
 /** `java.net.URLEncoder.encode(value, "UTF-8")`: a form's own encoding, "+" for a space. */
 function javaFormEncode(value) {
@@ -88,17 +99,21 @@ function encodeSealedValue(value, encoding) {
 }
 
 /**
- * Every form [redact] replaces for an opened [plain] value: what [substitute] writes (raw, the URL
- * encoding, the JSON encoding), and how a server commonly echoes a value back (URLEncoder's form
- * encoding and its "%20" twin, base64 and base64url, with and without padding).
+ * Every form [redact] replaces for an opened [plain] value, the same list as the app's
+ * PluginSecrets.echoForms: what [substitute] writes (raw, the URL encoding, the JSON encoding), and
+ * how a server commonly echoes a value back (URLEncoder's form encoding and its "%20" twin, base64
+ * and base64url, with and without padding, and inside a JSON string with `/` as `\\/` and non-ASCII
+ * as `\\uXXXX` -- PHP's json_encode, Python's json.dumps -- in either hex case, and each combination).
  */
 function echoForms(plain) {
   const bytes = Buffer.from(plain, "utf8");
   const b64 = bytes.toString("base64");
   const b64url = b64.replace(/\+/g, "-").replace(/\//g, "_");
   const form = javaFormEncode(plain);
+  const json = [];
+  for (const upper of [true, false]) for (const slash of [false, true]) for (const nonAscii of [false, true]) json.push(jsonEscape(plain, { slash, nonAscii, upper }));
   return new Set([
-    plain, encodeUrlComponent(plain), encodeJsonStringBody(plain),
+    plain, encodeUrlComponent(plain), encodeJsonStringBody(plain), ...json,
     form, form.replace(/\+/g, "%20"),
     b64, b64.replace(/=+$/, ""), b64url, b64url.replace(/=+$/, ""),
   ]);
@@ -107,8 +122,10 @@ function echoForms(plain) {
 /**
  * One runtime's sealed secrets: [manifest.secrets]' names, each given a marker
  * (`__kinoSecret_<name>_<nonce>__`) random per runtime. The kit reads plain values from
- * [secretsFile] (`.kino-secrets.json`, `{ "<name>": "<value>" }`), opening each lazily on first
- * substitution; a name declared in the manifest but missing there throws. Null when the manifest
+ * [secretsFile] (`.kino-secrets.json`, `{ "<name>": "<value>" }`), opening one on its first
+ * substitution -- a name declared in the manifest but missing there throws then -- and every one the
+ * file has on the first redaction of non-empty text, like the app (a value can come back before
+ * this runtime used it: a cookie an earlier one set, a server echo). Null when the manifest
  * declares no secrets, exactly like the app's `pluginSecretsFor`.
  */
 function pluginSecretsFor(manifest, secretsFile) {
@@ -130,6 +147,13 @@ function pluginSecretsFor(manifest, secretsFile) {
     }
     return opened[name];
   }
+  /** Every declared value .kino-secrets.json has, opened once: what the app's openAll does before redacting. */
+  let allOpened = false;
+  function openAll() {
+    if (allOpened) return;
+    for (const name of names) if (!(name in opened) && Object.prototype.hasOwnProperty.call(values, name)) opened[name] = String(values[name]);
+    allOpened = true;
+  }
   function substitute(text, encoding = "raw") {
     let out = text;
     for (const [name, m] of Object.entries(markers)) if (out.includes(m)) out = out.split(m).join(encodeSealedValue(plainOf(name), encoding));
@@ -145,7 +169,8 @@ function pluginSecretsFor(manifest, secretsFile) {
    * rescanned for a shorter form of the SAME value. [text] unchanged when nothing opened is found in it.
    */
   function redactWith(text, placeholderFor) {
-    if (typeof text !== "string") return text;
+    if (typeof text !== "string" || text === "") return text;
+    openAll();
     const forms = [];
     for (const [name, plain] of Object.entries(opened)) {
       if (!plain) continue;
@@ -159,6 +184,12 @@ function pluginSecretsFor(manifest, secretsFile) {
     return out;
   }
   const redact = (text) => redactWith(text, (name) => markers[name]);
+  /** True when [text] holds a declared value in any form [redact] replaces. */
+  function containsValue(text) {
+    if (typeof text !== "string" || text === "") return false;
+    openAll();
+    return Object.values(opened).some((plain) => plain && [...echoForms(plain)].some((f) => text.includes(f)));
+  }
   // A stable, nonce-free placeholder for [record]/[replay]'s tape (spec §6): the marker itself is
   // random per runtime, so a tape keyed or written with it could never match a later run (a fresh
   // `--replay` process gets a different nonce than the `--record` one that made the tape) -- and a
@@ -180,7 +211,7 @@ function pluginSecretsFor(manifest, secretsFile) {
     }
     return out;
   }
-  return { marker, containsMarker, isMarker, substitute, redact, redactToCanonical, fromCanonical, sealedHosts: manifest.hosts || [] };
+  return { marker, containsMarker, isMarker, substitute, redact, containsValue, redactToCanonical, fromCanonical, sealedHosts: manifest.hosts || [] };
 }
 
 const loadJson = (file, fallback) => (file && existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : fallback);
@@ -312,11 +343,26 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", stora
     const type = headers["content-type"];
     const charset = /charset=([^;]+)/i.exec(type || "");
     const decode = () => (charset && !/utf-?8/i.test(charset[1]) ? new TextDecoder(charset[1].trim()).decode(buf) : buf.toString("utf8"));
+    /**
+     * The app's base64 twin (DefaultPluginHost.base64): a binary body's bytes as they came (not
+     * scanned); a text body's bytes re-encoded from the REDACTED text in its own charset when
+     * redaction changed it -- and when the twin's bytes, read as UTF-8 or as Latin-1, still hold a
+     * value (a wrong declared charset), the redacted text's UTF-8 bytes instead.
+     */
+    function base64() {
+      if (!pluginSecrets || !textual(type)) return buf.toString("base64");
+      const raw = decode();
+      const redacted = redact(raw);
+      const enc = !charset || /utf-?8/i.test(charset[1]) ? "utf8" : /^\s*(iso-?8859-1|latin-?1|us-ascii)\s*$/i.test(charset[1]) ? "latin1" : null;
+      const twin = redacted === raw ? buf : enc ? Buffer.from(redacted, enc) : null;
+      if (!twin || pluginSecrets.containsValue(twin.toString("utf8")) || pluginSecrets.containsValue(twin.toString("latin1"))) return Buffer.from(redacted, "utf8").toString("base64");
+      return twin.toString("base64");
+    }
     return Object.freeze({
       ok: status >= 200 && status < 300, status, url: redact(url), headers: Object.freeze(headers),
       text: () => redact(textual(type) ? decode() : buf.toString("utf8")),
       json: () => JSON.parse(redact(textual(type) ? decode() : buf.toString("utf8"))),
-      base64: () => buf.toString("base64"),
+      base64,
     });
   }
 
@@ -514,6 +560,9 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", stora
       // A cipher key must be EXACTLY one marker, nothing before or after it: the rest of a longer
       // key would be known, and peeling it off shrinks the search to the secret alone.
       if (sealedIn(p.key) && !pluginSecrets.isMarker(p.key)) throw kinoError("crypto_error", SEALED_CRYPTO_REFUSED);
+      // And only as an AES key: a des-ede3 key read under a JS-chosen keyEncoding can carry little
+      // entropy per byte, which puts it in reach of a search.
+      if (sealedIn(p.key) && !String(alg).startsWith("aes-")) throw kinoError("crypto_error", SEALED_CRYPTO_REFUSED);
     }
     if (!k.ciphers.includes(alg)) throw kinoError("crypto_error", "cifrado desconocido: " + String(alg).slice(0, 20));
     const key = buf(openKeyLike(p.key), p.keyEncoding || "utf8", "key");
