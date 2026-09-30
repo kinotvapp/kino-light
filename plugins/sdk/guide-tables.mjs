@@ -16,7 +16,7 @@ export const TABLES = {
   limits: () => table(["What", "Limit"], [
     ["Manifest / entry file / icon", `${kb(c.manifest.maxBytes)} / ${kb(c.manifest.entryMaxBytes)} / ${kb(c.manifest.iconMaxBytes)}`],
     ["Memory / stack, per plugin", `${kb(c.runtime.memoryBytes)} / ${kb(c.runtime.stackBytes)}`],
-    ["Time per call", `\`search\` ${c.timeoutsMs.search / 1000} s; \`home\`, \`browse\`, \`episodes\`, \`resolve\` ${c.timeoutsMs.home / 1000} s each (\`resolve\` of a plugin converted from a Nuvio scraper: ${c.timeoutsMs.nuvioResolve / 1000} s); \`liveCategories\`, \`liveChannels\`, \`guide\` ${c.timeoutsMs.liveChannels / 1000} s each; counting all your fetches and sleeps together`],
+    ["Time per call", `\`search\` ${c.timeoutsMs.search / 1000} s; \`home\`, \`browse\`, \`episodes\`, \`resolve\` ${c.timeoutsMs.home / 1000} s each (\`resolve\` of a plugin converted from a Nuvio scraper: ${c.timeoutsMs.nuvioResolve / 1000} s); \`liveCategories\`, \`liveChannels\`, \`guide\` ${c.timeoutsMs.liveChannels / 1000} s each; counting all your fetches and sleeps together, but not the time the person spends answering a host question for that call`],
     ["Loading the module (its top level)", `${c.timeoutsMs.load / 1000} s`],
     ["Idle sandbox", `closed after ${c.runtime.idleCloseMs / 60000} minutes without calls`],
     ["Consecutive timeouts", `${c.runtime.timeoutsBeforeUnresponsive} in a row and Kino disables the plugin ("No responde")`],
