@@ -373,13 +373,21 @@ TLDs, which a `*.xyz` entry can never cover). With `"apiVersion": 4` a plugin ma
 ```
 
 `"any"` is the only value and no capability is needed; an older manifest ignores the field. It lets
-**what the plugin plays** (the `url` `resolve` returns, for a movie, an episode or a channel, and
-the manifests, segments and redirects the player follows from it) be on **any public host**, over
-`http` or `https`. It changes nothing else: `kino.fetch`, images, subtitles, side audio and DRM
-license servers stay on your declared `hosts`, and local or private addresses are still refused.
-The consent screen shows it in red ("Puede reproducir video desde cualquier servidor que
-indique"), and an update that adds it waits for the person to approve again. Prefer listing the real
-domains when you can: people trust a narrow list more.
+**what the plugin plays** be on **any public host**, over `http` or `https`:
+
+- a movie or an episode: exactly the rule of the
+  [broad video permission](#what-you-return) -- it is the same rule, asked for by you instead of
+  granted by the person. **In the player only**, the `url` `resolve` returns, everything its manifest
+  names, every redirect hop, **and** the `subtitles` and `audioTracks` you return may be on any public
+  host. A download resolves and fetches exactly as without it (your `hosts` only);
+- a live channel: the rule of [`liveStreamHosts: "any"`](#channels-from-any-server-livestreamhosts-apiversion-3)
+  (the stream, its manifest and redirects; your `subtitles` and `audioTracks` stay on your `hosts`).
+
+It changes nothing else: `kino.fetch` (and so every [sealed secret](#sealed-secrets-apiversion-4)),
+images and DRM license servers stay on your declared `hosts`, and local or private addresses are
+still refused. The consent screen shows it in red ("Puede reproducir video desde cualquier servidor
+que indique"), and an update that adds it waits for the person to approve again. Prefer listing the
+real domains when you can: people trust a narrow list more.
 
 ### Channels from any server (`liveStreamHosts`, apiVersion 3)
 
@@ -706,8 +714,10 @@ It does **not** add a poster, a backdrop or seasons from TMDB -- those stay exac
 - **The person may let your video come from any server** (the *broad video permission*). The
   video, subtitle and audio dialogs of a movie or an episode (at resolve time, and when the player
   meets a new host mid-playback) have a third choice, "Permitir video de cualquier servidor". It is
-  the person's alone: no manifest field asks for it, and it is shown and revocable in Ajustes ▸
-  Plugins ("Puede reproducir video desde cualquier servidor", "Quitar permiso de video amplio").
+  the person's own grant, shown and revocable in Ajustes ▸ Plugins ("Puede reproducir video desde
+  cualquier servidor", "Quitar permiso de video amplio"); the one way for you to ask for the same rule
+  up front is [`streamHosts: "any"`](#playing-from-any-server-streamhosts-apiversion-4) (apiVersion
+  4), approved on the consent sheet, and with it no video host is ever asked about.
   An update or a reinstall keeps it; uninstalling drops it. While it is on, **in the player only**,
   your movie or episode `Stream` is checked the way a live channel's is under
   [`liveStreamHosts: "any"`](#channels-from-any-server-livestreamhosts-apiversion-3) -- the same

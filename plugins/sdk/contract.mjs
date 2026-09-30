@@ -455,18 +455,24 @@ function stream(value, { manifest, servers, allowDrm, liveChannel = false }) {
   const check = urlChecker(manifest, servers);
   const drm = drmOf(value, check, allowDrm);
   // `liveStreamHosts: "any"` relaxes a live channel's own stream URL only; its subtitles, audio and
-  // license stay on the strict rule below.
+  // license stay on the strict rule below. `streamHosts: "any"` on a movie or an episode is the app's
+  // broad-video rule (EffectiveHosts.anyPublicVideoHost, the player's own resolve): the URL AND its
+  // side subtitles and audio tracks; never the license. On a live channel it is the live rule.
+  const anyVideo = !liveChannel && manifest.streamHostsAny;
+  const anyPublic = liveStreamUrlAllowed(manifest, servers);
   if ((liveChannel && manifest.liveStreamHostsAny) || manifest.streamHostsAny) {
-    if (!liveStreamUrlAllowed(manifest, servers)(value.url)) throw new Error("El video apunta a una dirección local");
+    if (!anyPublic(value.url)) throw new Error("El video apunta a una dirección local");
   } else check(value.url, "El video");
+  const sideOk = (url, what) => {
+    if (anyVideo) return anyPublic(url);
+    try { check(url, what); return true; } catch { return false; }
+  };
   const expires = Number.isInteger(value.expiresInSeconds) && value.expiresInSeconds >= o().minExpiresInSeconds && value.expiresInSeconds <= o().maxExpiresInSeconds ? value.expiresInSeconds : 0;
-  const subtitles = (Array.isArray(value.subtitles) ? value.subtitles : []).slice(0, o().maxSubtitles).filter((s) => {
-    try { check(s && s.url, "El subtítulo"); return true; } catch { return false; }
-  });
+  const subtitles = (Array.isArray(value.subtitles) ? value.subtitles : []).slice(0, o().maxSubtitles).filter((s) => sideOk(s && s.url, "El subtítulo"));
   // One URL is one merged child in the app: a repeated URL is kept once, the first wins.
   const audioUrls = new Set();
   const audioTracks = (Array.isArray(value.audioTracks) ? value.audioTracks : []).slice(0, o().maxAudioTracks).filter((a) => {
-    try { check(a && a.url, "El audio"); } catch { return false; }
+    if (!sideOk(a && a.url, "El audio")) return false;
     if (audioUrls.has(a.url)) return false;
     audioUrls.add(a.url);
     return true;

@@ -2074,3 +2074,19 @@ test("streamHosts any (apiVersion 4) lets a movie's stream be on any public host
   assert.equal(out.value.url, "https://cdn.random-tld.xyz/v.mp4");
   assert.throws(() => checkOutput("resolve", { url: "http://192.168.1.20/v.mp4" }, r.manifest, []), /local/);
 });
+
+test("streamHosts any covers a movie's side subtitles and audio too, never a channel's, like the broad video permission", () => {
+  const m = validateManifest(JSON.stringify({ ...JSON.parse(manifest()), apiVersion: 4, streamHosts: "any" })).manifest;
+  const value = {
+    url: "https://cdn.random-tld.xyz/v.m3u8",
+    subtitles: [{ lang: "es", url: "https://subs.elsewhere.org/es.vtt" }, { lang: "en", url: "http://10.0.0.5/en.vtt" }],
+    audioTracks: [{ lang: "es", url: "https://audio.elsewhere.org/es.m4a" }],
+  };
+  const movie = checkOutput("resolve", value, m, []).value;
+  assert.deepEqual(movie.subtitles.map((s) => s.lang), ["es"]);
+  assert.equal(movie.audioTracks.length, 1);
+  const channel = checkOutput("resolve", value, m, [], { liveChannel: true }).value;
+  assert.equal(channel.url, value.url);
+  assert.equal(channel.subtitles.length, 0);
+  assert.equal(channel.audioTracks.length, 0);
+});
