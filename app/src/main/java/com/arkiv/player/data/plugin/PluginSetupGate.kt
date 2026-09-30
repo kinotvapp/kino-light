@@ -62,6 +62,10 @@ object PluginConsent {
         if (m.streamHostsAny) {
             out += ConsentLine("Puede reproducir video desde cualquier servidor que indique", danger = true, isNew = preview.isUpdate && preview.newStreamHostsAny)
         }
+        // Only a Nuvio-converted install is ever granted it (PluginInstaller.commit), so only its sheet says so.
+        if (m.fetchHostsAny && preview.nuvioOrigin != null) {
+            out += ConsentLine("Puede conectarse a cualquier servidor de internet", danger = true, isNew = preview.isUpdate && preview.newFetchHostsAny)
+        }
         return out
     }
 }

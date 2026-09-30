@@ -552,6 +552,26 @@ class PluginHttpTest {
         assertEquals(listOf("archive.org", "new-cdn.example"), live.value.declared)
     }
 
+    // areshd real-network run: three vidhidepro.com links 301'd at once to the new vidhidefast.com;
+    // one was approved, and a request that missed just before that approval landed was refused as
+    // "not a gap" (the host was declared by then) instead of going through.
+    @Test fun `concurrent misses racing an instant approval all get through, asked once`() = runBlocking {
+        val offline = object : Dns { override fun lookup(hostname: String): List<InetAddress> = throw java.net.UnknownHostException(hostname) }
+        repeat(200) {
+            val asks = java.util.concurrent.atomic.AtomicInteger()
+            val h = PluginHttp(
+                OkHttpClient(), "test", EffectiveHosts(listOf("archive.org")), "1.0", delegateDns = offline, log = {},
+                reactiveApproval = PluginHttp.ReactiveApproval("P", HostApprovalRequester { _, _, _ -> asks.incrementAndGet(); true }, {}, {}, emptySet()),
+            )
+            val results = (1..3).map {
+                async(kotlinx.coroutines.Dispatchers.Default) { runCatching { h.fetch(PluginHttp.Request("https://new-cdn.example/x")) } }
+            }.map { it.await() }
+            // Offline DNS: "network" proves each one got past the host gate.
+            results.forEach { assertEquals("network", (it.exceptionOrNull() as PluginFetchException).code) }
+            assertEquals(1, asks.get())
+        }
+    }
+
     // Finding 1 of the final review: the cookie jar and `kino.cookies.get` read the SAME live host
     // set as kino.fetch, so a host approved mid-call is theirs too for the rest of that call.
     @Test fun `a reactively approved host is at once allowed by the shared cookie jar and kino cookies get`() = runTest {

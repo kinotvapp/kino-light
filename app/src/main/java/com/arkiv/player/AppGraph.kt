@@ -630,7 +630,9 @@ class AppGraph(context: Context) {
         // accepted) plus the servers typed in its settings, as the registry read them -- ONE live
         // instance shared by the jar, kino.fetch and kino.cookies.get, so a host the person approves
         // mid-call (reactive approval) reaches all three at once (see LiveHosts).
-        val hosts = LiveHosts(plugin.hosts)
+        // A Nuvio plugin approved for fetchHosts "any" reaches any public host from kino.fetch (never
+        // the player, a license or a download: those read the registry's hosts, not this instance).
+        val hosts = LiveHosts(plugin.hosts.copy(anyPublicFetchHost = plugin.record.fetchFromAnyHost))
         val dataDir = pluginStore.dataDir(id)
         // Config (passwords from the Keystore) is read on IO, never on Main.
         val config = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {

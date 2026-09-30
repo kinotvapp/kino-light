@@ -55,6 +55,14 @@ data class InstalledRecord(
     val streamHostsAny: Boolean = false,
     /** A pending update newly asks for `streamHosts: "any"`, shown on its consent sheet. */
     val pendingStreamHostsAny: Boolean = false,
+    /**
+     * The person APPROVED the manifest's `"fetchHosts": "any"` (in red at install/update) on a
+     * Nuvio-converted plugin: its `kino.fetch` may reach any public host without asking. Honoured
+     * only through [fetchFromAnyHost].
+     */
+    val fetchHostsAny: Boolean = false,
+    /** A pending update newly asks for `fetchHosts: "any"`, shown on its consent sheet. */
+    val pendingFetchHostsAny: Boolean = false,
     /** Hosts the person explicitly said "no" to via reactive approval; never prompted again for this plugin. */
     val rejectedHosts: List<String> = emptyList(),
     /** Set together, both null for a normal (hand-written-repo) plugin: which Nuvio repo and scraper this was converted from. */
@@ -78,6 +86,14 @@ data class InstalledRecord(
      */
     val videoFromAnyHost: Boolean get() = anyVideoHost || streamHostsAny
 
+    /**
+     * `kino.fetch` may reach any PUBLIC host without asking ([EffectiveHosts.anyPublicFetchHost]):
+     * the person approved `fetchHosts: "any"` AND this plugin was converted from a Nuvio scraper (the
+     * same origin test as the Nuvio request budget, [PluginHttp.requestBudgetFor]). A hand-edited
+     * record on a hand-written plugin gets nothing from the flag alone.
+     */
+    val fetchFromAnyHost: Boolean get() = fetchHostsAny && nuvioScraperId != null
+
     fun toJson(): String = JSONObject()
         .put("address", address).put("version", version).put("sha256", sha256)
         .put("hosts", JSONArray(hosts)).put("installedAt", installedAt).put("enabled", enabled)
@@ -98,6 +114,8 @@ data class InstalledRecord(
         .put("pendingSealedSecrets", pendingSealedSecrets)
         .put("streamHostsAny", streamHostsAny)
         .put("pendingStreamHostsAny", pendingStreamHostsAny)
+        .put("fetchHostsAny", fetchHostsAny)
+        .put("pendingFetchHostsAny", pendingFetchHostsAny)
         .put("rejectedHosts", JSONArray(rejectedHosts))
         .put("nuvioRepo", nuvioRepo ?: JSONObject.NULL)
         .put("nuvioScraperId", nuvioScraperId ?: JSONObject.NULL)
@@ -129,6 +147,8 @@ data class InstalledRecord(
                 pendingSealedSecrets = o.optBoolean("pendingSealedSecrets"),
                 streamHostsAny = o.optBoolean("streamHostsAny"),
                 pendingStreamHostsAny = o.optBoolean("pendingStreamHostsAny"),
+                fetchHostsAny = o.optBoolean("fetchHostsAny"),
+                pendingFetchHostsAny = o.optBoolean("pendingFetchHostsAny"),
                 rejectedHosts = list("rejectedHosts"),
                 nuvioRepo = if (o.isNull("nuvioRepo")) null else o.optString("nuvioRepo").ifEmpty { null },
                 nuvioScraperId = if (o.isNull("nuvioScraperId")) null else o.optString("nuvioScraperId").ifEmpty { null },

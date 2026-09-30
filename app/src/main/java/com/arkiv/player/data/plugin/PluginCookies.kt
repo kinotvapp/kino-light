@@ -109,7 +109,11 @@ class PluginCookies(
     @Synchronized fun size(): Int = cookies.size
 
     /** WHICH host, not how: the request itself already passed [PluginHostGate] (scheme included). */
-    private fun allowed(url: HttpUrl): Boolean = hosts.value.let { h -> h.userHostFor(url) != null || HostRules.matches(url.host, h.declared) }
+    private fun allowed(url: HttpUrl): Boolean = hosts.value.let { h ->
+        h.userHostFor(url) != null || HostRules.matches(url.host, h.declared) ||
+            // A Nuvio plugin's fetchHosts "any": the jar follows kino.fetch to any public host.
+            (h.anyPublicFetchHost && !HostRules.isLocalAddress(url.host))
+    }
 
     private fun dropExpired() {
         val now = clock()

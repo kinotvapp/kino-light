@@ -85,8 +85,8 @@ object PluginHostGate {
             }
             return
         }
-        if (hosts.anyPublicStreamHost && !hosts.isUserHostName(url.host)) {
-            // Live "any" or the broad video permission: one rule for both.
+        if ((hosts.anyPublicStreamHost || hosts.anyPublicFetchHost) && !hosts.isUserHostName(url.host)) {
+            // Live "any", the broad video permission or a Nuvio plugin's fetchHosts "any": one rule for all.
             // Any scheme HttpUrl knows (http or https) on a public IPv4 literal or a public NAME;
             // PluginDns still refuses a name that resolves into the LAN, at connect time. A typed
             // server's NAME on another port or scheme is not "any": PluginDns lets a typed name
@@ -127,7 +127,7 @@ object PluginHostGate {
     fun isPromptableMiss(url: HttpUrl, hosts: EffectiveHosts): Boolean {
         if (url.scheme != "https") return false
         if (hosts.userHostFor(url) != null) return false
-        if (hosts.anyPublicStreamHost) return false
+        if (hosts.anyPublicStreamHost || hosts.anyPublicFetchHost) return false
         if (HostRules.isLocalAddress(url.host)) return false
         // Only a host a manifest could itself have declared: approving one is adding it to
         // `hosts` verbatim, so a shape HostRules refuses there (a trailing dot, an underscore, a
@@ -256,7 +256,9 @@ class PluginHttp(
     /**
      * What this plugin may reach right now: declared + typed servers + anything approved reactively
      * since the runtime opened. Always [EffectiveHosts.strict]: neither live "any" nor the broad video
-     * permission ever reaches `kino.fetch`, whatever a caller hands in.
+     * permission ever reaches `kino.fetch`, whatever a caller hands in. A Nuvio plugin's
+     * `fetchHosts: "any"` ([EffectiveHosts.anyPublicFetchHost]) survives [EffectiveHosts.strict]:
+     * it exists only for this gate.
      */
     val hosts: EffectiveHosts get() = liveHosts.value.strict
 
@@ -497,7 +499,13 @@ class PluginHttp(
                 throw e
             }
             val ra = reactiveApproval
-            if (ra == null || !PluginHostGate.isPromptableMiss(url, hosts)) refuse(PluginCallTrace.Refusal.NOT_ASKED)
+            if (ra == null || !PluginHostGate.isPromptableMiss(url, hosts)) {
+                // Not a gap any more because a concurrent request approved this host since the miss
+                // above (three redirects racing to the same new host): hosts only grow, so the gate
+                // now lets it through. Anything else really is a hard refusal.
+                if (ra != null && runCatching { checkOnce(from, url) }.isSuccess) return
+                refuse(PluginCallTrace.Refusal.NOT_ASKED)
+            }
             if (url.host in ra.rejectedHosts) refuse(PluginCallTrace.Refusal.REJECTED_BEFORE)
             val call = calls?.current
             if (calls != null && (call == null || !call.asksAboutHosts)) {
@@ -568,6 +576,13 @@ class PluginHttp(
                     currentCoroutineContext().ensureActive() // rethrows only if THIS caller was cancelled
                     continue // the winner's own cancellation, not ours: the entry is gone, ask afresh
                 }
+            }
+            // A previous winner approved it and left between our miss and here (it adds the host
+            // before it removes its entry): already answered, never asked twice.
+            if (HostRules.matches(host, liveHosts.value.declared)) {
+                pendingApprovals.remove(host, winning)
+                winning.complete(true)
+                return true
             }
             try {
                 // With a call: its clock stopped while the person decides, and the question taken

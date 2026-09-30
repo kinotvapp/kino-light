@@ -40,6 +40,8 @@ data class InstallPreview(
     val newSealedSecrets: Boolean = false,
     /** The manifest asks for `streamHosts: "any"` and the person has not approved it yet. */
     val newStreamHostsAny: Boolean = false,
+    /** A Nuvio-converted manifest asks for `fetchHosts: "any"` and the person has not approved it yet (never for a hand-written plugin). */
+    val newFetchHostsAny: Boolean = false,
     /** Set for a Nuvio-origin install/update: the converted script to write, skipping the fetch. */
     val nuvioOrigin: NuvioOrigin? = null,
 )
@@ -188,6 +190,8 @@ class PluginInstaller(
             enabled = previous?.record?.enabled ?: true, lastUpdateCheckAt = installedAt,
             permissions = m.permissions, capabilities = m.capabilities.toList(), insecureHosts = m.insecureHosts.toList(),
             exports = exports.sorted(), liveStreamHostsAny = m.liveStreamHostsAny, streamHostsAny = m.streamHostsAny,
+            // Honoured only for a Nuvio-converted install: a hand-written manifest's copy is ignored.
+            fetchHostsAny = m.fetchHostsAny && preview.nuvioOrigin != null,
             sealedSecrets = m.secrets.isNotEmpty(),
             // A "no" is remembered until the person forgets it (Ajustes ▸ Plugins), not until the next version.
             rejectedHosts = previous?.record?.rejectedHosts.orEmpty(),
@@ -229,7 +233,7 @@ class PluginInstaller(
                 it.copy(
                     pendingVersion = null, pendingHosts = emptyList(), pendingPermissions = emptyList(),
                     pendingCapabilities = emptyList(), pendingInsecureHosts = emptyList(), pendingLiveStreamHostsAny = false, pendingStreamHostsAny = false,
-                    pendingSealedSecrets = false,
+                    pendingSealedSecrets = false, pendingFetchHostsAny = false,
                 )
             }
             return UpdateOutcome.UpToDate
@@ -239,14 +243,14 @@ class PluginInstaller(
         // them. A new REQUIRED setting doesn't: the update applies and the plugin shows "Falta configurar".
         if (preview.newHosts.isNotEmpty() || preview.newPermissions.isNotEmpty() ||
             preview.newCapabilities.isNotEmpty() || preview.newInsecureHosts.isNotEmpty() || preview.newLiveStreamHostsAny ||
-            preview.newStreamHostsAny || preview.newSealedSecrets
+            preview.newStreamHostsAny || preview.newSealedSecrets || preview.newFetchHostsAny
         ) {
             touch {
                 it.copy(
                     pendingVersion = preview.manifest.version, pendingHosts = preview.newHosts, pendingPermissions = preview.newPermissions,
                     pendingCapabilities = preview.newCapabilities, pendingInsecureHosts = preview.newInsecureHosts,
                     pendingLiveStreamHostsAny = preview.newLiveStreamHostsAny, pendingStreamHostsAny = preview.newStreamHostsAny,
-                    pendingSealedSecrets = preview.newSealedSecrets,
+                    pendingSealedSecrets = preview.newSealedSecrets, pendingFetchHostsAny = preview.newFetchHostsAny,
                 )
             }
             return UpdateOutcome.NeedsApproval(preview)
@@ -320,6 +324,7 @@ class PluginInstaller(
             newLiveStreamHostsAny = manifest.liveStreamHostsAny && existing?.record?.liveStreamHostsAny != true,
             newSealedSecrets = manifest.secrets.isNotEmpty() && existing?.record?.sealedSecrets != true,
             newStreamHostsAny = manifest.streamHostsAny && existing?.record?.streamHostsAny != true,
+            newFetchHostsAny = manifest.fetchHostsAny && nuvioOrigin != null && existing?.record?.fetchHostsAny != true,
             nuvioOrigin = nuvioOrigin,
         )
     }

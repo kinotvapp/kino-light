@@ -285,6 +285,16 @@ data class EffectiveHosts(
      * `kino.fetch` ([PluginHttp] gates with [strict]), a DRM license, a download or a live channel.
      */
     val anyPublicVideoHost: Boolean = false,
+    /**
+     * `fetchHosts: "any"` approved on a Nuvio-converted plugin ([InstalledRecord.fetchFromAnyHost]):
+     * `kino.fetch` (every redirect hop included) and its cookie jar may reach any public host, over
+     * http or https, without asking -- the same public-only test as [anyPublicStreamHost] (a public
+     * name or public IPv4 literal; a name resolving into the LAN is refused by [PluginDns]). Set only
+     * on the runtime's own [LiveHosts] (`AppGraph.openPluginRuntime`); never on the player, a DRM
+     * license or a download, which build their hosts from the registry. [strict] keeps it: it is
+     * already only where `kino.fetch` reads.
+     */
+    val anyPublicFetchHost: Boolean = false,
 ) {
     /** The stream's own URL (and its manifest's requests) may be on any public host: live "any" or broad video. */
     val anyPublicStreamHost: Boolean get() = anyPublicLiveHost || anyPublicVideoHost

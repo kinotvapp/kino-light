@@ -148,6 +148,9 @@ object NuvioPluginConverter {
             .put("capabilities", JSONArray(listOf("search", "episodes", "resolve")))
             // Nuvio scrapers return videos from CDNs that change per title: the person approves "any video host" once, at install.
             .put("streamHosts", ManifestParser.LIVE_STREAM_HOSTS_ANY)
+            // Their resolvers hop across mirror and CDN hosts no scan can list: kino.fetch may reach
+            // any PUBLIC host, approved once, instead of one dialog per new host.
+            .put("fetchHosts", ManifestParser.LIVE_STREAM_HOSTS_ANY)
             .toString()
 
         return NuvioConversionResult(script, manifestJson, hosts, warnings, scraperHosts = candidates)
