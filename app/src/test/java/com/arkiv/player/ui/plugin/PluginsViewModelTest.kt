@@ -399,7 +399,7 @@ class PluginsViewModelTest {
         assertEquals("Este repositorio de Nuvio no tiene scrapers instalables en Android", vm.state.value.message)
     }
 
-    @Test fun `picking a scraper converts it and opens the same consent sheet, clearing the picker`() {
+    @Test fun `picking a scraper converts it and opens the same consent sheet, keeping the picker open behind it`() {
         val admin = FakeAdmin()
         val nuvio = nuvioInstaller(mapOf(
             "https://raw.githubusercontent.com/owner/nuvio-repo/HEAD/manifest.json" to nuvioManifestJson,
@@ -409,11 +409,19 @@ class PluginsViewModelTest {
         vm.onAddressChange("owner/nuvio-repo")
         vm.add()
         vm.pickNuvioScraper("fakesrc")
-        assertNull(vm.state.value.nuvioPicker)
-        assertNotNull(vm.state.value.consent)
-        assertTrue("fakesrc.example" in vm.state.value.consent!!.newHosts)
+        // The full-screen picker stays open behind the consent sheet: several scrapers of the same repo
+        // can be added in a row without retyping the address.
+        assertNotNull(vm.state.value.nuvioPicker)
+        val consent = vm.state.value.consent
+        assertNotNull(consent)
+        assertTrue("fakesrc.example" in consent!!.newHosts)
         // Hands off to the SAME confirmInstall/admin.install path: nothing installs on its own here.
         assertTrue(admin.installed.isEmpty())
+        // Confirming the install clears the consent sheet only: the picker is still there to add another.
+        vm.confirmInstall()
+        assertNull(vm.state.value.consent)
+        assertNotNull(vm.state.value.nuvioPicker)
+        assertEquals(listOf(consent), admin.installed)
     }
 
     @Test fun `reinstalling a damaged Nuvio-origin plugin re-converts its scraper instead of the generic preview`() {

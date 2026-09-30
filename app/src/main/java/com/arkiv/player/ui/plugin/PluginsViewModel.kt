@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.arkiv.player.data.plugin.InstallException
 import com.arkiv.player.data.plugin.InstallPreview
 import com.arkiv.player.data.plugin.InstalledPlugin
+import com.arkiv.player.data.plugin.NuvioManifestParser
 import com.arkiv.player.data.plugin.NuvioPluginInstaller
 import com.arkiv.player.data.plugin.NuvioScraperEntry
 import com.arkiv.player.data.plugin.PluginAddress
@@ -55,7 +56,12 @@ data class PluginsUiState(
     val messagePluginId: String? = null,
     /** Non-null = the consent sheet is open for this install/update. */
     val consent: InstallPreview? = null,
-    /** Non-null = [add] found a Nuvio-shaped manifest at the typed address: the scraper picker is open. */
+    /**
+     * Non-null = [add] found a Nuvio-shaped manifest at the typed address: the full-screen scraper picker
+     * is open. It stays open through [pickNuvioScraper]'s consent sheet (install or cancel), so several
+     * scrapers of the same repo can be added in a row without retyping the address -- only
+     * [cancelNuvioPicker] (Back on the picker screen) closes it.
+     */
     val nuvioPicker: NuvioPickerState? = null,
     /** Non-null = asking "¿Desinstalar …?". */
     val confirmUninstall: InstalledPlugin? = null,
@@ -68,10 +74,11 @@ data class PluginsUiState(
 )
 
 /**
- * What the Nuvio scraper picker shows, once [PluginsViewModel.add] finds a Nuvio-shaped manifest at the
- * typed address: [repoInput] is that same address (fed straight back into
+ * What the full-screen Nuvio scraper picker shows, once [PluginsViewModel.add] finds a Nuvio-shaped
+ * manifest at the typed address: [repoInput] is that same address (fed straight back into
  * [NuvioPluginInstaller.previewScraper] by [PluginsViewModel.pickNuvioScraper]), and [scrapers] is the
- * repo's installable list ([com.arkiv.player.data.plugin.NuvioManifestParser.installable]).
+ * manifest's WHOLE list -- disabled and Android-disabled entries included, so the screen can show them
+ * dimmed instead of pretending they don't exist (see [com.arkiv.player.data.plugin.NuvioManifestParser.isInstallable]).
  */
 data class NuvioPickerState(val repoInput: String, val scrapers: List<NuvioScraperEntry>)
 
@@ -507,8 +514,8 @@ class PluginsViewModel(
      * like a Kino plugin's and must open the scraper picker instead of the normal consent sheet. Anything
      * that ISN'T a Nuvio-shaped manifest -- garbage text, a normal Kino plugin repo, one with no
      * `manifest.json` at all -- answers null and falls through to [admin]'s own preview, unchanged. A Nuvio
-     * repo whose scrapers are all disabled or Android-disabled ([NuvioManifestParser.installable] empties
-     * it) says so instead of opening a picker with nothing to pick.
+     * repo whose scrapers are all disabled or Android-disabled ([NuvioManifestParser.isInstallable] false
+     * for every one of them) says so instead of opening a picker with nothing installable in it.
      */
     fun add() {
         val input = _state.value.address.trim()
@@ -516,7 +523,7 @@ class PluginsViewModel(
         busy(pluginId = null) {
             val preview = nuvioPluginInstaller?.let { withContext(io) { it.previewRepo(input) } }
             when {
-                preview != null && preview.scrapers.isNotEmpty() ->
+                preview != null && preview.scrapers.any(NuvioManifestParser::isInstallable) ->
                     // preview.address, not the raw typed `input`: when the default branch wasn't
                     // Nuvio-shaped and NuvioPluginInstaller fell back to `@main`/`@master`, this is
                     // the address that actually worked -- pickNuvioScraper must re-resolve from THAT
@@ -534,16 +541,19 @@ class PluginsViewModel(
      * consent sheet and "Instalar" button as any other install ([confirmInstall] already dispatches through
      * [admin] on [InstallPreview.nuvioOrigin], Task 6) -- no second install path. A refused conversion (a
      * missing file, an invalid generated manifest) surfaces the installer's own Spanish message, the same
-     * way any other failed preview does.
+     * way any other failed preview does. [PluginsUiState.nuvioPicker] itself is left untouched: the picker
+     * screen stays open behind the consent sheet, so the person lands back on it (state kept) once
+     * [confirmInstall] or [cancelConsent] clears [PluginsUiState.consent] -- the way several scrapers of one
+     * repo get added without retyping the address.
      */
     fun pickNuvioScraper(scraperId: String) = busy(pluginId = null) {
         val installer = nuvioPluginInstaller ?: return@busy
         val repoInput = _state.value.nuvioPicker?.repoInput ?: return@busy
         val preview = withContext(io) { installer.previewScraper(repoInput, scraperId) }
-        _state.update { it.copy(nuvioPicker = null, consent = preview) }
+        _state.update { it.copy(consent = preview) }
     }
 
-    /** Cancelar/Back on the scraper picker: back to typing an address, nothing previewed. */
+    /** Back on the full-screen scraper picker: back to typing an address, nothing previewed. */
     fun cancelNuvioPicker() = _state.update { it.copy(nuvioPicker = null) }
 
     fun confirmInstall() {
