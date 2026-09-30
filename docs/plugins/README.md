@@ -19,7 +19,7 @@ API for your editor (`/// <reference path="./kino.d.ts" />` at the top of `plugi
 1. [What a plugin is](#1-what-a-plugin-is)
 2. [A first plugin](#2-a-first-plugin)
 3. [The manifest](#3-the-manifest)
-4. [The contract (apiVersion 1)](#4-the-contract-apiversion-1)
+4. [The contract (apiVersion 1 to 4)](#4-the-contract-apiversion-1-to-4)
 5. [The `kino` API](#5-the-kino-api)
 6. [Limits and engine quirks](#6-limits-and-engine-quirks)
 7. [Test it locally](#7-test-it-locally)
@@ -400,9 +400,12 @@ author owns) can seal it instead of writing it into the manifest as plain text:
 node sdk/seal.mjs --repo owner/repo --name apiKey
 ```
 
-(`owner/repo/path` for a plugin that lives in a subfolder.) The value is read from a hidden prompt or
-piped on stdin — never as a command-line argument, which would land in shell history. It must be 1 to
-4,096 bytes; the tool prints one line, `kino-sealed:v1:...`, to paste into the manifest:
+(`owner/repo/path` for a plugin that lives in a subfolder.) `--repo` follows the same rules as the
+address people install from: a trailing `/` and a `.git` are dropped, but a URL
+(`https://github.com/...`) and an `@ref` are refused rather than guessed at. The value is read from a
+hidden prompt or piped on stdin — never as a command-line argument, which would land in shell
+history. It must be 1 to 4,096 bytes (UTF-8); the tool prints one line, `kino-sealed:v1:...`, to paste
+into the manifest:
 
 ```json
 "apiVersion": 4,
@@ -410,18 +413,29 @@ piped on stdin — never as a command-line argument, which would land in shell h
 ```
 
 - Up to 16 secrets; each name matches `^[A-Za-z][A-Za-z0-9_]{0,31}$`. `secrets` needs
-  `"apiVersion": 4`; on an older manifest the field is refused like any unknown one, and a device
-  running an older Kino refuses the whole install with "Este plugin necesita una versión más nueva de
-  Kino" — the release that includes sealed secrets (apiVersion 4).
+  `"apiVersion": 4`; below that the field is ignored (the plugin installs with no secrets, and
+  `kino.secret` throws for every name), and a device running an older Kino refuses the whole install
+  with "Este plugin necesita una versión más nueva de Kino" — the release that includes sealed
+  secrets (apiVersion 4).
 - A seal is bound to the repository (and subfolder) you passed `seal.mjs`, lowercased, **never to a
-  branch or tag**: moving the same plugin to a different branch keeps its seals valid. Kino opens
-  every seal against the address the person is installing or updating at install/update time, never
-  at any other moment. A seal made for a different repository, path or name, or one that was
-  corrupted, is refused with "Los datos sellados de este plugin no son para este repositorio o están
-  dañados"; a build that cannot open seals at all (no native X25519) refuses with "Este Kino no puede
-  abrir datos sellados".
+  branch or tag**: moving the same plugin to a different branch keeps its seals valid. At install and
+  at every update Kino opens each seal once against the address the person is installing from, only to
+  check it belongs there; each run of the plugin opens them again, in memory, for that run alone. A
+  seal made for a different repository, path or name, or one that was corrupted, is refused with "Los
+  datos sellados de este plugin no son para este repositorio o están dañados"; a build that cannot open
+  seals at all (no native X25519) refuses with "Este Kino no puede abrir datos sellados".
+- **Never from a commit.** GitHub serves a fork's commits — a pull request's too — through the parent
+  repository's own address, so `owner/repo@<commit>` can be someone else's manifest, with their own
+  `hosts`, while the seal still reads `owner/repo`. A plugin with secrets installed or updated from a
+  ref that looks like a commit (7 to 40 hexadecimal characters) is refused with "Los datos sellados no
+  se pueden usar desde un commit: instala el plugin desde una rama o etiqueta", and a run at such an
+  address gets no secrets. HEAD, a branch or a tag work (a branch or tag named like a commit doesn't).
+- A seal trusts the repository's *name*: if its owner is renamed or deleted and someone else
+  registers that name, their repository opens your seals. Seal again for the new name, and rotate the
+  value if the old one was worth protecting.
 - Declaring any secret adds "Usa datos sellados por su autor" to the consent sheet; an update that
-  adds a secret the person had not already approved asks again, exactly like a new host.
+  brings secrets to a plugin that had none asks again, exactly like a new host. Adding, changing or
+  removing a secret in a plugin that already declared some does not.
 
 **What this protects, and what it does not.** This is obfuscation, not secrecy: the private key that
 opens a seal ships inside every copy of Kino. Sealing a value keeps it out of your manifest and your
@@ -452,21 +466,29 @@ your settings, and the broad `liveStreamHosts: "any"` permission does not extend
 anywhere else fails as `host_not_allowed`: "este plugin no puede enviar datos sellados a `<host>`" for
 a host you did not declare, "... sin https a `<host>`" for plain `http` even on a declared one.
 
-**`kino.crypto`.** A secret's marker may be the *entire* `key` of `encrypt`/`decrypt` — exactly one
-marker, nothing else in the string — or be part of a longer HMAC `key` or PBKDF2 `password`/`salt`.
-It is always refused, with "no se puede usar un dato sellado aquí", as `data`, `iv` or `aad`, or as
-part of a longer cipher `key`. That is not an arbitrary line: a known `iv` or `aad` under a sealed key
+**`kino.crypto`.** A secret's marker may be the *entire* `key` of an AES `encrypt`/`decrypt` —
+exactly one marker, nothing else in the string — or be part of a longer HMAC `key` or PBKDF2
+`password`/`salt`. It is always refused, with "no se puede usar un dato sellado aquí", as `data`, `iv`
+or `aad`, as part of a longer cipher `key`, and as the key of a non-AES cipher (`des-ede3-*`: read
+under a `keyEncoding` you choose, each of its bytes can carry little entropy, which puts a 3DES key
+in reach of a search). That is not an arbitrary line: a known `iv` or `aad` under a sealed key
 lets a cipher be turned into a way to compute the key back (the same block decrypted under CBC with
 the known iv, XORed with the same block under ECB, is the iv itself — and with the key's own marker
 used as the iv, that recovers the key), and a key padded out with known bytes shrinks the search down
 to the unknown part alone. HMAC and PBKDF2 mix their whole input through a hash before anything comes
 out, so a known prefix or suffix next to the secret never splits it back out.
 
-**Redaction.** Anything Kino hands back to your code that could carry an opened value — `r.text()`,
-`r.url`, header values, `kino.cookies.get`, an error message, a `kino.crypto` answer, and every
-`kino.log` line — has the value swapped back for its marker first, in its raw form, in URL
-percent-encoding (strict, the `+`-for-space form, and the `%20`-for-space form), JSON-escaped, and
-base64/base64url. What it does **not** catch: a binary response (`r.base64()` of something that was
+**Redaction.** Anything Kino hands back to your code that could carry a sealed value — `r.text()`,
+`r.url`, header values, a text body's `r.base64()`, `kino.cookies.get`, an error message, a
+`kino.crypto` answer, and every `kino.log` line — has the value swapped back for its marker first,
+whether or not this run has used the secret yet (a cookie set in an earlier run, or a server echoing
+the value to a request that never carried it, is caught too). The forms caught: raw, URL
+percent-encoding (strict, the `+`-for-space form, and the `%20`-for-space form), JSON-escaped —
+including with `/` written as `\/` and non-ASCII as `\uXXXX` in either hex case, as PHP's
+`json_encode` and Python's `json.dumps` write them — and base64/base64url. A URL the server returns
+with the value inside it comes back with the marker instead, so a `Stream` built from it won't play:
+markers are swapped only in `kino.fetch` requests, never in what your plugin returns to Kino. What it
+does **not** catch: a binary response (`r.base64()` of something that was
 never text) is not scanned, a response header's *name* is not checked (only its value), a lowercase
 `%xx` a server happens to echo is not one of the forms above, and a server that transforms the value
 on purpose (hashes it, reverses it, ...) leaves nothing left to recognize. A `kino.crypto` error can
@@ -481,7 +503,7 @@ host-and-https check, the `kino.crypto` restrictions and redaction. `--record` n
 value to a fixtures file either — a canonical placeholder stands in for it, so a committed recording
 never carries a secret however it is replayed later. See [section 7](#7-test-it-locally).
 
-## 4. The contract (apiVersion 1, 2 and 3)
+## 4. The contract (apiVersion 1 to 4)
 
 Your entry file is one ES module that exports one `async` function for each capability you
 declared, and nothing is called that you did not declare:
@@ -880,10 +902,11 @@ const key = kino.secret("apiKey");   // a marker, not the value; any other name 
 await kino.fetch(`https://api.example.org/v1/list?key=${key}`);
 ```
 
-A placeholder for a value sealed in your manifest's `secrets` field. Kino opens the seal once per
-run and swaps the marker for the plain value only where `kino.fetch` sends it (and inside
+A placeholder for a value sealed in your manifest's `secrets` field. Kino opens each seal at most
+once per run and swaps the marker for the plain value only where `kino.fetch` sends it (and inside
 `kino.crypto`'s key-like fields); nowhere else in your code ever sees it, and anything that comes
-back — the response, an error, a log line — has it swapped back for the marker. Full rules, the
+back — the response, a cookie, an error, a log line — has it swapped back for the marker, even
+before your code first asks for it. Full rules, the
 `seal.mjs` tool and the security level: [Sealed secrets](#sealed-secrets-apiversion-4).
 
 ### `kino.cookies`
@@ -916,8 +939,9 @@ kino.crypto.uuid()
 - CBC and ECB use PKCS#7 padding unless you pass `padding: "none"`. GCM appends its 16-byte tag to
   the ciphertext, and expects it there to decrypt (as most sites send it).
 - A wrong key size, a bad padding or a failed GCM tag throws; it never returns garbage silently.
-- A `kino.secret` marker is only accepted as the whole `key` of `encrypt`/`decrypt`, or as part of an
-  HMAC `key` or `pbkdf2`'s `password`/`salt` — never in `data`, `iv` or `aad`. See
+- A `kino.secret` marker is only accepted as the whole `key` of an AES `encrypt`/`decrypt`, or as
+  part of an HMAC `key` or `pbkdf2`'s `password`/`salt` — never in `data`, `iv` or `aad`, nor as a
+  `des-ede3` key. See
   [Sealed secrets](#sealed-secrets-apiversion-4) for why.
 
 <!-- contract:crypto:start -->
