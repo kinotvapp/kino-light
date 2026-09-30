@@ -338,6 +338,8 @@ internal fun StreamExoPlayer(
     // shrinks, when [fallbackAudioTracks] blames one (or all) of them for a player error -- never
     // restored within the same playback, so a track already found unusable is not retried.
     var activeAudioTracks by remember(prepared) { mutableStateOf(audioTracks) }
+    // Re-prepares already spent on a stuck VOD player (see PlayerErrorRoute.STUCK_RETRY); per prepared source.
+    var stuckRetries by remember(prepared) { mutableStateOf(0) }
 
     var videoAspectRatio by remember(exoPlayer) { mutableFloatStateOf(0f) }
     // Read inside the layout listener below, which is built once (`remember`) and outlives every
@@ -495,8 +497,19 @@ internal fun StreamExoPlayer(
                     drmError = PluginWidevine.isDrmError(error.errorCode),
                     drmSoftwareRefused = prepared.drmSoftwareLevelRefused.get(),
                     audioTracksActive = activeAudioTracks.isNotEmpty(),
+                    stuck = isStuckPlayer(error),
+                    stuckRetriesLeft = MAX_STUCK_RETRIES - stuckRetries,
                 )
                 when (route) {
+                    // The player's own watchdog found it stuck (playing with no progress, or buffering and not loading), on a VOD:
+                    // rebuild the source at the same position, up to twice, before the person sees an error. Most of these follow
+                    // an audio sink discontinuity on a TV box, after which the AudioTrack is dead until the renderer is re-enabled.
+                    PlayerErrorRoute.STUCK_RETRY -> {
+                        stuckRetries++
+                        val at = exoPlayer.currentPosition.coerceAtLeast(0L)
+                        Log.w(TAG, "player stuck ($msg) → re-preparing at ${at}ms, retry $stuckRetries/$MAX_STUCK_RETRIES")
+                        applyAudioTracks(prepared, activeAudioTracks, at, playWhenReady = exoPlayer.playWhenReady)
+                    }
                     // A live channel's playlist-level error (behind the live window, reset, stuck) is
                     // never an audio track's fault: it is fixed in place before anything is blamed.
                     PlayerErrorRoute.LIVE_IN_PLACE, PlayerErrorRoute.LIVE_CUT -> recoverLive(liveKind!!, msg, error)
@@ -846,3 +859,6 @@ internal fun fallbackAudioTracks(tracks: List<ResolvedAudioTrack>, failureText: 
 /** [error]'s message, and every cause behind it: where [fallbackAudioTracks] looks for a URL. */
 internal fun playbackFailureText(error: Throwable): String =
     generateSequence(error) { it.cause }.joinToString(" | ") { it.toString() }
+
+/** How many times a stuck VOD player is re-prepared in place before its error reaches the person. */
+private const val MAX_STUCK_RETRIES = 2
