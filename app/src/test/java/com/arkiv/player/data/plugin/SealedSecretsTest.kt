@@ -43,9 +43,33 @@ class SealedSecretsTest {
         assertFalse(SealedSecrets.isWellFormed(TestSealing.seal("x".repeat(4097), b, "apiKey")))
     }
 
+    @Test fun `a value of exactly 1 and exactly 4096 bytes seals and opens, 4097 does not`() {
+        for (plain in listOf("x", "x".repeat(4096), "ñ".repeat(2048))) {
+            val s = TestSealing.seal(plain, b, "apiKey")
+            assertTrue(plain.length.toString(), SealedSecrets.isWellFormed(s))
+            assertEquals(plain, open(s))
+        }
+        for (plain in listOf("x".repeat(4097), "ñ".repeat(2048) + "x")) {
+            val s = TestSealing.seal(plain, b, "apiKey")
+            assertFalse(SealedSecrets.isWellFormed(s))
+            assertThrows(SealException::class.java) { open(s) }
+        }
+        // An empty value makes a 60-byte seal: nothing to open.
+        assertFalse(SealedSecrets.isWellFormed(TestSealing.seal("", b, "apiKey")))
+    }
+
     @Test fun `binding is lowercase owner-repo-path without ref`() {
         assertEquals("owner/repo", SealedSecrets.bindingOf(PluginAddress.parse("Owner/Repo@main")!!))
         assertEquals("owner/repo/plugins/x", SealedSecrets.bindingOf(PluginAddress.parse("owner/repo/plugins/x@v2")!!))
+    }
+
+    @Test fun `seals open at HEAD, a branch or a tag, never at a commit`() {
+        for (ref in listOf("HEAD", "main", "v2", "release-1.0", "abc123", "cafe-babe", "0".repeat(41))) {
+            assertTrue(ref, SealedSecrets.opensAt(PluginAddress("o", "r", ref = ref)))
+        }
+        for (ref in listOf("0123abc", "DEADBEEF", "0123456789abcdef0123456789abcdef01234567")) {
+            assertFalse(ref, SealedSecrets.opensAt(PluginAddress("o", "r", ref = ref)))
+        }
     }
 
     @Test fun `names follow the pattern`() {

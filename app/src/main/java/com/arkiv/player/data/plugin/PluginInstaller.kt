@@ -287,9 +287,12 @@ class PluginInstaller(
      * GCM), never stores or logs anything. [SealException.message] equal to
      * [SealedSecrets.NO_NATIVE_MESSAGE] (thrown here when [sealAgreement] is null, or by the native
      * agreement when the device build can't open seals at all) means the app itself can't; any other
-     * failure means the seal doesn't belong to this plugin.
+     * failure means the seal doesn't belong to this plugin. An address at a commit ref is refused
+     * before any seal is tried ([SealedSecrets.opensAt]): that manifest may be a fork's.
      */
     private fun verifySeals(address: PluginAddress, manifest: PluginManifest) {
+        if (manifest.secrets.isEmpty()) return
+        if (!SealedSecrets.opensAt(address)) throw InstallException(COMMIT_SEALS_MESSAGE)
         val binding = SealedSecrets.bindingOf(address)
         manifest.secrets.forEach { (name, seal) ->
             try {
@@ -362,6 +365,8 @@ class PluginInstaller(
         /** Shown when a manifest declares `secrets` and this build has no way to open any seal at all. */
         const val NO_SEALS_MESSAGE = "Este Kino no puede abrir datos sellados"
         /** Shown when a seal doesn't open for this plugin's address (wrong repo, wrong name, tampered, or malformed). */
+        /** Shown when a manifest with `secrets` is installed or updated from a commit ref ([SealedSecrets.opensAt]). */
+        const val COMMIT_SEALS_MESSAGE ="Los datos sellados no se pueden usar desde un commit: instala el plugin desde una rama o etiqueta"
         const val WRONG_SEALS_MESSAGE = "Los datos sellados de este plugin no son para este repositorio o están dañados"
     }
 }

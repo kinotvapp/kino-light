@@ -160,8 +160,10 @@ class PluginSecrets(
 /**
  * The secrets a runtime of [plugin] opens with: its manifest's seals, bound to the INSTALLED
  * record's address (the same binding the installer verified them against), allowed toward the
- * manifest's own `hosts` only. Null when it declares none, or when its recorded address no longer
- * parses (then `kino.secret` answers "not declared" rather than opening against a wrong binding).
+ * manifest's own `hosts` only. Null when it declares none, when its recorded address no longer
+ * parses (then `kino.secret` answers "not declared" rather than opening against a wrong binding),
+ * or when that address is at a commit ref ([SealedSecrets.opensAt]; the installer refuses those
+ * too, this is the runtime's own check).
  */
 internal fun pluginSecretsFor(
     plugin: InstalledPlugin,
@@ -170,5 +172,6 @@ internal fun pluginSecretsFor(
 ): PluginSecrets? {
     if (plugin.manifest.secrets.isEmpty()) return null
     val address = PluginAddress.parse(plugin.record.address) ?: return null
+    if (!SealedSecrets.opensAt(address)) return null
     return PluginSecrets(plugin.manifest.secrets, SealedSecrets.bindingOf(address), agreement, plugin.manifest.hosts, recipient)
 }

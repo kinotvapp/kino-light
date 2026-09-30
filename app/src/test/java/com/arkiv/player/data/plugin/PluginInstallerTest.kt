@@ -425,6 +425,53 @@ class PluginInstallerTest {
         assertTrue(preview.newSealedSecrets)
     }
 
+    // GitHub serves a fork's (or a pull request's) commits through the parent repo's raw URL, so a
+    // commit ref proves nothing about who wrote the manifest: seals never open there.
+    @Test fun `seals at a commit ref refuse the install, a branch or tag does not`() = runBlocking {
+        installer = installerWithSeal()
+        val seal = TestSealing.seal("shh", SealedSecrets.bindingOf(PluginAddress("o", "r")), "apiKey")
+        for (ref in listOf("0123abc", "0123456789abcdef0123456789ABCDEF01234567")) {
+            publish(api = 4, secrets = mapOf("apiKey" to seal), prefix = "https://raw.githubusercontent.com/o/r/$ref/")
+            val e = assertThrows(InstallException::class.java) { runBlocking { installer.preview("o/r@$ref") } }
+            assertEquals(ref, PluginInstaller.COMMIT_SEALS_MESSAGE, e.message)
+        }
+        assertEquals(
+            "Los datos sellados no se pueden usar desde un commit: instala el plugin desde una rama o etiqueta",
+            PluginInstaller.COMMIT_SEALS_MESSAGE,
+        )
+        // Not hex, too short or too long to be a commit: a branch or a tag, and it installs.
+        for (ref in listOf("main", "v1.2.0", "abc123", "0123456789abcdef0123456789abcdef012345678", "deadbeef-fix")) {
+            publish(api = 4, secrets = mapOf("apiKey" to seal), prefix = "https://raw.githubusercontent.com/o/r/$ref/")
+            assertTrue(ref, installer.preview("o/r@$ref").newSealedSecrets)
+        }
+        // A commit ref without secrets installs as before.
+        publish(prefix = "https://raw.githubusercontent.com/o/r/0123abc/")
+        assertFalse(installer.preview("o/r@0123abc").newSealedSecrets)
+    }
+
+    @Test fun `an update that brings seals to a plugin installed at a commit fails`() = runBlocking {
+        installer = installerWithSeal()
+        val prefix = "https://raw.githubusercontent.com/o/r/0123abcd/"
+        publish("1.0.0", prefix = prefix)
+        installer.install(installer.preview("o/r@0123abcd"))
+        publish("1.1.0", api = 4, secrets = mapOf("apiKey" to TestSealing.seal("shh", "o/r", "apiKey")), prefix = prefix)
+        assertEquals(UpdateOutcome.Failed(PluginInstaller.COMMIT_SEALS_MESSAGE), installer.checkUpdate("demo"))
+        assertEquals("1.0.0", store.get("demo")!!.record.version)
+    }
+
+    @Test fun `a runtime of a plugin recorded at a commit gets no secrets`() = runBlocking {
+        installer = installerWithSeal()
+        val seal = TestSealing.seal("shh", SealedSecrets.bindingOf(PluginAddress("o", "r")), "apiKey")
+        publish(api = 4, secrets = mapOf("apiKey" to seal), prefix = "https://raw.githubusercontent.com/o/r/dev/")
+        installer.install(installer.preview("o/r@dev"))
+        val plugin = PluginRegistry(store).apply { reload() }.find("demo")!!
+        assertEquals("shh", pluginSecretsFor(plugin, TestSealing.agreement, TestSealing.TEST_PUBLIC)!!.let { it.substitute(it.marker("apiKey")!!) })
+        for (ref in listOf("0123abc", "0123456789abcdef0123456789abcdef01234567")) {
+            val atCommit = plugin.copy(record = plugin.record.copy(address = "o/r@$ref"))
+            assertNull(ref, pluginSecretsFor(atCommit, TestSealing.agreement, TestSealing.TEST_PUBLIC))
+        }
+    }
+
     // The runtime side of the same binding: the secrets AppGraph opens a runtime with come from the
     // INSTALLED record's address (branch and all), and only the ordinary host gets them.
     @Test fun `an installed plugin's runtime opens its seals with its recorded address`() = runBlocking {
