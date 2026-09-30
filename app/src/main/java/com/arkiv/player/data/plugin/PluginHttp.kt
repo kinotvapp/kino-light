@@ -6,6 +6,8 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okhttp3.CookieJar
 import okhttp3.Dns
@@ -200,7 +202,8 @@ class PluginDns(
 /**
  * `kino.fetch` for one plugin: host-gated per hop against [hosts] (declared + the servers typed in
  * its settings; a settings change closes the runtime, so a new instance gets the new set), capped
- * (5 MB body, 60 requests per call -- 250 for a converted Nuvio scraper -- 15 s default / 30 s max), with the plugin's persistent
+ * (5 MB body, 60 requests per call -- every hop, refused ones included; 250 for a converted Nuvio scraper --
+ * 15 s default / 30 s max; at most [PluginCall.MAX_HOST_QUESTIONS] host questions per call), with the plugin's persistent
  * [cookies] jar.
  *
  * Redirects are followed HERE, not by OkHttp: OkHttp opens the connection to a redirect target
@@ -386,7 +389,16 @@ class PluginHttp(
     /** Starts a new plugin call: the 60-request budget is per call. */
     fun beginCall() = requests.set(0)
 
-    suspend fun fetch(req: Request): Response = withContext(Dispatchers.IO) {
+    /**
+     * At most [MAX_FETCHES_IN_FLIGHT] of this runtime's `kino.fetch`es run at once; the rest wait
+     * their turn. Each holds up to a 5 MB body plus its decoded text on the app heap until the JS
+     * thread takes it, so `Promise.all` over 60 large pages must not buffer them all together.
+     */
+    private val inFlight = Semaphore(MAX_FETCHES_IN_FLIGHT)
+
+    suspend fun fetch(req: Request): Response = inFlight.withPermit { fetchNow(req) }
+
+    private suspend fun fetchNow(req: Request): Response = withContext(Dispatchers.IO) {
         // The call this fetch belongs to, read once: what it meets goes on that call's trace.
         val trace = calls?.current?.trace
         try {
@@ -420,11 +432,13 @@ class PluginHttp(
         var previous: HttpUrl? = null
         repeat(MAX_REDIRECTS + 1) {
             val from = previous
-            req.sealedTo?.let { allowed -> checkSealed(url, allowed) }
-            ensureHostAllowed(from, url, trace)
+            // Every hop counts, refused or asked about included: a loop over hosts it may not reach
+            // still runs out of budget.
             if (requests.incrementAndGet() > maxRequestsPerCall) {
                 throw invalid("demasiadas solicitudes en una sola llamada (máximo $maxRequestsPerCall)")
             }
+            req.sealedTo?.let { allowed -> checkSealed(url, allowed) }
+            ensureHostAllowed(from, url, trace)
             executeTraced(callClient, buildRequest(url, method, body, req.headers), url.host, trace, sealed = req.sealedTo != null).use { resp ->
                 if (resp.code >= 400) trace?.answered(url.host, resp.code)
                 val location = resp.header("Location")
@@ -515,9 +529,21 @@ class PluginHttp(
                 log("[$pluginId] ${call?.function ?: "no call running"}: undeclared host ${url.host} not asked (${notAskedWhy(call)})")
                 refuse(PluginCallTrace.Refusal.NOT_ASKED)
             }
+            // At most PluginCall.MAX_HOST_QUESTIONS per call, none after a "no" in it. A miss that
+            // joins a question already up for its host takes nothing (it is the same question); two
+            // racing to open one may both take one -- fewer questions, never more.
+            if (call != null && !pendingApprovals.containsKey(url.host)) {
+                call.takeHostQuestion()?.let { why ->
+                    log("[$pluginId] ${call.function}: undeclared host ${url.host} not asked ($why)")
+                    refuse(PluginCallTrace.Refusal.NOT_ASKED)
+                }
+            }
             when (askOnce(ra, url.host, call)) {
                 true -> checkOnce(from, url)
-                false -> refuse(PluginCallTrace.Refusal.REJECTED_NOW)
+                false -> {
+                    call?.hostDeclined()
+                    refuse(PluginCallTrace.Refusal.REJECTED_NOW)
+                }
                 // No answer: the call ended while the question was up (it came down unanswered).
                 // Without a tracker, a requester that gave up (tests): a timeout, as it always was.
                 null -> if (call != null) throw e else throw PluginFetchException("timeout", "no hubo respuesta a tiempo para conectarse a ${url.host}")
@@ -550,7 +576,8 @@ class PluginHttp(
      *   surfaces as a `timeout` [PluginFetchException], as it always did.
      * - [hostsLock] also makes the add itself atomic against a DIFFERENT host being approved by
      *   another winner at the same moment: neither winner's host is lost to the other's copy of
-     *   [liveHosts]. There is no cap on how many hosts the person can approve: each one is theirs.
+     *   [liveHosts]. No product cap on how many hosts the person can approve (each one is theirs); the
+     *   call itself asks at most [PluginCall.MAX_HOST_QUESTIONS] ([ensureHostAllowed]).
      * - Deliberately not `CoroutineScope(currentCoroutineContext()).async { … }` (as first sketched):
      *   that would parent the shared deferred to whichever caller wins the race, so an unrelated
      *   cancellation further up THAT winner's own call stack (its own timeout, say) would complete the
@@ -701,6 +728,9 @@ class PluginHttp(
         const val MAX_TIMEOUT_MS = 30_000L
         const val MAX_BODY_BYTES = 5 * 1024 * 1024
         const val MAX_REQUESTS_PER_CALL = 60
+
+        /** `kino.fetch`es one runtime runs at once; see [inFlight]. */
+        const val MAX_FETCHES_IN_FLIGHT = 6
         /**
          * A converted Nuvio scraper's budget: its hoster resolvers race many mirrors (StreamWish,
          * VOE, VidHide...) plus PoW and TMDB calls, so 60 cut real streams (latino audit 2026-09-30:

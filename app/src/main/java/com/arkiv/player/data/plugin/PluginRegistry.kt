@@ -190,21 +190,34 @@ class PluginRegistry(
     fun markDamaged(id: String) = update(id) { it.copy(damaged = true) }
 
     /**
-     * Adds [host] to [id]'s approved hosts if it isn't there already. There is no cap: every one of
-     * them is the person's own approval ([ManifestParser.MAX_HOSTS] limits only the manifest's own
-     * list). Returns whether it actually changed anything.
+     * Adds [host] to [id]'s approved hosts if it isn't there already. Every one of them is the
+     * person's own approval, so there is no product limit ([ManifestParser.MAX_HOSTS] limits only the
+     * manifest's own list) -- only the safety cap [MAX_APPROVED_HOSTS], far past any real use, so a
+     * runaway plugin can't grow installed.json without bound: past it the host is not stored (it
+     * still works for the runtime that asked) and the refusal is logged. Returns whether it
+     * actually changed anything.
      */
     fun addApprovedHost(id: String, host: String): Boolean {
         var added = false
+        var full = false
         update(id) {
-            if (host in it.hosts) it
-            else { added = true; it.copy(hosts = it.hosts + host) }
+            when {
+                host in it.hosts -> it
+                it.hosts.size >= MAX_APPROVED_HOSTS -> { full = true; it }
+                else -> { added = true; it.copy(hosts = it.hosts + host) }
+            }
         }
+        if (full) log("[$id] approved host $host not stored: already $MAX_APPROVED_HOSTS approved hosts (safety cap)")
         return added
     }
 
-    /** Remembers that the person said no to [host] for plugin [id]: never prompted again for it. */
-    fun rejectHost(id: String, host: String) = update(id) { if (host in it.rejectedHosts) it else it.copy(rejectedHosts = it.rejectedHosts + host) }
+    /**
+     * Remembers that the person said no to [host] for plugin [id]: never prompted again for it. At
+     * most [MAX_REJECTED_HOSTS] are kept, the oldest dropped first (asked about again, at worst).
+     */
+    fun rejectHost(id: String, host: String) = update(id) {
+        if (host in it.rejectedHosts) it else it.copy(rejectedHosts = (it.rejectedHosts + host).takeLast(MAX_REJECTED_HOSTS))
+    }
 
     /** Clears every remembered "no" for [id], from Ajustes ▸ Plugins. */
     /**
@@ -247,8 +260,14 @@ class PluginRegistry(
         reload()
     }
 
-    private companion object {
+    companion object {
         /** The declarative capability of `contract.json` that turns downloads on (apiVersion 2). */
-        const val DOWNLOAD_CAPABILITY = "download"
+        private const val DOWNLOAD_CAPABILITY = "download"
+
+        /** Safety cap on a record's `hosts` (declared + approved): see [addApprovedHost]. */
+        const val MAX_APPROVED_HOSTS = 500
+
+        /** A record's remembered "no"s: see [rejectHost]. */
+        const val MAX_REJECTED_HOSTS = 200
     }
 }

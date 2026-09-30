@@ -42,9 +42,33 @@ class PluginCall internal constructor(
         ended.complete()
     }
 
+    private val questionsLock = Any()
+    private var questionsAsked = 0
+    private var declinedAHost = false
+
+    /**
+     * Takes one of this call's host questions: null when taken, else why not (for the log) -- ask
+     * nothing, fail the host silently -- once [MAX_HOST_QUESTIONS] were put, or once the person said
+     * "no" to one in this call. A scraper probing mirror after mirror would otherwise put dialog
+     * after dialog while its clock is stopped.
+     */
+    fun takeHostQuestion(): String? = synchronized(questionsLock) {
+        when {
+            declinedAHost -> "the person already declined a host in this call"
+            questionsAsked >= MAX_HOST_QUESTIONS -> "already $MAX_HOST_QUESTIONS host questions in this call"
+            else -> { questionsAsked++; null }
+        }
+    }
+
+    /** The person said "no" to a host of this call: nothing else is asked for the rest of it. */
+    fun hostDeclined() = synchronized(questionsLock) { declinedAHost = true }
+
     companion object {
         /** `resolve` (the person pressed play) and `episodes` (they opened a series). */
         val ASKING_FUNCTIONS = setOf("resolve", "episodes")
+
+        /** Host questions one call may put to the person; see [takeHostQuestion]. */
+        const val MAX_HOST_QUESTIONS = 3
     }
 
     /**

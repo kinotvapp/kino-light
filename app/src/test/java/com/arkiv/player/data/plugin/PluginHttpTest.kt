@@ -774,6 +774,55 @@ class PluginHttpTest {
         assertNull(call.trace.waitingFor)
     }
 
+    @Test fun `a call asks about at most 3 hosts, then fails the rest silently`() = runTest {
+        val asked = Asked()
+        val logs = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val calls = PluginCallTracker().apply { begin(runningCall("resolve")) }
+        val h = trackedHttp(calls, asked, logs) { true }
+        for (i in 1..3) assertEquals("network", fetchError(h, PluginHttp.Request("https://m$i.example.com/x")).code)
+        for (i in 4..8) assertEquals("host_not_allowed", fetchError(h, PluginHttp.Request("https://m$i.example.com/x")).code)
+        assertEquals((1..3).map { "m$it.example.com" }, asked.hosts.toList())
+        assertTrue(logs.toString(), logs.any { "m4.example.com" in it && "already 3 host questions" in it })
+        // A new call gets its own questions.
+        calls.begin(runningCall("resolve"))
+        assertEquals("network", fetchError(h, PluginHttp.Request("https://m9.example.com/x")).code)
+        assertEquals("m9.example.com", asked.hosts.last())
+    }
+
+    @Test fun `after a no, nothing else is asked in that call`() = runTest {
+        val asked = Asked()
+        val calls = PluginCallTracker().apply { begin(runningCall("resolve")) }
+        val h = trackedHttp(calls, asked) { false }
+        repeat(4) { assertEquals("host_not_allowed", fetchError(h, PluginHttp.Request("https://m$it.example.com/x")).code) }
+        assertEquals(listOf("m0.example.com"), asked.hosts.toList())
+        assertEquals(listOf("m0.example.com"), asked.rejected.toList())
+    }
+
+    @Test fun `at most 6 fetches of one runtime are in flight at once`() = runBlocking {
+        val now = java.util.concurrent.atomic.AtomicInteger()
+        val peak = java.util.concurrent.atomic.AtomicInteger()
+        server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+            override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): MockResponse {
+                peak.accumulateAndGet(now.incrementAndGet(), ::maxOf)
+                Thread.sleep(150)
+                now.decrementAndGet()
+                return MockResponse().setBody("x")
+            }
+        }
+        val h = http()
+        h.beginCall()
+        val all = (1..14).map { async(kotlinx.coroutines.Dispatchers.Default) { h.fetch(PluginHttp.Request(url("/p$it"))).text } }
+        assertEquals(List(14) { "x" }, all.map { it.await() })
+        assertTrue("peak ${peak.get()}", peak.get() in 2..PluginHttp.MAX_FETCHES_IN_FLIGHT)
+    }
+
+    @Test fun `refused hops count toward the request budget`() = runTest {
+        val h = PluginHttp(OkHttpClient(), "test", EffectiveHosts(listOf("archive.org")), "1.0", maxRequestsPerCall = 5)
+        h.beginCall()
+        repeat(5) { assertEquals("host_not_allowed", fetchError(h, PluginHttp.Request("https://m$it.example.com/x")).code) }
+        assertEquals("invalid_request", fetchError(h, PluginHttp.Request("https://m9.example.com/x")).code)
+    }
+
     @Test fun `the same host is asked once per call`() = runTest {
         val asked = Asked()
         val calls = PluginCallTracker().apply { begin(runningCall("resolve")) }

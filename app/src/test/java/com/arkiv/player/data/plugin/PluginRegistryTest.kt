@@ -253,6 +253,22 @@ class PluginRegistryTest {
         assertTrue(registry.find("pa")!!.record.rejectedHosts.isEmpty())
     }
 
+    @Test fun `approved hosts stop being stored at the safety cap`() {
+        val full = (1..PluginRegistry.MAX_APPROVED_HOSTS).map { "h$it.example.com" }
+        install("pa", "A") { copy(hosts = full) }
+        assertFalse(registry.addApprovedHost("pa", "one-more.example.com"))
+        assertEquals(full, registry.find("pa")!!.record.hosts)
+    }
+
+    @Test fun `remembered rejections keep the newest 200`() {
+        install("pa", "A")
+        repeat(PluginRegistry.MAX_REJECTED_HOSTS + 5) { registry.rejectHost("pa", "r$it.example.com") }
+        val kept = registry.find("pa")!!.record.rejectedHosts
+        assertEquals(PluginRegistry.MAX_REJECTED_HOSTS, kept.size)
+        assertEquals("r5.example.com", kept.first())
+        assertEquals("r204.example.com", kept.last())
+    }
+
     @Test fun `InstalledRecord round-trips rejectedHosts through JSON`() {
         val r = InstalledRecord("o/pa", "1.0.0", "sha", listOf("example.com"), 1L, rejectedHosts = listOf("evil.example"))
         val back = InstalledRecord.fromJson(r.toJson())
