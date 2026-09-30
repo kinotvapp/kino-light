@@ -135,7 +135,8 @@ object NuvioPluginConverter {
         // The scraper's own declared types and display name, baked in for the adapter's support check.
         val displayName = scraper.name.trim().ifEmpty { scraper.id }
         val supportBinding = "\nvar __NUVIO_SUPPORTED_TYPES = " +
-            JSONArray(scraper.supportedTypes.map { it.trim().lowercase() }).toString() + ";\n" +
+            // Folded once here onto movie/tv/anime (NuvioMediaTypes, the picker's own sets): `series` must mean tv.
+            JSONArray(scraper.supportedTypes.map(NuvioMediaTypes::canonical).distinct()).toString() + ";\n" +
             "var __NUVIO_SCRAPER_NAME = " + JSONObject.quote(displayName) + ";\n"
         val script = shim + "\n\n" + libraries + CONSOLE + wrapped + supportBinding + ADAPTER
 
@@ -249,7 +250,7 @@ object NuvioPluginConverter {
           return (season > 0 && episode > 0) ? "tv" : "movie";
         }
 
-        // Nuvio's supportedTypes: movie / tv / anime. Anime alone covers films and shows; unknown or
+        // Nuvio's supportedTypes, already folded onto movie / tv / anime (NuvioMediaTypes). Anime alone covers films and shows; unknown or
         // empty keeps every type.
         function __nuvioSupports(mediaType) {
           var t = __NUVIO_SUPPORTED_TYPES;

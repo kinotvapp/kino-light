@@ -183,6 +183,35 @@ class NuvioPluginConverterTest {
         assertEquals("https://cdn.example/movie/null/null", resolvedUrl("""{"tmdbId":603,"type":"movie","season":0,"episode":0}"""))
     }
 
+    @Test fun `every supportedTypes spelling is folded onto movie, tv or anime`() {
+        val cases = mapOf(
+            "movie" to "movie", "Movies" to "movie", "film" to "movie", " films " to "movie",
+            "tv" to "tv", "series" to "tv", "Series" to "tv", "show" to "tv", "shows" to "tv",
+            "anime" to "anime", "ANIME" to "anime", "documentary" to "documentary",
+        )
+        for ((raw, want) in cases) {
+            assertEquals(raw, want, NuvioMediaTypes.canonical(raw))
+            val script = NuvioPluginConverter.convert(scraper.copy(supportedTypes = listOf(raw)), echoTypeSource, repoSlug = "o/r").script
+            assertTrue(raw, script.contains("var __NUVIO_SUPPORTED_TYPES = [\"$want\"];"))
+        }
+        val both = NuvioPluginConverter.convert(scraper.copy(supportedTypes = listOf("movies", "film", "series", "tv")), echoTypeSource, repoSlug = "o/r").script
+        assertTrue(both.contains("var __NUVIO_SUPPORTED_TYPES = [\"movie\",\"tv\"];"))
+    }
+
+    // Review nuvio-ui I1: the picker says "Película · Serie" for ["movie","series"]; the adapter must agree.
+    @Test fun `a scraper declaring movie and series resolves series episodes`() = runBlocking {
+        for (types in listOf(listOf("movie", "series"), listOf("movie", "show"), listOf("films", "shows"))) {
+            val result = NuvioPluginConverter.convert(scraper.copy(supportedTypes = types), echoTypeSource, repoSlug = "o/r")
+            val runtime = PluginRuntime.open("probe", result.script, ProbePluginHost, PluginEnv(appVersion = "1.0"))
+            try {
+                val ref = """{"tmdbId":1399,"type":"series","season":2,"episode":5}"""
+                assertEquals(types.toString(), "https://cdn.example/tv/2/5", JSONObject(runtime.call("resolve", JSONObject.quote(ref), 5_000)).getString("url"))
+            } finally {
+                runtime.close()
+            }
+        }
+    }
+
     @Test fun `an any-typed ref is decided from its episode fields`() {
         assertEquals("https://cdn.example/tv/1/3", resolvedUrl("""{"tmdbId":1399,"type":"any","season":1,"episode":3}"""))
         assertEquals("https://cdn.example/movie/null/null", resolvedUrl("""{"tmdbId":603,"type":"any","season":0,"episode":0}"""))

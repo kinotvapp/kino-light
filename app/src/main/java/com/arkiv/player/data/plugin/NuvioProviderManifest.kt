@@ -24,6 +24,29 @@ data class NuvioScraperEntry(
 data class NuvioProviderManifest(val name: String, val scrapers: List<NuvioScraperEntry>)
 
 /**
+ * The spellings of a Nuvio `supportedTypes` entry, folded onto the three the adapter knows: Nuvio's
+ * own manifests say `movie`/`tv`/`anime`, community repos also write `series`, `shows`, `films`...
+ * The same sets the scraper picker's "Película"/"Serie"/"Anime" chips use
+ * (`ui/plugin/NuvioScraperPickerState.kt`), so a card that promises series gets series.
+ */
+object NuvioMediaTypes {
+    val MOVIE = setOf("movie", "movies", "film", "films")
+    val SERIES = setOf("series", "tv", "show", "shows")
+    val ANIME = setOf("anime")
+
+    /** `movie`, `tv` or `anime` for a known spelling (any case, spaces trimmed); anything else as written, lowercased. */
+    fun canonical(raw: String): String {
+        val t = raw.trim().lowercase()
+        return when (t) {
+            in MOVIE -> "movie"
+            in SERIES -> "tv"
+            in ANIME -> "anime"
+            else -> t
+        }
+    }
+}
+
+/**
  * Parses Nuvio's OWN manifest format: a `manifest.json` with a top-level `scrapers` array,
  * nothing like `kino-plugin.json`'s shape. This is how Kino tells the two apart in the install box.
  */
