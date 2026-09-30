@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// Seals a plugin secret for Kino's v1 format (spec: docs/superpowers/specs/2026-09-29-plugin-sealed-
-// secrets-design.md §3, §6): X25519 (ephemeral) + HKDF-SHA256 + AES-256-GCM against the app's public
-// key. The kit can never open a seal -- only Kino, with the matching private key, can -- so this is
+// Seals a plugin secret for Kino's v1 format (the sealed-secrets design, §3 and §6; for authors:
+// "Sealed secrets" in the plugin guide): X25519 (ephemeral) + HKDF-SHA256 + AES-256-GCM against the
+// app's public key. The kit can never open a seal -- only Kino, with the matching private key, can -- so this is
 // the only place a plugin author needs to run outside the app.
 //
 //   node sdk/seal.mjs --repo owner/repo[/path] --name apiKey
