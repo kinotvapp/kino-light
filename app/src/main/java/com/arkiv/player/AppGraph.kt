@@ -751,8 +751,8 @@ class AppGraph(context: Context) {
         PluginInstaller(
             store = pluginStore,
             fetcher = PluginFetcher { url, max -> (debugPluginFetcher ?: github).fetch(url, max) },
-            probe = { script ->
-                val runtime = PluginRuntime.open("probe", script, ProbePluginHost, PluginEnv(appVersion = BuildConfig.VERSION_NAME))
+            probe = { script, secretNames ->
+                val runtime = PluginRuntime.open("probe", script, ProbeHost(secretNames), PluginEnv(appVersion = BuildConfig.VERSION_NAME))
                 try { runtime.exports } finally { runtime.close() }
             },
             sealAgreement = sealAgreement,

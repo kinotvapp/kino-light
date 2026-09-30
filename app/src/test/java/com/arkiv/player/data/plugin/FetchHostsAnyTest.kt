@@ -86,7 +86,7 @@ class FetchHostsAnyTest {
     private val store by lazy { PluginStore(File(tmp.root, "plugins"), File(tmp.root, "plugin-data")) }
     private val handFiles = HashMap<String, String>()
     private val installer by lazy {
-        PluginInstaller(store, fetcher(handFiles), probe = { script ->
+        PluginInstaller(store, fetcher(handFiles), probe = { script, _ ->
             val runtime = PluginRuntime.open("probe", script, ProbePluginHost, PluginEnv(appVersion = "1.0"))
             try { runtime.exports } finally { runtime.close() }
         })

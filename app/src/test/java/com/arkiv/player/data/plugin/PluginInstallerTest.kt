@@ -33,7 +33,7 @@ class PluginInstallerTest {
 
     @Before fun setUp() {
         store = PluginStore(File(tmp.root, "plugins"), File(tmp.root, "plugin-data"))
-        installer = PluginInstaller(store, fetcher, probe = { exports(it) }, clock = { now })
+        installer = PluginInstaller(store, fetcher, probe = { s, _ -> exports(s) }, clock = { now })
     }
 
     private fun publish(
@@ -185,7 +185,7 @@ class PluginInstallerTest {
     // they approved in the moment on top of them -- here the 21st and, later, up to the 25th.
     @Test fun `an update declaring 20 hosts keeps every reactively approved host past them`() = runBlocking {
         val logs = mutableListOf<String>()
-        val logging = PluginInstaller(store, fetcher, probe = { exports(it) }, clock = { now }, log = { logs += it })
+        val logging = PluginInstaller(store, fetcher, probe = { s, _ -> exports(s) }, clock = { now }, log = { logs += it })
         val nineteen = (1..19).map { "h$it.example.com" }
         publish("1.0.0", hosts = nineteen)
         logging.install(logging.preview("o/r"))
@@ -322,7 +322,7 @@ class PluginInstallerTest {
             }
             bytes
         }
-        val racyInstaller = PluginInstaller(store, racyFetcher, probe = { exports(it) }, clock = { now })
+        val racyInstaller = PluginInstaller(store, racyFetcher, probe = { s, _ -> exports(s) }, clock = { now })
         assertEquals(UpdateOutcome.UpToDate, racyInstaller.checkUpdate("demo"))
         assertFalse(store.get("demo")!!.record.enabled)
     }
@@ -336,7 +336,7 @@ class PluginInstallerTest {
             if (url == base + "plugin.js") store.remove("demo", "Demo")
             bytes
         }
-        val racyInstaller = PluginInstaller(store, racyFetcher, probe = { exports(it) }, clock = { now })
+        val racyInstaller = PluginInstaller(store, racyFetcher, probe = { s, _ -> exports(s) }, clock = { now })
         assertEquals(UpdateOutcome.Failed("El plugin se desinstaló mientras se actualizaba"), racyInstaller.checkUpdate("demo"))
         assertNull(store.get("demo"))
         assertEquals("Demo", store.removedName("demo"))
@@ -393,7 +393,7 @@ class PluginInstallerTest {
     }
 
     private fun installerWithSeal() = PluginInstaller(
-        store, fetcher, probe = { exports(it) }, clock = { now },
+        store, fetcher, probe = { s, _ -> exports(s) }, clock = { now },
         sealAgreement = TestSealing.agreement, sealRecipient = TestSealing.TEST_PUBLIC,
     )
 
@@ -491,6 +491,46 @@ class PluginInstallerTest {
         plugin, PluginHttp(okhttp3.OkHttpClient(), plugin.id, plugin.hosts, "9.9.9"), PluginStorage(File(tmp.root, "s.json")),
         PluginConfig.EMPTY, null, lazy<com.arkiv.player.data.magis.MagisPluginBridge> { error("no Magis objects in this test") }, secrets,
     )
+
+    // The install probe is the real sandbox with the probe host: a module-level kino.secret for a
+    // declared name must load there (a marker, never a value); an undeclared one still fails.
+    private fun installerWithRealProbe() = PluginInstaller(
+        store, fetcher, clock = { now },
+        probe = { script, names ->
+            val rt = PluginRuntime.open("probe", script, ProbeHost(names), PluginEnv(appVersion = "1"))
+            try { rt.exports } finally { rt.close() }
+        },
+        sealAgreement = TestSealing.agreement, sealRecipient = TestSealing.TEST_PUBLIC,
+    )
+
+    @Test fun `a module-level kino secret for a declared name installs`() = runBlocking {
+        installer = installerWithRealProbe()
+        val seal = TestSealing.seal("shh", SealedSecrets.bindingOf(PluginAddress("o", "r")), "apiKey")
+        val script = """
+            const KEY = kino.secret("apiKey");
+            if (!/^__kinoSecret_apiKey_[0-9a-f]{16}__${'$'}/.test(KEY)) throw new Error("not a marker: " + KEY);
+            export async function search(){ return KEY }
+            export async function resolve(){}
+        """.trimIndent()
+        publish(api = 4, secrets = mapOf("apiKey" to seal), script = script)
+        assertTrue(installer.install(installer.preview("o/r")).sealedSecrets)
+    }
+
+    @Test fun `a module-level kino secret for an undeclared name still fails the install`() {
+        installer = installerWithRealProbe()
+        val seal = TestSealing.seal("shh", SealedSecrets.bindingOf(PluginAddress("o", "r")), "apiKey")
+        val script = "const K = kino.secret(\"other\");\nexport async function search(){}\nexport async function resolve(){}"
+        publish(api = 4, secrets = mapOf("apiKey" to seal), script = script)
+        val e = assertThrows(InstallException::class.java) { runBlocking { installer.install(installer.preview("o/r")) } }
+        assertTrue(e.message, e.message!!.contains("no declara el secreto other"))
+    }
+
+    @Test fun `the probe host never answers a sealed value`() {
+        val host = ProbeHost(setOf("apiKey"))
+        assertTrue(host.secret("apiKey")!!.matches(Regex("__kinoSecret_apiKey_[0-9a-f]{16}__")))
+        assertNull(host.secret("other"))
+        assertNull(ProbePluginHost.secret("apiKey"))
+    }
 
     @Test fun `a plugin without seals opens its runtime without secrets`() {
         publish()

@@ -24,7 +24,7 @@ class PluginSetupLifecycleTest {
     private fun installer(known: Set<String> = emptySet()) = PluginInstaller(
         store,
         PluginFetcher { url, _ -> files[url] ?: throw FileNotFoundException(url) },
-        probe = { setOf("search", "resolve") },
+        probe = { _, _ -> setOf("search", "resolve") },
         clock = { 1_000L },
         knownPermissions = known,
     )

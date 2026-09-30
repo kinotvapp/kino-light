@@ -64,7 +64,7 @@ class PluginAdminTest {
         })
         registry = PluginRegistry(store) { p -> config.setupState(p.manifest.id, p.manifest.settings) }
         pool = PluginRuntimePool(open = { FakeRuntime() }, onUnresponsive = {}, scope = CoroutineScope(Dispatchers.Unconfined))
-        installer = PluginInstaller(store, fetcher, probe = { setOf("search", "resolve") }, clock = { 1_000L })
+        installer = PluginInstaller(store, fetcher, probe = { _, _ -> setOf("search", "resolve") }, clock = { 1_000L })
         // No test here installs a Nuvio-origin plugin, so `coordinator` always routes to `installer`
         // (see PluginUpdateCoordinator.checkUpdate) -- this fetcher/tmdbApiKey are never exercised.
         coordinator = PluginUpdateCoordinator(store, installer, NuvioPluginInstaller(installer, fetcher, tmdbApiKey = "test"), clock = { 1_000L })

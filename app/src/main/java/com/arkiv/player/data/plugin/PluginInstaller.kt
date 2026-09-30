@@ -109,8 +109,18 @@ class RawGithubFetcher(base: OkHttpClient) : PluginFetcher {
     }
 }
 
-/** Host for the install-time load check: the plugin must load without touching the network. */
-object ProbePluginHost : PluginHost {
+/**
+ * Host for the install-time load check: the plugin must load without touching the network.
+ * `kino.secret(name)` answers a marker of the real runtime's shape (`__kinoSecret_<name>_<nonce>__`,
+ * see [PluginSecrets]) for a name in [secretNames] -- the manifest's declared ones -- so a module-level
+ * `const KEY = kino.secret("apiKey")` loads here exactly as it does in the real runtime. Never a value:
+ * the probe opens no seal. An undeclared name answers null ("not declared"), as the runtime does.
+ */
+open class ProbeHost(secretNames: Set<String> = emptySet()) : PluginHost {
+    private val nonce = PluginSecrets.randomNonce()
+    private val markers: Map<String, String> = secretNames.associateWith { "__kinoSecret_${it}_${nonce}__" }
+
+    override fun secret(name: String): String? = markers[name]
     override suspend fun fetch(requestJson: String): String = throw IOException("el plugin no puede usar la red al cargarse")
     override fun select(html: String, css: String): String = PluginHtml.selectJson(html, css)
     override fun storageGet(key: String): String? = null
@@ -118,6 +128,9 @@ object ProbePluginHost : PluginHost {
     override fun storageRemove(key: String) = Unit
     override fun log(level: String, message: String) = Unit
 }
+
+/** [ProbeHost] for a plugin that declares no secrets. */
+object ProbePluginHost : ProbeHost()
 
 /**
  * Install and update flow from the spec: fetch + validate the manifest, (consent happens in the
@@ -128,7 +141,8 @@ object ProbePluginHost : PluginHost {
 class PluginInstaller(
     internal val store: PluginStore,
     private val fetcher: PluginFetcher,
-    private val probe: suspend (script: String) -> Set<String>,
+    /** Loads a script in a throwaway sandbox ([ProbeHost] answering the manifest's secret names) and returns its exports. */
+    private val probe: suspend (script: String, secretNames: Set<String>) -> Set<String>,
     private val clock: () -> Long = System::currentTimeMillis,
     /** [PluginSettings.PERMISSIONS]; tests pass their own (SDK v1 has none, so nothing else can reach this). */
     private val knownPermissions: Set<String> = PluginSettings.PERMISSIONS,
@@ -174,7 +188,7 @@ class PluginInstaller(
     internal suspend fun commit(preview: InstallPreview, script: ByteArray, icon: ByteArray?): InstalledRecord {
         val m = preview.manifest
         val exports = try {
-            probe(script.toString(Charsets.UTF_8))
+            probe(script.toString(Charsets.UTF_8), m.secrets.keys)
         } catch (e: PluginException) {
             reportInstall(preview, "probe", raw = e.message)
             throw InstallException("El plugin no carga: ${e.message}")

@@ -28,7 +28,7 @@ class PluginUpdateCoordinatorTest {
         install(store, "fromnuvio", "owner/nuvio-repo", nuvioRepo = "owner/nuvio-repo", nuvioScraperId = "fakesrc")
 
         var kinoFetchCalls = 0
-        val kino = PluginInstaller(store, PluginFetcher { _, _ -> kinoFetchCalls++; throw FileNotFoundException("no update host in this test") }, probe = { emptySet() })
+        val kino = PluginInstaller(store, PluginFetcher { _, _ -> kinoFetchCalls++; throw FileNotFoundException("no update host in this test") }, probe = { _, _ -> emptySet() })
         var nuvioFetchCalls = 0
         val nuvio = NuvioPluginInstaller(kino, PluginFetcher { _, _ -> nuvioFetchCalls++; throw FileNotFoundException("no update host in this test") }, tmdbApiKey = "k")
 
@@ -62,7 +62,7 @@ class PluginUpdateCoordinatorTest {
         // lastUpdateCheckAt using ITS OWN clock, not the coordinator's -- in production both are
         // System::currentTimeMillis so they naturally agree, but a test using a fake clock for one
         // and real wall-clock time for the other would make "due" comparisons meaningless.
-        val kino = PluginInstaller(store, PluginFetcher { _, _ -> kinoFetchCalls++; throw FileNotFoundException("offline") }, probe = { emptySet() }, clock = { now })
+        val kino = PluginInstaller(store, PluginFetcher { _, _ -> kinoFetchCalls++; throw FileNotFoundException("offline") }, probe = { _, _ -> emptySet() }, clock = { now })
         var nuvioFetchCalls = 0
         val nuvio = NuvioPluginInstaller(kino, PluginFetcher { _, _ -> nuvioFetchCalls++; throw FileNotFoundException("offline") }, tmdbApiKey = "k")
 

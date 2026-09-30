@@ -136,7 +136,7 @@ class PluginCrashSentinelTest {
         val installer = PluginInstaller(
             store,
             PluginFetcher { url, _ -> files.getValue(url) },
-            probe = { script -> PluginRuntime.open("probe", script, ProbePluginHost, PluginEnv(appVersion = "1")).let { rt -> rt.exports.also { rt.close() } } },
+            probe = { script, _ -> PluginRuntime.open("probe", script, ProbePluginHost, PluginEnv(appVersion = "1")).let { rt -> rt.exports.also { rt.close() } } },
         )
         installer.install(installer.preview("o/r"))
         assertFalse(marker("pa").exists())

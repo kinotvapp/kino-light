@@ -335,7 +335,7 @@ class PluginsViewModelTest {
         val pluginInstaller = PluginInstaller(
             store,
             PluginFetcher { url, _ -> throw FileNotFoundException(url) },
-            probe = { error("not used by previewRepo/previewScraper") },
+            probe = { _, _ -> error("not used by previewRepo/previewScraper") },
         )
         return NuvioPluginInstaller(pluginInstaller, PluginFetcher { url, _ -> files[url]?.toByteArray() ?: throw FileNotFoundException(url) }, tmdbApiKey = "test-key")
     }

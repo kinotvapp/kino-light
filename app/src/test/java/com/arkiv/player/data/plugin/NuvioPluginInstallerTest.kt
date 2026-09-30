@@ -36,7 +36,7 @@ class NuvioPluginInstallerTest {
         val files = mapOf(
             "https://raw.githubusercontent.com/owner/nuvio-repo/HEAD/kino-plugin.json" to "not json", // provokes the fallback path
         )
-        installer = PluginInstaller(store, fetcher(files), probe = { script ->
+        installer = PluginInstaller(store, fetcher(files), probe = { script, _ ->
             val runtime = PluginRuntime.open("probe", script, ProbePluginHost, PluginEnv(appVersion = "1.0"))
             try { runtime.exports } finally { runtime.close() }
         })

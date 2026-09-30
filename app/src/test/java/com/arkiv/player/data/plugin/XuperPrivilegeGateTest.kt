@@ -69,7 +69,7 @@ class XuperPrivilegeGateTest {
             if (bytes.size > max) throw IOException("archivo demasiado grande")
             bytes
         }
-        val installer = PluginInstaller(store, fetcher, probe = { setOf("resolve", "home") })
+        val installer = PluginInstaller(store, fetcher, probe = { _, _ -> setOf("resolve", "home") })
         installer.install(installer.preview("$owner/$repo"))
 
         val registry = PluginRegistry(store)
