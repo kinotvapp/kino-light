@@ -472,6 +472,9 @@ class AppGraph(context: Context) {
             .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
             // raw.githubusercontent.com (install, updates, catalog art) resolves like every other host.
             .dns(com.arkiv.player.data.net.DohDns)
+            // Never through a system/Wi-Fi proxy: the proxy would resolve the target name itself, and
+            // PluginDns's refusal of names that resolve into the LAN would never run.
+            .proxy(java.net.Proxy.NO_PROXY)
             .build()
     }
 

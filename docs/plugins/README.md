@@ -928,16 +928,19 @@ seconds of your call's time. Ask for the form the content is.
   URL on a declared host fails too, unless you declared that host `{ "host": "…", "insecureHttp": true }`
   (apiVersion 2, [section 3](#declaring-an-insecure-host-apiversion-2)). An IP address or a local name (`localhost`, `.local`, …) is always
   refused unless the person typed it. Kino also refuses a declared name that resolves to an address
-  inside the person's own network (loopback, private, link-local, carrier-grade NAT, multicast).
+  inside the person's own network (loopback, private, link-local, carrier-grade NAT, multicast, and
+  the IPv6 prefixes that embed one), and never sends your traffic through a proxy set on the device.
 - **Redirects** (301, 302, 303, 307, 308) are followed by Kino, up to 10 hops; each hop is checked
-  and counted as a request. A 303, or a 301/302 after a POST, turns into a GET without a body. With
+  and counted as a request -- a hop Kino refuses (or asks the person about) counts too. A 303, or a 301/302 after a POST, turns into a GET without a body. With
   `redirect: "manual"` you get the 3xx answer instead (a login form usually answers 302 on success).
 - **A host you forgot may be asked about, during `resolve` and `episodes` only.** When one of those
   calls fetches an `https` host you did not declare (a redirect hop included), Kino asks the person
   ("Quiere conectarse por primera vez a `<host>`. ¿Permitir?"). Your call's time limit stops while
   they decide, and the fetch goes on after "Permitir"; "Rechazar" or Back fails it as
   `host_not_allowed` and is remembered. The question comes down unanswered, with nothing remembered,
-  if your call ends first (it failed, timed out, or the person left). `search`, `home`, `browse`, the
+  if your call ends first (it failed, timed out, or the person left). One call asks about at most 3
+  hosts, and nothing more once the person rejects one in it: after that, every other undeclared host
+  of that call just fails as `host_not_allowed`. `search`, `home`, `browse`, the
   live lists, a download and a call that is already over never ask: the fetch just fails as
   `host_not_allowed`. Don't rely on it: declare your hosts.
 - **A non-2xx answer does not throw**: check `r.ok`. Everything else that goes wrong throws an error
@@ -955,7 +958,8 @@ seconds of your call's time. Ask for the form the content is.
 
 - **Limits:** 15 s per request by default (30 s at most), a body of at most 5 MB (decoded with the
   charset of its `Content-Type`, UTF-8 by default), and at most 60 requests in one call to your
-  plugin, redirect hops included.
+  plugin, redirect hops and refused hops included (a plugin Kino converted from a Nuvio scraper
+  gets 250). At most 6 of your fetches run at the same time; the rest wait their turn.
 - **Headers you set** are sent as given, except `Host`, `Content-Length`, `Transfer-Encoding`,
   `Connection`, `Cookie2` and `Accept-Encoding` (Kino asks for gzip itself and always hands you the
   body decompressed; a copied browser `Accept-Encoding` would get you compressed bytes instead). Unless you set `User-Agent`, Kino sends `Kino/<version> (plugin <id>)`.
@@ -1164,7 +1168,7 @@ does anything with season numbers or ordering: how a backend spells "season 2" i
 | Loading the module (its top level) | 10 s |
 | Idle sandbox | closed after 5 minutes without calls |
 | Consecutive timeouts | 3 in a row and Kino disables the plugin ("No responde") |
-| `kino.fetch` | https only (or the person's own server as typed, or `http` on a host declared `insecureHttp`); 15 s default, 30 s maximum; response body at most 5 MB; the request (URL, headers and body) at most 1,048,576 characters; at most 60 requests per call; at most 10 redirects per request |
+| `kino.fetch` | https only (or the person's own server as typed, or `http` on a host declared `insecureHttp`); 15 s default, 30 s maximum; response body at most 5 MB; the request (URL, headers and body) at most 1,048,576 characters; at most 60 requests per call, every hop counted, refused ones included (250 for a plugin converted from a Nuvio scraper); at most 6 fetches in flight at once; at most 3 host questions per call; at most 10 redirects per request |
 | Cookies | 50 per domain, 64 KB in total per plugin |
 | `kino.storage` | 256 KB per plugin; an entry's optional `ttlMs` is 1..2,592,000,000 ms (30 days) |
 | `kino.sleep` | 0 to 5,000 ms per call |

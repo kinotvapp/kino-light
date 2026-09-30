@@ -28,7 +28,7 @@ class PluginDnsTest {
     @Test fun `CGNAT, this-network, multicast and NAT64 answers are refused`() {
         listOf(
             ip(100, 64, 0, 1), ip(100, 127, 255, 254), ip(0, 1, 2, 3), ip(224, 0, 0, 251), ip(239, 255, 255, 250),
-            v6("ff02::1"), v6("64:ff9b::c0a8:101"), v6("fd00::1"), v6("fe80::1"), v6("::1"),
+            v6("ff02::1"), v6("64:ff9b::c0a8:101"), v6("64:ff9b:1::c0a8:101"), v6("64:ff9b:1:ffff::a00:1"), v6("fd00::1"), v6("fe80::1"), v6("::1"),
         ).forEach { a -> assertThrows(a.toString(), UnknownHostException::class.java) { dns(a).lookup("x") } }
     }
 
@@ -43,7 +43,7 @@ class PluginDnsTest {
     }
 
     @Test fun `the edges of CGNAT and NAT64 stay public`() {
-        listOf(ip(100, 63, 255, 255), ip(100, 128, 0, 1), v6("64:ff9c::1"), v6("2606:4700::1111"))
+        listOf(ip(100, 63, 255, 255), ip(100, 128, 0, 1), v6("64:ff9c::1"), v6("64:ff9b:2::1"), v6("2606:4700::1111"))
             .forEach { a -> assertEquals(a.toString(), listOf(a), dns(a).lookup("x")) }
     }
 

@@ -153,7 +153,7 @@ object PluginHostGate {
 /**
  * Refuses a declared name that resolves into the local network: loopback, RFC 1918, link-local,
  * "this network" 0.0.0.0/8, carrier-grade NAT 100.64.0.0/10, multicast, reserved 240.0.0.0/4
- * (with the broadcast address), IPv6 unique-local, and NAT64 64:ff9b::/96, 6to4 2002::/16 and
+ * (with the broadcast address), IPv6 unique-local, and NAT64 64:ff9b::/96 (and its local-use 64:ff9b:1::/48), 6to4 2002::/16 and
  * Teredo 2001::/32 (which embed an IPv4 address, private ones included). A public-looking
  * domain must not become a way into the home LAN.
  *
@@ -183,7 +183,7 @@ class PluginDns(
         }
         val b = a.address.map { it.toInt() and 0xFF }
         return if (a is Inet6Address) {
-            (b[0] and 0xFE) == 0xFC || b.take(12) == NAT64_PREFIX ||
+            (b[0] and 0xFE) == 0xFC || b.take(12) == NAT64_PREFIX || b.take(6) == NAT64_LOCAL_PREFIX ||
                 // 6to4 2002::/16 and Teredo 2001::/32 embed an IPv4 address, private ones included.
                 (b[0] == 0x20 && b[1] == 0x02) || (b[0] == 0x20 && b[1] == 0x01 && b[2] == 0 && b[3] == 0)
         } else {
@@ -196,6 +196,8 @@ class PluginDns(
 
     private companion object {
         val NAT64_PREFIX = listOf(0x00, 0x64, 0xFF, 0x9B, 0, 0, 0, 0, 0, 0, 0, 0)
+        /** RFC 8215's local-use NAT64 prefix 64:ff9b:1::/48: a local translator may map it onto private IPv4. */
+        val NAT64_LOCAL_PREFIX = listOf(0x00, 0x64, 0xFF, 0x9B, 0x00, 0x01)
     }
 }
 
