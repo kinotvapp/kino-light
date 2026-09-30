@@ -1,5 +1,6 @@
 package com.arkiv.player.ui.tv
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
@@ -61,7 +62,6 @@ import com.arkiv.player.ui.plugin.CatalogAction
 import com.arkiv.player.ui.plugin.CatalogRow
 import com.arkiv.player.ui.plugin.CatalogUiState
 import com.arkiv.player.ui.plugin.CommunityUiState
-import com.arkiv.player.ui.plugin.NuvioScraperPickerDialog
 import com.arkiv.player.ui.plugin.PluginConfigDialog
 import com.arkiv.player.ui.plugin.PluginConsentDialog
 import com.arkiv.player.ui.plugin.PluginUninstallDialog
@@ -129,25 +129,13 @@ private val FULL_WIDTH: LazyGridItemSpanScope.() -> GridItemSpan = { GridItemSpa
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun TvPluginsContent(
+    vm: PluginsViewModel,
+    addRequested: Boolean,
+    onAddRequestedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
     entryFocus: FocusRequester? = null,
     upFocus: FocusRequester? = null,
 ) {
-    val graph = rememberGraph()
-    val vm: PluginsViewModel = viewModel(
-        key = "plugins",
-        factory = viewModelFactory {
-            initializer {
-                PluginsViewModel(
-                    graph.pluginAdmin,
-                    catalogProvider = graph.pluginCatalog,
-                    artProvider = graph.catalogArt,
-                    discovery = graph.pluginDiscovery,
-                    nuvioPluginInstaller = graph.nuvioPluginInstaller,
-                )
-            }
-        },
-    )
     val plugins by vm.plugins.collectAsStateWithLifecycle()
     val state by vm.state.collectAsStateWithLifecycle()
     val catalog by vm.catalog.collectAsStateWithLifecycle()
@@ -157,7 +145,6 @@ internal fun TvPluginsContent(
     val rows = legacyFirst(catalog.rows)
 
     var tab by rememberSaveable { mutableStateOf(PluginsTab.RECOMMENDED) }
-    var addRequested by rememberSaveable { mutableStateOf(false) }
     val dialogVisible = addModalVisible(addRequested, state)
 
     // The places focus is sent to. Each tab chip has ITS OWN requester ([tabFocus], for good: one that moved
@@ -196,6 +183,9 @@ internal fun TvPluginsContent(
         }
     }
 
+    // The Nuvio picker (when open) and the consent/Configurar/uninstall dialogs are the CALLER's job now
+    // ([TvPluginsHost]): it can show the picker as its own full screen, never nested in this content's own
+    // container (the earlier double-inset bug). This function only ever draws the tabs.
     Column(modifier = modifier) {
         // Above the tabs, not inside a list: what an install or an add answers must be seen wherever the
         // list is scrolled to and on either tab. A message about one installed plugin shows on its own row, and
@@ -230,7 +220,7 @@ internal fun TvPluginsContent(
                 // The dialog opens empty: what an earlier action said is not its news, and neither is an address
                 // a confirmed install left behind when it failed. (Changing the address also drops the message.)
                 vm.onAddressChange("")
-                addRequested = true
+                onAddRequestedChange(true)
             },
         )
         // The scaled card or action has to be fully visible when it takes focus, so the scroll keeps a margin around it.
@@ -275,12 +265,57 @@ internal fun TvPluginsContent(
             onDismiss = {
                 // Cancelar and Back forget what was typed and what the last try said: a TV keyboard types at the
                 // end of the field, so a dialog that reopened with the old text made a doubled repository.
-                addRequested = false
+                onAddRequestedChange(false)
                 vm.onAddressChange(addressAfterDialogDismissed())
             },
         )
     }
-    state.nuvioPicker?.let { NuvioScraperPickerDialog(it, onPick = vm::pickNuvioScraper, onCancel = vm::cancelNuvioPicker) }
+}
+
+/**
+ * Hosts the Plugins view model for both TV entry points ([TvPluginsRoute] and [TvSettingsScreen]'s tab):
+ * the full-screen Nuvio picker when [com.arkiv.player.ui.plugin.PluginsUiState.nuvioPicker] is open, drawn
+ * as its OWN screen (never nested inside [chrome]'s own padded container -- the earlier double-inset bug:
+ * the picker used to draw inside [TvPluginsContent]'s host, which already padded the "Plugins"/"Ajustes"
+ * title, and then added its own padding on top); [chrome] otherwise, with `vm` and the hoisted
+ * `addRequested` flag (see [TvPluginsContent]'s KDoc for why it can't just live inside that composable:
+ * it has to survive being unmounted while the picker, not it, is on screen).
+ *
+ * The consent, Configurar and uninstall-confirmation dialogs are drawn here, OUTSIDE both branches: any of
+ * the three can open from the picker (a fresh Nuvio install's required settings, an update's consent) or
+ * from the ordinary tabs (Instalados), so neither branch alone is the right place for them.
+ */
+@Composable
+internal fun TvPluginsHost(chrome: @Composable (vm: PluginsViewModel, addRequested: Boolean, onAddRequestedChange: (Boolean) -> Unit) -> Unit) {
+    val vm = rememberPluginsViewModel()
+    val state by vm.state.collectAsStateWithLifecycle()
+    var addRequested by rememberSaveable { mutableStateOf(false) }
+    val picker = state.nuvioPicker
+    if (picker != null) {
+        val plugins by vm.plugins.collectAsStateWithLifecycle()
+        // Replaces the Plugins screen entirely: the full-screen picker (Task: "see the scrapers properly"),
+        // not a dialog stacked over it. It stays up through the consent sheet below (install or cancel), so
+        // several scrapers of the same repo can be added in a row without retyping the address.
+        TvNuvioScraperPickerScreen(
+            picker = picker,
+            installed = plugins,
+            busy = state.busy,
+            message = state.message,
+            consentOpen = state.consent != null || state.configuring != null,
+            onPick = vm::pickNuvioScraper,
+            onBack = {
+                // Leaves all the way to the Plugins screen, not back to the "Agregar" dialog that opened
+                // the picker: without this, an "Agregar" that never reached a confirmed/cancelled consent
+                // (addRequested still true) left addModalVisible true once nuvioPicker cleared, and Back
+                // on the picker reopened the dialog with the old address instead of leaving.
+                addRequested = false
+                vm.onAddressChange(addressAfterDialogDismissed())
+                vm.cancelNuvioPicker()
+            },
+        )
+    } else {
+        chrome(vm, addRequested) { addRequested = it }
+    }
     state.consent?.let {
         PluginConsentDialog(
             it,
@@ -296,6 +331,26 @@ internal fun TvPluginsContent(
     }
     state.confirmUninstall?.let { PluginUninstallDialog(it, onConfirm = vm::confirmUninstall, onCancel = vm::cancelUninstall) }
     state.configuring?.let { PluginConfigDialog(it, isTv = true, vm = vm) }
+}
+
+/** The Plugins view model both TV entry points share ([TvPluginsHost]), scoped by the same key so either finds the same instance. */
+@Composable
+private fun rememberPluginsViewModel(): PluginsViewModel {
+    val graph = rememberGraph()
+    return viewModel(
+        key = "plugins",
+        factory = viewModelFactory {
+            initializer {
+                PluginsViewModel(
+                    graph.pluginAdmin,
+                    catalogProvider = graph.pluginCatalog,
+                    artProvider = graph.catalogArt,
+                    discovery = graph.pluginDiscovery,
+                    nuvioPluginInstaller = graph.nuvioPluginInstaller,
+                )
+            }
+        },
+    )
 }
 
 /**
@@ -692,3 +747,34 @@ internal class KeepMarginBringIntoView(private val marginPx: Float) : BringIntoV
 @OptIn(ExperimentalFoundationApi::class)
 internal fun scrollDistanceWithMargin(offset: Float, size: Float, containerSize: Float, margin: Float): Float =
     MinimalScrollBringIntoView.calculateScrollDistance(offset - margin, size + 2 * margin, containerSize)
+
+/**
+ * The Plugins screen as its own TV route (`"plugins"`, reached from the "Plugins" button of the Home top bar --
+ * see [TvHomeScreen]), not just the "Plugins" tab inside [TvSettingsScreen]: same title chrome and horizontal
+ * padding as [TvSettingsScreen] (64/32 dp), so it reads as a screen of the same family, but no tab row above
+ * it -- [TvPluginsContent] gets neither an [entryFocus] nor an [upFocus] to route through, since there is
+ * nothing above it here. Initial focus lands on the content's own header (its selected tab chip); [onBack]
+ * (Back) leaves the route -- [ArkivTvRoot] pops back to Home, which puts focus back on the "Plugins" button.
+ * [onBack] only fires while this chrome is showing: the Nuvio picker ([TvPluginsHost]) takes over the whole
+ * screen and handles its own Back (returns to this chrome, not to Home) while it is open.
+ */
+@Composable
+internal fun TvPluginsRoute(onBack: () -> Unit) {
+    TvPluginsHost { vm, addRequested, onAddRequestedChange ->
+        BackHandler(onBack = onBack)
+        val entryFocus = remember { FocusRequester() }
+        LaunchedEffect(Unit) {
+            repeat(20) {
+                if (runCatching { entryFocus.requestFocus() }.isSuccess) return@LaunchedEffect
+                delay(50)
+            }
+        }
+        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 64.dp, vertical = 32.dp)) {
+            Text("Plugins", style = MaterialTheme.typography.headlineMedium, color = Color.White)
+            TvPluginsContent(
+                vm = vm, addRequested = addRequested, onAddRequestedChange = onAddRequestedChange,
+                modifier = Modifier.weight(1f).fillMaxWidth().padding(top = 16.dp), entryFocus = entryFocus,
+            )
+        }
+    }
+}

@@ -3,6 +3,7 @@ package com.arkiv.player.ui.tv
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -117,39 +118,28 @@ fun TvSettingsScreen() {
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize().padding(horizontal = 64.dp, vertical = 32.dp)) {
-        Text("Ajustes", style = MaterialTheme.typography.headlineMedium, color = Color.White)
-        LazyRow(
-            modifier = Modifier.fillMaxWidth(),
-            // Room for the zoom and the focus border: without this the focused tab gets clipped
-            // against its own row's bounds.
-            contentPadding = PaddingValues(vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            items(TvSettingsTab.entries.size) { i ->
-                val t = TvSettingsTab.entries[i]
-                TvTab(
-                    label = t.label,
-                    selected = t == tab,
-                    onClick = { tab = t },
-                    modifier = (if (t == tab) Modifier.focusRequester(selectedTabFocus) else Modifier)
-                        .dpadDownTo(pluginsEntryFocus.takeIf { tab == TvSettingsTab.PLUGINS }),
+    // The Plugins tab's picker (when open) needs the WHOLE screen, not the pane the tab row leaves: drawn as
+    // its own full screen ([TvPluginsHost]), never nested inside this chrome's own padded container (that
+    // double inset was measured and fixed -- see [TvNuvioScraperPickerScreen]'s KDoc). Every other tab, and
+    // Plugins itself while no picker is open, keeps the tab row above it ([TvSettingsChrome]).
+    if (tab == TvSettingsTab.PLUGINS) {
+        TvPluginsHost { vm, addRequested, onAddRequestedChange ->
+            TvSettingsChrome(tab = tab, onSelect = { tab = it }, selectedTabFocus = selectedTabFocus, pluginsEntryFocus = pluginsEntryFocus) {
+                // The Plugins screen itself, not a section of it: a card grid of its own, in the whole width of the pane
+                // and the height the tab row leaves (a lazy grid inside the scroll below would be measured with an
+                // infinite height and crash). Focus is NOT placed on a card when it opens: the person is walking
+                // Ajustes' tab row. Down from that row enters the content's header, Up from it comes back here to the
+                // selected tab. Back is not handled: it closes Ajustes, as on every other tab.
+                TvPluginsContent(
+                    vm = vm, addRequested = addRequested, onAddRequestedChange = onAddRequestedChange,
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    entryFocus = pluginsEntryFocus,
+                    upFocus = selectedTabFocus,
                 )
             }
         }
-
-        if (tab == TvSettingsTab.PLUGINS) {
-            // The Plugins screen itself, not a section of it: a card grid of its own, in the whole width of the pane
-            // and the height the tab row leaves (a lazy grid inside the scroll below would be measured with an
-            // infinite height and crash). Focus is NOT placed on a card when it opens: the person is walking
-            // Ajustes' tab row. Down from that row enters the content's header, Up from it comes back here to the
-            // selected tab. Back is not handled: it closes Ajustes, as on every other tab.
-            TvPluginsContent(
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                entryFocus = pluginsEntryFocus,
-                upFocus = selectedTabFocus,
-            )
-        } else {
+    } else {
+        TvSettingsChrome(tab = tab, onSelect = { tab = it }, selectedTabFocus = selectedTabFocus, pluginsEntryFocus = pluginsEntryFocus) {
             Column(
                 modifier = Modifier.fillMaxSize().verticalScroll(scroll).padding(top = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -167,5 +157,42 @@ fun TvSettingsScreen() {
                 }
             }
         }
+    }
+}
+
+/**
+ * The "Ajustes" title, horizontal padding and tab row shared by every tab's content ([content]): extracted
+ * so the Plugins tab can wrap [content] in [TvPluginsHost] (needed for the Nuvio picker's focus/state) while
+ * every other tab skips it, without duplicating this chrome for each.
+ */
+@Composable
+private fun TvSettingsChrome(
+    tab: TvSettingsTab,
+    onSelect: (TvSettingsTab) -> Unit,
+    selectedTabFocus: FocusRequester,
+    pluginsEntryFocus: FocusRequester,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxSize().padding(horizontal = 64.dp, vertical = 32.dp)) {
+        Text("Ajustes", style = MaterialTheme.typography.headlineMedium, color = Color.White)
+        LazyRow(
+            modifier = Modifier.fillMaxWidth(),
+            // Room for the zoom and the focus border: without this the focused tab gets clipped
+            // against its own row's bounds.
+            contentPadding = PaddingValues(vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            items(TvSettingsTab.entries.size) { i ->
+                val t = TvSettingsTab.entries[i]
+                TvTab(
+                    label = t.label,
+                    selected = t == tab,
+                    onClick = { onSelect(t) },
+                    modifier = (if (t == tab) Modifier.focusRequester(selectedTabFocus) else Modifier)
+                        .dpadDownTo(pluginsEntryFocus.takeIf { tab == TvSettingsTab.PLUGINS }),
+                )
+            }
+        }
+        content()
     }
 }
