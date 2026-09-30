@@ -137,12 +137,13 @@ function pluginSecretsFor(manifest, secretsFile) {
     for (const [name, m] of Object.entries(markers)) if (out.includes(m)) out = out.split(m).join(encodeSealedValue(plainOf(name), encoding));
     return out;
   }
-  function redact(text) {
+  /** Every opened value, in every form, replaced by [placeholderFor](name); [text] unchanged when nothing opened is found. */
+  function redactWith(text, placeholderFor) {
     if (typeof text !== "string") return text;
     const forms = new Map();
     for (const [name, plain] of Object.entries(opened)) {
       if (!plain) continue;
-      for (const f of echoForms(plain)) if (!forms.has(f)) forms.set(f, markers[name]);
+      for (const f of echoForms(plain)) if (!forms.has(f)) forms.set(f, placeholderFor(name));
     }
     if (forms.size === 0) return text;
     let found = false;
@@ -151,7 +152,27 @@ function pluginSecretsFor(manifest, secretsFile) {
     const pattern = new RegExp([...forms.keys()].sort((a, b) => b.length - a.length).map(escapeRegExp).join("|"), "g");
     return text.replace(pattern, (m) => forms.get(m));
   }
-  return { marker, containsMarker, isMarker, substitute, redact, sealedHosts: manifest.hosts || [] };
+  const redact = (text) => redactWith(text, (name) => markers[name]);
+  // A stable, nonce-free placeholder for [record]/[replay]'s tape (spec §6): the marker itself is
+  // random per runtime, so a tape keyed or written with it could never match a later run (a fresh
+  // `--replay` process gets a different nonce than the `--record` one that made the tape) -- and a
+  // record-time nonce baked into a committed fixtures.json would be a small, pointless leak of its
+  // own. Keyed by name only, so two runtimes that open the same secret from the same
+  // .kino-secrets.json always agree on it. `\0` can't appear in a marker, a plugin's own text, or
+  // anything this kit reads as JSON, so it never collides with real content.
+  const canonicalToken = (name) => `\u0000kino-secret:${name}\u0000`;
+  const redactToCanonical = (text) => redactWith(text, canonicalToken);
+  /** The reverse of [redactToCanonical]'s placeholder: THIS runtime's own marker, for a taped answer read back on replay. */
+  function fromCanonical(text) {
+    if (typeof text !== "string") return text;
+    let out = text;
+    for (const name of names) {
+      const token = canonicalToken(name);
+      if (out.includes(token)) out = out.split(token).join(markers[name]);
+    }
+    return out;
+  }
+  return { marker, containsMarker, isMarker, substitute, redact, redactToCanonical, fromCanonical, sealedHosts: manifest.hosts || [] };
 }
 
 const loadJson = (file, fallback) => (file && existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : fallback);
@@ -317,21 +338,10 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", stora
     const headers = {};
     for (const k of Object.keys(o.headers || {})) headers[k] = String(o.headers[k]);
     let carriesSecret = false;
-    // A form's fields are substituted RAW here, before requestBody's own percent-encoding -- the
-    // same order the app follows (substitute, then let the wire encoding of that context run).
-    let bodyInput = o.body;
-    if (pluginSecrets && bodyInput && typeof bodyInput === "object" && bodyInput.form && typeof bodyInput.form === "object") {
-      const substitutedForm = {};
-      let changed = false;
-      for (const [fk, fv] of Object.entries(bodyInput.form)) {
-        let key = String(fk), val = String(fv);
-        if (pluginSecrets.containsMarker(key)) { key = pluginSecrets.substitute(key); changed = true; }
-        if (pluginSecrets.containsMarker(val)) { val = pluginSecrets.substitute(val); changed = true; }
-        substitutedForm[key] = val;
-      }
-      if (changed) { carriesSecret = true; bodyInput = { ...bodyInput, form: substitutedForm }; }
-    }
-    let body = requestBody(bodyInput, headers);
+    // The size cap is checked BEFORE any substitution, on every body kind alike -- exactly like the
+    // app, where the prelude computes it on the marker-laden request before it ever crosses to the
+    // Kotlin side that substitutes.
+    let body = requestBody(o.body, headers);
     const size = String(url).length + JSON.stringify(headers).length + (body ? (typeof body === "string" ? body.length : body.length * 2) : 0);
     if (size > f.maxRequestChars) throw kinoError("too_large", `solicitud demasiado grande (más de ${kb(f.maxRequestChars)})`);
     let current;
@@ -349,11 +359,21 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", stora
         }
         headers[name] = substituted;
       }
-      // The body: JSON-string-escaped inside a JSON body (it sits inside an already-serialized JSON
-      // string), raw in a text body (a form body was already substituted above, before encoding).
-      if (typeof body === "string" && pluginSecrets.containsMarker(body)) {
+      // The body: a form's fields are substituted RAW at the object level and re-encoded (so a
+      // plain value with a "&", "=" or space is percent-encoded like any other form value, never
+      // spliced unescaped into the wire body); a JSON body is JSON-string-escaped in its already-
+      // serialized text; a text body is substituted raw.
+      const isForm = o.body && typeof o.body === "object" && o.body.form && typeof o.body.form === "object";
+      if (isForm && pluginSecrets.containsMarker(body)) {
         carriesSecret = true;
-        const isJson = bodyInput && typeof bodyInput === "object" && "json" in bodyInput;
+        const substitutedForm = {};
+        for (const [fk, fv] of Object.entries(o.body.form)) {
+          substitutedForm[pluginSecrets.substitute(String(fk))] = pluginSecrets.substitute(String(fv));
+        }
+        body = requestBody({ ...o.body, form: substitutedForm }, headers);
+      } else if (typeof body === "string" && pluginSecrets.containsMarker(body)) {
+        carriesSecret = true;
+        const isJson = o.body && typeof o.body === "object" && "json" in o.body;
         body = pluginSecrets.substitute(body, isJson ? "json" : "raw");
       }
       // The URL: only the path and the query (never the scheme, userinfo, host, port or fragment --
@@ -372,13 +392,31 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", stora
       if (!Object.keys(headers).some((k) => k.toLowerCase() === "user-agent")) headers["User-Agent"] = `Kino/${appVersion} (plugin ${manifest.id})`;
       const sendHeaders = { ...headers };
       if (o.cookies !== false) { const c = cookieHeader(current); if (c) sendHeaders.Cookie = c; }
-      const key = JSON.stringify([method, current.toString(), typeof body === "string" ? body : body ? body.toString("base64") : null]);
+      // A tape (--record/--replay) is keyed and stored in a nonce-free, per-name CANONICAL form,
+      // never the plain value and never the runtime's own random marker: [record, then replay
+      // offline]'s author commits fixtures.json, so it must never carry a secret to disk -- and a
+      // marker's nonce is random per runtime, so a plain marker in the key would never match again
+      // once a fresh `--replay` process (a different nonce than the `--record` one) looked it up.
+      // redactToCanonical/fromCanonical are no-ops without pluginSecrets, so an ordinary plugin's
+      // key and tape are unchanged.
+      const canon = (text) => (pluginSecrets ? pluginSecrets.redactToCanonical(text) : text);
+      const uncanon = (text) => (pluginSecrets ? pluginSecrets.fromCanonical(text) : text);
+      const rawKey = JSON.stringify([method, current.toString(), typeof body === "string" ? body : body ? body.toString("base64") : null]);
+      const key = canon(rawKey);
       let status, headerList, bytes;
       const taped = tape && replay ? tape.find((t) => t.key === key) : null;
       if (replay) {
-        if (!taped) throw kinoError("network", "--replay: no recorded answer for " + method + " " + current);
+        if (!taped) throw kinoError("network", redact("--replay: no recorded answer for " + method + " " + current));
         ({ status, headers: headerList } = taped);
+        headerList = headerList.map(([k2, v]) => [k2, uncanon(v)]);
         bytes = Buffer.from(taped.body, "base64");
+        if (pluginSecrets) {
+          const asText = bytes.toString("utf8");
+          if (Buffer.from(asText, "utf8").equals(bytes)) {
+            const restored = uncanon(asText);
+            if (restored !== asText) bytes = Buffer.from(restored, "utf8");
+          }
+        }
       } else {
         const requested = Math.trunc(Number(o.timeoutMs));
         const timeoutMs = Number.isFinite(requested) && requested > 0 ? Math.min(requested, f.maxTimeoutMs) : f.defaultTimeoutMs;
@@ -401,7 +439,23 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", stora
         status = r.status;
         headerList = [...r.headers].map(([k, v]) => [k.toLowerCase(), v]);
         if (o.cookies !== false) storeCookies(current, r.headers);
-        if (tape) tape.push({ key, status, headers: headerList.filter(([k]) => !k.startsWith("set-cookie")), body: bytes.toString("base64") });
+        if (tape) {
+          // The recorded answer, canonicalized too: a server that echoes the secret back (an echo
+          // endpoint, a test fixture) must never write its plain value -- or a marker some OTHER
+          // runtime will never recognize -- into the tape file.
+          const storedHeaders = headerList.filter(([k]) => !k.startsWith("set-cookie")).map(([k, v]) => [k, canon(v)]);
+          let storedBody = bytes.toString("base64");
+          if (pluginSecrets) {
+            const asText = bytes.toString("utf8");
+            // Only rewrite a body that round-trips as UTF-8 text -- true binary bytes are left as
+            // recorded (spec: binary bodies are not scanned), and can't hold a text-form value.
+            if (Buffer.from(asText, "utf8").equals(bytes)) {
+              const canonText = canon(asText);
+              if (canonText !== asText) storedBody = Buffer.from(canonText, "utf8").toString("base64");
+            }
+          }
+          tape.push({ key, status, headers: storedHeaders, body: storedBody });
+        }
       }
       if (bytes.length > f.maxBodyBytes) throw kinoError("too_large", `respuesta demasiado grande (más de ${kb(f.maxBodyBytes)})`);
       const location = headerList.find(([k]) => k === "location");

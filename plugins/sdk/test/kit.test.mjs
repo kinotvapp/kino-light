@@ -1202,6 +1202,66 @@ test("a cookie value equal to an opened secret comes back as its marker", async 
   assert.equal(kino.cookies.get("https://api.example.com/", "sid"), marker);
 });
 
+test("the --replay 'no recorded answer' error redacts a sealed value instead of just cutting it", async () => {
+  const { dir } = withSecretsFile({ apiKey: "SUPER-SECRET-VALUE-12345" });
+  const m = JSON.parse(manifest({ hosts: ["api.example.com"], secrets: { apiKey: "x" } }));
+  const emptyTape = join(dir, "empty-tape.json");
+  writeFileSync(emptyTape, JSON.stringify([]));
+  const { kino } = createKino(m, { secretsFile: join(dir, ".kino-secrets.json"), replay: emptyTape, fetchImpl: () => { throw new Error("must not reach the network"); } });
+  const marker = kino.secret("apiKey");
+  await assert.rejects(
+    kino.fetch(`https://api.example.com/x?k=${marker}`),
+    (e) => e.code === "network" && !e.message.includes("SUPER-SECRET-VALUE-12345") && e.message.includes(marker),
+  );
+});
+
+test("--record never writes a plain secret value (or a random marker another runtime won't recognize) to the tape file, and --replay round-trips", async () => {
+  const { dir } = withSecretsFile({ apiKey: "SUPER-SECRET-VALUE-12345" });
+  const m = JSON.parse(manifest({ hosts: ["api.example.com"], secrets: { apiKey: "x" } }));
+  const secretsFile = join(dir, ".kino-secrets.json");
+  const tape = join(dir, "tape.json");
+  const fetchImpl = async () => new Response(JSON.stringify({ echoed: "SUPER-SECRET-VALUE-12345" }), { status: 200, headers: { "content-type": "application/json", "x-echo": "SUPER-SECRET-VALUE-12345" } });
+
+  const rec = createKino(m, { secretsFile, record: tape, fetchImpl });
+  const recMarker = rec.kino.secret("apiKey");
+  const live = await rec.kino.fetch(`https://api.example.com/v1/items?api_key=${recMarker}`, { headers: { Authorization: "Bearer " + recMarker } });
+  rec.saveTape();
+  assert.equal(live.json().echoed, recMarker);
+  assert.equal(live.headers["x-echo"], recMarker);
+
+  const tapeText = readFileSync(tape, "utf8");
+  assert.ok(!tapeText.includes("SUPER-SECRET-VALUE-12345"), tapeText);
+  assert.ok(!tapeText.includes(Buffer.from("SUPER-SECRET-VALUE-12345", "utf8").toString("base64")), tapeText);
+  // Not even this runtime's own random marker (a fresh --replay process gets a different nonce).
+  assert.ok(!tapeText.includes(recMarker), tapeText);
+  assert.match(tapeText, /kino-secret:apiKey/);
+
+  // A completely separate runtime (its own random nonce) replays the very same tape file offline.
+  const rep = createKino(m, { secretsFile, replay: tape, fetchImpl: () => { throw new Error("replay must not touch the network"); } });
+  const repMarker = rep.kino.secret("apiKey");
+  assert.notEqual(repMarker, recMarker);
+  const again = await rep.kino.fetch(`https://api.example.com/v1/items?api_key=${repMarker}`, { headers: { Authorization: "Bearer " + repMarker } });
+  assert.equal(again.json().echoed, repMarker);
+  assert.equal(again.headers["x-echo"], repMarker);
+});
+
+test("the size cap is checked before substitution for a form body too, like the app's own prelude", async () => {
+  const secretValue = "x".repeat(4096); // the largest a sealed secret's plaintext can ever be
+  const { dir } = withSecretsFile({ apiKey: secretValue });
+  const m = JSON.parse(manifest({ hosts: ["api.example.com"], secrets: { apiKey: "x" } }));
+  const calls = [];
+  const fetchImpl = async (url, init) => { calls.push({ body: init.body }); return new Response("ok"); };
+  const { kino } = createKino(m, { secretsFile: join(dir, ".kino-secrets.json"), fetchImpl });
+  const marker = kino.secret("apiKey");
+  // filler pads the MARKER-laden body to just under the cap; substituting the 4096-byte secret in
+  // for the marker (~38 characters) would push the real, post-substitution body well over it.
+  const filler = "a".repeat(contract.fetch.maxRequestChars - marker.length - 200);
+  await kino.fetch("https://api.example.com/x", { method: "POST", body: { form: { key: marker, filler } } });
+  assert.equal(calls.length, 1);
+  assert.ok(calls[0].body.includes(secretValue));
+  assert.ok(calls[0].body.length > contract.fetch.maxRequestChars, "the real, substituted body IS over the cap");
+});
+
 test("kino.crypto: a sealed key decrypts what that key encrypted", () => {
   const { kino } = sealedKino({ aesKey: "0123456789abcdef" });
   const hexIv = "000102030405060708090a0b0c0d0e0f";
