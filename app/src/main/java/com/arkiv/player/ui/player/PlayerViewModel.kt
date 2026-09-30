@@ -746,6 +746,8 @@ class PlayerViewModel internal constructor(
      * itself against the CDN -- that's [LiveHlsProxy]'s whole reason to exist (see its KDoc).
      */
     private fun openCurrentChannel() {
+        // A zap still settling is superseded by this open (it goes straight through from here).
+        zapSettle.cancel()
         // A plugin open still in flight belongs to the channel zapping just left; loadPlugin may
         // have turned `resolving` on, and nothing else would turn it off.
         pluginOpenJob?.let { if (it.isActive) { it.cancel(); _resolving.value = false } }
@@ -926,9 +928,22 @@ class PlayerViewModel internal constructor(
         }
     }
 
+    /**
+     * A plugin channel's open waits for the zapping to settle ([ZAP_SETTLE_MS] without another zap): the channel card follows every
+     * key at once, but the plugin is asked to resolve only the one the person stopped on. Xuper's channels open at once.
+     */
+    private val zapSettle = SettleDebounce(viewModelScope, ZAP_SETTLE_MS)
+
+    private fun openAfterZap() {
+        val channel = zapping?.current ?: return
+        if (channel.provider == LiveChannelKeys.XUPER) { zapSettle.cancel(); openCurrentChannel(); return }
+        _liveChannel.value = channel
+        zapSettle.run { openCurrentChannel() }
+    }
+
     /** Zapping: next/previous in the list entered with. No effect outside live mode. */
-    fun zapNext() { zapping?.next() ?: return; openCurrentChannel() }
-    fun zapPrevious() { zapping?.previous() ?: return; openCurrentChannel() }
+    fun zapNext() { zapping?.next() ?: return; openAfterZap() }
+    fun zapPrevious() { zapping?.previous() ?: return; openAfterZap() }
 
     /** Consecutive reopens of the current channel with no picture back yet, and which channel they're for. */
     private var liveReopens = 0
@@ -1765,6 +1780,9 @@ class PlayerViewModel internal constructor(
     }
 
     private companion object {
+        /** How long the zapping must be quiet before a plugin channel is opened; see [zapSettle]. */
+        const val ZAP_SETTLE_MS = 350L
+
         /** How many times a cut live stream reopens before warning. See [reopenLiveAfterCut]; one policy with a plugin's channel ([LiveReopenPolicy]). */
         const val MAX_LIVE_REOPENS = LiveReopenPolicy.MAX_REOPENS
 
