@@ -4,6 +4,7 @@ import com.arkiv.player.data.plugin.InstalledPlugin
 import com.arkiv.player.data.plugin.NuvioManifestParser
 import com.arkiv.player.data.plugin.NuvioScraperEntry
 import com.arkiv.player.data.plugin.PluginAddress
+import java.text.Normalizer
 
 /*
  * The pure decisions behind the full-screen Nuvio scraper picker (replaces the old dialog): the type and
@@ -89,9 +90,24 @@ internal fun nuvioScraperMatchesLanguage(scraper: NuvioScraperEntry, bucket: Str
 internal fun defaultNuvioLanguageFilter(scrapers: List<NuvioScraperEntry>): String? =
     "es".takeIf { scrapers.any { s -> s.contentLanguage.any(::nuvioIsSpanishLanguageCode) } }
 
-/** Whether [scraper]'s name matches [query]: a case-insensitive, accent-sensitive substring; blank matches everything. */
+/** Whether [scraper]'s name matches [query]: a case- and accent-insensitive substring ("pelicula" finds "Películas"); blank matches everything. */
 internal fun nuvioScraperMatchesQuery(scraper: NuvioScraperEntry, query: String): Boolean =
-    query.isBlank() || scraper.name.contains(query.trim(), ignoreCase = true)
+    query.isBlank() || withoutMarks(scraper.name).contains(withoutMarks(query.trim()), ignoreCase = true)
+
+private val MARKS = Regex("\\p{Mn}+")
+
+/** [text] with its accents and other combining marks dropped ("Películas" -> "Peliculas"). */
+private fun withoutMarks(text: String): String = MARKS.replace(Normalizer.normalize(text, Normalizer.Form.NFD), "")
+
+/**
+ * "1 fuente" / "3 fuentes": [count] with the noun that agrees with it in Spanish. [plural] defaults to
+ * [singular] + "s", which covers every noun and adjective this picker counts.
+ */
+internal fun spanishCount(count: Int, singular: String, plural: String = singular + "s"): String =
+    "$count ${if (count == 1) singular else plural}"
+
+/** The TV picker's header count: "1 fuente", "12 fuentes". */
+internal fun nuvioPickerSourceCount(scraperCount: Int): String = spanishCount(scraperCount, "fuente")
 
 /** The scrapers the picker's grid shows: every one of [scrapers] matching all three filters, in the manifest's own order. */
 internal fun filterNuvioScrapers(scrapers: List<NuvioScraperEntry>, type: NuvioTypeFilter, language: String?, query: String): List<NuvioScraperEntry> =
@@ -135,8 +151,8 @@ internal fun nuvioPickerRepoName(repoInput: String): String = PluginAddress.pars
  * own GPL-3.0 code.
  */
 internal fun nuvioPickerHeaderLine(scraperCount: Int): String {
-    val noun = if (scraperCount == 1) "scraper" else "scrapers"
-    return "$scraperCount $noun convertidos de Nuvio (código original con licencia GPL-3.0)."
+    val converted = if (scraperCount == 1) "convertido" else "convertidos"
+    return "${spanishCount(scraperCount, "scraper")} $converted de Nuvio (código original con licencia GPL-3.0)."
 }
 
 /** Whether [scraper] can be added right now: installable ([NuvioManifestParser.isInstallable]) and not already installed. */
@@ -163,7 +179,7 @@ internal fun nuvioCardActionLabel(action: NuvioCardAction): String = when (actio
 /** The line a card's meta row shows: language(s), version and author, whichever [scraper] declares, "·"-separated. */
 internal fun nuvioScraperMetaLine(scraper: NuvioScraperEntry): String? {
     val parts = buildList {
-        scraper.contentLanguage.takeIf { it.isNotEmpty() }?.let { codes -> add(codes.joinToString("/") { nuvioLanguageLabel(nuvioLanguageBucket(it)) }) }
+        scraper.contentLanguage.takeIf { it.isNotEmpty() }?.let { codes -> add(codes.map { nuvioLanguageLabel(nuvioLanguageBucket(it)) }.distinct().joinToString("/")) }
         scraper.version?.let { add("v$it") }
         scraper.author?.let { add(it) }
     }

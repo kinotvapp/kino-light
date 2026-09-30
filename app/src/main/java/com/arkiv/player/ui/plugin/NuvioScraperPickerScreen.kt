@@ -75,9 +75,10 @@ internal fun NuvioScraperPickerScreen(
     modifier: Modifier = Modifier,
 ) {
     BackHandler(onBack = onBack)
-    var typeFilter by rememberSaveable { mutableStateOf(NuvioTypeFilter.ALL) }
+    // Keyed on the repo like the language filter: another repo opens on a clean search, not the last one's.
+    var typeFilter by rememberSaveable(picker.repoInput) { mutableStateOf(NuvioTypeFilter.ALL) }
     var languageFilter by rememberSaveable(picker.repoInput) { mutableStateOf(defaultNuvioLanguageFilter(picker.scrapers)) }
-    var query by rememberSaveable { mutableStateOf("") }
+    var query by rememberSaveable(picker.repoInput) { mutableStateOf("") }
 
     val installedIds = remember(picker.repoInput, installed) { nuvioInstalledScraperIds(picker.repoInput, installed) }
     val languages = remember(picker.scrapers) { nuvioLanguageBuckets(picker.scrapers) }

@@ -330,14 +330,21 @@ class PluginsViewModelTest {
      * `previewRepo`/`previewScraper` (only `install`/`checkUpdate` touch them), so they are stubs
      * that fail loudly if that ever changes.
      */
-    private fun nuvioInstaller(files: Map<String, String>): NuvioPluginInstaller {
+    private fun nuvioInstaller(files: Map<String, String>, gate: CompletableDeferred<Unit>? = null): NuvioPluginInstaller {
         val store = PluginStore(File(tmp.root, "plugins"), File(tmp.root, "plugin-data"))
         val pluginInstaller = PluginInstaller(
             store,
             PluginFetcher { url, _ -> throw FileNotFoundException(url) },
             probe = { _, _ -> error("not used by previewRepo/previewScraper") },
         )
-        return NuvioPluginInstaller(pluginInstaller, PluginFetcher { url, _ -> files[url]?.toByteArray() ?: throw FileNotFoundException(url) }, tmdbApiKey = "test-key")
+        return NuvioPluginInstaller(
+            pluginInstaller,
+            PluginFetcher { url, _ ->
+                // [gate] holds back everything but the manifest: a conversion still downloading its script.
+                if (gate != null && !url.endsWith("manifest.json")) gate.await()
+                files[url]?.toByteArray() ?: throw FileNotFoundException(url)
+            },
+        )
     }
 
     @Test fun `a typed address that is a Nuvio provider repo opens the scraper picker, not the normal consent`() {
@@ -489,6 +496,29 @@ class PluginsViewModelTest {
         vm.cancelNuvioPicker()
         assertNull(vm.state.value.nuvioPicker)
         assertNull(vm.state.value.consent)
+    }
+
+    @Test fun `Back while a scraper is still converting cancels it, so no consent sheet pops up later`() {
+        val admin = FakeAdmin()
+        val gate = CompletableDeferred<Unit>()
+        val nuvio = nuvioInstaller(
+            mapOf(
+                "https://raw.githubusercontent.com/owner/nuvio-repo/HEAD/manifest.json" to nuvioManifestJson,
+                "https://raw.githubusercontent.com/owner/nuvio-repo/HEAD/providers/fakesrc.js" to nuvioScraperJs,
+            ),
+            gate,
+        )
+        val vm = PluginsViewModel(admin, io = dispatcher, nuvioPluginInstaller = nuvio)
+        vm.onAddressChange("owner/nuvio-repo")
+        vm.add()
+        vm.pickNuvioScraper("fakesrc")
+        assertTrue(vm.state.value.busy)
+        vm.cancelNuvioPicker()
+        gate.complete(Unit)
+        assertNull(vm.state.value.nuvioPicker)
+        assertNull(vm.state.value.consent)
+        assertFalse(vm.state.value.busy)
+        assertNull(vm.state.value.message)
     }
 
     @Test fun `toggling goes to the admin`() {

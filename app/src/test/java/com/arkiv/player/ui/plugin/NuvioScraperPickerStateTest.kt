@@ -112,7 +112,15 @@ class NuvioScraperPickerStateTest {
 
     // ---- search ----
 
-    @Test fun `query matches the name case-insensitively, substring, accents kept literal`() {
+    @Test fun `query ignores accents on either side`() {
+        val s = scraper("x", name = "Películas Latino")
+        assertTrue(nuvioScraperMatchesQuery(s, "pelicula"))
+        assertTrue(nuvioScraperMatchesQuery(s, "PELÍCULAS"))
+        assertTrue(nuvioScraperMatchesQuery(scraper("y", name = "Peliculas"), "películas"))
+        assertFalse(nuvioScraperMatchesQuery(s, "serie"))
+    }
+
+    @Test fun `query matches the name case-insensitively, substring`() {
         val s = scraper("x", name = "CineCalidad")
         assertTrue(nuvioScraperMatchesQuery(s, "cine"))
         assertTrue(nuvioScraperMatchesQuery(s, "CALIDAD"))
@@ -194,10 +202,23 @@ class NuvioScraperPickerStateTest {
         assertEquals("garbage input", nuvioPickerRepoName("garbage input"))
     }
 
-    @Test fun `header line pluralizes scraper vs scrapers and names the GPL-3-0 license`() {
-        assertTrue(nuvioPickerHeaderLine(1).startsWith("1 scraper "))
-        assertTrue(nuvioPickerHeaderLine(3).startsWith("3 scrapers "))
+    @Test fun `header line agrees in number and names the GPL-3-0 license`() {
+        assertTrue(nuvioPickerHeaderLine(1), nuvioPickerHeaderLine(1).startsWith("1 scraper convertido de Nuvio "))
+        assertTrue(nuvioPickerHeaderLine(3), nuvioPickerHeaderLine(3).startsWith("3 scrapers convertidos de Nuvio "))
+        assertTrue(nuvioPickerHeaderLine(0), nuvioPickerHeaderLine(0).startsWith("0 scrapers convertidos "))
         assertTrue(nuvioPickerHeaderLine(3).contains("GPL-3.0"))
+    }
+
+    @Test fun `spanishCount agrees the noun with the number`() {
+        assertEquals("1 fuente", nuvioPickerSourceCount(1))
+        assertEquals("12 fuentes", nuvioPickerSourceCount(12))
+        assertEquals("0 fuentes", nuvioPickerSourceCount(0))
+        assertEquals("2 países", spanishCount(2, "país", "países"))
+    }
+
+    @Test fun `meta line names each language once`() {
+        assertEquals("Español · v1.2", nuvioScraperMetaLine(scraper("x", languages = listOf("es", "es-MX", "latino"), version = "1.2")))
+        assertEquals("Español/Inglés", nuvioScraperMetaLine(scraper("x", languages = listOf("es", "en", "es-419"))))
     }
 
     @Test fun `meta line joins language, version and author, skipping whichever is absent`() {

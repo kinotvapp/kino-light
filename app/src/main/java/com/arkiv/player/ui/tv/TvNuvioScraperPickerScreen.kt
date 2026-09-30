@@ -73,6 +73,7 @@ import com.arkiv.player.ui.plugin.nuvioInstalledScraperIds
 import com.arkiv.player.ui.plugin.nuvioLanguageBuckets
 import com.arkiv.player.ui.plugin.nuvioLanguageLabel
 import com.arkiv.player.ui.plugin.nuvioPickerRepoName
+import com.arkiv.player.ui.plugin.nuvioPickerSourceCount
 import com.arkiv.player.ui.plugin.nuvioScraperTypeAndLanguageLine
 import com.arkiv.player.ui.plugin.nuvioScraperVersionAuthorLine
 import com.arkiv.player.ui.plugin.nuvioTypeFilterLabel
@@ -120,9 +121,10 @@ internal fun TvNuvioScraperPickerScreen(
     onBack: () -> Unit,
 ) {
     BackHandler(onBack = onBack)
-    var typeFilter by rememberSaveable { mutableStateOf(NuvioTypeFilter.ALL) }
+    // Keyed on the repo like the language filter: another repo opens on a clean search, not the last one's.
+    var typeFilter by rememberSaveable(picker.repoInput) { mutableStateOf(NuvioTypeFilter.ALL) }
     var languageFilter by rememberSaveable(picker.repoInput) { mutableStateOf(defaultNuvioLanguageFilter(picker.scrapers)) }
-    var query by rememberSaveable { mutableStateOf("") }
+    var query by rememberSaveable(picker.repoInput) { mutableStateOf("") }
     var languageMenuOpen by remember { mutableStateOf(false) }
     var lastPickedId by rememberSaveable { mutableStateOf<String?>(null) }
 
@@ -175,7 +177,7 @@ internal fun TvNuvioScraperPickerScreen(
         Column(Modifier.fillMaxSize()) {
             Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    "${nuvioPickerRepoName(picker.repoInput)} · ${picker.scrapers.size} fuentes",
+                    "${nuvioPickerRepoName(picker.repoInput)} · ${nuvioPickerSourceCount(picker.scrapers.size)}",
                     style = MaterialTheme.typography.headlineSmall, color = Color.White,
                 )
             }

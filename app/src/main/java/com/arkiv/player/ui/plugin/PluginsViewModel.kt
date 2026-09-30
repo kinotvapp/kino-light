@@ -546,15 +546,26 @@ class PluginsViewModel(
      * [confirmInstall] or [cancelConsent] clears [PluginsUiState.consent] -- the way several scrapers of one
      * repo get added without retyping the address.
      */
-    fun pickNuvioScraper(scraperId: String) = busy(pluginId = null) {
-        val installer = nuvioPluginInstaller ?: return@busy
-        val repoInput = _state.value.nuvioPicker?.repoInput ?: return@busy
-        val preview = withContext(io) { installer.previewScraper(repoInput, scraperId) }
-        _state.update { it.copy(consent = preview) }
+    fun pickNuvioScraper(scraperId: String) {
+        nuvioPick = busyJob(pluginId = null) {
+            val installer = nuvioPluginInstaller ?: return@busyJob
+            val repoInput = _state.value.nuvioPicker?.repoInput ?: return@busyJob
+            val preview = withContext(io) { installer.previewScraper(repoInput, scraperId) }
+            // Only onto the picker it was asked from: Back while the script downloaded must never bring a
+            // consent sheet up seconds later over the screen the person went back to.
+            _state.update { if (it.nuvioPicker?.repoInput == repoInput) it.copy(consent = preview) else it }
+        } ?: nuvioPick
     }
 
-    /** Back on the full-screen scraper picker: back to typing an address, nothing previewed. */
-    fun cancelNuvioPicker() = _state.update { it.copy(nuvioPicker = null) }
+    /** The conversion [pickNuvioScraper] started, cancelled by [cancelNuvioPicker]. */
+    private var nuvioPick: Job? = null
+
+    /** Back on the full-screen scraper picker: back to typing an address, nothing previewed, any conversion dropped. */
+    fun cancelNuvioPicker() {
+        nuvioPick?.cancel()
+        nuvioPick = null
+        _state.update { it.copy(nuvioPicker = null) }
+    }
 
     fun confirmInstall() {
         val preview = _state.value.consent ?: return
@@ -697,9 +708,14 @@ class PluginsViewModel(
      * section, or on [pluginId]'s row.
      */
     private fun busy(pluginId: String?, block: suspend () -> Unit) {
-        if (_state.value.busy) return
+        busyJob(pluginId, block)
+    }
+
+    /** [busy], returning the launched job, or null when another busy action was already running. */
+    private fun busyJob(pluginId: String?, block: suspend () -> Unit): Job? {
+        if (_state.value.busy) return null
         _state.update { it.copy(busy = true, message = null, messagePluginId = pluginId) }
-        viewModelScope.launch {
+        return viewModelScope.launch {
             try {
                 block()
             } catch (e: CancellationException) {
