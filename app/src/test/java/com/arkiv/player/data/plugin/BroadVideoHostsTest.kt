@@ -29,7 +29,7 @@ import java.net.UnknownHostException
  * (the resolved VOD stream, everything its manifest names, redirects, side subtitles and audio) from
  * any public server -- the `liveStreamHosts: "any"` rule applied to VOD, granted only by the person
  * ([InstalledRecord.anyVideoHost]). Never the home network, never an IPv6 literal, never `kino.fetch`,
- * never a DRM license, never a download.
+ * never a DRM license; a download follows the player's rule.
  */
 class BroadVideoHostsTest {
     @get:Rule val tmp = TemporaryFolder()
@@ -203,19 +203,39 @@ class BroadVideoHostsTest {
 
     private val movie = PluginRef(ID, "m1", PluginRef.MOVIE, "R1").encode()
 
-    @Test fun `the player's resolve accepts the stream once granted, a download's resolve does not`() = runBlocking {
+    @Test fun `the player's and the download's resolve accept the stream once granted, any other background call does not`() = runBlocking {
         install { copy(anyVideoHost = true) }
         val out = """{"url":"https://jeremyparticipantanything.com/e/abc.m3u8"}"""
         val played = withContext(InteractivePluginCall) { source(out).resolve(movie) }
         assertEquals("https://jeremyparticipantanything.com/e/abc.m3u8", played.url)
+        // The download queue's resolve follows the rule of playing that stream.
+        val saved = withContext(BackgroundPluginCall + PluginDownloadCall) { source(out).resolve(movie) }
+        assertEquals("https://jeremyparticipantanything.com/e/abc.m3u8", saved.url)
         val e = assertThrows(GatewayException::class.java) {
             runBlocking { withContext(BackgroundPluginCall + InteractivePluginCall) { source(out).resolve(movie) } }
         }
         assertEquals("Demo: El video apunta a jeremyparticipantanything.com, que el plugin no declaró", e.message)
-        // Not granted: exactly as before.
+        // Not granted: exactly as before, for the player and the download alike.
         registry.setAnyVideoHost(ID, false)
         assertThrows(GatewayException::class.java) { runBlocking { withContext(InteractivePluginCall) { source(out).resolve(movie) } } }
+        assertThrows(GatewayException::class.java) { runBlocking { withContext(BackgroundPluginCall + PluginDownloadCall) { source(out).resolve(movie) } } }
         Unit
+    }
+
+    @Test fun `a download's resolve of a live channel never uses it`() = runBlocking {
+        install { copy(anyVideoHost = true) }
+        val live = PluginRef(ID, "c1", PluginRef.LIVE, "ch").encode()
+        assertThrows(GatewayException::class.java) {
+            runBlocking { withContext(BackgroundPluginCall + PluginDownloadCall) { source("""{"url":"https://cdn.elsewhere.org/live.m3u8"}""").resolve(live) } }
+        }
+        Unit
+    }
+
+    @Test fun `the download's client uses the plugin's video hosts, the same as the player's`() {
+        install { copy(anyVideoHost = true) }
+        assertTrue(registry.find(ID)!!.videoHosts.anyPublicVideoHost)
+        registry.setAnyVideoHost(ID, false)
+        assertFalse(registry.find(ID)!!.videoHosts.anyPublicVideoHost)
     }
 
     @Test fun `a live channel's resolve never uses it`() = runBlocking {

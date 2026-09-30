@@ -1249,12 +1249,14 @@ class AppGraph(context: Context) {
 
     /**
      * The downloader a third-party plugin's file comes through: [downloadHttp] behind the same host
-     * gate the player applies to that plugin's stream (`PluginStreamHttp`: https on its approved
-     * hosts or typed servers, every redirect hop checked, never the home network). A plugin that
-     * vanished between the queue and the download gets an empty host list, which refuses everything.
+     * gate the player applies to that plugin's VOD stream (`PluginStreamHttp` over its `videoHosts`:
+     * its approved hosts or typed servers, or any public host when the person granted the broad video
+     * permission / approved `streamHosts: "any"`; every redirect hop checked, never the home network).
+     * A plugin that vanished between the queue and the download gets an empty host list, which
+     * refuses everything.
      */
     private fun pluginDownloaderFor(pluginId: String): com.arkiv.player.data.local.HttpRangeDownloader {
-        val hosts = pluginRegistry.find(pluginId)?.hosts ?: com.arkiv.player.data.plugin.EffectiveHosts(emptyList())
+        val hosts = pluginRegistry.find(pluginId)?.videoHosts ?: com.arkiv.player.data.plugin.EffectiveHosts(emptyList())
         return com.arkiv.player.data.local.HttpRangeDownloader(
             com.arkiv.player.data.plugin.PluginStreamHttp.client(downloadHttp, hosts),
         )

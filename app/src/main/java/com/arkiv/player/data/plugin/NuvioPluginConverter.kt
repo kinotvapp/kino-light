@@ -145,7 +145,9 @@ object NuvioPluginConverter {
             .put("entry", "plugin.js")
             .put("description", description(scraper.name, repoSlug, warnings))
             .put("hosts", JSONArray(hosts))
-            .put("capabilities", JSONArray(listOf("search", "episodes", "resolve")))
+            // "download": a converted scraper's movies and episodes may be saved for offline viewing (the
+            // consent sheet shows the line; an existing install gets it through "Buscar actualización").
+            .put("capabilities", JSONArray(listOf("search", "episodes", "resolve", "download")))
             // Nuvio scrapers return videos from CDNs that change per title: the person approves "any video host" once, at install.
             .put("streamHosts", ManifestParser.LIVE_STREAM_HOSTS_ANY)
             // Their resolvers hop across mirror and CDN hosts no scan can list: kino.fetch may reach

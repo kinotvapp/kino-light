@@ -281,8 +281,9 @@ data class EffectiveHosts(
      * stream's URL, everything its manifest names (variants, segments, keys) and every redirect hop,
      * AND its side-loaded subtitles and audio tracks, may be on any public host -- the same test as
      * [anyPublicLiveHost] (http or https, a public name or public IPv4 literal, never the home
-     * network). Set only by [InstalledPlugin.videoHosts], for the player's own calls; never on
-     * `kino.fetch` ([PluginHttp] gates with [strict]), a DRM license, a download or a live channel.
+     * network). Set only by [InstalledPlugin.videoHosts], for the player's own calls and the
+     * download queue's (a saved copy follows the rule of playing it); never on `kino.fetch`
+     * ([PluginHttp] gates with [strict]), a DRM license or a live channel.
      */
     val anyPublicVideoHost: Boolean = false,
     /**

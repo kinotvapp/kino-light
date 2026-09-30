@@ -208,17 +208,18 @@ class PluginContentSource(
      * approved during the call, or by [askAboutUndeclaredHosts] right after it, counts. A channel's
      * stream may be on any public host only if the INSTALLED record approved liveStreamHosts "any".
      * A movie or episode's only when the person granted the broad video permission AND this is the
-     * player's own call ([InteractivePluginCall], never under [BackgroundPluginCall]): the permission
-     * is for the player, so a download keeps today's rule (its client is gated to the strict hosts,
-     * and a stream it could not fetch is better refused here, with the usual sentence). Typed
-     * servers are kept either way.
+     * player's own call ([InteractivePluginCall], never under [BackgroundPluginCall]) or the download
+     * queue's ([PluginDownloadCall]): a saved copy follows the same rule as playing that stream, and
+     * its client is gated with the same relaxed hosts (`AppGraph.pluginDownloaderFor`). Any other
+     * background call keeps the strict hosts. Typed servers are kept either way.
      */
     private suspend fun streamHostsFor(own: PluginRef): EffectiveHosts {
         val hosts = currentHosts()
         if (own.kind == PluginRef.LIVE) return hosts.copy(anyPublicLiveHost = plugin.record.liveStreamHostsAny || plugin.record.streamHostsAny)
         val context = currentCoroutineContext()
         val player = context[InteractivePluginCall] != null && context[BackgroundPluginCall] == null
-        return if (player && anyVideoHostGranted()) hosts.copy(anyPublicVideoHost = true) else hosts
+        val download = context[PluginDownloadCall] != null
+        return if ((player || download) && anyVideoHostGranted()) hosts.copy(anyPublicVideoHost = true) else hosts
     }
 
     /** Logs each host of [stream] that only the broad video permission let through: the host alone, never a path or query. */

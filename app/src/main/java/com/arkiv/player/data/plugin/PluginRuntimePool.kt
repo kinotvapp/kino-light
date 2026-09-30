@@ -28,6 +28,18 @@ object BackgroundPluginCall : kotlin.coroutines.CoroutineContext.Element, kotlin
 }
 
 /**
+ * Marks the download queue's `resolve` of a movie or an episode (always together with
+ * [BackgroundPluginCall]). The saved copy is fetched under the same host rules as playing that
+ * stream: when the person granted the broad video permission (or approved `streamHosts: "any"`),
+ * `PluginContentSource` accepts the Stream on any public host for this call exactly as it does for
+ * the player, and the download's client is gated with the plugin's `videoHosts`. Nothing is ever
+ * asked from here: a host the person has not approved is refused, as before.
+ */
+object PluginDownloadCall : kotlin.coroutines.CoroutineContext.Element, kotlin.coroutines.CoroutineContext.Key<PluginDownloadCall> {
+    override val key: kotlin.coroutines.CoroutineContext.Key<*> get() = this
+}
+
+/**
  * One lazily-opened runtime per plugin, calls serialized per plugin, closed after [idleMs] without
  * calls. A timeout discards the runtime (the next call opens a fresh one); [maxConsecutiveTimeouts]
  * in a row call [onUnresponsive] — the registry then disables the plugin as "no responde".

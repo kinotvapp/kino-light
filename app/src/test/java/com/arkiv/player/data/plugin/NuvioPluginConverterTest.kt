@@ -35,7 +35,7 @@ class NuvioPluginConverterTest {
         val parsed = ManifestParser.parse(result.manifestJson)
         assertTrue(parsed is ManifestResult.Valid)
         val manifest = (parsed as ManifestResult.Valid).manifest
-        assertEquals(setOf("search", "episodes", "resolve"), manifest.capabilities)
+        assertEquals(setOf("search", "episodes", "resolve", "download"), manifest.capabilities)
         assertEquals(listOf("api.themoviedb.org", "fakesrc.example"), manifest.hosts)
         assertTrue(manifest.id.startsWith("nuvio-fakesrc-"))
         assertEquals(4, manifest.apiVersion)

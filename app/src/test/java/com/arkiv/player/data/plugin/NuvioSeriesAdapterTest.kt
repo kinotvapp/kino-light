@@ -70,7 +70,7 @@ class NuvioSeriesAdapterTest {
 
     @Test fun `the manifest declares the episodes capability and the script exports it`() {
         val manifest = (ManifestParser.parse(conversion.manifestJson) as ManifestResult.Valid).manifest
-        assertEquals(setOf("search", "episodes", "resolve"), manifest.capabilities)
+        assertEquals(setOf("search", "episodes", "resolve", "download"), manifest.capabilities)
         withRuntime(ProbePluginHost) { assertEquals(setOf("search", "episodes", "resolve"), it.exports) }
     }
 

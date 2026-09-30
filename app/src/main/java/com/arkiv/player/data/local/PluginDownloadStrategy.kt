@@ -3,6 +3,7 @@ package com.arkiv.player.data.local
 import com.arkiv.player.data.gateway.ContentSource
 import com.arkiv.player.data.gateway.GatewayPlayable
 import com.arkiv.player.data.plugin.BackgroundPluginCall
+import com.arkiv.player.data.plugin.PluginDownloadCall
 import com.arkiv.player.data.plugin.PluginIds
 import com.arkiv.player.data.plugin.PluginRef
 import com.arkiv.player.playback.Container
@@ -51,8 +52,9 @@ class PluginDownloadStrategy(
 
         val ref = refForEpisode(episodeId) ?: return DownloadOutcome.Failed("No se encontró la fuente del video")
         // A background call: a queue against a slow server must never switch the plugin off
-        // ("No responde") for the person's own search and Home.
-        val playable = runCatching { withContext(BackgroundPluginCall) { source.resolve(ref) } }.getOrElse {
+        // ("No responde") for the person's own search and Home. A download's: the Stream is checked
+        // against the same hosts as playing it (the broad video permission included).
+        val playable = runCatching { withContext(BackgroundPluginCall + PluginDownloadCall) { source.resolve(ref) } }.getOrElse {
             return DownloadOutcome.Failed.ofResolve(it, "No se pudo resolver el video")
         }
         // Permanent: the stream's shape will not change, so the row ends `refused` (no retry, no report).

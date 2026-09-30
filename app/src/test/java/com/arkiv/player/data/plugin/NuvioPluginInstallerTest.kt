@@ -138,7 +138,7 @@ class NuvioPluginInstallerTest {
 
     @Test fun `previewScraper converts, validates, and installs, and playback resolves`() = runBlocking {
         val preview = nuvio.previewScraper("owner/nuvio-repo", "fakesrc")
-        assertEquals(setOf("search", "episodes", "resolve"), preview.manifest.capabilities)
+        assertEquals(setOf("search", "episodes", "resolve", "download"), preview.manifest.capabilities)
         assertTrue("fakesrc.example" in preview.newHosts)
         val record = nuvio.install(preview)
         assertEquals("owner/nuvio-repo", record.nuvioRepo)
@@ -288,9 +288,12 @@ class NuvioPluginInstallerTest {
         assertTrue(store.get(id)!!.record.pendingStreamHostsAny)
         // The consent sheet marks the red line as new.
         assertTrue(PluginConsent.extraLines(preview).any { it.danger && it.isNew })
+        // Downloads came with this converter too: the sheet shows their line as new.
+        assertEquals(listOf("download"), preview.newCapabilities)
+        assertTrue(PluginConsent.extraLines(preview).any { it.text == "Puede descargar videos para verlos sin conexión" && it.isNew })
         n.install(preview) // what approving the sheet does
         val record = store.get(id)!!.record
-        assertEquals(listOf("search", "episodes", "resolve"), record.capabilities)
+        assertEquals(listOf("search", "episodes", "resolve", "download"), record.capabilities)
         assertTrue(record.streamHostsAny)
         assertTrue(record.videoFromAnyHost)
         assertTrue(!record.pendingStreamHostsAny)
@@ -302,13 +305,14 @@ class NuvioPluginInstallerTest {
         val outcome = n.checkUpdate(id)
         assertTrue(outcome.toString(), outcome is UpdateOutcome.NeedsApproval)
         val preview = (outcome as UpdateOutcome.NeedsApproval).preview
-        // `episodes` is not a capability that needs consent (only download/drm/channels do): the new host is the only ask.
+        // `episodes` is not a capability that needs consent (only download/drm/channels do): the new
+        // host and the converter's `download` are the only asks.
         assertEquals(listOf("api.themoviedb.org"), preview.newHosts)
-        assertTrue(preview.newCapabilities.isEmpty())
+        assertEquals(listOf("download"), preview.newCapabilities)
         assertEquals(listOf("api.themoviedb.org"), store.get(id)!!.record.pendingHosts)
         n.install(preview) // what approving the sheet does
         val record = store.get(id)!!.record
-        assertEquals(listOf("search", "episodes", "resolve"), record.capabilities)
+        assertEquals(listOf("search", "episodes", "resolve", "download"), record.capabilities)
         assertEquals(listOf("api.themoviedb.org", "fakesrc.example"), record.hosts)
         assertNull(record.pendingVersion)
     }

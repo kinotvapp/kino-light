@@ -49,9 +49,12 @@ class PluginDownloadStrategyTest {
         override fun search(ctx: GatewaySearchQuery): Flow<SearchEvent> = emptyFlow()
         /** Whether each resolve ran as a background call (its timeouts never switch the plugin off). */
         val background = mutableListOf<Boolean>()
+        /** Whether each resolve was marked as the download queue's (it follows playback's host rules). */
+        val download = mutableListOf<Boolean>()
         override suspend fun resolve(ref: String): GatewayPlayable {
             resolved += ref
             background += kotlin.coroutines.coroutineContext[com.arkiv.player.data.plugin.BackgroundPluginCall] != null
+            download += kotlin.coroutines.coroutineContext[com.arkiv.player.data.plugin.PluginDownloadCall] != null
             return playable()
         }
         override suspend fun episodesWithSeries(ref: String): Pair<List<GatewayEpisode>, GatewaySeries?> = emptyList<GatewayEpisode>() to null
@@ -114,6 +117,7 @@ class PluginDownloadStrategyTest {
         strategy(source).run()
 
         assertEquals(listOf(true), source.background)
+        assertEquals("marked as a download, so the broad video permission applies as for playback", listOf(true), source.download)
     }
 
     /** A live channel's ref refuses even when its stream is a plain file: it has no end to save. */
