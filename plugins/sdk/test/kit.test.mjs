@@ -971,12 +971,124 @@ test("seal(): format, length, and it opens to the plain value for the right bind
   assert.notEqual(seal("s3cr3t-válue", "Owner/Repo", "apiKey", publicKeyHex), sealed);
 });
 
-test("seal(): the binding is lowercased and its @ref stripped, never sealed in", () => {
+test("seal(): the binding is the app's owner/repo[/path], lowercased; .git and a trailing / dropped", () => {
   const { privateKey, publicKeyHex } = testKeypair();
-  assert.equal(normalizeBinding("Owner/Repo@main"), "owner/repo");
-  assert.equal(normalizeBinding("Owner/Repo/sub@v2"), "owner/repo/sub");
-  const sealed = seal("x", "Owner/Repo@main", "n", publicKeyHex);
+  assert.equal(normalizeBinding("Owner/Repo"), "owner/repo");
+  assert.equal(normalizeBinding("  Owner/Repo/Sub/Dir/ "), "owner/repo/sub/dir");
+  assert.equal(normalizeBinding("owner/repo.git"), "owner/repo");
+  assert.equal(normalizeBinding("owner/repo.git/"), "owner/repo");
+  assert.equal(normalizeBinding("my-org/my.repo_1/plugins/x-y"), "my-org/my.repo_1/plugins/x-y");
+  const sealed = seal("x", "Owner/Repo.git/", "n", publicKeyHex);
   assert.equal(openSealed(sealed, "owner/repo", "n", privateKey, publicKeyHex), "x");
+});
+
+test("seal(): --repo refuses a URL, an @ref, and anything the app's PluginAddress wouldn't accept", () => {
+  const { publicKeyHex } = testKeypair();
+  const url = /not a URL \(for https:\/\/github\.com\/owner\/repo use --repo owner\/repo\)/;
+  for (const bad of ["https://github.com/owner/repo", "http://github.com/owner/repo", "github.com/owner/repo", "www.github.com/owner/repo", "git://example.com/o/r"]) {
+    assert.throws(() => normalizeBinding(bad), url, bad);
+  }
+  for (const bad of ["owner/repo@main", "owner/repo/sub@v2", "owner/repo@0123abc"]) {
+    assert.throws(() => normalizeBinding(bad), /without an @ref/, bad);
+  }
+  for (const bad of ["", "owner", "owner/", "-owner/repo", "o_wner/repo", "a".repeat(40) + "/repo", "owner/..", "owner/.", "owner/.git", "owner/re po", "owner/repo/../x", "owner/repo//x", "owner/" + "r".repeat(101)]) {
+    assert.throws(() => normalizeBinding(bad), /invalid --repo: expected "owner\/repo" or "owner\/repo\/path"/, bad);
+  }
+  assert.throws(() => seal("x", "owner/repo@main", "n", publicKeyHex), /without an @ref/);
+  // The CLI refuses before it even asks for the value.
+  const r = spawnSync(process.execPath, [join(here, "..", "seal.mjs"), "--repo", "https://github.com/o/r", "--name", "n"], { input: "v\n", encoding: "utf8" });
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, url);
+  assert.equal(r.stdout, "");
+});
+
+test("seal(): a value of exactly 1 and exactly 4096 UTF-8 bytes seals, 0 and 4097 don't; validate agrees on the seal's length", () => {
+  const { privateKey, publicKeyHex } = testKeypair();
+  for (const v of ["x", "x".repeat(4096), "ñ".repeat(2048)]) {
+    const s = seal(v, "o/r", "n", publicKeyHex);
+    assert.equal(openSealed(s, "o/r", "n", privateKey, publicKeyHex), v);
+    assert.equal(validateManifest(manifest({ apiVersion: 4, secrets: { n: s } })).ok, true);
+  }
+  for (const v of ["", "x".repeat(4097), "ñ".repeat(2048) + "x"]) assert.throws(() => seal(v, "o/r", "n", publicKeyHex), /1\.\.4096 bytes/);
+  // A seal's raw bytes: 60 bytes of overhead plus the value's. Only 61..4156 are well formed.
+  const rawSeal = (n) => contract.manifest.secrets.prefix + Buffer.alloc(n, 7).toString("base64url");
+  for (const [n, ok] of [[60, false], [61, true], [60 + 4096, true], [60 + 4097, false]]) {
+    assert.equal(validateManifest(manifest({ apiVersion: 4, secrets: { n: rawSeal(n) } })).ok, ok, String(n));
+  }
+});
+
+// The hidden prompt reads a raw-mode TTY, where a paste (and a fast typist) arrives as ONE chunk.
+test("seal.mjs's hidden prompt: a line ends at the first Enter inside any chunk, with editing keys applied", async () => {
+  const { hiddenLineReader } = await import("../seal.mjs");
+  const feed = (...chunks) => {
+    const r = hiddenLineReader();
+    let last;
+    for (const c of chunks) last = r.feed(c);
+    return last;
+  };
+  assert.deepEqual(feed("abc\r"), { done: true, value: "abc" });
+  assert.deepEqual(feed("ab", "c\r"), { done: true, value: "abc" });
+  assert.deepEqual(feed("a", "b", "c", "\r"), { done: true, value: "abc" });
+  assert.deepEqual(feed("abc\n"), { done: true, value: "abc" });
+  assert.deepEqual(feed("abc\r\n"), { done: true, value: "abc" });
+  assert.deepEqual(feed("abc\rdef\r"), { done: true, value: "abc" });
+  assert.deepEqual(feed("x\u007f\r"), { done: true, value: "" });
+  assert.deepEqual(feed("xy\u007fz\r"), { done: true, value: "xz" });
+  assert.deepEqual(feed("xy\bz\r"), { done: true, value: "xz" });
+  assert.deepEqual(feed("\u007f\u007fa\r"), { done: true, value: "a" });
+  assert.deepEqual(feed("ñ😀\u007f\r"), { done: true, value: "ñ" });
+  assert.deepEqual(feed("old\u0015new\r"), { done: true, value: "new" });
+  assert.deepEqual(feed("a\u001b[Db\u001bOAc\r"), { done: true, value: "abc" });
+  assert.deepEqual(feed("a\tb\u0001\r"), { done: true, value: "a\tb" });
+  assert.deepEqual(feed("abc\u0003\r"), { done: true, cancelled: true });
+  assert.deepEqual(feed("\u0004"), { done: true, cancelled: true });
+  assert.deepEqual(feed("abc\u0004"), { done: true, value: "abc" });
+  assert.deepEqual(feed("abc"), { done: false });
+  // Once over, later chunks change nothing.
+  const r = hiddenLineReader();
+  r.feed("abc\r");
+  assert.deepEqual(r.feed("more\r"), { done: true, value: "abc" });
+});
+
+// The real thing on a real pseudo-terminal (Python's pty module drives it): the value is typed as
+// ONE write -- what a paste delivers -- and must come back sealed without its Enter, never echoed.
+const hasPython = spawnSync("python3", ["-c", "import pty"], { encoding: "utf8" }).status === 0;
+test("seal.mjs's CLI on a TTY: a pasted value with its Enter seals the value alone, echoing nothing", { skip: !hasPython && "python3 with pty not available" }, () => {
+  const driver = [
+    "import os, pty, sys, time, select, signal",
+    "typed = sys.argv[1].encode()",
+    "pid, fd = pty.fork()",
+    "if pid == 0:",
+    "    os.execvp(sys.argv[2], sys.argv[2:])",
+    "out, sent, deadline = b'', False, time.time() + 10",
+    "while time.time() < deadline:",
+    "    r, _, _ = select.select([fd], [], [], 0.1)",
+    "    if r:",
+    "        try:",
+    "            chunk = os.read(fd, 4096)",
+    "        except OSError:",
+    "            break",
+    "        if not chunk:",
+    "            break",
+    "        out += chunk",
+    "    if not sent and b'Secret value' in out:",
+    "        time.sleep(0.2)",
+    "        os.write(fd, typed)",
+    "        sent = True",
+    "else:",
+    "    os.kill(pid, signal.SIGKILL)",
+    "_, status = os.waitpid(pid, 0)",
+    "sys.stdout.write(out.decode('utf-8', 'replace'))",
+  ].join("\n");
+  const { privateKey, publicKeyHex } = testKeypair();
+  const r = spawnSync("python3", ["-c", driver, "p4ss-wörd\r", process.execPath, join(here, "..", "seal.mjs"), "--repo", "o/r", "--name", "n"], {
+    encoding: "utf8", env: { ...process.env, KINO_SEAL_PUBLIC_KEY: publicKeyHex },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(!r.stdout.includes("p4ss"), r.stdout);
+  const line = r.stdout.split(/\r?\n/).find((l) => l.startsWith("kino-sealed:v1:"));
+  assert.ok(line, r.stdout);
+  assert.equal(openSealed(line.trim(), "o/r", "n", privateKey, publicKeyHex), "p4ss-wörd");
 });
 
 test("seal(): rejects a bad name, a missing repo, and an out-of-range value", () => {
@@ -1002,11 +1114,18 @@ test("seal.mjs's CLI reads the value from stdin, never argv, and prints one line
   assert.equal(openSealed(r2.stdout.trim(), "owner/repo", "apiKey", privateKey, publicKeyHex), "from-stdin");
 });
 
-test("seal.mjs's CLI honours KINO_SEAL_PUBLIC_KEY (tests only) instead of the embedded production key", () => {
+test("seal.mjs's CLI honours KINO_SEAL_PUBLIC_KEY (tests only) instead of the embedded production key, and warns that it does", () => {
   const { privateKey, publicKeyHex } = testKeypair();
   const r = spawnSync(process.execPath, [join(here, "..", "seal.mjs"), "--repo", "o/r", "--name", "n"], { input: "v\n", encoding: "utf8", env: { ...process.env, KINO_SEAL_PUBLIC_KEY: publicKeyHex } });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(openSealed(r.stdout.trim(), "o/r", "n", privateKey, publicKeyHex), "v");
+  assert.match(r.stderr, /warning: KINO_SEAL_PUBLIC_KEY replaces Kino's own public key -- this seal will NOT open in Kino \(tests only\)/);
+  // Without it: no warning.
+  const env = { ...process.env };
+  delete env.KINO_SEAL_PUBLIC_KEY;
+  const plain = spawnSync(process.execPath, [join(here, "..", "seal.mjs"), "--repo", "o/r", "--name", "n"], { input: "v\n", encoding: "utf8", env });
+  assert.equal(plain.status, 0, plain.stderr);
+  assert.equal(plain.stderr, "");
 });
 
 // ---------- kino.secret and the kit's simulation of substitution/redaction (spec §5, §6) ----------

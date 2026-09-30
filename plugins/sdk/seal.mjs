@@ -10,9 +10,10 @@
 // command-line argument, which would land in shell history and process listings. One line goes to
 // stdout: `kino-sealed:v1:...`; paste it into the manifest's `secrets` field.
 //
-// KINO_SEAL_PUBLIC_KEY=<hex> overrides the embedded production public key. Tests only: it lets the
-// kit and the app's Kotlin tests agree on a fixture without the production private key ever leaving
-// the app's native sources. Never use it to seal a secret for a real, published plugin.
+// KINO_SEAL_PUBLIC_KEY=<hex> overrides the embedded production public key (the CLI warns on stderr
+// when it does). Tests only: it lets the kit and the app's Kotlin tests agree on a fixture without
+// the production private key ever leaving the app's native sources. Never use it to seal a secret
+// for a real, published plugin.
 import { createCipheriv, createPublicKey, diffieHellman, generateKeyPairSync, hkdfSync, randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
@@ -25,9 +26,31 @@ export const PRODUCTION_PUBLIC_KEY_HEX = "b13ecf6d231a75bf57ca21d977075c74f914b4
 const SPKI_PREFIX = Buffer.from("302a300506032b656e032100", "hex");
 const NAME = new RegExp(contract.manifest.secrets.namePattern);
 
-/** owner/repo (+ /path), lowercased, with any `@ref` stripped: a seal never binds to a branch. */
+// The app's PluginAddress rules: an owner is a GitHub user or organization name, a repo name and
+// each folder of the path are 1..100 of letters, digits, ".", "_" and "-" (never "." or "..").
+const OWNER = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/;
+const PART = /^[A-Za-z0-9._-]{1,100}$/;
+const REPO_USAGE = 'expected "owner/repo" or "owner/repo/path"';
+
+/**
+ * `owner/repo[/path]`, lowercased: what a seal binds to, exactly as the app computes it from the
+ * address the plugin is installed from. A trailing `/` and a repo's `.git` are dropped like the app
+ * drops them. A URL and an `@ref` are refused rather than guessed at: a seal never binds to a branch
+ * (it opens from any branch or tag of the repo, never from a commit).
+ */
 export function normalizeBinding(repo) {
-  return String(repo).split("@")[0].toLowerCase();
+  const s = String(repo ?? "").trim().replace(/\/+$/, "");
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(s) || /^(www\.)?github\.com\//i.test(s)) {
+    throw new Error(`invalid --repo: ${REPO_USAGE}, not a URL (for https://github.com/owner/repo use --repo owner/repo)`);
+  }
+  if (s.includes("@")) {
+    throw new Error(`invalid --repo: ${REPO_USAGE}, without an @ref -- a seal opens from any branch or tag of the repo, so it never names one`);
+  }
+  const [owner, repoRaw = "", ...path] = s.split("/");
+  const name = repoRaw.replace(/\.git$/, "");
+  const part = (x) => PART.test(x) && x !== "." && x !== "..";
+  if (!OWNER.test(owner) || !part(name) || !path.every(part)) throw new Error(`invalid --repo: ${REPO_USAGE}`);
+  return [owner, name, ...path].join("/").toLowerCase();
 }
 
 /**
@@ -38,7 +61,6 @@ export function normalizeBinding(repo) {
 export function seal(value, binding, name, publicKeyHex = process.env.KINO_SEAL_PUBLIC_KEY || PRODUCTION_PUBLIC_KEY_HEX) {
   if (!NAME.test(String(name))) throw new Error(`invalid secret name: "${String(name).slice(0, 40)}" (expected ${contract.manifest.secrets.namePattern})`);
   const binding0 = normalizeBinding(binding);
-  if (!binding0 || !binding0.includes("/")) throw new Error('invalid --repo: expected "owner/repo" or "owner/repo/path"');
   const plain = Buffer.from(String(value), "utf8");
   if (plain.length < 1 || plain.length > contract.manifest.secrets.maxValueBytes) {
     throw new Error(`the secret value must be 1..${contract.manifest.secrets.maxValueBytes} bytes (UTF-8), got ${plain.length}`);
@@ -69,6 +91,43 @@ function readStdin() {
   });
 }
 
+/**
+ * The hidden prompt's line editing, fed the raw-mode chunks as they arrive. A chunk is whatever the
+ * terminal delivered at once -- a single key, or a whole paste with its Enter -- so it is walked
+ * character by character: the line ends at the first Enter (`\r` or `\n`) and anything after it is
+ * dropped. Backspace (DEL or ^H) removes the last character (a whole one, even past the BMP), ^U the
+ * whole line; ^C cancels; ^D ends the input (an empty line cancels). An escape sequence (an arrow or
+ * function key) and any other control character are dropped, a tab is kept. `feed` answers
+ * `{ done: false }` until the line is over, then `{ done: true, value }` or
+ * `{ done: true, cancelled: true }` -- the same answer for any later chunk.
+ */
+export function hiddenLineReader() {
+  let chars = [];
+  let escape = null; // null, "esc" (just saw ESC), "csi" (inside ESC [ ... final byte)
+  let result = null;
+  const finish = (r) => { result = r; chars = []; return r; };
+  return {
+    feed(chunk) {
+      if (result) return result;
+      for (const ch of String(chunk)) {
+        const code = ch.codePointAt(0);
+        if (escape === "esc") { escape = ch === "[" ? "csi" : ch === "O" ? "ss3" : null; continue; }
+        if (escape === "ss3") { escape = null; continue; }
+        if (escape === "csi") { if (code >= 0x40 && code <= 0x7e) escape = null; continue; }
+        if (ch === "\r" || ch === "\n") return finish({ done: true, value: chars.join("") });
+        if (ch === "\u0003") return finish({ done: true, cancelled: true });
+        if (ch === "\u0004") return finish(chars.length ? { done: true, value: chars.join("") } : { done: true, cancelled: true });
+        if (ch === "\u007f" || ch === "\b") { chars.pop(); continue; }
+        if (ch === "\u0015") { chars = []; continue; }
+        if (ch === "\u001b") { escape = "esc"; continue; }
+        if ((code < 0x20 && ch !== "\t") || (code >= 0x80 && code < 0xa0)) continue;
+        chars.push(ch);
+      }
+      return { done: false };
+    },
+  };
+}
+
 /** A hidden prompt on the TTY itself: nothing echoed, not even asterisks. */
 function readHiddenPrompt(query) {
   return new Promise((resolvePromise, reject) => {
@@ -77,12 +136,11 @@ function readHiddenPrompt(query) {
     stdin.setRawMode(true);
     stdin.resume();
     stdin.setEncoding("utf8");
-    let value = "";
-    const onData = (ch) => {
-      if (ch === "\u0003") { done(new Error("cancelled")); return; }
-      if (ch === "\r" || ch === "\n") { done(null, value); return; }
-      if (ch === "\u007f" || ch === "\b") { value = value.slice(0, -1); return; }
-      value += ch;
+    const reader = hiddenLineReader();
+    const onData = (chunk) => {
+      const r = reader.feed(chunk);
+      if (!r.done) return;
+      if (r.cancelled) done(new Error("cancelled")); else done(null, r.value);
     };
     const done = (err, val) => {
       stdin.setRawMode(false);
@@ -107,6 +165,15 @@ async function main(argv) {
   const name = opt("--name");
   if (!repo || !name) {
     console.error("usage: node sdk/seal.mjs --repo owner/repo[/path] --name secretName   (value read from stdin or a hidden prompt, never argv)");
+    return 2;
+  }
+  if (process.env.KINO_SEAL_PUBLIC_KEY) {
+    console.error("warning: KINO_SEAL_PUBLIC_KEY replaces Kino's own public key -- this seal will NOT open in Kino (tests only)");
+  }
+  try {
+    normalizeBinding(repo);
+  } catch (e) {
+    console.error(e.message);
     return 2;
   }
   let value;
