@@ -231,7 +231,7 @@ class PluginTelemetry(
                 is PluginThrownException -> of(if (error.atLoad) PluginFailureKind.LOAD else PluginFailureKind.THROWN, raw = error.message, host = failedHost)
                 is PluginDamagedException -> of(PluginFailureKind.LOAD, detail = mapOf("load" to "damaged"))
                 is PluginException -> of(if (error.atLoad) PluginFailureKind.LOAD else PluginFailureKind.RUNTIME, raw = error.message)
-                else -> of(PluginFailureKind.RUNTIME, detail = mapOf("error" to error.javaClass.simpleName))
+                else -> of(PluginFailureKind.RUNTIME, detail = mapOf("error" to errorName(error)))
             }
         }
 
@@ -341,6 +341,46 @@ class PluginTelemetry(
         }
 
         /** A plugin id (or `owner/repo` for one that has none yet), cut to a safe alphabet. */
+        /**
+         * A stable name for [t]'s type, for an `error` detail. Never `javaClass.simpleName`: R8
+         * renames the app's and its libraries' classes in a release build (`InstallException` is
+         * `h5.C` there), so GlitchTip would read `error: C`. Kino's own failures and the common
+         * JDK ones get a fixed word, matched by type; any other JDK or Android class keeps its
+         * simple name (those are never renamed); anything else is `other`.
+         */
+        fun errorName(t: Throwable): String = when (t) {
+            is CancellationException -> "cancelled"
+            is InstallException -> "install"
+            is PluginFetchStatusException -> "http_${t.code}"
+            is PluginFileTooBigException -> "too_large"
+            is HostNotAllowedException -> "host_not_allowed"
+            is PrivateAddressException -> "private_address"
+            is PluginFetchException -> "fetch_${safeWord(t.code)}"
+            is PluginContractException -> "contract"
+            is PluginCryptoException -> "crypto"
+            is SealException -> "seal"
+            is PluginSetupRequiredException -> "setup_required"
+            is PluginException -> "plugin"
+            is com.arkiv.player.data.gateway.GatewayException -> "gateway"
+            is org.json.JSONException -> "json"
+            is java.io.FileNotFoundException -> "not_found"
+            is java.net.UnknownHostException -> "dns"
+            is java.io.InterruptedIOException -> "timeout"
+            is javax.net.ssl.SSLException -> "tls"
+            is java.net.SocketException -> "socket"
+            is java.io.EOFException -> "eof"
+            is java.io.IOException -> "io"
+            is OutOfMemoryError -> "out_of_memory"
+            is StackOverflowError -> "stack_overflow"
+            is IllegalArgumentException -> "illegal_argument"
+            is IllegalStateException -> "illegal_state"
+            is SecurityException -> "security"
+            else -> t.javaClass.name.takeIf { name -> PLATFORM_PACKAGES.any(name::startsWith) }?.let { t.javaClass.simpleName } ?: "other"
+        }
+
+        /** Packages R8 never renames: the platform's own classes are not in the APK. */
+        private val PLATFORM_PACKAGES = listOf("java.", "javax.", "android.", "dalvik.")
+
         internal fun safeId(id: String): String = id.take(80).replace(UNSAFE_ID, "_").ifEmpty { "unknown" }
 
         private fun safeWord(s: String): String = s.take(80).replace(UNSAFE_ID, "_")

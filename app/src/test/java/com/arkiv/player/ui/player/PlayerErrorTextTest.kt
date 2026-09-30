@@ -62,6 +62,19 @@ class PlayerErrorTextTest {
         assertEquals("El video llegó dañado o en un formato que Kino no reconoce", say(PlaybackException.ERROR_CODE_IO_UNSPECIFIED, parser))
     }
 
+    @Test fun `a decoder that could not start is found by its type, whatever the code says`() {
+        val format = androidx.media3.common.Format.Builder().setSampleMimeType("video/hevc").build()
+        val init = androidx.media3.exoplayer.mediacodec.MediaCodecRenderer.DecoderInitializationException(format, IllegalStateException("no codec"), false, 0)
+        assertEquals("Este aparato no puede reproducir este formato de video", say(PlaybackException.ERROR_CODE_UNSPECIFIED, init))
+    }
+
+    // R8 renames media3's classes in a release build (Loader$UnexpectedLoaderException -> H2.n): a
+    // class-name match passes these JVM tests and then never matches on a phone.
+    @Test fun `no exception is recognized by its class name`() {
+        val source = java.io.File("src/main/java/com/arkiv/player/ui/player/PlayerErrorText.kt").readText()
+        assertFalse(source.contains("javaClass") || source.contains("simpleName") || source.contains("::class.java.name"))
+    }
+
     @Test fun `a refused server is named, the home network said plainly`() {
         assertEquals(
             "El video pidió un servidor no permitido (seg.other.example)",

@@ -2,6 +2,8 @@ package com.arkiv.player.ui.player
 
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.util.StuckPlayerException
+import androidx.media3.exoplayer.mediacodec.MediaCodecRenderer
+import androidx.media3.exoplayer.upstream.Loader
 import com.arkiv.player.data.plugin.HostNotAllowedException
 import com.arkiv.player.data.plugin.PrivateAddressException
 
@@ -24,7 +26,8 @@ internal fun playerErrorMessage(error: PlaybackException, videoHeight: Int, vide
     val heavy = heavyFormatTag(videoHeight, videoMime)
     val code = error.errorCode
     return when {
-        code in DECODER_CODES || causes.any { it.javaClass.name.endsWith("DecoderInitializationException") } ->
+        // By type, never by class name: R8 renames media3's classes in a release build.
+        code in DECODER_CODES || causes.any { it is MediaCodecRenderer.DecoderInitializationException } ->
             "Este aparato no puede reproducir este formato de video" + (heavy?.let { " ($it)" } ?: "")
         code in AUDIO_CODES -> "Este aparato no puede reproducir el audio de este video"
         causes.any { it is StuckPlayerException } || code == PlaybackException.ERROR_CODE_TIMEOUT ->
@@ -36,7 +39,7 @@ internal fun playerErrorMessage(error: PlaybackException, videoHeight: Int, vide
         code == PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND -> "El video ya no está en el servidor"
         // An extractor that crashed on the bytes (Loader.UnexpectedLoaderException) or refused them
         // (ParserException) is filed under IO_UNSPECIFIED: the data arrived, it could not be read.
-        code in PARSING_CODES || causes.any { it is androidx.media3.common.ParserException || it.javaClass.simpleName == "UnexpectedLoaderException" } ->
+        code in PARSING_CODES || causes.any { it is androidx.media3.common.ParserException || it is Loader.UnexpectedLoaderException } ->
             "El video llegó dañado o en un formato que Kino no reconoce"
         code in IO_CODES -> "Se cortó la conexión con el servidor del video"
         else -> "No se pudo reproducir este video"

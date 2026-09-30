@@ -214,4 +214,26 @@ class PluginTelemetryTest {
         PluginTelemetry.NONE.reportCall("p", "search", thrown("Error: algo falló aquí"))
         assertTrue(events.isEmpty())
     }
+
+    // R8 renames Kino's classes in a release build (InstallException -> h5.C): the `error` detail
+    // is a fixed word per type, never the class's simple name.
+    @Test fun `the error detail is a stable word per exception type, never an obfuscated class name`() {
+        assertEquals("install", PluginTelemetry.errorName(InstallException("x")))
+        assertEquals("http_404", PluginTelemetry.errorName(PluginFetchStatusException(404)))
+        assertEquals("too_large", PluginTelemetry.errorName(PluginFileTooBigException()))
+        assertEquals("host_not_allowed", PluginTelemetry.errorName(HostNotAllowedException("a.example")))
+        assertEquals("private_address", PluginTelemetry.errorName(PrivateAddressException("a.example")))
+        assertEquals("fetch_timeout", PluginTelemetry.errorName(PluginFetchException("timeout", "x")))
+        assertEquals("contract", PluginTelemetry.errorName(PluginContractException("x")))
+        assertEquals("gateway", PluginTelemetry.errorName(com.arkiv.player.data.gateway.GatewayException("x")))
+        assertEquals("dns", PluginTelemetry.errorName(java.net.UnknownHostException("x")))
+        assertEquals("timeout", PluginTelemetry.errorName(java.net.SocketTimeoutException("x")))
+        assertEquals("io", PluginTelemetry.errorName(java.io.IOException("x")))
+        assertEquals("illegal_state", PluginTelemetry.errorName(IllegalStateException("x")))
+        // A platform class R8 never renames keeps its own name; anything else is `other`.
+        assertEquals("ArithmeticException", PluginTelemetry.errorName(ArithmeticException("x")))
+        assertEquals("other", PluginTelemetry.errorName(object : RuntimeException("x") {}))
+        val runtime = PluginTelemetry.failureOf("p", "search", java.io.IOException("x"))!!
+        assertEquals(mapOf("error" to "io"), runtime.detail)
+    }
 }
