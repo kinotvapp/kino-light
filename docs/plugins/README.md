@@ -1257,8 +1257,9 @@ package.json
 ```js
 // src/animeav1.js
 export async function searchAnimeAV1(query) {
-  const res = await kino.fetch(`https://animeav1.com/api/search?q=${encodeURIComponent(query)}`);
-  return JSON.parse(res.text()).results.map((r) => ({ id: r.slug, title: r.title, poster: r.image }));
+  const res = await kino.fetch(`https://animeav1.com/api/search?q=${encodeURIComponent(query.q)}`);
+  if (!res.ok) throw new Error("animeav1 respondió " + res.status);
+  return res.json().results.map((r) => ({ id: r.slug, ref: r.slug, title: r.title, kind: "series", poster: r.image }));
 }
 ```
 
