@@ -23,6 +23,7 @@ graft/
 .claude/
 .superpowers/
 
-# Local stand-in for kino.storage written by plugins/sdk/run.mjs
+# Local stand-ins for kino.storage, sealed secrets and the cookie jar written by plugins/sdk/run.mjs
 plugins/**/.kino-storage.json
 plugins/**/.kino-secrets.json
+plugins/**/.kino-cookies.json
