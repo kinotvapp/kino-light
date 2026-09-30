@@ -4,6 +4,7 @@ import java.io.FileOutputStream
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermissions
 import java.security.KeyFactory
+import java.security.MessageDigest
 import java.security.spec.PKCS8EncodedKeySpec
 import java.security.spec.X509EncodedKeySpec
 import java.util.Properties
@@ -420,11 +421,41 @@ fun writeSecretsHeader(bindCert: Boolean, outputDir: File) {
     outputDir.resolve("generated_secrets.h").writeText(content)
 }
 
+/** The exact `.env` keys [writeSecretsHeader] reads: a change to any of them must re-run it. */
+val secretsHeaderEnvKeys = listOf(
+    "CREDENTIALS_BLOB_KEY", "IPTV_3DES_KEY", "IPTV_HOSTS", "IPTV_APP_ID", "IPTV_APK_VERSION",
+    "API_KEY", "MAGIS_FALLBACK_EMAIL", "MAGIS_FALLBACK_PASSWORD", "PLUGIN_SEAL_PRIVATE_KEY",
+)
+
+/**
+ * A SHA-256 over every value in [secretsHeaderEnvKeys] (each paired with its own key name and a NUL
+ * separator, so two values can't be shuffled into an equal digest), used as a task input FINGERPRINT.
+ * Both `generateNativeSecretsHeader*` tasks used to declare `outputs` but no `inputs` at all, so
+ * Gradle considered them up to date forever once run once -- a changed `.env` (a rotated key, a newly
+ * set `PLUGIN_SEAL_PRIVATE_KEY`) never re-ran header generation or the seal-key check. Hashing the
+ * values themselves (never `inputs.property` on a value, or `inputs.file(".env")` on the whole file,
+ * which the rest of `.env` -- Sentry DSN, Cast app id, unrelated to this header -- has no business
+ * being a dependency of either) keeps them out of Gradle's task history, a build scan or an --info
+ * log, while still changing whenever any of them does.
+ */
+fun secretsHeaderEnvFingerprint(): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+    for (key in secretsHeaderEnvKeys) {
+        digest.update(key.toByteArray(Charsets.UTF_8))
+        digest.update(0)
+        digest.update(readEnv(key).toByteArray(Charsets.UTF_8))
+        digest.update(0)
+    }
+    return digest.digest().joinToString("") { "%02x".format(it) }
+}
+
 val generateNativeSecretsHeaderDebug = tasks.register("generateNativeSecretsHeaderDebug") {
+    inputs.property("envFingerprint", provider { secretsHeaderEnvFingerprint() })
     outputs.file(debugSecretsHeaderDir.map { it.file("generated_secrets.h") })
     doLast { writeSecretsHeader(bindCert = false, outputDir = debugSecretsHeaderDir.get().asFile) }
 }
 val generateNativeSecretsHeaderRelease = tasks.register("generateNativeSecretsHeaderRelease") {
+    inputs.property("envFingerprint", provider { secretsHeaderEnvFingerprint() })
     outputs.file(releaseSecretsHeaderDir.map { it.file("generated_secrets.h") })
     doLast { writeSecretsHeader(bindCert = true, outputDir = releaseSecretsHeaderDir.get().asFile) }
 }
