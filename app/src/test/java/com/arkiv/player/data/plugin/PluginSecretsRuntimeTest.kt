@@ -31,10 +31,17 @@ class PluginSecretsRuntimeTest {
         sealedHosts = listOf("localhost"), recipient = TestSealing.TEST_PUBLIC,
     )
 
+    /** Every line both loggers wrote: [PluginHttp]'s and [DefaultPluginHost]'s (`kino.log`, `console`). */
+    private val logs = java.util.concurrent.CopyOnWriteArrayList<String>()
+
     private fun home(body: String, secrets: PluginSecrets? = this.secrets): String = runBlocking {
         val hosts = EffectiveHosts(listOf("localhost"))
-        val http = PluginHttp(OkHttpClient(), "test", hosts, "1.0", allowInsecureLocalhost = true)
-        val host = DefaultPluginHost("test", http, PluginStorage(tmp.root.resolve("s-${System.nanoTime()}.json")), allowInsecureLocalhost = true, secrets = secrets, logger = {})
+        val cookies = PluginCookies(tmp.root.resolve("c-${System.nanoTime()}.json"), hosts)
+        val http = PluginHttp(OkHttpClient(), "test", hosts, "1.0", cookies = cookies, allowInsecureLocalhost = true, log = { logs += it })
+        val host = DefaultPluginHost(
+            "test", http, PluginStorage(tmp.root.resolve("s-${System.nanoTime()}.json")), cookies = cookies,
+            allowInsecureLocalhost = true, secrets = secrets, logger = { logs += it },
+        )
         val rt = PluginRuntime.open("test", "export async function home() { $body }", host, PluginEnv(appVersion = "1.0")).also { opened += it }
         http.beginCall()
         rt.call("home", "null", 10_000)
@@ -78,6 +85,128 @@ class PluginSecretsRuntimeTest {
         assertFalse(out, "k-123" in out)
         val m = secrets.marker("apiKey")!!
         assertEquals(JSONArray().put(m).put("$base/search?api_key=$m").put("your key is $m").toString(), out)
+    }
+
+    // --- Redaction (spec §5): every form of an opened value comes back to the plugin as its marker. ---
+
+    private val tricky = "k3y with/sl?sh+plus~*>"
+    private val trickySecrets = PluginSecrets(
+        mapOf("apiKey" to TestSealing.seal(tricky, "owner/repo", "apiKey")), "owner/repo", TestSealing.agreement,
+        sealedHosts = listOf("localhost"), recipient = TestSealing.TEST_PUBLIC,
+    )
+
+    /** How a server may echo [plain] back: as is, form- and component-encoded, base64 and base64url with and without padding. */
+    private fun echoForms(plain: String): List<String> {
+        val bytes = plain.toByteArray(Charsets.UTF_8)
+        val form = java.net.URLEncoder.encode(plain, "UTF-8")
+        return listOf(
+            plain, form, form.replace("+", "%20"),
+            java.util.Base64.getEncoder().encodeToString(bytes), java.util.Base64.getEncoder().withoutPadding().encodeToString(bytes),
+            java.util.Base64.getUrlEncoder().encodeToString(bytes), java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(bytes),
+        )
+    }
+
+    @Test fun `echoed value is redacted in every encoding`() {
+        val forms = echoForms(tricky)
+        server.enqueue(
+            MockResponse().setBody(forms.joinToString("\n")).addHeader("X-Echo", forms.joinToString(" | "))
+                .apply { forms.forEachIndexed { i, f -> addHeader("Set-Cookie", "c$i=$f; Path=/") } },
+        )
+        val base = "http://localhost:${server.port}"
+        val out = home(
+            """
+            const k = kino.secret('apiKey');
+            const r = await kino.fetch('$base/echo/' + encodeURIComponent(k) + '?k=' + encodeURIComponent(k), { headers: { 'X-Key': k } });
+            const cookies = [];
+            for (let i = 0; i < ${forms.size}; i++) cookies.push(kino.cookies.get('$base/', 'c' + i));
+            return { url: r.url, text: r.text(), echo: r.headers['x-echo'], cookies };
+            """,
+            secrets = trickySecrets,
+        )
+        val seen = server.takeRequest()
+        assertEquals(tricky, seen.getHeader("X-Key"))
+        assertEquals(tricky, seen.requestUrl!!.queryParameter("k"))
+        // Nothing handed to the plugin carries any form of the value, only its marker.
+        for (f in forms) assertFalse("$f in $out", f in out)
+        val m = trickySecrets.marker("apiKey")!!
+        val o = org.json.JSONObject(out)
+        assertEquals(forms.joinToString("\n") { m }, o.getString("text"))
+        assertEquals(forms.joinToString(" | ") { m }, o.getString("echo"))
+        assertEquals(forms.joinToString(",", "[", "]") { "\"$m\"" }, o.getJSONArray("cookies").toString())
+        assertEquals("$base/echo/$m?k=$m", o.getString("url"))
+    }
+
+    @Test fun `a text body that isn't UTF-8 hands the plugin no base64 twin with the value`() {
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "text/plain; charset=ISO-8859-1")
+                .setBody(okio.Buffer().write("año $tricky".toByteArray(Charsets.ISO_8859_1))),
+        )
+        val out = JSONArray(
+            home(
+                "const r = await kino.fetch('http://localhost:${server.port}/x?k=' + kino.secret('apiKey')); return [r.text(), r.base64()]",
+                secrets = trickySecrets,
+            ),
+        )
+        val m = trickySecrets.marker("apiKey")!!
+        assertEquals("año $m", out.getString(0))
+        // The raw bytes re-encoded from the redacted text, in the body's own charset.
+        assertEquals("año $m", String(java.util.Base64.getDecoder().decode(out.getString(1)), Charsets.ISO_8859_1))
+    }
+
+    @Test fun `errors and logs never carry the value`() {
+        server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+            override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): MockResponse = when (request.requestUrl!!.pathSegments[0]) {
+                // A network failure on a request with the value in its path.
+                "a" -> MockResponse().setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.DISCONNECT_AFTER_REQUEST)
+                // A server whose broken status line quotes the value, straddling the 200-character
+                // cut of an error message: no piece of it may survive the cut unredacted.
+                "b" -> MockResponse().setStatus("HTTP/1.1 abc " + "x".repeat(142) + request.requestUrl!!.pathSegments[1])
+                // A binary body is not scanned (spec §5): the plugin can read the value there, but not log it.
+                else -> MockResponse().setHeader("Content-Type", "application/octet-stream").setBody(okio.Buffer().write(tricky.toByteArray()))
+            }
+        }
+        val base = "http://localhost:${server.port}"
+        val out = home(
+            """
+            const k = kino.secret('apiKey');
+            const errors = [];
+            for (const path of ['/a/', '/b/']) {
+              try { await kino.fetch('$base' + path + encodeURIComponent(k)); errors.push('no error'); } catch (e) { errors.push([e.code, e.message]); kino.log(e.message); }
+            }
+            const leaked = atob((await kino.fetch('$base/c/' + encodeURIComponent(k))).base64());
+            kino.log('got ' + leaked);
+            console.warn(leaked, errors);
+            return [errors, leaked === '$tricky'];
+            """,
+            secrets = trickySecrets,
+        )
+        val o = JSONArray(out)
+        assertTrue(out, o.getBoolean(1))
+        val errors = o.getJSONArray(0)
+        assertEquals(out, "network", errors.getJSONArray(0).getString(0))
+        assertEquals(out, "network", errors.getJSONArray(1).getString(0))
+        val pieces = (0..tricky.length - 6).map { tricky.substring(it, it + 6) } + PluginSecrets.encode(tricky, PluginSecrets.Encoding.URL_COMPONENT).take(8)
+        for (p in pieces) assertFalse("$p in $errors", p in errors.toString())
+        assertTrue(logs.toString(), logs.any { "got " + trickySecrets.marker("apiKey") in it })
+        for (p in pieces) assertFalse("$p in $logs", logs.any { p in it })
+    }
+
+    @Test fun `a sealed value a header can't carry is refused before sending, without echoing it`() {
+        for (value in listOf("line1\nline2", "clé")) {
+            val s = PluginSecrets(
+                mapOf("apiKey" to TestSealing.seal(value, "owner/repo", "apiKey")), "owner/repo", TestSealing.agreement,
+                sealedHosts = listOf("localhost"), recipient = TestSealing.TEST_PUBLIC,
+            )
+            logs.clear()
+            server.enqueue(MockResponse().setBody("ok")) // only reached if the header is dropped instead of refused
+            val out = home(
+                "try { await kino.fetch('http://localhost:${server.port}/x', { headers: { 'X-Key': 'v=' + kino.secret('apiKey') } }); return 'sent' } catch (e) { return [e.code, e.message] }",
+                secrets = s,
+            )
+            assertEquals(value, "[\"invalid_request\",\"el encabezado X-Key no puede llevar este dato sellado: tiene caracteres no permitidos\"]", out)
+            assertFalse(logs.toString(), logs.any { "line1" in it || "clé" in it })
+        }
+        assertEquals(0, server.requestCount)
     }
 
     @Test fun `a sealed fetch to an undeclared host fails in the plugin with the sealed-host message`() {

@@ -290,6 +290,8 @@ class PluginHttp(
         val text: String?,
         /** The raw bytes as base64: for a binary body, or a text body whose charset isn't UTF-8. */
         val bytesBase64: String?,
+        /** The charset [text] was decoded with, when [bytesBase64] is its raw twin (a text body that isn't UTF-8). */
+        val textCharset: java.nio.charset.Charset? = null,
     )
 
     /**
@@ -389,7 +391,11 @@ class PluginHttp(
         } catch (e: InterruptedIOException) {
             throw PluginFetchException("timeout", "la solicitud tardó demasiado")
         } catch (e: IOException) {
-            throw PluginFetchException("network", "error de red: ${(e.message ?: e.javaClass.simpleName).take(200)}")
+            val detail = e.message ?: e.javaClass.simpleName
+            // Not cut for a sealed request: its detail may quote what the server echoed, and a value
+            // straddling the cut would leave a piece redaction can't recognize. DefaultPluginHost
+            // redacts it whole, then cuts it.
+            throw PluginFetchException("network", "error de red: ${if (req.sealedTo != null) detail else detail.take(200)}")
         } finally {
             cookies?.saveIfChanged()
         }
@@ -647,7 +653,11 @@ class PluginHttp(
         return if (isText(type)) {
             val text = String(bytes, charset ?: Charsets.UTF_8)
             val utf8 = charset == null || charset == Charsets.UTF_8
-            Response(resp.isSuccessful, resp.code, url.toString(), headers, text, if (utf8) null else b64(bytes))
+            if (utf8) {
+                Response(resp.isSuccessful, resp.code, url.toString(), headers, text, null)
+            } else {
+                Response(resp.isSuccessful, resp.code, url.toString(), headers, text, b64(bytes), charset)
+            }
         } else {
             Response(resp.isSuccessful, resp.code, url.toString(), headers, null, b64(bytes))
         }

@@ -29,6 +29,8 @@ object PluginCrypto {
     const val PBKDF2_MAX_KEY_BYTES = 64
     const val RANDOM_MAX_BYTES = 1024
     const val ERROR_CODE = "crypto_error"
+    /** A sealed value where `kino.crypto` could hand it back or let it be computed: see [DefaultPluginHost.crypto]. */
+    const val SEALED_REFUSED = "no se puede usar un dato sellado aquí"
     val HASHES = listOf("md5", "sha1", "sha256", "sha512")
     val PBKDF2_HASHES = listOf("sha1", "sha256", "sha512")
     val ENCODINGS = listOf("utf8", "hex", "base64")

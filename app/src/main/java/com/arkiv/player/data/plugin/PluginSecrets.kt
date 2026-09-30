@@ -1,6 +1,8 @@
 package com.arkiv.player.data.plugin
 
+import java.net.URLEncoder
 import java.security.SecureRandom
+import java.util.Base64
 
 /**
  * One runtime's sealed secrets (spec: docs/superpowers/specs/2026-09-29-plugin-sealed-secrets-design.md §5).
@@ -56,15 +58,16 @@ class PluginSecrets(
     }
 
     /**
-     * [text] with every opened plain value -- as is, and in every [Encoding] [substitute] writes --
-     * replaced by its marker. One pass, longest form first at each position: a value that is a
-     * prefix of another leaves no tail, and a marker just put in is never scanned again.
+     * [text] with every opened plain value, in every form [echoForms] lists, replaced by its marker.
+     * One pass, longest form first at each position: a value that is a prefix of another leaves no
+     * tail, and a marker just put in is never scanned again. Exact occurrences only: a server that
+     * transforms the value any other way (case, hashing, another escaping) is not caught.
      */
     fun redact(text: String): String {
         val forms = HashMap<String, String>()
         for ((name, plain) in synchronized(opened) { opened.toMap() }) {
             if (plain.isEmpty()) continue
-            for (e in Encoding.entries) forms.putIfAbsent(encode(plain, e), markers.getValue(name))
+            for (form in echoForms(plain)) forms.putIfAbsent(form, markers.getValue(name))
         }
         if (forms.isEmpty()) return text
         val pattern = Regex(forms.keys.sortedByDescending { it.length }.joinToString("|") { Regex.escape(it) })
@@ -78,6 +81,21 @@ class PluginSecrets(
     companion object {
         private val random = SecureRandom()
         private const val HEX = "0123456789ABCDEF"
+
+        /**
+         * Every form [redact] replaces: what [substitute] writes (each [Encoding]), and how a server
+         * commonly echoes a value back -- `URLEncoder`'s form encoding (`+` for a space) and the same
+         * with `%20`, and the UTF-8 bytes in base64 and base64url, with and without padding.
+         */
+        private fun echoForms(plain: String): Set<String> {
+            val bytes = plain.toByteArray(Charsets.UTF_8)
+            val form = URLEncoder.encode(plain, "UTF-8")
+            return Encoding.entries.mapTo(LinkedHashSet()) { encode(plain, it) } + listOf(
+                form, form.replace("+", "%20"),
+                Base64.getEncoder().encodeToString(bytes), Base64.getEncoder().withoutPadding().encodeToString(bytes),
+                Base64.getUrlEncoder().encodeToString(bytes), Base64.getUrlEncoder().withoutPadding().encodeToString(bytes),
+            )
+        }
 
         fun encode(value: String, encoding: Encoding): String = when (encoding) {
             Encoding.RAW -> value

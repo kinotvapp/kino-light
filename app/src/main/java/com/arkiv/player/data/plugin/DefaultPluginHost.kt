@@ -22,8 +22,10 @@ import java.util.Base64
  * [secrets] (a plugin whose manifest declares sealed ones, see [PluginSecrets]): `kino.secret`
  * answers a marker, and [fetch] swaps markers for the plain values in the URL's path and query,
  * every header value and a text/JSON/form body, then sends that request toward the manifest's own
- * hosts only, over https only ([PluginHttp.Request.sealedTo]). What goes back to the plugin -- the final URL,
- * headers, text body, an error message -- has any opened value swapped back for its marker.
+ * hosts only, over https only ([PluginHttp.Request.sealedTo]); [crypto] takes markers in its
+ * key-like fields only. What goes back to the plugin -- the final URL, headers, text body (and its
+ * base64 twin), an error message, a cookie value, a `kino.crypto` answer -- and every `kino.log`
+ * line have any opened value, in every form [PluginSecrets.redact] knows, swapped back for its marker.
  */
 class DefaultPluginHost(
     private val pluginId: String,
@@ -38,15 +40,57 @@ class DefaultPluginHost(
 ) : PluginHost {
     override fun secret(name: String): String? = secrets?.marker(name)
 
+    /**
+     * `kino.crypto` with sealed values (spec §5): a marker is swapped for its value only in what an
+     * op reads as a key -- `key` (encrypt, decrypt, hmac), pbkdf2's `password` and `salt` -- and in
+     * `iv` and `aad` only when the key carries one too. A marker in `data`, or in iv/aad under a
+     * plain key, is refused with [PluginCrypto.SEALED_REFUSED]: with a known key the ciphertext gives
+     * a sealed iv back (CBC's first block), and a guessable aad falls to the tag. A marker anywhere
+     * else stays text. The answer is redacted like everything else that returns to the plugin.
+     *
+     * Known gap, pending a spec decision: under a sealed key the plugin can still compute a sealed
+     * iv back -- the same block decrypted under that iv and under a zero one, XORed -- and with the
+     * key's own marker as the iv, that is the key.
+     */
+    override fun crypto(opJson: String): String {
+        val s = secrets ?: return PluginCrypto.run(opJson)
+        val o = try {
+            JSONObject(opJson)
+        } catch (e: org.json.JSONException) {
+            return PluginCrypto.run(opJson)
+        }
+        val op = o.optString("op")
+        fun hasMarker(field: String) = (o.opt(field) as? String)?.let(s::containsMarker) == true
+        val keySealed = hasMarker(if (op == "pbkdf2") "password" else "key")
+        if (hasMarker("data") || (!keySealed && (hasMarker("iv") || hasMarker("aad")))) {
+            return JSONObject().put("error", PluginCrypto.SEALED_REFUSED).toString()
+        }
+        val keyLike = when (op) {
+            "hmac" -> listOf("key")
+            "encrypt", "decrypt" -> listOf("key", "iv", "aad")
+            "pbkdf2" -> listOf("password", "salt")
+            else -> emptyList()
+        }
+        try {
+            for (field in keyLike) if (hasMarker(field)) o.put(field, s.substitute(o.getString(field)))
+        } catch (e: SealException) {
+            // A seal that won't open on this build: a fixed message, never a value.
+            return JSONObject().put("error", e.message.orEmpty()).toString()
+        }
+        val answer = JSONObject(PluginCrypto.run(o.toString()))
+        for (k in answer.keys().asSequence().toList()) (answer.opt(k) as? String)?.let { answer.put(k, s.redact(it)) }
+        return answer.toString()
+    }
+
     override suspend fun fetch(requestJson: String): String = try {
         val resp = http.fetch(request(JSONObject(requestJson)))
+        val text = resp.text?.let(::redact)
         JSONObject().put("ok", resp.ok).put("status", resp.status).put("url", redact(resp.url))
             .put("headers", JSONObject(resp.headers.mapValues { redact(it.value) }))
-            // A binary body (base64) is not scanned: spec §5, Redaction.
-            .apply { resp.text?.let { put("text", redact(it)) }; resp.bytesBase64?.let { put("base64", it) } }
+            .apply { text?.let { put("text", it) }; base64(resp, text)?.let { put("base64", it) } }
             .toString()
     } catch (e: PluginFetchException) {
-        error(e.code, redact(e.message.orEmpty()))
+        error(e.code, e.message.orEmpty())
     } catch (e: SealException) {
         // A seal that won't open on this build (no native X25519): a fixed message, never a value.
         error("invalid_request", e.message.orEmpty())
@@ -108,7 +152,7 @@ class DefaultPluginHost(
         }
         return request.copy(
             url = sealedUrl,
-            headers = request.headers.mapValues { s.substitute(it.value) },
+            headers = request.headers.mapValues { (name, value) -> sealedHeader(name, value, s) },
             body = when (val b = request.body) {
                 is PluginHttp.Body.Text -> PluginHttp.Body.Text(s.substitute(b.text))
                 is PluginHttp.Body.Json -> PluginHttp.Body.Json(s.substitute(b.json, PluginSecrets.Encoding.JSON_STRING))
@@ -117,6 +161,35 @@ class DefaultPluginHost(
             },
             sealedTo = s.sealedHosts,
         )
+    }
+
+    /**
+     * What the plugin gets as `r.base64()`. A binary body's bytes are not scanned (spec §5,
+     * Redaction). A text body that isn't UTF-8 also comes with its raw bytes; when redaction changed
+     * its text (the [redacted] one), those bytes are re-encoded from the redacted text in the same
+     * charset, so the twin says what the text says and never still holds the value. Only the value's
+     * bytes change: the rest of the body is its original bytes, unless it held some the charset
+     * can't round-trip.
+     */
+    private fun base64(resp: PluginHttp.Response, redacted: String?): String? {
+        if (redacted == null || redacted == resp.text || resp.bytesBase64 == null) return resp.bytesBase64
+        // No charset to re-encode with (never, as PluginHttp builds it): no twin rather than the raw one.
+        val charset = resp.textCharset ?: return null
+        return Base64.getEncoder().encodeToString(redacted.toByteArray(charset))
+    }
+
+    /**
+     * A header [value] with [s]'s markers swapped in. One OkHttp can't send (a line break or any
+     * other control character but a tab, anything outside ASCII) is refused here, naming the header
+     * only: OkHttp would throw with the value in its message, and PluginHttp would drop the header.
+     */
+    private fun sealedHeader(name: String, value: String, s: PluginSecrets): String {
+        if (!s.containsMarker(value)) return value
+        val out = s.substitute(value)
+        if (out.any { it != '\t' && it !in ' '..'~' }) {
+            throw PluginFetchException("invalid_request", "el encabezado ${name.take(40)} no puede llevar este dato sellado: tiene caracteres no permitidos")
+        }
+        return out
     }
 
     private fun redact(text: String): String = secrets?.redact(text) ?: text
@@ -143,15 +216,16 @@ class DefaultPluginHost(
         }
     }
 
+    /** Redacted whole, then cut: a cut first could leave a piece of a value no redaction recognizes. */
     private fun error(code: String, message: String): String =
-        JSONObject().put("error", JSONObject().put("code", code).put("message", message.take(PluginErrors.MAX_MESSAGE_CHARS))).toString()
+        JSONObject().put("error", JSONObject().put("code", code).put("message", redact(message).take(PluginErrors.MAX_MESSAGE_CHARS))).toString()
 
     override fun select(html: String, css: String): String = PluginHtml.selectJson(html, css)
     override fun storageGet(key: String): String? = storage.get(key)
     override fun storageSet(key: String, value: String, ttlMs: Long?) = storage.set(key, value, ttlMs)
     override fun storageRemove(key: String) = storage.remove(key)
     override fun storageKeys(): String = JSONArray(storage.keys()).toString()
-    override fun log(level: String, message: String) = logger("[$pluginId] $level: ${message.take(2000)}")
+    override fun log(level: String, message: String) = logger("[$pluginId] $level: ${redact(message).take(2000)}")
     override fun config(): String = config.toJson()
 
     override fun cookieGet(url: String, name: String): String? {
@@ -159,7 +233,7 @@ class DefaultPluginHost(
         // [http]'s own, live host set (see [LiveHosts]): never a copy taken when the runtime opened,
         // which would miss a host approved reactively earlier in this very call.
         if (runCatching { PluginHostGate.check(u, http.hosts, allowInsecureLocalhost) }.isFailure) return null
-        return cookies?.get(u, name)
+        return cookies?.get(u, name)?.let(::redact)
     }
 
     override fun cookiesClear() {

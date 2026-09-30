@@ -91,6 +91,32 @@ class PluginSecretsTest {
         assertEquals("x $long y $short z", s.redact("x abcdef y abc z"))
     }
 
+    @Test fun `redact knows every form a server may echo the value in`() {
+        val plain = "k3y with/sl?sh+plus~*>"
+        val s = PluginSecrets(
+            mapOf("apiKey" to TestSealing.seal(plain, binding, "apiKey")), binding, TestSealing.agreement,
+            listOf("api.example.com"), recipient = TestSealing.TEST_PUBLIC,
+        )
+        val m = s.marker("apiKey")!!
+        s.substitute(m)
+        val bytes = plain.toByteArray(Charsets.UTF_8)
+        val form = java.net.URLEncoder.encode(plain, "UTF-8")
+        val forms = listOf(
+            plain,
+            form,
+            form.replace("+", "%20"),
+            PluginSecrets.encode(plain, PluginSecrets.Encoding.URL_COMPONENT),
+            java.util.Base64.getEncoder().encodeToString(bytes),
+            java.util.Base64.getEncoder().withoutPadding().encodeToString(bytes),
+            java.util.Base64.getUrlEncoder().encodeToString(bytes),
+            java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(bytes),
+        )
+        // Eight different texts: the value was picked so that no two forms coincide.
+        assertEquals(forms.toString(), 8, forms.toSet().size)
+        for (f in forms) assertEquals(f, "<$m>", s.redact("<$f>"))
+        assertEquals(forms.joinToString(" ") { m }, s.redact(forms.joinToString(" ")))
+    }
+
     @Test fun `redact puts the marker back in place of an opened value`() {
         val s = secrets()
         val a = s.marker("apiKey")!!
