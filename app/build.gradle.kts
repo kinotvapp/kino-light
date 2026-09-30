@@ -721,6 +721,9 @@ dependencies {
     // Image loading
     implementation("io.coil-kt:coil-compose:2.7.0")
 
+    // Phone-only first-run mini guide (spotlight + tooltip steps over existing composables).
+    implementation("com.canopas.intro-showcase-view:introshowcaseview:2.0.1")
+
     // Plugin sandbox (see docs/superpowers/specs/2026-09-24-plugin-sources-design.md). alpha13 is the
     // last quickjs-kt built with Kotlin 2.0; every later release needs Kotlin >= 2.3. Its engine
     // quirks are pinned by QuickJsSpikeTest.

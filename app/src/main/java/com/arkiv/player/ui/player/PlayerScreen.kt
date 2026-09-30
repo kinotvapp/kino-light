@@ -2954,6 +2954,7 @@ private fun PlayerContent(
                 subtitleConfigs = (webExtras?.subtitles ?: emptyList()).toExoSubtitleConfigs(),
                 audioTracks = webExtras?.audioTracks ?: emptyList(),
                 drm = webExtras?.drm,
+                clearKey = webExtras?.clearKey,
                 requestHeaders = mItem.requestHeaders,
                 http = streamHttpFor(mItem.kind, mItem.pluginHosts, mItem.pluginXuper),
                 mimeType = mItem.mime.ifBlank { null },

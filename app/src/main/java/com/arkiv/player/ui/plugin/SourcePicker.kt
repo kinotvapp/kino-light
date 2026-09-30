@@ -53,6 +53,13 @@ internal fun sourcePickerLine(isTv: Boolean): String =
 internal const val SOURCE_PICKER_DONE = "Continuar"
 internal const val RECOMMENDED_TITLE = "Recomendados"
 
+/** First-run mini guide (phone only, spec 2026-09-30 §mini-guide): what a plugin is. */
+internal const val SOURCE_PICKER_INTRO_WHAT_TITLE = "¿Qué son los plugins?"
+internal const val SOURCE_PICKER_INTRO_WHAT_BODY = "Cada plugin conecta Kino con una fuente de contenido distinta."
+/** Same guide: how to install one. */
+internal const val SOURCE_PICKER_INTRO_HOW_TITLE = "Así los agregás"
+internal const val SOURCE_PICKER_INTRO_HOW_BODY = "Tocá una tarjeta para instalarla. Podés agregar o quitar plugins cuando quieras."
+
 /**
  * "Continuar" does something once at least one plugin is installed and switched on ([Onboarding.hasSource]):
  * the same rule that reopens the picker at start, so leaving it never leads to it again next time.

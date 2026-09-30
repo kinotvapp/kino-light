@@ -50,6 +50,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -111,7 +112,9 @@ private val FULL_WIDTH: LazyGridItemSpanScope.() -> GridItemSpan = { GridItemSpa
  *   [TV_CATALOG_COLUMNS] columns; OK on a card opens its actions dialog
  *   ([TvInstalledActionsDialog]). With nothing installed, a line saying so and "Ver recomendados".
  * - **Agregar** opens [TvAddCustomPluginDialog] for the custom `usuario/repositorio`. Installing always goes
- *   through the consent sheet, and that sheet replaces the dialog while it is up (see [addModalVisible]).
+ *   through the consent sheet, and that sheet replaces the dialog while it is up (see [addModalVisible]). A
+ *   static line under the header, end-aligned so it sits under the button itself, says Agregar takes a Kino
+ *   or a Nuvio plugin's repo -- fixed text, no focus of its own, on either tab.
  *
  * The header row is never inside a scrolling list (a scroll would drag it away as focus went down and
  * getting back would be a fumble). D-pad: Left and Right move among the tabs and the button, OK on a tab
@@ -232,6 +235,13 @@ internal fun TvPluginsContent(
                 vm.onAddressChange("")
                 addRequested = true
             },
+        )
+        Text(
+            "Agregar también acepta el usuario/repositorio de un plugin Kino o Nuvio.",
+            style = MaterialTheme.typography.bodySmall,
+            color = ArkivTextSecondary,
+            textAlign = TextAlign.End,
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp),
         )
         // The scaled card or action has to be fully visible when it takes focus, so the scroll keeps a margin around it.
         val density = LocalDensity.current

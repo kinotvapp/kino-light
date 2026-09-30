@@ -21,7 +21,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -31,6 +34,7 @@ import com.arkiv.player.ui.theme.ArkivBlack
 import com.arkiv.player.ui.theme.ArkivRed
 import com.arkiv.player.ui.theme.ArkivTextSecondary
 import com.arkiv.player.ui.tv.gridLinesWithStatus
+import com.canopas.lib.showcase.IntroShowcase
 
 /**
  * "Elige tus fuentes" on the phone: title and one line, what an action answers, then one grid with the
@@ -41,9 +45,13 @@ import com.arkiv.player.ui.tv.gridLinesWithStatus
  * opened at start).
  * Installing opens the consent sheet and, for a plugin that needs setup, Configurar, both over this screen;
  * the card then reads "Instalado".
+ *
+ * [isMandatoryOnboarding] (the picker opened at start, never one reopened mid-session) also gates a
+ * two-step mini guide over this screen: what a plugin is, then how to install one. Existing users never
+ * see it, because they never reach the mandatory picker in the first place.
  */
 @Composable
-fun SourcePickerScreen(onFinish: () -> Unit, onBack: () -> Unit) {
+fun SourcePickerScreen(onFinish: () -> Unit, onBack: () -> Unit, isMandatoryOnboarding: Boolean = false) {
     BackHandler(onBack = onBack)
     val vm = sourcePickerViewModel()
     val plugins by vm.plugins.collectAsStateWithLifecycle()
@@ -55,9 +63,20 @@ fun SourcePickerScreen(onFinish: () -> Unit, onBack: () -> Unit) {
     val statusLines = remember(rows) { gridLinesWithStatus(rows, PHONE_CATALOG_COLUMNS) }
     val installedRows = pickerInstalledRows(plugins, rows + community.rows)
     val installedLines = remember(installedRows) { gridLinesWithStatus(installedRows, PHONE_CATALOG_COLUMNS) }
+    var showIntro by rememberSaveable { mutableStateOf(isMandatoryOnboarding) }
 
+    IntroShowcase(showIntroShowCase = showIntro, onShowCaseCompleted = { showIntro = false }) {
     Column(Modifier.fillMaxSize().background(ArkivBlack).systemBarsPadding()) {
-        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+                .introShowCaseTarget(
+                    index = 0,
+                    content = { MiniGuideTooltip(SOURCE_PICKER_INTRO_WHAT_TITLE, SOURCE_PICKER_INTRO_WHAT_BODY) },
+                ),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
             Text(SOURCE_PICKER_TITLE, style = MaterialTheme.typography.headlineSmall, color = Color.White)
             Text(sourcePickerLine(isTv = false), style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary)
         }
@@ -67,7 +86,13 @@ fun SourcePickerScreen(onFinish: () -> Unit, onBack: () -> Unit) {
         }
         LazyVerticalGrid(
             columns = GridCells.Fixed(PHONE_CATALOG_COLUMNS),
-            modifier = Modifier.weight(1f).fillMaxWidth(),
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .introShowCaseTarget(
+                    index = 1,
+                    content = { MiniGuideTooltip(SOURCE_PICKER_INTRO_HOW_TITLE, SOURCE_PICKER_INTRO_HOW_BODY) },
+                ),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -112,6 +137,21 @@ fun SourcePickerScreen(onFinish: () -> Unit, onBack: () -> Unit) {
             ) { Text(SOURCE_PICKER_DONE) }
         }
     }
+    }
     state.consent?.let { PluginConsentDialog(it, onInstall = vm::confirmInstall, onCancel = vm::cancelConsent) }
     state.configuring?.let { PluginConfigDialog(it, isTv = false, vm = vm) }
+}
+
+/** The tooltip box the mini guide's steps share (source picker and Home), styled like the app's dialogs. */
+@Composable
+internal fun MiniGuideTooltip(title: String, body: String) {
+    Column(
+        Modifier
+            .background(ArkivBlack, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(title, style = MaterialTheme.typography.titleMedium, color = Color.White)
+        Text(body, style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary)
+    }
 }

@@ -76,6 +76,35 @@ class M3uParserTest {
         }
     }
 
+    @Test fun `a KODIPROP ClearKey license is captured as the entry's DRM key`() {
+        val text = "#EXTM3U\n" +
+            "#EXTINF:-1,Canal protegido\n" +
+            "#KODIPROP:inputstream.adaptive.license_type=clearkey\n" +
+            "#KODIPROP:inputstream.adaptive.license_key=0123456789abcdef0123456789abcdef:fedcba9876543210fedcba9876543210\n" +
+            "https://live.example.com/protegido.m3u8\n"
+        val entry = M3uParser.parse(text).entries.single()
+        assertEquals("0123456789abcdef0123456789abcdef", entry.drmKeyId)
+        assertEquals("fedcba9876543210fedcba9876543210", entry.drmKey)
+    }
+
+    @Test fun `a KODIPROP license of an unsupported type is ignored, not half-kept`() {
+        val text = "#EXTM3U\n" +
+            "#EXTINF:-1,Canal widevine\n" +
+            "#KODIPROP:inputstream.adaptive.license_type=com.widevine.alpha\n" +
+            "#KODIPROP:inputstream.adaptive.license_key=https://license.example.com/acquire\n" +
+            "https://live.example.com/widevine.m3u8\n"
+        val entry = M3uParser.parse(text).entries.single()
+        assertEquals("", entry.drmKeyId)
+        assertEquals("", entry.drmKey)
+    }
+
+    @Test fun `a plain entry with no KODIPROP DRM has empty DRM fields, same as before this feature`() {
+        val text = "#EXTM3U\n#EXTINF:-1,Canal libre\nhttps://live.example.com/libre.m3u8\n"
+        val entry = M3uParser.parse(text).entries.single()
+        assertEquals("", entry.drmKeyId)
+        assertEquals("", entry.drmKey)
+    }
+
     @Test fun `hidden and refused entries are counted apart and never spend the cap`() {
         val text = buildString {
             append("#EXTM3U\n")

@@ -260,6 +260,8 @@ class PluginContentSource(
             // from them, and `PluginDownloadEligibility` refuses to save anything that has one.
             drmLicenseUrl = stream.drm?.licenseUrl.orEmpty(),
             drmLicenseHeaders = stream.drm?.licenseHeaders.orEmpty(),
+            drmClearKeyId = stream.drm?.clearKeyId.orEmpty(),
+            drmClearKey = stream.drm?.clearKey.orEmpty(),
             expiresInSeconds = stream.expiresInSeconds,
         )
 

@@ -102,6 +102,13 @@ data class GatewayPlayable(
     /** Extra headers for the DRM license request (e.g. Cookie: playback_token=…). */
     val drmLicenseHeaders: Map<String, String> = emptyMap(),
     /**
+     * ClearKey (own M3U live channels only, see [com.arkiv.player.data.live.M3uEntry]): hex kid/key,
+     * no license server. "" = no ClearKey. Independent of [drmLicenseUrl] -- a stream carries one
+     * DRM shape or the other, never both.
+     */
+    val drmClearKeyId: String = "",
+    val drmClearKey: String = "",
+    /**
      * Plugins only (0 = not said): after this many seconds the URL may stop working, so a
      * playback failure past it resolves once more (`PluginStreamExpiry`). Magis and Caracol leave it 0.
      */

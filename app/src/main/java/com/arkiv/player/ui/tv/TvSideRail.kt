@@ -45,7 +45,7 @@ import com.arkiv.player.ui.KinoWordmark
 import com.arkiv.player.ui.theme.ArkivBlack
 import com.arkiv.player.ui.theme.ArkivRed
 
-/** The rail's width while it only shows icons: a 64 dp pill around each 40 dp icon and 8 dp of air either side. */
+/** The rail's width while it only shows icons: a 64 dp pill around each 40 dp slot (a 32 dp icon centred in it) and 8 dp of air either side. */
 internal val TV_RAIL_COLLAPSED_WIDTH = 80.dp
 
 /**
@@ -58,10 +58,10 @@ internal val TV_RAIL_CONTENT_START = 28.dp
 /** The rail's width while it shows icons and words: it opens OVER the content, which does not move. */
 internal val TV_RAIL_EXPANDED_WIDTH = 264.dp
 
-// Closed rail: a 40 dp icon in a 40 dp slot. Open rail: a 28 dp icon in a 32 dp slot, beside the words.
-private val RAIL_CLOSED_ICON = 40.dp
+// Closed rail: a 32 dp icon in a 40 dp slot. Open rail: a 24 dp icon in a 32 dp slot, beside the words.
+private val RAIL_CLOSED_ICON = 32.dp
 private val RAIL_CLOSED_SLOT = 40.dp
-private val RAIL_OPEN_ICON = 28.dp
+private val RAIL_OPEN_ICON = 24.dp
 private val RAIL_OPEN_SLOT = 32.dp
 
 /** The strip each item owns: the closed pill's height (40 dp slot + 6 dp above and below). */

@@ -121,7 +121,10 @@ private val TABS = listOf(
 internal fun visibleTabRoutes(isColombia: Boolean, liveModule: Boolean, categoriesModule: Boolean = true): List<String> =
     TABS.map { it.route }.filter { route ->
         when (route) {
-            "caracol" -> isColombia
+            // Hidden for now (2026-09-30): Caracol is getting rebuilt as a plugin, so the built-in
+            // tab is off regardless of country until that lands. Not deleted -- isColombia is kept
+            // as the parameter a re-enable would restore.
+            "caracol" -> false
             "live" -> liveModule
             "categorias_home" -> categoriesModule
             else -> true
@@ -138,6 +141,18 @@ internal fun categoriesTabAvailable(plugins: List<com.arkiv.player.data.plugin.I
 
 /** Whether tapping the top bar's logo goes to Inicio: on every section but Inicio itself. */
 internal fun logoGoesHome(currentRoute: String?): Boolean = currentRoute != null && currentRoute != "home"
+
+/**
+ * Home mini guide (phone only, spec 2026-09-30 §mini-guide): shown once, right after the mandatory
+ * source picker finishes. Three steps, in this order: the content area, the drawer's menu icon, the
+ * search icon (the last two only compose on "home", same as the guide's gate).
+ */
+internal const val HOME_INTRO_CONTENT_TITLE = "Tu contenido"
+internal const val HOME_INTRO_CONTENT_BODY = "Acá vas a ver lo que traen tus plugins instalados."
+internal const val HOME_INTRO_MENU_TITLE = "El menú"
+internal const val HOME_INTRO_MENU_BODY = "Categorías, Biblioteca, Plugins y Ajustes están acá."
+internal const val HOME_INTRO_SEARCH_TITLE = "Buscar"
+internal const val HOME_INTRO_SEARCH_BODY = "Tocá la lupa para buscar algo puntual."
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -230,8 +245,22 @@ fun ArkivRoot(
     // app. One opened from the empty Home mid-session (a last plugin removed) is not: Back returns there.
     var sourcePickerMandatory by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
 
+    // The Home mini guide (spec 2026-09-30 §mini-guide): only right after the mandatory picker, never
+    // reopened mid-session one. Consumed once by IntroShowcase's onShowCaseCompleted, below.
+    var showHomeIntro by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
+    // True only while the "home" back-stack entry itself is RESUMED -- Navigation Compose holds an
+    // entry below that state for as long as its AnimatedContent enter transition is still running. Set
+    // from inside composable("home") below (see there for why). IntroShowcase measures its target's
+    // boundsInWindow() the moment it turns on; doing that while the target still sits in the entering
+    // transition reads a detached LayoutNode and crashes (IllegalStateException: LayoutCoordinate
+    // operations are only valid when isAttached is true, inside
+    // com.canopas.lib.showcase.component.ShowcaseContent -- confirmed via a device crash log, not a
+    // mocked scenario). Not rememberSaveable: purely a transitional handoff, never worth restoring.
+    var homeEntryResumed by remember { androidx.compose.runtime.mutableStateOf(false) }
+
     /** "Listo" of the source picker: back to Home. */
     fun finishSourcePicker() {
+        if (sourcePickerMandatory) showHomeIntro = true
         sourcePickerMandatory = false
         com.arkiv.player.ui.plugin.leaveSourcePicker(
             isShowing = { navController.currentDestination?.route == com.arkiv.player.ui.plugin.SOURCE_PICKER_ROUTE },
@@ -276,6 +305,10 @@ fun ArkivRoot(
     val drawerState = rememberDrawerState(DrawerValue.Closed)
 
     androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
+    com.canopas.lib.showcase.IntroShowcase(
+        showIntroShowCase = showHomeIntro && currentRoute == "home" && homeEntryResumed,
+        onShowCaseCompleted = { showHomeIntro = false },
+    ) {
     ModalNavigationDrawer(
         drawerState = drawerState,
         gesturesEnabled = isTab && !isWide,
@@ -333,7 +366,13 @@ fun ArkivRoot(
                 TopAppBar(
                     navigationIcon = {
                         if (!isWide) {
-                            IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                            IconButton(
+                                onClick = { scope.launch { drawerState.open() } },
+                                modifier = Modifier.introShowCaseTarget(
+                                    index = 1,
+                                    content = { com.arkiv.player.ui.plugin.MiniGuideTooltip(HOME_INTRO_MENU_TITLE, HOME_INTRO_MENU_BODY) },
+                                ),
+                            ) {
                                 Icon(Icons.Default.Menu, contentDescription = "Menú", tint = Color.White)
                             }
                         }
@@ -403,7 +442,13 @@ fun ArkivRoot(
                                     tint = Color.White,
                                 )
                             }
-                            IconButton(onClick = { navController.navigate("search") }) {
+                            IconButton(
+                                onClick = { navController.navigate("search") },
+                                modifier = Modifier.introShowCaseTarget(
+                                    index = 2,
+                                    content = { com.arkiv.player.ui.plugin.MiniGuideTooltip(HOME_INTRO_SEARCH_TITLE, HOME_INTRO_SEARCH_BODY) },
+                                ),
+                            ) {
                                 Icon(Icons.Default.Search, contentDescription = "Buscar", tint = Color.White)
                             }
                         }
@@ -422,6 +467,23 @@ fun ArkivRoot(
     ) { padding ->
         NavHost(navController = navController, startDestination = "home") {
             composable("home") {
+                // homeEntryResumed: this entry only reaches RESUMED once Navigation Compose's own enter
+                // transition for it has finished (see the flag's declaration above for why that matters).
+                // ON_PAUSE resets it, so leaving Home before the guide ever showed re-arms it correctly.
+                if (showHomeIntro) {
+                    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+                    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+                        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                            when (event) {
+                                androidx.lifecycle.Lifecycle.Event.ON_RESUME -> homeEntryResumed = true
+                                androidx.lifecycle.Lifecycle.Event.ON_PAUSE -> homeEntryResumed = false
+                                else -> Unit
+                            }
+                        }
+                        lifecycleOwner.lifecycle.addObserver(observer)
+                        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+                    }
+                }
                 HomeScreen(
                     onOpenItem = { navController.navigate("detail/${Uri.encode(it)}") },
                     onPlayEpisode = { playEpisode(it) },
@@ -440,6 +502,13 @@ fun ArkivRoot(
                     contentPadding = padding,
                     onBrowsePluginRow = { navController.navigate(com.arkiv.player.ui.plugin.PluginMoreTarget.route(it)) },
                     onOpenSourcePicker = { openSourcePicker() },
+                    // The guide's first step (spec 2026-09-30 §mini-guide): the hero itself, a single
+                    // bounded box, not the whole screen -- a full-screen target left the spotlight with
+                    // nothing to cut a hole around.
+                    heroModifier = Modifier.introShowCaseTarget(
+                        index = 0,
+                        content = { com.arkiv.player.ui.plugin.MiniGuideTooltip(HOME_INTRO_CONTENT_TITLE, HOME_INTRO_CONTENT_BODY) },
+                    ),
                 )
             }
             composable("live") {
@@ -667,6 +736,7 @@ fun ArkivRoot(
             composable(com.arkiv.player.ui.plugin.SOURCE_PICKER_ROUTE) {
                 com.arkiv.player.ui.plugin.SourcePickerScreen(
                     onFinish = { finishSourcePicker() },
+                    isMandatoryOnboarding = sourcePickerMandatory,
                     onBack = {
                         com.arkiv.player.ui.plugin.onSourcePickerBack(
                             sourcePickerMandatory,
@@ -698,6 +768,7 @@ fun ArkivRoot(
     }
     } // end Row
     } // end ModalNavigationDrawer
+    } // end IntroShowcase (Home mini guide)
     if (com.arkiv.player.ui.plugin.startCoverShows(startGate, currentRoute)) com.arkiv.player.ui.plugin.SourceDecisionCover()
     } // end Box
 }

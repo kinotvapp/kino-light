@@ -12,4 +12,9 @@ class OwnSourcesCopyTest {
     @Test fun `something that is not an address is shown as it is`() {
         assertEquals("hola", OwnSourcesCopy.hostOf("hola"))
     }
+
+    @Test fun `the URL fields carry an example placeholder`() {
+        assertEquals("Ej.: http://miservidor.com/canal.m3u8", OwnSourcesCopy.URL_CHANNEL_HINT)
+        assertEquals("Ej.: http://miservidor.com/get.php?username=...&password=...&type=m3u_plus", OwnSourcesCopy.URL_PLAYLIST_HINT)
+    }
 }

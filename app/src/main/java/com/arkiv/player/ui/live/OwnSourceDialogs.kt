@@ -66,6 +66,7 @@ private fun OwnSourceFormDialog(ui: OwnFormUi, vm: OwnSourcesViewModel) {
                 OwnTextField(OwnSourcesCopy.NAME, f.name, ui.errors[OwnField.NAME]) { vm.change(f.copy(name = it)) }
                 OwnTextField(
                     if (playlist) OwnSourcesCopy.URL_PLAYLIST else OwnSourcesCopy.URL_CHANNEL, f.url, ui.errors[OwnField.URL], uri = true,
+                    placeholder = if (playlist) OwnSourcesCopy.URL_PLAYLIST_HINT else OwnSourcesCopy.URL_CHANNEL_HINT,
                 ) { vm.change(f.copy(url = it)) }
                 if (ui.cleartext) {
                     Text(OwnSourcesCopy.CLEARTEXT, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
@@ -100,11 +101,12 @@ private fun OwnSourceFormDialog(ui: OwnFormUi, vm: OwnSourcesViewModel) {
 }
 
 @Composable
-private fun OwnTextField(label: String, value: String, error: String?, uri: Boolean = false, onChange: (String) -> Unit) {
+private fun OwnTextField(label: String, value: String, error: String?, uri: Boolean = false, placeholder: String? = null, onChange: (String) -> Unit) {
     OutlinedTextField(
         value = value,
         onValueChange = onChange,
         label = { Text(label) },
+        placeholder = placeholder?.let { { Text(it) } },
         singleLine = true,
         isError = error != null,
         supportingText = error?.let { { Text(it) } },
