@@ -31,6 +31,7 @@
     "pathSegmentPattern": "^[A-Za-z0-9._-]+$",
     "maxPathChars": 200,
     "liveStreamHosts": { "value": "any", "apiVersion": 3, "requires": "channels" },
+    "streamHosts": { "value": "any", "apiVersion": 4 },
     "discoverable": { "default": true }
   },
   "hostRules": {

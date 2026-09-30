@@ -1219,3 +1219,15 @@ test("the url fields of a list are the servers the plugin may reach", async () =
   assert.deepEqual(kino.config.get("sources"), [{ url: "https://my.server:8443/x", category: "A" }]);
   assert.deepEqual(servers, ["https://my.server:8443/x"]);
 });
+
+test("streamHosts any (apiVersion 4) lets a movie's stream be on any public host, and nothing else", () => {
+  const base = { ...JSON.parse(manifest()), apiVersion: 4, streamHosts: "any" };
+  const r = validateManifest(JSON.stringify(base));
+  assert.equal(r.ok, true);
+  assert.equal(r.manifest.streamHostsAny, true);
+  assert.equal(validateManifest(JSON.stringify({ ...base, streamHosts: "all" })).message, 'El campo "streamHosts" solo admite "any"');
+  assert.equal(validateManifest(JSON.stringify({ ...base, apiVersion: 3 })).manifest.streamHostsAny, false);
+  const out = checkOutput("resolve", { url: "https://cdn.random-tld.xyz/v.mp4" }, r.manifest, []);
+  assert.equal(out.value.url, "https://cdn.random-tld.xyz/v.mp4");
+  assert.throws(() => checkOutput("resolve", { url: "http://192.168.1.20/v.mp4" }, r.manifest, []), /local/);
+});

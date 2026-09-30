@@ -362,7 +362,7 @@ class PluginLiveProvider(
         for (page in 1..PluginLiveContract.MAX_PAGES_PER_CATEGORY) {
             val arg = JSONObject().put("categoryId", categoryId).put("cursor", cursor ?: JSONObject.NULL).toString()
             val out = PluginCalls.callOrThrow(caller, pluginId, name, "liveChannels", arg, PluginLiveContract.CHANNELS_TIMEOUT_MS)
-            val p = PluginOutput.liveChannels(out, currentHosts().copy(anyPublicLiveHost = plugin.record.liveStreamHostsAny), allowDrm) { log("[$pluginId] $it") }
+            val p = PluginOutput.liveChannels(out, currentHosts().copy(anyPublicLiveHost = plugin.record.liveStreamHostsAny || plugin.record.streamHostsAny), allowDrm) { log("[$pluginId] $it") }
             val fresh = p.items.filter { seenIds.add(it.id) }
             items += fresh
             val next = p.next ?: break

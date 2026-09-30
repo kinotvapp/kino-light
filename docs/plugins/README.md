@@ -362,6 +362,25 @@ needs one of them (a plugin with only channels exports a `home()` that returns `
 `"live"` in your rows keep working; a plugin can do both. On install, and on an update that adds it,
 the person reads and approves "Agrega canales en vivo a la pestaña En vivo".
 
+### Playing from any server (`streamHosts`, apiVersion 4)
+
+Some sources serve their video from CDNs whose domains you cannot list (they change, or sit on bare
+TLDs, which a `*.xyz` entry can never cover). With `"apiVersion": 4` a plugin may add:
+
+```json
+"apiVersion": 4,
+"streamHosts": "any"
+```
+
+`"any"` is the only value and no capability is needed; an older manifest ignores the field. It lets
+**what the plugin plays** (the `url` `resolve` returns, for a movie, an episode or a channel, and
+the manifests, segments and redirects the player follows from it) be on **any public host**, over
+`http` or `https`. It changes nothing else: `kino.fetch`, images, subtitles, side audio and DRM
+license servers stay on your declared `hosts`, and local or private addresses are still refused.
+The consent screen shows it in red ("Puede reproducir video desde cualquier servidor que
+indique"), and an update that adds it waits for the person to approve again. Prefer listing the real
+domains when you can: people trust a narrow list more.
+
 ### Channels from any server (`liveStreamHosts`, apiVersion 3)
 
 IPTV lists name their streams on servers you cannot know ahead of time, often plain `http` and

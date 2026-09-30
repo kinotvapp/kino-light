@@ -30,6 +30,13 @@ data class PluginManifest(
      */
     val liveStreamHostsAny: Boolean = false,
     /**
+     * `"streamHosts": "any"` (apiVersion 4): what the plugin plays -- a movie, an episode or a live
+     * channel -- may be on any public server. Only the STREAM's hosts are relaxed: `kino.fetch`, images,
+     * subtitles and DRM licenses stay on the declared hosts. What the gate honours is the INSTALLED
+     * record's copy ([InstalledRecord.streamHostsAny]), the one the person approved in red.
+     */
+    val streamHostsAny: Boolean = false,
+    /**
      * `"discoverable": false` keeps the plugin out of Kino's community search (Recomendados ▸ "De la
      * comunidad" and "Elige tus fuentes"). Only discovery reads it, never the runtime, so it is valid at
      * every apiVersion. Default [ManifestParser.DISCOVERABLE_DEFAULT].
@@ -61,6 +68,8 @@ object ManifestParser {
     const val CHANNELS = "channels"
     /** The only value `liveStreamHosts` admits: a live channel's stream may be on any public host. */
     const val LIVE_STREAM_HOSTS_ANY = "any"
+    /** `streamHosts` (any kind of title, no capability needed) arrived with apiVersion 4; its only value is [LIVE_STREAM_HOSTS_ANY]. */
+    const val STREAM_HOSTS_API_VERSION = 4
     /** `liveStreamHosts` arrived with apiVersion 3 (and needs [CHANNELS]). */
     const val LIVE_STREAM_HOSTS_API_VERSION = 3
     /** What a manifest without `discoverable` means: listed when its repo carries the `kino-plugin` topic. */
@@ -189,6 +198,11 @@ object ManifestParser {
             true
         }
 
+        val streamHostsAny = if (!o.has("streamHosts") || api < STREAM_HOSTS_API_VERSION) false else {
+            if (o.opt("streamHosts") != LIVE_STREAM_HOSTS_ANY) return invalid("streamHosts", "El campo \"streamHosts\" solo admite \"$LIVE_STREAM_HOSTS_ANY\"")
+            true
+        }
+
         // Only discovery reads it (never the runtime), so it is valid at every apiVersion (ruling R2).
         val discoverable = when (val d = o.opt("discoverable")) {
             null -> DISCOVERABLE_DEFAULT
@@ -227,7 +241,7 @@ object ManifestParser {
                 description = text(o, "description", MAX_DESCRIPTION_CHARS), author = text(o, "author", MAX_AUTHOR_CHARS),
                 homepage = text(o, "homepage", MAX_HOMEPAGE_CHARS), hosts = hosts, capabilities = caps,
                 color = color?.uppercase(), icon = icon, permissions = permissions, settings = settings,
-                insecureHosts = insecureHosts, liveStreamHostsAny = liveStreamHostsAny, discoverable = discoverable,
+                insecureHosts = insecureHosts, liveStreamHostsAny = liveStreamHostsAny, streamHostsAny = streamHostsAny, discoverable = discoverable,
             ),
         )
     }

@@ -42,7 +42,10 @@ data class InstalledPlugin(
      * [hosts] for a LIVE CHANNEL's stream: relaxed to any public host only when the INSTALLED
      * record says the person approved `liveStreamHosts: "any"` -- never from plugin output.
      */
-    val liveHosts: EffectiveHosts get() = hosts.copy(anyPublicLiveHost = record.liveStreamHostsAny)
+    val liveHosts: EffectiveHosts get() = hosts.copy(anyPublicLiveHost = record.liveStreamHostsAny || record.streamHostsAny)
+
+    /** [hosts] for a movie's or an episode's stream: relaxed only when the person approved `streamHosts: "any"`. */
+    val streamHosts: EffectiveHosts get() = hosts.copy(anyPublicLiveHost = record.streamHostsAny)
 
     /** A required setting has no value: its calls fail with `auth_required` without running. */
     val needsSetup: Boolean get() = missingSettings.isNotEmpty()
@@ -83,6 +86,8 @@ sealed interface PluginAccess {
         val xuper: Boolean = false,
         /** [hosts] for a live channel's stream (see [InstalledPlugin.liveHosts]); equal to [hosts] unless approved. */
         val liveHosts: EffectiveHosts = hosts,
+        /** [hosts] for a movie's or an episode's stream (see [InstalledPlugin.streamHosts]); equal to [hosts] unless approved. */
+        val streamHosts: EffectiveHosts = hosts,
     ) : PluginAccess {
         /**
          * The player's gate for the stream [ref] resolved to: [liveHosts] only when [ref] is a LIVE
@@ -91,7 +96,7 @@ sealed interface PluginAccess {
          */
         fun streamHostsFor(pluginId: String, ref: String): EffectiveHosts {
             val decoded = PluginRef.decode(ref)
-            return if (decoded != null && decoded.pluginId == pluginId && decoded.kind == PluginRef.LIVE) liveHosts else hosts
+            return if (decoded != null && decoded.pluginId == pluginId && decoded.kind == PluginRef.LIVE) liveHosts else streamHosts
         }
     }
     data class Disabled(override val name: String) : PluginAccess
@@ -209,7 +214,7 @@ class PluginRegistry(
             p == null -> PluginAccess.Uninstalled(pluginId?.let(store::removedName) ?: pluginId ?: "desconocido")
             p.record.damaged -> PluginAccess.Damaged(p.manifest.name)
             !p.isUsable -> PluginAccess.Disabled(p.manifest.name)
-            else -> PluginAccess.Ready(p.manifest.name, p.hosts, xuper = XuperPrivilege.grants(p.record), liveHosts = p.liveHosts)
+            else -> PluginAccess.Ready(p.manifest.name, p.hosts, xuper = XuperPrivilege.grants(p.record), liveHosts = p.liveHosts, streamHosts = p.streamHosts)
         }
     }
 

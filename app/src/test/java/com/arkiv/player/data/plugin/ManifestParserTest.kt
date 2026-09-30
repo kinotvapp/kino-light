@@ -198,6 +198,19 @@ class ManifestParserTest {
         assertEquals("kino-plugin.json", invalidField(base().put("description", "x".repeat(17_000))))
     }
 
+    @Test fun `streamHosts any needs apiVersion 4, no capability, and only the value any`() {
+        val ok = (ManifestParser.parse(base().put("apiVersion", 4).put("streamHosts", "any").toString()) as ManifestResult.Valid).manifest
+        assertTrue(ok.streamHostsAny)
+        for (api in 1..3) {
+            val old = (ManifestParser.parse(base().put("apiVersion", api).put("streamHosts", "any").toString()) as ManifestResult.Valid).manifest
+            assertEquals(false, old.streamHostsAny)
+        }
+        val other = ManifestParser.parse(base().put("apiVersion", 4).put("streamHosts", "all").toString()) as ManifestResult.Invalid
+        assertEquals("El campo \"streamHosts\" solo admite \"any\"", other.message)
+        assertEquals("streamHosts", other.field)
+        assertEquals(false, (ManifestParser.parse(base().put("apiVersion", 4).toString()) as ManifestResult.Valid).manifest.streamHostsAny)
+    }
+
     @Test fun `liveStreamHosts any needs apiVersion 3 and the channels capability`() {
         val caps = JSONArray(listOf("home", "resolve", "channels"))
         val ok = (ManifestParser.parse(base().put("apiVersion", 3).put("capabilities", caps).put("liveStreamHosts", "any").toString()) as ManifestResult.Valid).manifest

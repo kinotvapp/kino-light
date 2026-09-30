@@ -129,6 +129,11 @@ export function validateManifest(text, { knownPermissions = contract.permissions
     if (!caps.includes(lsh.requires)) return bad("liveStreamHosts", `"liveStreamHosts" necesita la capacidad "${lsh.requires}"`);
     liveStreamHostsAny = true;
   }
+  let streamHostsAny = false;
+  if (o.streamHosts !== undefined && o.apiVersion >= m.streamHosts.apiVersion) {
+    if (o.streamHosts !== m.streamHosts.value) return bad("streamHosts", `El campo "streamHosts" solo admite "${m.streamHosts.value}"`);
+    streamHostsAny = true;
+  }
   // Only discovery reads it (never the runtime): valid at every apiVersion, exactly true or false.
   if (o.discoverable !== undefined && typeof o.discoverable !== "boolean") return bad("discoverable", 'El campo "discoverable" debe ser true o false');
   const discoverable = o.discoverable === undefined ? m.discoverable.default : o.discoverable;
@@ -145,7 +150,7 @@ export function validateManifest(text, { knownPermissions = contract.permissions
   if (hosts.length === 0 && !(o.settings || []).some((x) => x.type === "url" || (x.type === "list" && Array.isArray(x.fields) && x.fields.some((f) => f.type === "url")))) {
     return bad("hosts", 'El campo "hosts" solo puede estar vacío si el plugin tiene un ajuste de tipo "url"');
   }
-  return { ok: true, manifest: { ...o, hosts: [...new Set(hosts)], capabilities: caps, permissions: o.permissions || [], settings: o.settings || [], insecureHosts, liveStreamHostsAny, discoverable } };
+  return { ok: true, manifest: { ...o, hosts: [...new Set(hosts)], capabilities: caps, permissions: o.permissions || [], settings: o.settings || [], insecureHosts, liveStreamHostsAny, streamHostsAny, discoverable } };
 }
 
 function validateSettings(list, apiVersion = contract.maxApiVersion) {
@@ -422,7 +427,7 @@ function stream(value, { manifest, servers, allowDrm, liveChannel = false }) {
   const drm = drmOf(value, check, allowDrm);
   // `liveStreamHosts: "any"` relaxes a live channel's own stream URL only; its subtitles, audio and
   // license stay on the strict rule below.
-  if (liveChannel && manifest.liveStreamHostsAny) {
+  if ((liveChannel && manifest.liveStreamHostsAny) || manifest.streamHostsAny) {
     if (!liveStreamUrlAllowed(manifest, servers)(value.url)) throw new Error("El video apunta a una dirección local");
   } else check(value.url, "El video");
   const expires = Number.isInteger(value.expiresInSeconds) && value.expiresInSeconds >= o().minExpiresInSeconds && value.expiresInSeconds <= o().maxExpiresInSeconds ? value.expiresInSeconds : 0;
@@ -488,7 +493,7 @@ export function liveStreamUrlAllowed(manifest, servers = []) {
   const typedNames = servers.map((s) => { try { return new URL(s).hostname; } catch { return null; } });
   return (url) => {
     if (strict(url)) return true;
-    if (!manifest.liveStreamHostsAny) return false;
+    if (!manifest.liveStreamHostsAny && !manifest.streamHostsAny) return false;
     let u;
     try { u = new URL(String(url)); } catch { return false; }
     if (u.protocol !== "http:" && u.protocol !== "https:") return false;

@@ -316,4 +316,29 @@ class PluginContentSourceTest {
         val lan = FakeCaller(mapOf("resolve" to """{"url":"http://192.168.1.20/1.m3u8"}"""))
         assertTrue(runCatching { source(lan, any).resolve(live) }.exceptionOrNull() is GatewayException)
     }
+
+    // --- streamHosts "any" (apiVersion 4) ---
+
+    @Test fun `with streamHosts any approved, a movie and a live ref resolve to an undeclared public server`() = runTest {
+        val base = plugin(caps = setOf("home", "resolve"), apiVersion = 4)
+        val any = base.copy(record = base.record.copy(streamHostsAny = true))
+        val caller = FakeCaller(mapOf("resolve" to """{"url":"https://cdn.random-tld.xyz/v.mp4"}"""))
+        val movie = PluginRef("demo", "m1", PluginRef.MOVIE, "m-1").encode()
+        val live = PluginRef("demo", "c1", PluginRef.LIVE, "ch-1").encode()
+        assertEquals("https://cdn.random-tld.xyz/v.mp4", source(caller, any).resolve(movie).url)
+        assertEquals("https://cdn.random-tld.xyz/v.mp4", source(caller, any).resolve(live).url)
+        // Without the approval it stays strict.
+        assertTrue(runCatching { source(caller, base).resolve(movie) }.exceptionOrNull() is GatewayException)
+        // Never the LAN, approval or not.
+        val lan = FakeCaller(mapOf("resolve" to """{"url":"http://192.168.1.20/v.mp4"}"""))
+        assertTrue(runCatching { source(lan, any).resolve(movie) }.exceptionOrNull() is GatewayException)
+    }
+
+    @Test fun `streamHosts any leaves the player's gate strict for anything else`() {
+        val hosts = com.arkiv.player.data.plugin.EffectiveHosts(listOf("a.example"))
+        val ready = PluginAccess.Ready("Demo", hosts, liveHosts = hosts.copy(anyPublicLiveHost = true), streamHosts = hosts.copy(anyPublicLiveHost = true))
+        val movie = PluginRef("demo", "m1", PluginRef.MOVIE, "m-1").encode()
+        assertTrue(ready.streamHostsFor("demo", movie).anyPublicLiveHost)
+        assertEquals(false, PluginAccess.Ready("Demo", hosts).streamHostsFor("demo", movie).anyPublicLiveHost)
+    }
 }

@@ -147,7 +147,9 @@ class PluginContentSource(
         // liveStreamHosts "any"; `hosts` keeps any typed servers either way. Read now, after the
         // call: a host approved during it counts.
         val hosts = currentHosts()
-        val streamHosts = if (own.kind == PluginRef.LIVE) hosts.copy(anyPublicLiveHost = plugin.record.liveStreamHostsAny) else hosts
+        val streamHosts = hosts.copy(
+            anyPublicLiveHost = plugin.record.streamHostsAny || (own.kind == PluginRef.LIVE && plugin.record.liveStreamHostsAny),
+        )
         val stream = try {
             PluginOutput.stream(out, streamHosts, xuper, allowDrm)
         } catch (e: PluginContractException) {

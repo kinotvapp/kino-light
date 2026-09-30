@@ -36,6 +36,8 @@ data class InstallPreview(
     val newInsecureHosts: List<String> = emptyList(),
     /** The manifest asks for `liveStreamHosts: "any"` and the person has not approved it yet (always, on a first install that asks). */
     val newLiveStreamHostsAny: Boolean = false,
+    /** The manifest asks for `streamHosts: "any"` and the person has not approved it yet. */
+    val newStreamHostsAny: Boolean = false,
     /** Set for a Nuvio-origin install/update: the converted script to write, skipping the fetch. */
     val nuvioOrigin: NuvioOrigin? = null,
 )
@@ -180,7 +182,7 @@ class PluginInstaller(
             hosts = hostsCarriedOver(m.hosts, previous) { droppedByCap = it }, installedAt = installedAt,
             enabled = previous?.record?.enabled ?: true, lastUpdateCheckAt = installedAt,
             permissions = m.permissions, capabilities = m.capabilities.toList(), insecureHosts = m.insecureHosts.toList(),
-            exports = exports.sorted(), liveStreamHostsAny = m.liveStreamHostsAny,
+            exports = exports.sorted(), liveStreamHostsAny = m.liveStreamHostsAny, streamHostsAny = m.streamHostsAny,
             // A "no" is remembered until the person forgets it (Ajustes ▸ Plugins), not until the next version.
             rejectedHosts = previous?.record?.rejectedHosts.orEmpty(),
             nuvioRepo = preview.nuvioOrigin?.repo, nuvioScraperId = preview.nuvioOrigin?.scraperId,
@@ -225,7 +227,7 @@ class PluginInstaller(
             touch {
                 it.copy(
                     pendingVersion = null, pendingHosts = emptyList(), pendingPermissions = emptyList(),
-                    pendingCapabilities = emptyList(), pendingInsecureHosts = emptyList(), pendingLiveStreamHostsAny = false,
+                    pendingCapabilities = emptyList(), pendingInsecureHosts = emptyList(), pendingLiveStreamHostsAny = false, pendingStreamHostsAny = false,
                 )
             }
             return UpdateOutcome.UpToDate
@@ -234,13 +236,13 @@ class PluginInstaller(
         // a host newly marked insecureHttp or liveStreamHosts "any" -- waits for them. A new REQUIRED setting doesn't: the
         // update applies and the plugin shows "Falta configurar".
         if (preview.newHosts.isNotEmpty() || preview.newPermissions.isNotEmpty() ||
-            preview.newCapabilities.isNotEmpty() || preview.newInsecureHosts.isNotEmpty() || preview.newLiveStreamHostsAny
+            preview.newCapabilities.isNotEmpty() || preview.newInsecureHosts.isNotEmpty() || preview.newLiveStreamHostsAny || preview.newStreamHostsAny
         ) {
             touch {
                 it.copy(
                     pendingVersion = preview.manifest.version, pendingHosts = preview.newHosts, pendingPermissions = preview.newPermissions,
                     pendingCapabilities = preview.newCapabilities, pendingInsecureHosts = preview.newInsecureHosts,
-                    pendingLiveStreamHostsAny = preview.newLiveStreamHostsAny,
+                    pendingLiveStreamHostsAny = preview.newLiveStreamHostsAny, pendingStreamHostsAny = preview.newStreamHostsAny,
                 )
             }
             return UpdateOutcome.NeedsApproval(preview)
@@ -289,6 +291,7 @@ class PluginInstaller(
             newCapabilities = manifest.capabilities.filter { it in ManifestParser.APPROVAL_CAPABILITIES }.filterNot { it in approvedCapabilities },
             newInsecureHosts = manifest.insecureHosts.filterNot { it in approvedInsecureHosts },
             newLiveStreamHostsAny = manifest.liveStreamHostsAny && existing?.record?.liveStreamHostsAny != true,
+            newStreamHostsAny = manifest.streamHostsAny && existing?.record?.streamHostsAny != true,
             nuvioOrigin = nuvioOrigin,
         )
     }

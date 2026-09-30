@@ -63,6 +63,9 @@ class PluginContractParityTest {
         assertEquals(ManifestParser.LIVE_STREAM_HOSTS_ANY, lsh.getString("value"))
         assertEquals(ManifestParser.LIVE_STREAM_HOSTS_API_VERSION, lsh.getInt("apiVersion"))
         assertEquals(ManifestParser.CHANNELS, lsh.getString("requires"))
+        val sh = m.getJSONObject("streamHosts")
+        assertEquals(ManifestParser.LIVE_STREAM_HOSTS_ANY, sh.getString("value"))
+        assertEquals(ManifestParser.STREAM_HOSTS_API_VERSION, sh.getInt("apiVersion"))
         assertEquals(ManifestParser.DISCOVERABLE_DEFAULT, m.getJSONObject("discoverable").getBoolean("default"))
     }
 

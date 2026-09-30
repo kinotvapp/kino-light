@@ -43,6 +43,10 @@ data class InstalledRecord(
     val liveStreamHostsAny: Boolean = false,
     /** A pending update newly asks for `liveStreamHosts: "any"`, shown on its consent sheet. */
     val pendingLiveStreamHostsAny: Boolean = false,
+    /** The person APPROVED `"streamHosts": "any"`: what this plugin plays may be on any public host. Read by `InstalledPlugin.streamHosts`. */
+    val streamHostsAny: Boolean = false,
+    /** A pending update newly asks for `streamHosts: "any"`, shown on its consent sheet. */
+    val pendingStreamHostsAny: Boolean = false,
     /** Hosts the person explicitly said "no" to via reactive approval; never prompted again for this plugin. */
     val rejectedHosts: List<String> = emptyList(),
     /** Set together, both null for a normal (hand-written-repo) plugin: which Nuvio repo and scraper this was converted from. */
@@ -65,6 +69,8 @@ data class InstalledRecord(
         .put("exports", JSONArray(exports))
         .put("liveStreamHostsAny", liveStreamHostsAny)
         .put("pendingLiveStreamHostsAny", pendingLiveStreamHostsAny)
+        .put("streamHostsAny", streamHostsAny)
+        .put("pendingStreamHostsAny", pendingStreamHostsAny)
         .put("rejectedHosts", JSONArray(rejectedHosts))
         .put("nuvioRepo", nuvioRepo ?: JSONObject.NULL)
         .put("nuvioScraperId", nuvioScraperId ?: JSONObject.NULL)
@@ -91,6 +97,8 @@ data class InstalledRecord(
                 exports = list("exports"),
                 liveStreamHostsAny = o.optBoolean("liveStreamHostsAny"),
                 pendingLiveStreamHostsAny = o.optBoolean("pendingLiveStreamHostsAny"),
+                streamHostsAny = o.optBoolean("streamHostsAny"),
+                pendingStreamHostsAny = o.optBoolean("pendingStreamHostsAny"),
                 rejectedHosts = list("rejectedHosts"),
                 nuvioRepo = if (o.isNull("nuvioRepo")) null else o.optString("nuvioRepo").ifEmpty { null },
                 nuvioScraperId = if (o.isNull("nuvioScraperId")) null else o.optString("nuvioScraperId").ifEmpty { null },

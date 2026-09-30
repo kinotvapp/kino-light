@@ -108,19 +108,19 @@ class NuvioPluginInstaller(
             patch {
                 it.copy(
                     pendingVersion = null, pendingHosts = emptyList(), pendingPermissions = emptyList(),
-                    pendingCapabilities = emptyList(), pendingInsecureHosts = emptyList(), pendingLiveStreamHostsAny = false,
+                    pendingCapabilities = emptyList(), pendingInsecureHosts = emptyList(), pendingLiveStreamHostsAny = false, pendingStreamHostsAny = false,
                 )
             }
             return UpdateOutcome.UpToDate
         }
         if (preview.newHosts.isNotEmpty() || preview.newPermissions.isNotEmpty() ||
-            preview.newCapabilities.isNotEmpty() || preview.newInsecureHosts.isNotEmpty() || preview.newLiveStreamHostsAny
+            preview.newCapabilities.isNotEmpty() || preview.newInsecureHosts.isNotEmpty() || preview.newLiveStreamHostsAny || preview.newStreamHostsAny
         ) {
             patch {
                 it.copy(
                     pendingVersion = preview.manifest.version, pendingHosts = preview.newHosts, pendingPermissions = preview.newPermissions,
                     pendingCapabilities = preview.newCapabilities, pendingInsecureHosts = preview.newInsecureHosts,
-                    pendingLiveStreamHostsAny = preview.newLiveStreamHostsAny,
+                    pendingLiveStreamHostsAny = preview.newLiveStreamHostsAny, pendingStreamHostsAny = preview.newStreamHostsAny,
                 )
             }
             return UpdateOutcome.NeedsApproval(preview)
