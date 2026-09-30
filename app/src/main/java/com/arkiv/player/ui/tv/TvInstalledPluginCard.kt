@@ -7,7 +7,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -40,7 +45,9 @@ import com.arkiv.player.ui.theme.ArkivTextSecondary
  * [TvPluginCard], plus the hosts it may reach (a recommended card never shows hosts, only an installed
  * plugin's own). The whole card is the focus target; OK opens the actions dialog ([TvInstalledActionsDialog]),
  * which is where every management action lives on the TV (there is no separate switch on the card face, as
- * there never was on the deleted `TvInstalledPluginRows`' own "activado/desactivado" row). [message] is this plugin's own
+ * there never was on the deleted `TvInstalledPluginRows`' own "activado/desactivado" row). A small gear in the
+ * tile's top-right corner is only a visual hint that the card opens that dialog -- it holds no focus of its
+ * own, so it adds nothing to the D-pad's traversal. [message] is this plugin's own
  * line (see [com.arkiv.player.ui.plugin.rowMessagePluginId]); [reserveMessageLines] leaves the same room for
  * it in a card that has none, so every card of the same grid line ends at the same height. [liveNotice] is a
  * live plugin's "Lista recortada: …" line (`LiveCatalog.noticeFor`), under the status, and
@@ -77,6 +84,12 @@ internal fun TvInstalledPluginCard(
             PluginCardSurface(name = model.name, iconFile = model.iconFile, tileColorArgb = model.tileColorArgb, pill = null) {
                 CardTexts(plugin, model, message, reserveMessageLines, liveNotice, reserveNoticeLines)
             }
+            Icon(
+                Icons.Filled.Settings,
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.align(Alignment.TopEnd).padding(10.dp).size(18.dp),
+            )
         }
     }
 }

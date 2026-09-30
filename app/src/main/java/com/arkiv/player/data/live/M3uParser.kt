@@ -23,6 +23,10 @@ data class M3uEntry(
     val language: String = "",
     val country: String = "",
     val headers: Map<String, String> = emptyMap(),
+    /** A `#KODIPROP:inputstream.adaptive.license_key` ClearKey pair (hex), or "" for no DRM. Any
+     *  other license type (Widevine, etc.) is unsupported here and left out entirely. */
+    val drmKeyId: String = "",
+    val drmKey: String = "",
 )
 
 /**
@@ -112,6 +116,8 @@ object M3uParser {
         var info: Info? = null
         var extgrp = ""
         val headers = LinkedHashMap<String, String>()
+        var licenseType = ""
+        var licenseKey = ""
         var n = 0
         for (raw in lines) {
             if (++n % 1000 == 0 && deadline()) return M3uResult(out, total, skipped + (if (info != null) 1 else 0), stoppedEarly = true, hidden, refused)
@@ -125,12 +131,15 @@ object M3uParser {
                 line.startsWith("#EXTGRP:", ignoreCase = true) -> extgrp = line.substringAfter(':').trim()
                 line.startsWith("#EXTVLCOPT:", ignoreCase = true) -> vlcOpt(line.substringAfter(':'), headers)
                 line.startsWith("#KODIPROP:", ignoreCase = true) -> kodiProp(line.substringAfter(':'), headers)
+                    ?.let { (k, v) -> if (k == "type") licenseType = v else licenseKey = v }
                 line.startsWith("#") -> Unit
                 else -> {
-                    val entry = info?.let { entryOf(it, line, extgrp, headers) }
+                    val entry = info?.let { entryOf(it, line, extgrp, headers, licenseType, licenseKey) }
                     info = null
                     extgrp = ""
                     headers.clear()
+                    licenseType = ""
+                    licenseKey = ""
                     when {
                         entry == null -> skipped++
                         hide(entry) -> hidden++
@@ -158,7 +167,10 @@ object M3uParser {
         return Info(attrs, if (comma >= 0) body.substring(comma + 1).trim() else "")
     }
 
-    private fun entryOf(info: Info, urlLine: String, extgrp: String, pending: Map<String, String>): M3uEntry? {
+    private fun entryOf(
+        info: Info, urlLine: String, extgrp: String, pending: Map<String, String>,
+        licenseType: String = "", licenseKey: String = "",
+    ): M3uEntry? {
         val pipe = urlLine.indexOf('|')
         val url = (if (pipe >= 0) urlLine.substring(0, pipe) else urlLine).trim()
         val scheme = url.substringBefore("://", "").lowercase()
@@ -168,6 +180,10 @@ object M3uParser {
         if (name.isBlank()) return null
         val headers = LinkedHashMap(pending)
         if (pipe >= 0) pairs(urlLine.substring(pipe + 1), headers)
+        // Only ClearKey is supported: any other license type (Widevine, PlayReady...) is left out
+        // entirely rather than half-carried as an unusable DRM hint.
+        val clearKey = (licenseType == "clearkey").let { if (it) licenseKey.split(':', limit = 2) else null }
+            ?.takeIf { it.size == 2 }
         return M3uEntry(
             name = name, url = url, tvgId = info.attrs["tvg-id"].orEmpty(), tvgName = tvgName,
             logo = info.attrs["tvg-logo"].orEmpty(),
@@ -175,6 +191,7 @@ object M3uParser {
             group = info.attrs["group-title"].orEmpty().ifBlank { extgrp },
             language = info.attrs["tvg-language"].orEmpty(), country = info.attrs["tvg-country"].orEmpty(),
             headers = headers,
+            drmKeyId = clearKey?.get(0).orEmpty(), drmKey = clearKey?.get(1).orEmpty(),
         )
     }
 
@@ -188,9 +205,19 @@ object M3uParser {
         v.substringAfter('=', "").trim().takeIf { it.isNotEmpty() }?.let { into[name] = it }
     }
 
-    private fun kodiProp(v: String, into: MutableMap<String, String>) {
+    /** Headers are written straight into [into]; a license type/key line is returned instead (the
+     *  caller holds licenseType/licenseKey as locals, reset per entry like everything else here). */
+    private fun kodiProp(v: String, into: MutableMap<String, String>): Pair<String, String>? {
         val key = v.substringBefore('=').trim().lowercase()
-        if (key == "inputstream.adaptive.stream_headers" || key == "inputstream.adaptive.common_headers") pairs(v.substringAfter('=', ""), into)
+        return when (key) {
+            "inputstream.adaptive.stream_headers", "inputstream.adaptive.common_headers" -> {
+                pairs(v.substringAfter('=', ""), into)
+                null
+            }
+            "inputstream.adaptive.license_type" -> "type" to v.substringAfter('=', "").trim().lowercase()
+            "inputstream.adaptive.license_key" -> "key" to v.substringAfter('=', "").trim()
+            else -> null
+        }
     }
 
     private fun pairs(s: String, into: MutableMap<String, String>) {

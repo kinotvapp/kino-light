@@ -14,6 +14,8 @@ object OwnSourcesCopy {
     const val NAME = "Nombre"
     const val URL_CHANNEL = "Dirección del canal (.m3u8)"
     const val URL_PLAYLIST = "Dirección de la lista (.m3u)"
+    const val URL_CHANNEL_HINT = "Ej.: http://miservidor.com/canal.m3u8"
+    const val URL_PLAYLIST_HINT = "Ej.: http://miservidor.com/get.php?username=...&password=...&type=m3u_plus"
     const val GROUP = "Grupo (opcional)"
     const val LOGO = "Logo (opcional)"
     const val EPG = "Guía de programación (opcional, XMLTV)"

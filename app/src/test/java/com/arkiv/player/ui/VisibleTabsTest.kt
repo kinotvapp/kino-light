@@ -9,7 +9,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** The phone's tabs: "En vivo" follows the live module (any provider), "Caracol" the device's country. */
+/** The phone's tabs: "En vivo" follows the live module (any provider); "Caracol" is hidden for now. */
 class VisibleTabsTest {
 
     @Test fun `en vivo shows only while the live module has a provider`() {
@@ -18,8 +18,8 @@ class VisibleTabsTest {
         assertFalse("live" in visibleTabRoutes(isColombia = false, liveModule = false))
     }
 
-    @Test fun `caracol does not depend on the live module`() {
-        assertTrue("caracol" in visibleTabRoutes(isColombia = true, liveModule = false))
+    @Test fun `caracol is hidden for now, regardless of country -- a plugin will replace it`() {
+        assertFalse("caracol" in visibleTabRoutes(isColombia = true, liveModule = false))
         assertFalse("caracol" in visibleTabRoutes(isColombia = false, liveModule = true))
     }
 
@@ -29,7 +29,7 @@ class VisibleTabsTest {
             visibleTabRoutes(isColombia = false, liveModule = false),
         )
         assertEquals(
-            listOf("home", "categorias_home", "library", "downloads", "live", "caracol", "plugins", "settings"),
+            listOf("home", "categorias_home", "library", "downloads", "live", "plugins", "settings"),
             visibleTabRoutes(isColombia = true, liveModule = true),
         )
     }
@@ -55,7 +55,7 @@ class VisibleTabsTest {
 
     @Test fun `hiding Categorias moves no other tab`() {
         assertEquals(
-            listOf("home", "library", "downloads", "live", "caracol", "plugins", "settings"),
+            listOf("home", "library", "downloads", "live", "plugins", "settings"),
             visibleTabRoutes(isColombia = true, liveModule = true, categoriesModule = false),
         )
     }

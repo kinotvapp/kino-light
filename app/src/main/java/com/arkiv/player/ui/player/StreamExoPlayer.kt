@@ -203,6 +203,14 @@ internal fun StreamExoPlayer(
      */
     drm: ResolvedDrm? = null,
     /**
+     * An own M3U channel's ClearKey key (a `#KODIPROP:inputstream.adaptive.license_key`, see
+     * [com.arkiv.player.data.live.M3uEntry]), or null for every other source. Goes on the media
+     * item as [MediaItem.DrmConfiguration] like [drm], but the key never reaches the network: see
+     * [PluginClearKey]. Mutually exclusive with [drm] in practice -- a stream carries one DRM shape
+     * or the other, never both.
+     */
+    clearKey: ResolvedClearKey? = null,
+    /**
      * Headers for every request of this stream (plugins). Empty for Magis, whose headers travel
      * inside the local proxy's URL. Set on the data source, not through `archiveCacheProxy`: that
      * proxy serves ONE URL's bytes, and an HLS/DASH manifest's relative segments would resolve
@@ -258,10 +266,14 @@ internal fun StreamExoPlayer(
     val graph = rememberGraph()
     val subtitleStyle by graph.subtitlePrefs.prefs.collectAsStateWithLifecycle()
 
-    val prepared = remember(mediaUrl, subtitleConfigs, requestHeaders, mimeType, http, audioTracks, drm) {
+    val prepared = remember(mediaUrl, subtitleConfigs, requestHeaders, mimeType, http, audioTracks, drm, clearKey) {
         // Host and path only: a signed URL's query (Signature=…, tokens) never reaches the log.
         val shownUrl = Uri.parse(mediaUrl).let { "${it.scheme}://${it.host}${it.path.orEmpty().take(60)}" }
-        Log.i(TAG, "Creating ExoPlayer · url=$shownUrl startMs=$startPositionMs subs=${subtitleConfigs.size} audioTracks=${audioTracks.size} drm=${drm != null}")
+        Log.i(
+            TAG,
+            "Creating ExoPlayer · url=$shownUrl startMs=$startPositionMs subs=${subtitleConfigs.size} " +
+                "audioTracks=${audioTracks.size} drm=${drm != null} clearKey=${clearKey != null}",
+        )
         val pluginFactories: PluginHttpFactories? = (http as? StreamHttp.PluginGated)?.let {
             // Under liveStreamHosts "any", side-loaded subtitles and audio tracks stay strict on every hop
             // (under the broad video permission they don't: it covers them).
@@ -293,6 +305,7 @@ internal fun StreamExoPlayer(
             .setSubtitleConfigurations(subtitleConfigs)
             .apply { exoMimeType(mimeType)?.let { setMimeType(it) } }
             .apply { drm?.let { setDrmConfiguration(PluginWidevine.drmConfiguration(it)) } }
+            .apply { clearKey?.let { setDrmConfiguration(PluginClearKey.drmConfiguration()) } }
             .build()
 
         // Built once and reused for the video AND every audio track below: the same [httpFactory]
@@ -313,6 +326,12 @@ internal fun StreamExoPlayer(
             mediaSourceFactory.setDrmSessionManagerProvider(
                 PluginWidevine.sessionManagerProvider(pluginFactories?.license ?: httpFactory) { drmSoftwareLevelRefused.set(true) },
             )
+        } else if (clearKey != null) {
+            // No network at all: the key travels with the M3U entry, never fetched. A malformed
+            // key (see PluginClearKey.responseJson) leaves the provider null, same as no ClearKey.
+            PluginClearKey.sessionManagerProvider(clearKey.keyId, clearKey.key)?.let {
+                mediaSourceFactory.setDrmSessionManagerProvider(it)
+            }
         }
 
         // Magis's CDN delivers at 70–230 KB/s and its files carry 8 badly interleaved audio

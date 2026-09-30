@@ -123,7 +123,6 @@ import androidx.compose.ui.semantics.contentDescription
 import com.arkiv.player.ui.home.pluginHeroPick
 import com.arkiv.player.ui.home.tvHomeDefaultLanding
 import com.arkiv.player.ui.home.tvHomeLandingHeld
-import com.arkiv.player.ui.live.deviceCountry
 import com.arkiv.player.ui.EffectsAutoTune
 import com.arkiv.player.ui.KinoWordmark
 import com.arkiv.player.ui.LocalReducedEffects
@@ -458,12 +457,6 @@ fun TvHomeScreen(
     val seedsExhausted by graph.seedsExhausted.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
-
-    // Caracol Streaming (Ditu) only carries Colombian content, and its nav button led plenty of
-    // people outside Colombia into a catalog with nothing for them. `deviceCountry` is the same
-    // free, no-permission, no-network signal `countryChannelsForHome` already uses for the live
-    // channels row -- SIM, then time zone, then locale.
-    val isColombia = remember { deviceCountry(context) == "CO" }
 
     // "Para ti" recommendations: read straight from Room, same as the recent live channels below
     // -- a read-only row that doesn't need its own ViewModel. Until Task 5 these arrived through
@@ -1332,7 +1325,8 @@ fun TvHomeScreen(
             if (xuperLive) add(TvRailItem(Icons.Default.PlayCircle, "Xuper", onOpenCategorias))
             add(TvRailItem(Icons.Default.VideoLibrary, "Mi biblioteca", onOpenLibrary))
             if (liveOn) add(TvRailItem(Icons.Default.LiveTv, "En vivo", onOpenLive))
-            if (isColombia) add(TvRailItem(Icons.Default.Tv, "Caracol", onOpenCaracol))
+            // Hidden for now (2026-09-30): Caracol is getting rebuilt as a plugin; the "caracol"
+            // route and onOpenCaracol still exist, just nothing in the rail opens them.
             add(TvRailItem(Icons.Default.Extension, "Plugins", onOpenPlugins))
             add(TvRailItem(Icons.Default.Settings, "Ajustes", onOpenSettings))
         }

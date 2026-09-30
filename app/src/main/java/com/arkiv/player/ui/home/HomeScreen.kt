@@ -136,6 +136,9 @@ fun HomeScreen(
     onBrowsePluginRow: (com.arkiv.player.ui.plugin.PluginMoreTarget) -> Unit = {},
     /** "Agregar plugin" of the empty state: opens "Elige tus fuentes". */
     onOpenSourcePicker: () -> Unit = {},
+    /** The Home mini guide's first step (spec 2026-09-30 §mini-guide) spotlights the hero, not the
+     * whole screen -- the only element on Home guaranteed to be a single, bounded, visible box. */
+    heroModifier: Modifier = Modifier,
 ) {
     val graph = rememberGraph()
     val sizes = homeSizes()
@@ -356,6 +359,7 @@ fun HomeScreen(
                 )
                 Hero(
                     sizes = sizes,
+                    modifier = heroModifier,
                     backdropUrl = backdrop,
                     title = heroContinue.itemTitle,
                     // The chapter data, the SAME line the TV hero builds: number, name and how much
@@ -383,6 +387,7 @@ fun HomeScreen(
                 // big upscale and a crop to fill it (see PluginHeroPick.imageUrl).
                 Hero(
                     sizes = sizes,
+                    modifier = heroModifier,
                     backdropUrl = heroPick.imageUrl,
                     title = heroPick.item.title,
                     subtitle = heroPick.meta(),
@@ -545,9 +550,10 @@ private fun Hero(
     actionLabel: String?,
     onAction: (() -> Unit)?,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .height(sizes.heroHeight)
             .clickable(onClick = onClick),

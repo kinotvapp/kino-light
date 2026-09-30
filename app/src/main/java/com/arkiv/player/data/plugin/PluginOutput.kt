@@ -70,12 +70,24 @@ data class PluginSubtitle(val lang: String, val url: String, val format: String 
 data class PluginAudioTrack(val lang: String, val url: String, val label: String = "")
 
 /**
- * A Widevine-protected stream's license (apiVersion 2, only for a plugin whose manifest declares
- * the `drm` capability): [licenseUrl] passed the same check as the stream's own URL (a declared
- * host, https), [licenseHeaders] the same filter as the stream's `headers`. The player sends them
- * with the license request and nowhere else.
+ * A protected stream's DRM, one of two unrelated shapes:
+ * - Widevine (apiVersion 2, only for a plugin whose manifest declares the `drm` capability):
+ *   [licenseUrl] passed the same check as the stream's own URL (a declared host, https),
+ *   [licenseHeaders] the same filter as the stream's `headers`. The player sends them with the
+ *   license request and nowhere else.
+ * - ClearKey (own M3U channels, `#KODIPROP:inputstream.adaptive.license_key`, see [M3uEntry][
+ *   com.arkiv.player.data.live.M3uEntry]): [clearKeyId]/[clearKey], hex. No license server --
+ *   the key travels with the stream, never over the network.
+ *
+ * A [PluginDrm] carries one or the other, never both: [licenseUrl] blank means ClearKey,
+ * [clearKeyId] blank means Widevine.
  */
-data class PluginDrm(val licenseUrl: String, val licenseHeaders: Map<String, String> = emptyMap())
+data class PluginDrm(
+    val licenseUrl: String = "",
+    val licenseHeaders: Map<String, String> = emptyMap(),
+    val clearKeyId: String = "",
+    val clearKey: String = "",
+)
 
 data class PluginStream(
     val url: String, val mime: String = "", val headers: Map<String, String> = emptyMap(),

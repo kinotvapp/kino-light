@@ -26,9 +26,13 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.arkiv.player.ui.plugin.FocusWhenReady
@@ -90,7 +94,16 @@ internal fun TvAddCustomPluginDialog(
         ) {
             Text("Agregar un plugin", style = MaterialTheme.typography.headlineSmall, color = Color.White)
             Text(
-                "Escribe usuario/repositorio de GitHub. Antes de instalar vas a ver con qué sitios se conecta.",
+                "Escribe usuario/repositorio de GitHub, por ejemplo kinotvapp/kino-plugin-archive. Antes de " +
+                    "instalar vas a ver con qué sitios se conecta.",
+                style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary,
+            )
+            Text(
+                buildAnnotatedString {
+                    append("También podés instalar un scraper de ")
+                    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append("Nuvio") }
+                    append(", por ejemplo tapframe/nuvio-providers.")
+                },
                 style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary,
             )
             OutlinedTextField(

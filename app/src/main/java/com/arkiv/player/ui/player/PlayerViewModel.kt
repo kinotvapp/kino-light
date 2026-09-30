@@ -245,6 +245,8 @@ data class WebExtras(
     val audioTracks: List<ResolvedAudioTrack> = emptyList(),
     /** Plugins only (apiVersion 2, the `drm` capability); null for Magis and every clear stream. */
     val drm: ResolvedDrm? = null,
+    /** Own M3U live channels only (a `#KODIPROP` ClearKey key); null for every other source. */
+    val clearKey: ResolvedClearKey? = null,
 )
 
 /**
@@ -1764,7 +1766,10 @@ class PlayerViewModel internal constructor(
         playbackHostPrompts?.newAttempt()
         pluginExpiry = com.arkiv.player.data.plugin.PluginStreamExpiry(System.currentTimeMillis(), play.expiresInSeconds)
         val header = if (live) null else repo.headerInfo(episodeId)
-        _webExtras.value = WebExtras(episodeId, play.headers, pluginSubtitles(play.subtitles), pluginAudioTracks(play.audioTracks), drm = pluginDrm(play))
+        _webExtras.value = WebExtras(
+            episodeId, play.headers, pluginSubtitles(play.subtitles), pluginAudioTracks(play.audioTracks),
+            drm = pluginDrm(play), clearKey = pluginClearKey(play),
+        )
         // A live stream has no "where you were": it starts at the player's default position (the
         // live edge), and with 0 `StreamExoPlayer` doesn't seek.
         val startPos = if (live) 0L else safeStartPosition(episodeId, SourceKind.PLUGIN)

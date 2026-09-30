@@ -98,6 +98,7 @@ private fun TvOwnSourceForm(ui: OwnFormUi, vm: OwnSourcesViewModel) {
             TvOwnTextField(OwnSourcesCopy.NAME, f.name, ui.errors[OwnField.NAME], focusManager, Modifier.focusRequester(nameFocus)) { vm.change(f.copy(name = it)) }
             TvOwnTextField(
                 if (playlist) OwnSourcesCopy.URL_PLAYLIST else OwnSourcesCopy.URL_CHANNEL, f.url, ui.errors[OwnField.URL], focusManager, uri = true,
+                placeholder = if (playlist) OwnSourcesCopy.URL_PLAYLIST_HINT else OwnSourcesCopy.URL_CHANNEL_HINT,
             ) { vm.change(f.copy(url = it)) }
             if (ui.cleartext) Text(OwnSourcesCopy.CLEARTEXT, style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary)
             TvCompactAction(label = OwnSourcesCopy.ADVANCED + if (advanced) " ▴" else " ▾", onClick = { advanced = !advanced })
@@ -135,12 +136,14 @@ private fun TvOwnTextField(
     focusManager: androidx.compose.ui.focus.FocusManager,
     modifier: Modifier = Modifier,
     uri: Boolean = false,
+    placeholder: String? = null,
     onChange: (String) -> Unit,
 ) {
     OutlinedTextField(
         value = value,
         onValueChange = onChange,
         label = { Text(label) },
+        placeholder = placeholder?.let { { Text(it) } },
         singleLine = true,
         isError = error != null,
         supportingText = error?.let { { Text(it) } },

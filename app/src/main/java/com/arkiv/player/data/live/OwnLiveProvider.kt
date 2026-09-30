@@ -98,7 +98,11 @@ internal class OwnLiveProvider(
             else -> channel.name
         }
         val logo = channel.logo ?: single?.logo
-        val playable = PluginContentSource.livePlayable(PluginStream(url = url, headers = headers))
+        // Only a playlist entry carries a KODIPROP ClearKey (M3uParser); a single manually-added
+        // channel has no such field to read.
+        val drm = entry?.drmKey?.takeIf { it.isNotEmpty() }
+            ?.let { com.arkiv.player.data.plugin.PluginDrm(clearKeyId = entry.drmKeyId, clearKey = it) }
+        val playable = PluginContentSource.livePlayable(PluginStream(url = url, headers = headers, drm = drm))
         return LiveOpening.Plugin(
             PluginLiveChannel(
                 episodeId = PluginIds.liveEpisodeId(OwnLive.PLUGIN_ID, channel.code),

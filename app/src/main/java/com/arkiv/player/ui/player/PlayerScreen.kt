@@ -2966,6 +2966,7 @@ private fun PlayerContent(
                 subtitleConfigs = (webExtras?.subtitles ?: emptyList()).toExoSubtitleConfigs(),
                 audioTracks = webExtras?.audioTracks ?: emptyList(),
                 drm = webExtras?.drm,
+                clearKey = webExtras?.clearKey,
                 requestHeaders = mItem.requestHeaders,
                 // The plugin's id lets the stream client report an undeclared-but-askable host
                 // (onUndeclaredHost below) instead of a bare "Source error".
