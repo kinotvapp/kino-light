@@ -72,6 +72,12 @@ class PluginTimeoutException(function: String, ms: Long) :
 open class PluginScriptException(message: String, cause: Throwable? = null) : PluginException(message, cause)
 
 /**
+ * An error the plugin's own script threw (or its module failed to load with): [message] is the
+ * engine's raw text, stack included, for the log. The person reads [PluginErrorText]'s sentence.
+ */
+class PluginThrownException(message: String, cause: Throwable? = null) : PluginScriptException(message, cause)
+
+/**
  * A typed error: the plugin threw `kino.error(code, message)` (or a `kino.fetch`/`kino.crypto`
  * failure carrying its code went uncaught). [code] is `[a-z_]{1,32}`; [message] is the plugin's
  * detail, at most 200 characters. The app words what the person sees ([PluginErrors]).
@@ -175,11 +181,11 @@ class PluginRuntime private constructor(
             if (!isHealthy()) close()
             if (e is QuickJsException) {
                 PluginErrors.fromEngineMessage(e.message)?.let { throw it }
-                throw PluginScriptException(errorText(e.message, "Error del plugin"), boundedCause(e))
+                throw PluginThrownException(errorText(e.message, "Error del plugin"), boundedCause(e))
             }
             // A Kotlin exception from a binding that JS didn't catch, or whatever Throwable
             // quickjs-kt built from a plugin error's `name` (see EngineFailure).
-            throw PluginScriptException(errorText(e.message, e.javaClass.simpleName), boundedCause(e))
+            throw PluginThrownException(errorText(e.message, e.javaClass.simpleName), boundedCause(e))
         } finally {
             // Over, whatever way it ended: from here on a stray kino.fetch of this script (a
             // scraper's own retries outliving a timeout) finds no call to ask the person for.
@@ -354,8 +360,8 @@ class PluginRuntime private constructor(
             } catch (failure: EngineFailure) {
                 executor.shutdown()
                 val e = failure.error
-                if (e is QuickJsException) throw PluginScriptException(errorText(e.message, "El plugin no carga"), boundedCause(e))
-                throw PluginScriptException(errorText(e.message, e.javaClass.simpleName), boundedCause(e))
+                if (e is QuickJsException) throw PluginThrownException(errorText(e.message, "El plugin no carga"), boundedCause(e))
+                throw PluginThrownException(errorText(e.message, e.javaClass.simpleName), boundedCause(e))
             } catch (e: Exception) {
                 executor.shutdown()
                 throw PluginScriptException(errorText(e.message, e.javaClass.simpleName), boundedCause(e))

@@ -143,11 +143,13 @@ class PluginContentSource(
                 // first; it is a whole sentence, which DownSources shows as is.
                 val error = PluginCalls.explained(e, name) ?: when (e) {
                     is PluginTimeoutException -> "tardó más de ${e.seconds} s"
-                    is PluginErrorException -> PluginErrors.userMessage(e.code, name) ?: e.message ?: "error del plugin"
+                    is PluginErrorException -> PluginErrors.userMessage(e.code, name) ?: PluginErrorText.reason(e.message) ?: "error del plugin"
+                    // What the script threw is cleaned (no stack, URL or "Error:"); Kino's own text stays.
+                    is PluginThrownException -> PluginErrorText.reason(e.message) ?: "error del plugin"
                     else -> e.message ?: "error del plugin"
                 }
                 val trace = (e as? PluginException)?.trace?.summary()?.takeIf { it.isNotEmpty() }
-                log("[$id] search failed after ${System.currentTimeMillis() - t0} ms: $error" + (trace?.let { " [$it]" } ?: ""))
+                log("[$id] search failed after ${System.currentTimeMillis() - t0} ms: $error" + (trace?.let { " [$it]" } ?: "") + (e.message?.takeIf { it != error }?.let { " -- plugin said: $it" } ?: ""))
                 emit(SearchEvent.SourceError(source, error, System.currentTimeMillis() - t0, 0, cause = e))
                 return@flow
             }

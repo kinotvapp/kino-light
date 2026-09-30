@@ -71,7 +71,7 @@ class PluginFailureTextTest {
         assertEquals("Fuente no encontró este título", shown(PluginErrorException(PluginErrors.NOT_FOUND, NuvioPluginConverter.NO_STREAMS)))
         assertEquals("Fuente solo tiene torrents de este título", shown(PluginErrorException(PluginErrors.UNAVAILABLE, NuvioPluginConverter.ONLY_TORRENTS)))
         assertEquals(
-            "Fuente falló: unexpected token: ''",
+            "Fuente no pudo obtener el video",
             shown(PluginErrorException(PluginErrors.UNAVAILABLE, NuvioPluginConverter.SCRAPER_ERROR_PREFIX + "unexpected token: ''")),
         )
     }

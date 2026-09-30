@@ -49,12 +49,10 @@ object PluginFailureText {
         return when {
             detail == NuvioPluginConverter.NO_STREAMS -> "$name no encontró este título"
             detail == NuvioPluginConverter.ONLY_TORRENTS -> "$name solo tiene torrents de este título"
+            // Only a converted scraper's getStreams (resolve) reports this; cleaned like any script error.
             detail.startsWith(NuvioPluginConverter.SCRAPER_ERROR_PREFIX) ->
-                "$name falló: ${detail.removePrefix(NuvioPluginConverter.SCRAPER_ERROR_PREFIX).take(MAX_DETAIL_CHARS)}"
+                PluginErrorText.of(name, "resolve", detail.removePrefix(NuvioPluginConverter.SCRAPER_ERROR_PREFIX))
             else -> null
         }
     }
-
-    /** The longest scraper error text shown. */
-    const val MAX_DETAIL_CHARS = 120
 }

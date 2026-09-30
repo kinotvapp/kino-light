@@ -86,7 +86,8 @@ class PluginBrowseTest {
         assertEquals("Configura Demo en Menú ▸ Plugins", auth.message) // The default place is the phone's.
         assertEquals("Este contenido no está disponible en tu región", assertThrows(GatewayBlockedException::class.java) { kotlinx.coroutines.runBlocking { failing("geo_blocked").resolve(ref) } }.message)
         assertEquals("No se encontró en Demo", assertThrows(GatewayException::class.java) { kotlinx.coroutines.runBlocking { failing("not_found").browse("x", null) } }.message)
-        assertEquals("Demo: detalle", assertThrows(GatewayException::class.java) { kotlinx.coroutines.runBlocking { failing("network").resolve(ref) } }.message)
+        // An unknown code: PluginErrorText's sentence (a one-word detail is no readable reason).
+        assertEquals("Demo no pudo obtener el video", assertThrows(GatewayException::class.java) { kotlinx.coroutines.runBlocking { failing("network").resolve(ref) } }.message)
     }
 
     @Test fun `a typed error in search is the source's error line`() = runTest {
