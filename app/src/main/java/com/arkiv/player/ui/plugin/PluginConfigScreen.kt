@@ -183,6 +183,17 @@ private fun ListEntryDialog(s: PluginSetting, entry: Map<String, String>?, addin
     val initialFocus = remember { FocusRequester() }
     FocusWhenReady(initialFocus)
     Dialog(onDismissRequest = onCancel) {
+        // Read inside the Dialog: its window has its own focus owner, not the screen behind it.
+        // Same as the Configurar screen: D-pad Down always leaves a text field, or an open keyboard would trap the focus.
+        val focusManager = LocalFocusManager.current
+        val leaveOnDown = Modifier.onPreviewKeyEvent { e ->
+            if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionDown) {
+                focusManager.moveFocus(FocusDirection.Down)
+                true
+            } else {
+                false
+            }
+        }
         Surface(color = ArkivBlack, shape = MaterialTheme.shapes.large) {
             Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(if (adding) "Agregar a ${s.label}" else "Editar", style = MaterialTheme.typography.titleMedium, color = Color.White)
@@ -193,7 +204,7 @@ private fun ListEntryDialog(s: PluginSetting, entry: Map<String, String>?, addin
                         label = { Text(f.label + if (f.required) " *" else "") },
                         placeholder = f.hint.takeIf { it.isNotEmpty() }?.let { { Text(it) } }, singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = if (f.type == SettingType.URL) KeyboardType.Uri else KeyboardType.Text),
-                        modifier = Modifier.fillMaxWidth().then(focus),
+                        modifier = Modifier.fillMaxWidth().then(leaveOnDown).then(focus),
                     )
                 }
                 if (problem != null && values.values.any { it.isNotBlank() }) Text(problem, color = ArkivRed, style = MaterialTheme.typography.bodySmall)
