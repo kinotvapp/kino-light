@@ -40,6 +40,9 @@ class NuvioPluginConverterTest {
         assertTrue(manifest.id.startsWith("nuvio-fakesrc-"))
         assertEquals(4, manifest.apiVersion)
         assertTrue(manifest.streamHostsAny)
+        // The converter's own revision is in the version: a new conversion reads as a new version.
+        assertEquals("1.${NuvioPluginConverter.CONVERTER_REVISION}.0", manifest.version)
+        assertTrue(SemVer.compare(manifest.version, "1.0.0") > 0)
     }
 
     /**

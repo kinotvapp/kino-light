@@ -260,7 +260,7 @@ class NuvioPluginInstallerTest {
         repoFiles["https://raw.githubusercontent.com/owner/nuvio-repo/HEAD/providers/fakesrc.js"] =
             scraperJs.replace("quality: \"1080p\"", "quality: \"720p\"")
         val outcome = n.checkUpdate(id)
-        assertEquals(UpdateOutcome.Applied("1.0.0"), outcome)
+        assertEquals(UpdateOutcome.Applied(NuvioPluginConverter.VERSION), outcome)
         val record = store.get(id)!!.record
         assertTrue(record.sha256 != oldSha)
         assertEquals("owner/nuvio-repo", record.nuvioRepo)
@@ -275,7 +275,7 @@ class NuvioPluginInstallerTest {
         val outcome = n.checkUpdate(id)
         assertTrue(outcome is UpdateOutcome.NeedsApproval)
         val pending = store.get(id)!!.record
-        assertEquals("1.0.0", pending.pendingVersion)
+        assertEquals(NuvioPluginConverter.VERSION, pending.pendingVersion)
         assertEquals(listOf("newhost.example"), pending.pendingHosts)
         // What PluginRegistry turns into UPDATE_PENDING in Ajustes.
         assertEquals(PluginStatus.UPDATE_PENDING, store.get(id)!!.let { InstalledPlugin(it.manifest, it.record, null) }.status)
@@ -295,7 +295,7 @@ class NuvioPluginInstallerTest {
         val current = NuvioPluginConverter.convert(entry, scraperJs, repoSlug = "owner/nuvio-repo")
         val oldJson = org.json.JSONObject(current.manifestJson)
             .put("capabilities", org.json.JSONArray(listOf("search", "resolve"))).put("hosts", org.json.JSONArray(hosts))
-            .put("apiVersion", 1).also { it.remove("streamHosts") }.toString()
+            .put("apiVersion", 1).put("version", "1.0.0").also { it.remove("streamHosts") }.toString()
         val oldManifest = (ManifestParser.parse(oldJson) as ManifestResult.Valid).manifest
         val oldScript = "export async function search(q) { return []; }\nexport async function resolve(r) { return { url: 'https://fakesrc.example/v.mp4' }; }"
         val origin = NuvioOrigin(repo = "owner/nuvio-repo", scraperId = "fakesrc", script = oldScript.toByteArray())
@@ -319,8 +319,10 @@ class NuvioPluginInstallerTest {
         // Downloads came with this converter too: the sheet shows their line as new.
         assertEquals(listOf("download"), preview.newCapabilities)
         assertTrue(PluginConsent.extraLines(preview).any { it.text == "Puede descargar videos para verlos sin conexión" && it.isNew })
+        assertEquals(NuvioPluginConverter.VERSION, preview.manifest.version) // the sheet shows a new version, not 1.0.0 again
         n.install(preview) // what approving the sheet does
         val record = store.get(id)!!.record
+        assertEquals(NuvioPluginConverter.VERSION, record.version)
         assertEquals(listOf("search", "episodes", "resolve", "download"), record.capabilities)
         assertTrue(record.streamHostsAny)
         assertTrue(record.videoFromAnyHost)
@@ -338,8 +340,10 @@ class NuvioPluginInstallerTest {
         assertEquals(listOf("api.themoviedb.org"), preview.newHosts)
         assertEquals(listOf("download"), preview.newCapabilities)
         assertEquals(listOf("api.themoviedb.org"), store.get(id)!!.record.pendingHosts)
+        assertEquals(NuvioPluginConverter.VERSION, preview.manifest.version) // the sheet shows a new version, not 1.0.0 again
         n.install(preview) // what approving the sheet does
         val record = store.get(id)!!.record
+        assertEquals(NuvioPluginConverter.VERSION, record.version)
         assertEquals(listOf("search", "episodes", "resolve", "download"), record.capabilities)
         assertEquals(listOf("api.themoviedb.org", "fakesrc.example"), record.hosts)
         assertNull(record.pendingVersion)

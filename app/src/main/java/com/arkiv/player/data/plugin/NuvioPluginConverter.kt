@@ -143,7 +143,7 @@ object NuvioPluginConverter {
         val manifestJson = JSONObject()
             // Clipped to ManifestParser's own name limit: a longer Nuvio scraper name would otherwise make the whole manifest invalid.
             .put("id", id).put("name", scraper.name.trim().take(ManifestParser.MAX_NAME_CHARS).trim().ifEmpty { scraper.id.take(ManifestParser.MAX_NAME_CHARS) })
-            .put("version", "1.0.0").put("apiVersion", ManifestParser.STREAM_HOSTS_API_VERSION)
+            .put("version", VERSION).put("apiVersion", ManifestParser.STREAM_HOSTS_API_VERSION)
             .put("entry", "plugin.js")
             .put("description", description(scraper.name, repoSlug, warnings))
             .put("hosts", JSONArray(hosts))
@@ -159,6 +159,22 @@ object NuvioPluginConverter {
 
         return NuvioConversionResult(script, manifestJson, hosts, warnings, scraperHosts = candidates)
     }
+
+    /**
+     * What the converter itself produces, as a number: bump it whenever the conversion output changes
+     * (the shim, the adapter, a vendored library, the generated manifest's shape). An update never
+     * needs it -- [NuvioPluginInstaller.checkUpdate] compares the script's hash -- but it goes into
+     * [VERSION], so "Buscar actualización" and Ajustes show a new version for a new conversion.
+     * 0 was every conversion before it existed ("1.0.0"); 1 is apiVersion 4, fetchHosts any, the
+     * series adapter and the TMDB key behind a marker.
+     */
+    const val CONVERTER_REVISION = 1
+
+    /**
+     * A converted plugin's `version`: `1.<CONVERTER_REVISION>.0`. The upstream scraper's own changes
+     * don't move it (they are found by hash, and Nuvio's own `version` fields are not reliable).
+     */
+    const val VERSION = "1.$CONVERTER_REVISION.0"
 
     /** The one host the adapter itself calls (`search` artwork, `episodes`); see [convert]. */
     const val TMDB_HOST = "api.themoviedb.org"
