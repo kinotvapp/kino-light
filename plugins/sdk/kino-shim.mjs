@@ -160,13 +160,16 @@ function pluginSecretsFor(manifest, secretsFile) {
     return out;
   }
   /**
-   * Every opened value, in every form, replaced by [placeholderFor](name). Plain substring
-   * search-and-replace (`indexOf`/`split`/`join`), never a regex: the caps (16 secrets, 4096 bytes
-   * each, ~9 forms, one of them up to 3x on non-ASCII bytes) can build a combined alternation past
-   * V8's regex size limit -- measured, not hypothetical. Forms are still applied longest first (one
-   * full pass over [text] per form, mutating it before the next, shorter form's pass runs), so a
-   * value that is a prefix of another leaves no tail, and a placeholder just substituted in is never
-   * rescanned for a shorter form of the SAME value. [text] unchanged when nothing opened is found in it.
+   * Every opened value, in every form, replaced by [placeholderFor](name), in ONE left-to-right pass
+   * over [text]: the leftmost occurrence of any form is replaced, the longest form when several start
+   * at that same position, and the scan continues past it -- like the app's
+   * PluginSecrets.Redaction.replaceIn. A short value that happens to be a substring of another form,
+   * or of a placeholder just inserted, is never matched a second time once the pass is past it: doing
+   * one full pass per form (mutating the text before the next, shorter form's pass ran over it) could
+   * match a short secret's value INSIDE a placeholder an earlier, longer pass had just written. Plain
+   * substring search (`indexOf`), never a regex: the caps (16 secrets, 4096 bytes each, ~20 forms)
+   * can build a combined alternation past V8's regex size limit -- measured, not hypothetical.
+   * [text] unchanged when nothing opened is found in it.
    */
   function redactWith(text, placeholderFor) {
     if (typeof text !== "string" || text === "") return text;
@@ -175,13 +178,24 @@ function pluginSecretsFor(manifest, secretsFile) {
     for (const [name, plain] of Object.entries(opened)) {
       if (!plain) continue;
       const placeholder = placeholderFor(name);
-      for (const f of echoForms(plain)) forms.push([f, placeholder]);
+      for (const f of echoForms(plain)) if (f) forms.push([f, placeholder]);
     }
     if (forms.length === 0) return text;
-    forms.sort((a, b) => b[0].length - a[0].length);
-    let out = text;
-    for (const [f, placeholder] of forms) if (out.includes(f)) out = out.split(f).join(placeholder);
-    return out;
+    forms.sort((a, b) => b[0].length - a[0].length); // longest first: on a position tie the longest form wins.
+    const next = forms.map(([f]) => text.indexOf(f));
+    let out = "";
+    let cursor = 0;
+    for (;;) {
+      let best = -1;
+      for (let i = 0; i < forms.length; i++) if (next[i] >= 0 && (best < 0 || next[i] < next[best])) best = i;
+      if (best < 0) break;
+      const [form, placeholder] = forms[best];
+      out += text.slice(cursor, next[best]) + placeholder;
+      cursor = next[best] + form.length;
+      // Every form's occurrence the replacement covered (including the one just used) moves past it.
+      for (let i = 0; i < forms.length; i++) if (next[i] >= 0 && next[i] < cursor) next[i] = text.indexOf(forms[i][0], cursor);
+    }
+    return out + text.slice(cursor);
   }
   const redact = (text) => redactWith(text, (name) => markers[name]);
   /** True when [text] holds a declared value in any form [redact] replaces. */
@@ -342,7 +356,16 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", stora
     const buf = Buffer.from(bytes);
     const type = headers["content-type"];
     const charset = /charset=([^;]+)/i.exec(type || "");
-    const decode = () => (charset && !/utf-?8/i.test(charset[1]) ? new TextDecoder(charset[1].trim()).decode(buf) : buf.toString("utf8"));
+    const isLatin1 = (cs) => /^\s*(iso-?8859-1|latin-?1|us-ascii)\s*$/i.test(cs);
+    /**
+     * Node's `TextDecoder("iso-8859-1")` actually decodes windows-1252 (the WHATWG "iso-8859-1" label
+     * aliases to it), which disagrees with `Buffer.from(str, "latin1")` on bytes 0x80-0x9F -- that one
+     * maps every byte straight to the code point of the same number, true ISO-8859-1. [base64] below
+     * re-encodes with `"latin1"`, so decoding those bytes with `TextDecoder` first would silently
+     * change them on the round trip. Read with `Buffer.toString("latin1")` here instead, so decode and
+     * the encode in [base64] agree on the same (true Latin-1) mapping for every byte.
+     */
+    const decode = () => (!charset || /utf-?8/i.test(charset[1]) ? buf.toString("utf8") : isLatin1(charset[1]) ? buf.toString("latin1") : new TextDecoder(charset[1].trim()).decode(buf));
     /**
      * The app's base64 twin (DefaultPluginHost.base64): a binary body's bytes as they came (not
      * scanned); a text body's bytes re-encoded from the REDACTED text in its own charset when
@@ -353,7 +376,7 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", stora
       if (!pluginSecrets || !textual(type)) return buf.toString("base64");
       const raw = decode();
       const redacted = redact(raw);
-      const enc = !charset || /utf-?8/i.test(charset[1]) ? "utf8" : /^\s*(iso-?8859-1|latin-?1|us-ascii)\s*$/i.test(charset[1]) ? "latin1" : null;
+      const enc = !charset || /utf-?8/i.test(charset[1]) ? "utf8" : isLatin1(charset[1]) ? "latin1" : null;
       const twin = redacted === raw ? buf : enc ? Buffer.from(redacted, enc) : null;
       if (!twin || pluginSecrets.containsValue(twin.toString("utf8")) || pluginSecrets.containsValue(twin.toString("latin1"))) return Buffer.from(redacted, "utf8").toString("base64");
       return twin.toString("base64");

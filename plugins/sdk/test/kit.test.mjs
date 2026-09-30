@@ -918,7 +918,7 @@ test("secrets: a consent line, and validate notes it can't check the repo bindin
     const r = await validate(dir);
     assert.equal(r.ok, true);
     assert.deepEqual(r.consent, [{ text: "Usa datos sellados por su autor", danger: false }]);
-    assert.deepEqual(r.notes, ["No se puede comprobar aquí para qué repositorio se sellaron los secretos: Kino lo comprueba al instalar."]);
+    assert.deepEqual(r.notes, ["No se puede comprobar aquí para qué repositorio se sellaron los secretos: Kino lo comprueba al instalar. Además, solo se abren si la persona instala el plugin desde su rama principal, sin @rama."]);
     const cli = spawnSync(process.execPath, [join(here, "..", "validate.mjs"), dir], { encoding: "utf8" });
     assert.equal(cli.status, 0);
     assert.match(cli.stderr, /No se puede comprobar aquí para qué repositorio se sellaron los secretos/);
@@ -1628,6 +1628,41 @@ test("r.base64() of a text body is the redacted text's bytes, like the app; a bi
   assert.ok(!twin.toString("utf8").includes("clé") && !twin.toString("latin1").includes("clé"), twin.toString("latin1"));
   const binary = await kino.fetch("https://api.example.com/4");
   assert.equal(Buffer.from(binary.base64(), "base64").toString("utf8"), "raw k-123");
+});
+
+test("r.base64() of an ISO-8859-1 body round-trips bytes 0x80-0x9F, where windows-1252 disagrees with true Latin-1", async () => {
+  const { dir } = withSecretsFile({ apiKey: "k-123" });
+  const m = JSON.parse(manifest({ hosts: ["api.example.com"], secrets: { apiKey: "x" } }));
+  // 0x80 and 0x9F are control characters in true ISO-8859-1 but "€" and "Ÿ" in windows-1252 -- and
+  // Node's TextDecoder("iso-8859-1") decodes as windows-1252, not true Latin-1. Redacting this body
+  // (the value is present) forces base64() to re-encode from the decoded text, which is where the
+  // two disagreeing mappings used to lose the original bytes.
+  const body = Buffer.concat([Buffer.from([0x80, 0x9f]), Buffer.from("año k-123", "latin1")]);
+  const { kino } = createKino(m, { secretsFile: join(dir, ".kino-secrets.json"), fetchImpl: async () => new Response(body, { headers: { "content-type": "text/plain; charset=ISO-8859-1" } }) });
+  const k = kino.secret("apiKey");
+  const r = await kino.fetch("https://api.example.com/x");
+  assert.equal(r.text(), `\x80\x9faño ${k}`);
+  const twin = Buffer.from(r.base64(), "base64");
+  assert.equal(twin.toString("latin1"), `\x80\x9faño ${k}`);
+});
+
+// A marker is `__kinoSecret_<name>_<nonce>__`: it literally contains both "kino" and "Secret" as
+// substrings, so a short secret whose OWN value is one of those words is exactly the case where a
+// naive "one full pass per form, longest first" redaction can rematch itself inside a marker another
+// secret's longer pass just inserted.
+test("redactWith doesn't rematch a secret valued \"kino\" or \"Secret\" inside another secret's own marker", async () => {
+  const { dir } = withSecretsFile({ other: "unrelated-value-here", kinoWord: "kino", secretWord: "Secret" });
+  const m = JSON.parse(manifest({ hosts: ["api.example.com"], secrets: { other: "x", kinoWord: "x", secretWord: "x" } }));
+  const { kino } = createKino(m, {
+    secretsFile: join(dir, ".kino-secrets.json"),
+    fetchImpl: async () => new Response("unrelated-value-here, kino, Secret", { headers: { "content-type": "text/plain" } }),
+  });
+  const otherMarker = kino.secret("other");
+  const kinoMarker = kino.secret("kinoWord");
+  const secretMarker = kino.secret("secretWord");
+  assert.ok(otherMarker.includes("kino") && otherMarker.includes("Secret"), otherMarker);
+  const r = await kino.fetch("https://api.example.com/x");
+  assert.equal(r.text(), `${otherMarker}, ${kinoMarker}, ${secretMarker}`);
 });
 
 test("run.mjs wires .kino-secrets.json next to the manifest for kino.secret and substitution", () => {
