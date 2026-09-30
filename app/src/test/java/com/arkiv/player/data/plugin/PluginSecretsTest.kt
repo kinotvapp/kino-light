@@ -196,6 +196,34 @@ class PluginSecretsTest {
         assertEquals("[${e.marker("e")}]", e.redact("[k\\uD83D\\uDE00y]"))
     }
 
+    @Test fun `redaction takes the leftmost occurrence, the longest there, and never overlaps two`() {
+        val s = PluginSecrets(
+            mapOf("abc" to TestSealing.seal("abc", binding, "abc"), "bcd" to TestSealing.seal("bcd", binding, "bcd"), "aa" to TestSealing.seal("aa", binding, "aa")),
+            binding, TestSealing.agreement, listOf("api.example.com"), recipient = TestSealing.TEST_PUBLIC,
+        )
+        val (abc, bcd, aa) = listOf("abc", "bcd", "aa").map { s.marker(it)!! }
+        assertEquals("${abc}d", s.redact("abcd"))
+        assertEquals("x${bcd}", s.redact("xbcd"))
+        assertEquals("${aa}${aa}a", s.redact("aaaaa"))
+        assertEquals("${aa}${abc}", s.redact("aaabc"))
+        assertEquals("${aa}bc${bcd}", s.redact("aabcbcd"))
+    }
+
+    @Test fun `a one-byte value filling a multi-megabyte text redacts in time`() {
+        val s = PluginSecrets(
+            mapOf("one" to TestSealing.seal("a", binding, "one")), binding, TestSealing.agreement, listOf("api.example.com"), recipient = TestSealing.TEST_PUBLIC,
+        )
+        val m = s.marker("one")!!
+        val text = "a".repeat(3_000_000)
+        val started = System.nanoTime()
+        val out = s.redact(text)
+        val ms = (System.nanoTime() - started) / 1_000_000
+        assertEquals(3_000_000L * m.length, out.length.toLong())
+        assertFalse(out.replace(m, "").isNotEmpty())
+        println("one-byte value over 3M chars: $ms ms")
+        assertTrue("took $ms ms", ms < 10_000)
+    }
+
     // At the caps: 16 secrets of 4096 bytes, each full of characters every encoding changes, all
     // opened, echoed in every form inside a multi-megabyte text. One pass must finish well inside a
     // plugin call's time, and leave no form of any value behind.

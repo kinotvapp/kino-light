@@ -3,6 +3,7 @@ package com.arkiv.player.data.plugin
 import java.net.URLEncoder
 import java.security.SecureRandom
 import java.util.Base64
+import java.util.PriorityQueue
 
 /**
  * One runtime's sealed secrets (spec: docs/superpowers/specs/2026-09-29-plugin-sealed-secrets-design.md §5).
@@ -71,14 +72,15 @@ class PluginSecrets(
      * One pass, longest form first at each position: a value that is a prefix of another leaves no
      * tail, and a marker just put in is never scanned again. Exact occurrences only: a server that
      * transforms the value any other way (case, hashing, another escaping) is not caught. [text]
-     * itself comes back when it holds none: the regex runs only after a plain search found a form.
+     * itself comes back when it holds none: the replacing pass runs only after a plain search found
+     * a form.
      */
     fun redact(text: String): String {
         if (text.isEmpty()) return text
         openAll()
         val r = redaction()
         if (!r.foundIn(text)) return text
-        return r.pattern!!.replace(text) { r.forms.getValue(it.value) }
+        return r.replaceIn(text)
     }
 
     /** True when [text] holds a declared value in any form [redact] replaces. */
@@ -109,10 +111,46 @@ class PluginSecrets(
         }
     }
 
-    /** Every form of the values opened so far, each mapped to its marker, and one pattern for all of them. */
-    private class Redaction(val openedCount: Int, val forms: Map<String, String>) {
-        val pattern: Regex? = if (forms.isEmpty()) null else Regex(forms.keys.sortedByDescending { it.length }.joinToString("|") { Regex.escape(it) })
-        fun foundIn(text: String): Boolean = forms.keys.any { it in text }
+    /**
+     * Every form of the values opened so far, each with its marker, longest first. No regex: at the
+     * caps (16 values of 4096 bytes, each in some twenty forms, several of them up to six times
+     * longer than the value) one alternation of them all costs a try of every form at every
+     * position of a multi-megabyte body.
+     */
+    private class Redaction(val openedCount: Int, forms: Map<String, String>) {
+        private val forms: Array<String> = forms.keys.filter { it.isNotEmpty() }.sortedByDescending { it.length }.toTypedArray()
+        private val markers: Array<String> = Array(this.forms.size) { forms.getValue(this.forms[it]) }
+
+        fun foundIn(text: String): Boolean = forms.any { it in text }
+
+        /**
+         * One left-to-right pass: the leftmost occurrence of any form is replaced, the longest form
+         * when several start there (the lowest index), and the scan goes on after it. Each form keeps
+         * its next occurrence at or past the cursor ([String.indexOf], never re-scanned behind it),
+         * in a queue ordered by position, then index.
+         */
+        fun replaceIn(text: String): String {
+            val next = IntArray(forms.size) { text.indexOf(forms[it]) }
+            val queue = PriorityQueue<Int>(maxOf(1, forms.size), compareBy<Int>({ next[it] }, { it }))
+            for (i in forms.indices) if (next[i] >= 0) queue.add(i)
+            val out = StringBuilder(text.length)
+            var cursor = 0
+            while (queue.isNotEmpty()) {
+                val best = queue.poll()
+                val start = next[best]
+                out.append(text, cursor, start).append(markers[best])
+                cursor = start + forms[best].length
+                next[best] = text.indexOf(forms[best], cursor)
+                if (next[best] >= 0) queue.add(best)
+                // Occurrences the replaced one covered: each form moves to its next one past it.
+                while (queue.isNotEmpty() && next[queue.peek()] < cursor) {
+                    val i = queue.poll()
+                    next[i] = text.indexOf(forms[i], cursor)
+                    if (next[i] >= 0) queue.add(i)
+                }
+            }
+            return out.append(text, cursor, text.length).toString()
+        }
     }
 
     /** Built once per set of opened values: values are only ever added, so their count names the set. */
