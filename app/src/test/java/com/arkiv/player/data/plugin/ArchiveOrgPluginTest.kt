@@ -83,7 +83,9 @@ class ArchiveOrgPluginTest {
 
     @Test fun `manifest is valid and every capability is exported`() {
         assertEquals("archive-org", manifest.id)
-        assertTrue(runtime.exports.containsAll(manifest.capabilities))
+        // "download" is declarative (the app acts on it), so the exports to check come from requiredExports.
+        assertTrue(runtime.exports.containsAll(ManifestParser.requiredExports(manifest.capabilities.toSet())))
+        assertTrue("download" in manifest.capabilities)
     }
 
     /** The raw items `search` returns, in order: the Kotlin side de-duplicates, so it would hide a plugin that does not. */
