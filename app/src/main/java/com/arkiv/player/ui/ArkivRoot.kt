@@ -5,6 +5,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
 import android.net.Uri
 import androidx.compose.foundation.layout.Box
@@ -281,31 +282,36 @@ fun ArkivRoot(
         gesturesEnabled = isTab && !isWide,
         drawerContent = {
             ModalDrawerSheet(drawerContainerColor = ArkivBlack) {
-                Spacer(Modifier.height(24.dp))
-                KinoWordmark(
-                    height = 30.dp,
-                    modifier = Modifier.padding(horizontal = 28.dp, vertical = 8.dp),
-                )
-                Spacer(Modifier.height(8.dp))
-                tabs.forEach { tab ->
-                    val selected = backStackEntry?.destination?.hierarchy?.any { it.route == tab.route } == true
-                    NavigationDrawerItem(
-                        icon = tab.icon,
-                        label = { Text(tab.label) },
-                        selected = selected,
-                        colors = NavigationDrawerItemDefaults.colors(
-                            selectedContainerColor = ArkivRed.copy(alpha = 0.15f),
-                            selectedIconColor = ArkivRed,
-                            selectedTextColor = ArkivRed,
-                            unselectedIconColor = Color.White,
-                            unselectedTextColor = Color.White,
-                        ),
-                        onClick = {
-                            scope.launch { drawerState.close() }
-                            goToTab(tab)
-                        },
-                        modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
+                // Scrolls so every tab stays reachable when the sheet is short (phone landscape).
+                androidx.compose.foundation.layout.Column(
+                    Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState()),
+                ) {
+                    Spacer(Modifier.height(24.dp))
+                    KinoWordmark(
+                        height = 30.dp,
+                        modifier = Modifier.padding(horizontal = 28.dp, vertical = 8.dp),
                     )
+                    Spacer(Modifier.height(8.dp))
+                    tabs.forEach { tab ->
+                        val selected = backStackEntry?.destination?.hierarchy?.any { it.route == tab.route } == true
+                        NavigationDrawerItem(
+                            icon = tab.icon,
+                            label = { Text(tab.label) },
+                            selected = selected,
+                            colors = NavigationDrawerItemDefaults.colors(
+                                selectedContainerColor = ArkivRed.copy(alpha = 0.15f),
+                                selectedIconColor = ArkivRed,
+                                selectedTextColor = ArkivRed,
+                                unselectedIconColor = Color.White,
+                                unselectedTextColor = Color.White,
+                            ),
+                            onClick = {
+                                scope.launch { drawerState.close() }
+                                goToTab(tab)
+                            },
+                            modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
+                        )
+                    }
                 }
             }
         },
