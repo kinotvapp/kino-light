@@ -170,6 +170,7 @@ class PluginContentSource(
     /** A search answer as shown: checked like any page, minus the channels unrelated to the query ([LiveSearchRelevance]). */
     private fun searchPageOf(out: String, queryJson: String): PluginPage {
         val page = PluginOutput.page(out, PluginOutput.MAX_SEARCH_ITEMS, allowSeries, allowNext, currentHosts(), allowLive) { log("[$id] $it") }
+        PluginTelemetry.droppedList(id, "search", out, page.items.size)?.let(PluginTelemetry.current::report)
         val kept = LiveSearchRelevance.filter(page.items, LiveSearchRelevance.queryForms(queryJson))
         if (kept.size < page.items.size) log("[$id] search: dropped ${page.items.size - kept.size} live channel(s) unrelated to the query")
         return page.copy(items = kept)
@@ -179,7 +180,9 @@ class PluginContentSource(
         if (!allowNext) throw GatewayException("$name no tiene más para mostrar")
         val arg = JSONObject().put("ref", ref.take(PluginOutput.MAX_REF_CHARS)).put("cursor", cursor?.take(PluginOutput.MAX_CURSOR_CHARS) ?: JSONObject.NULL)
         val out = callOrThrow("browse", arg.toString(), BROWSE_TIMEOUT_MS)
-        return pageOf(PluginOutput.page(out, PluginOutput.MAX_BROWSE_ITEMS, allowSeries, allowNext = true, currentHosts(), allowLive) { log("[$id] $it") })
+        val page = PluginOutput.page(out, PluginOutput.MAX_BROWSE_ITEMS, allowSeries, allowNext = true, currentHosts(), allowLive) { log("[$id] $it") }
+        PluginTelemetry.droppedList(id, "browse", out, page.items.size)?.let(PluginTelemetry.current::report)
+        return pageOf(page)
     }
 
     private fun pageOf(page: PluginPage) = GatewayPage(page.items.map { resultFrom(plugin, it) }, page.next)
@@ -199,6 +202,7 @@ class PluginContentSource(
         val stream = try {
             PluginOutput.stream(out, hosts, xuper, allowDrm)
         } catch (e: PluginContractException) {
+            PluginTelemetry.invalidOutput(id, "resolve", e)?.let(PluginTelemetry.current::report)
             throw GatewayException("$name: ${e.message}", e)
         }
         if (hosts.anyPublicVideoHost) logAnyVideoHost(stream, hosts.strict)
@@ -286,6 +290,7 @@ class PluginContentSource(
         val parsed = try {
             PluginOutput.episodes(out, { log("[$id] $it") }, currentHosts())
         } catch (e: PluginContractException) {
+            PluginTelemetry.invalidOutput(id, "episodes", e)?.let(PluginTelemetry.current::report)
             throw GatewayException("$name: ${e.message}", e)
         }
         val episodes = parsed.episodes.map { e ->

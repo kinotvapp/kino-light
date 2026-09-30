@@ -504,7 +504,7 @@ internal fun StreamExoPlayer(
                     PluginLiveRecovery.GIVE_UP -> {
                         Log.e(TAG, "live $kind gave up · errorCode=${error.errorCode} msg=$msg", error)
                         // Only the definitive failure reaches Sentry: three hiccups in a row are one report, not three.
-                        com.arkiv.player.crash.Crash.report(error, "$crashTag-live-playback-${androidx.media3.common.PlaybackException.getErrorCodeName(error.errorCode)}")
+                        com.arkiv.player.crash.Crash.report(error, "$crashTag-live-playback-${androidx.media3.common.PlaybackException.getErrorCodeName(error.errorCode)}", pluginExtras(http))
                     }
                 }
             }
@@ -549,7 +549,7 @@ internal fun StreamExoPlayer(
                     PlayerErrorRoute.DRM_FINAL -> {
                         val tag = PluginWidevine.crashTag(crashTag, error.errorCode, prepared.drmSoftwareLevelRefused.get())
                         Log.e(TAG, "onPlayerError DRM errorCode=${error.errorCode} tag=$tag msg=$msg", error)
-                        com.arkiv.player.crash.Crash.report(error, tag)
+                        com.arkiv.player.crash.Crash.report(error, tag, pluginExtras(http))
                         onError(PluginWidevine.ERROR_MESSAGE)
                     }
                     // A MergingMediaSource is all-or-nothing (MergingMediaPeriod.maybeThrowPrepareError
@@ -579,7 +579,7 @@ internal fun StreamExoPlayer(
                         )
                         // Also to Sentry: VOD playback failures (codec init, source, decoder) used to vanish
                         // into Logcat -- this is proactive signal on which content/devices can't play.
-                        com.arkiv.player.crash.Crash.report(error, "$crashTag-playback-${androidx.media3.common.PlaybackException.getErrorCodeName(error.errorCode)}")
+                        com.arkiv.player.crash.Crash.report(error, "$crashTag-playback-${androidx.media3.common.PlaybackException.getErrorCodeName(error.errorCode)}", pluginExtras(http))
                         onError(shown)
                     }
                 }
@@ -964,6 +964,14 @@ internal fun strictSideUrls(hosts: com.arkiv.player.data.plugin.EffectiveHosts, 
 internal fun licenseHostsFor(hosts: com.arkiv.player.data.plugin.EffectiveHosts): com.arkiv.player.data.plugin.EffectiveHosts = hosts.strict
 
 /** Only a PLUGIN stream is gated; an empty host list is still gated (it reaches nothing). */
+/**
+ * A plugin stream's playback report carries which plugin it was (id, version, apiVersion, origin,
+ * Nuvio repo/scraper: `PluginTelemetry.describe`, nothing the person typed); empty for Magis and for a
+ * plugin stream without its id.
+ */
+private fun pluginExtras(http: StreamHttp): Map<String, String> =
+    (http as? StreamHttp.PluginGated)?.pluginId?.let { runCatching { com.arkiv.player.data.plugin.PluginTelemetry.current.describe(it) }.getOrNull() }.orEmpty()
+
 internal fun streamHttpFor(kind: SourceKind, pluginHosts: com.arkiv.player.data.plugin.EffectiveHosts, xuper: Boolean = false, pluginId: String? = null): StreamHttp =
     if (kind == SourceKind.PLUGIN) StreamHttp.PluginGated(pluginHosts, xuper, pluginId) else StreamHttp.Default
 

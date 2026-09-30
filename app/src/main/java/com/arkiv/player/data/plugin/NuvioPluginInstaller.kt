@@ -75,15 +75,30 @@ class NuvioPluginInstaller(
 
     suspend fun previewScraper(input: String, scraperId: String): InstallPreview {
         val typed = PluginAddress.parse(input) ?: throw InstallException("Dirección de repositorio inválida")
-        val (address, manifest) = resolveNuvioManifest(typed)
-        val scraper = manifest.scrapers.firstOrNull { it.id == scraperId } ?: throw InstallException("No encontré el scraper \"$scraperId\" en este repositorio")
+        // Telemetry: every way this conversion fails is one issue per (repo, scraper, stage).
+        val key = typed.owner + "/" + typed.repo + "#" + scraperId
+        fun failed(stage: String, message: String, detail: Map<String, String> = emptyMap(), raw: String? = null): InstallException {
+            PluginTelemetry.current.report(
+                PluginFailure(
+                    key, "nuvio:$stage", PluginFailureKind.CONVERSION, raw = raw, detail = detail,
+                    facts = PluginFacts(null, null, "nuvio", typed.owner + "/" + typed.repo, scraperId),
+                ),
+            )
+            return InstallException(message)
+        }
+        val (address, manifest) = try {
+            resolveNuvioManifest(typed)
+        } catch (e: InstallException) {
+            throw failed("repo", e.message.orEmpty())
+        }
+        val scraper = manifest.scrapers.firstOrNull { it.id == scraperId } ?: throw failed("scraper_missing", "No encontré el scraper \"$scraperId\" en este repositorio")
 
         val scraperSource = try {
             fetcher.fetch(address.rawUrl(scraper.filename), PluginInstaller.MAX_SCRIPT_BYTES).toString(Charsets.UTF_8)
         } catch (e: FileNotFoundException) {
-            throw InstallException("No encontré ${scraper.filename} en ${address.canonical}")
+            throw failed("scraper_fetch", "No encontré ${scraper.filename} en ${address.canonical}", mapOf("error" to "not_found"))
         } catch (e: IOException) {
-            throw InstallException(installReadFailureMessage(e))
+            throw failed("scraper_fetch", installReadFailureMessage(e), mapOf("error" to e.javaClass.simpleName))
         }
 
         val domainsUrl = NuvioHostExtractor.findDomainsJsonUrl(scraperSource)
@@ -92,13 +107,19 @@ class NuvioPluginInstaller(
                 .getOrNull()?.let { NuvioHostExtractor.parseDomainsJson(it, scraperSource) }
         } ?: NuvioRemoteHosts.NONE
 
-        val conversion = NuvioPluginConverter.convert(scraper, scraperSource, repoSlug = address.canonical, tmdbApiKey = tmdbApiKey, remoteHosts = remoteHosts)
+        val conversion = try {
+            NuvioPluginConverter.convert(scraper, scraperSource, repoSlug = address.canonical, tmdbApiKey = tmdbApiKey, remoteHosts = remoteHosts)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            throw failed("convert", "No se pudo convertir \"${scraper.name}\" a un plugin de Kino", mapOf("error" to e.javaClass.simpleName))
+        }
         if (conversion.scraperHosts.isEmpty()) {
-            throw InstallException("No encontré ningún dominio en el código de \"${scraper.name}\": no se puede convertir a un plugin de Kino")
+            throw failed("no_domains", "No encontré ningún dominio en el código de \"${scraper.name}\": no se puede convertir a un plugin de Kino")
         }
         val manifestResult = ManifestParser.parse(conversion.manifestJson)
         val parsedManifest = (manifestResult as? ManifestResult.Valid)?.manifest
-            ?: throw InstallException("El plugin generado no es válido: ${(manifestResult as ManifestResult.Invalid).message}")
+            ?: (manifestResult as ManifestResult.Invalid).let { throw failed("manifest", "El plugin generado no es válido: ${it.message}", mapOf("field" to it.field)) }
 
         return installer.diffAgainstInstalled(
             address, parsedManifest, conversion.manifestJson,

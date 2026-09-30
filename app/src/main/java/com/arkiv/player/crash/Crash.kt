@@ -78,10 +78,20 @@ object Crash {
      * the message makes one issue per distinct value and floods the board (what the "warm-up" reports
      * do); with a stable message and the numbers here, one issue collects every event. They go to
      * Sentry only, not to the local store.
+     *
+     * [tags] are searchable Sentry tags (low-cardinality values only); [fingerprint], when given,
+     * replaces GlitchTip's own grouping: one issue per fingerprint, whatever the message or stack
+     * (see `PluginTelemetry`). Both Sentry only.
      */
-    fun report(error: Throwable, tag: String, extras: Map<String, String> = emptyMap()) {
+    fun report(
+        error: Throwable,
+        tag: String,
+        extras: Map<String, String> = emptyMap(),
+        tags: Map<String, String> = emptyMap(),
+        fingerprint: List<String>? = null,
+    ) {
         guard?.report(error, tag)
-        reportToSentry(error, tag, extras)
+        reportToSentry(error, tag, extras, tags, fingerprint)
     }
 
     /**
@@ -91,12 +101,20 @@ object Crash {
      * [io.sentry.Sentry.isEnabled] is false here and this is a no-op -- no separate flag to keep in
      * sync. `runCatching`: a reporting path must never become a NEW reason something fails.
      */
-    private fun reportToSentry(error: Throwable, tag: String, extras: Map<String, String>) {
+    private fun reportToSentry(
+        error: Throwable,
+        tag: String,
+        extras: Map<String, String>,
+        tags: Map<String, String>,
+        fingerprint: List<String>?,
+    ) {
         runCatching {
             if (io.sentry.Sentry.isEnabled()) {
                 io.sentry.Sentry.captureException(error) { scope ->
                     scope.setTag("kino.report_tag", tag)
+                    tags.forEach { (key, value) -> scope.setTag(key, value) }
                     extras.forEach { (key, value) -> scope.setExtra(key, value) }
+                    if (!fingerprint.isNullOrEmpty()) scope.fingerprint = fingerprint
                 }
             }
         }

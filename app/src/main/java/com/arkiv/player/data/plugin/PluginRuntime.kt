@@ -63,6 +63,9 @@ data class PluginEnv(
 open class PluginException(message: String, cause: Throwable? = null) : Exception(message, cause) {
     /** What the failed call's `kino.fetch`es met (set by [PluginRuntime.call]): see [PluginFailureText]. */
     @Volatile var trace: PluginCallTrace? = null
+
+    /** The runtime failed while LOADING the script ([PluginRuntime.open]), not during a call: telemetry only ([PluginTelemetry]). */
+    @Volatile var atLoad: Boolean = false
 }
 class PluginTimeoutException(function: String, ms: Long) :
     PluginException("${function.take(100)} no respondió en ${(ms + 999) / 1000} s") {
@@ -294,7 +297,12 @@ class PluginRuntime private constructor(
          * [PluginEnv.loadTimeoutMs] (a top-level infinite loop leaks that thread, see the class KDoc).
          */
         suspend fun open(label: String, script: String, host: PluginHost, env: PluginEnv, calls: PluginCallTracker = PluginCallTracker()): PluginRuntime =
-            open(label, script, host, env, prelude(env), calls)
+            try {
+                open(label, script, host, env, prelude(env), calls)
+            } catch (e: PluginException) {
+                e.atLoad = true
+                throw e
+            }
 
         /** [open] with the prelude source given: tests use it to load a prelude that aborts. */
         @OptIn(ExperimentalCoroutinesApi::class) // Deferred.getCompleted(), read only after completion is confirmed

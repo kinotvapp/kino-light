@@ -158,7 +158,10 @@ class PluginHomeRows(
             // the call, same as `revision` above: if a save landed during the call and bumped it,
             // ANY later read (this process or after a restart) compares against the NEW persisted
             // value and correctly refuses this entry, exactly like the in-memory revision already did.
-            parse(p, json).also { rows -> if (rows.isNotEmpty()) writeCache(p.id, revision, p.configRevision, p.record.version, json) }
+            parse(p, json).also { rows ->
+                if (rows.isNotEmpty()) writeCache(p.id, revision, p.configRevision, p.record.version, json)
+                else PluginTelemetry.droppedList(p.id, "home", json, 0)?.let(PluginTelemetry.current::report)
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

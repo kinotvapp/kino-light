@@ -158,7 +158,24 @@ class LocalDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
                 // retry) -> this title won't finish for the user. Tells us which titles/devices
                 // can't download offline. A `permanent` refusal (an HLS-only plugin source, DRM,
                 // live: "Este video no se puede descargar") is a documented limit, never a report.
-                if (DownloadRetryPolicy.reports(outcome.transient, outcome.permanent, outcome.expected)) {
+                val pluginId = com.arkiv.player.data.plugin.PluginIds.pluginIdOfEpisode(entity.episodeId)
+                if (pluginId != null) {
+                    // A plugin's row: grouped per plugin (never per episode id, which carries the
+                    // plugin's ref) once it is final -- failed with no retry left, or refused. A
+                    // failed resolve was already reported as the plugin's own resolve failure.
+                    val final = DownloadRetryPolicy.resolve(outcome.transient, outcome.permanent, runAttemptCount) != FailureResolution.RETRY
+                    if (final && !outcome.expected && !outcome.atResolve) {
+                        com.arkiv.player.data.plugin.PluginTelemetry.current.report(
+                            com.arkiv.player.data.plugin.PluginFailure(
+                                pluginId, "download",
+                                if (outcome.permanent) com.arkiv.player.data.plugin.PluginFailureKind.DOWNLOAD_REFUSED
+                                else com.arkiv.player.data.plugin.PluginFailureKind.DOWNLOAD,
+                                raw = outcome.reason,
+                                detail = mapOf("transient" to outcome.transient.toString()),
+                            ),
+                        )
+                    }
+                } else if (DownloadRetryPolicy.reports(outcome.transient, outcome.permanent, outcome.expected)) {
                     com.arkiv.player.crash.Crash.report(
                         com.arkiv.player.crash.OfflineDownloadFailed("${entity.episodeId}: ${outcome.reason}"),
                         "offline-download",

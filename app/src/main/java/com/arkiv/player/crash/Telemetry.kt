@@ -145,3 +145,13 @@ class CastFailure(message: String) : Exception(message)
  * `unused`) and, for TLS, whether the device clock looks off. Once per app start. See `PluginDiscovery`.
  */
 class DiscoveryFailed(message: String) : Exception(message)
+
+/**
+ * A plugin failed in a way its author (or Kino's plugin system) can act on: a call that timed out,
+ * threw, failed to load, was refused a host it never asked for, answered something unusable, or a
+ * failed install/update/Nuvio conversion/download. The message is `plugin <id> <function> <kind>`
+ * (stable: never the plugin's own text) and the event carries the same triple as its fingerprint, so
+ * one GlitchTip issue per (plugin, function, kind). The cleaned reason and the plugin's facts travel as
+ * extras. Throttled on the device. See `PluginTelemetry`.
+ */
+class PluginFailed(message: String) : Exception(message)

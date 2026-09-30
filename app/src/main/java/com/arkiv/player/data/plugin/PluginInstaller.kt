@@ -150,8 +150,10 @@ class PluginInstaller(
         val script = preview.nuvioOrigin?.script ?: try {
             fetcher.fetch(preview.address.rawUrl(m.entry), MAX_SCRIPT_BYTES)
         } catch (e: FileNotFoundException) {
+            reportInstall(preview, "download", mapOf("error" to "not_found"))
             throw InstallException("No encontré ${m.entry} en ${preview.address.canonical}")
         } catch (e: IOException) {
+            reportInstall(preview, "download", mapOf("error" to e.javaClass.simpleName))
             throw InstallException("No se pudo descargar el plugin: ${e.message}")
         }
         // A Nuvio-origin preview has no icon of its own to fetch (yet): NuvioPluginConverter
@@ -174,11 +176,13 @@ class PluginInstaller(
         val exports = try {
             probe(script.toString(Charsets.UTF_8))
         } catch (e: PluginException) {
+            reportInstall(preview, "probe", raw = e.message)
             throw InstallException("El plugin no carga: ${e.message}")
         }
         // Declarative capabilities (download/drm) export nothing; `channels` exports
         // liveCategories + liveChannels (guide is optional): see ManifestParser.requiredExports.
         val missing = ManifestParser.requiredExports(m.capabilities) - exports
+        if (missing.isNotEmpty()) reportInstall(preview, "exports", mapOf("missing" to missing.sorted().joinToString(",")))
         if (missing.isNotEmpty()) throw InstallException("El plugin no carga: le falta ${missing.sorted().joinToString(", ")}")
         val sha = sha256Hex(script)
         val installedAt = clock()
@@ -208,6 +212,7 @@ class PluginInstaller(
             store.writeFiles(staging, preview.manifestJson, m.entry, script, icon, buildRecord(null))
             return store.finishInstall(staging, m.id, isUpdate = preview.isUpdate) { previous -> buildRecord(previous) }
         } catch (e: IOException) {
+            reportInstall(preview, "save", mapOf("error" to e.javaClass.simpleName))
             throw InstallException("No se pudo guardar el plugin: ${e.message}")
         } finally {
             if (staging.exists()) staging.deleteRecursively()
@@ -263,6 +268,23 @@ class PluginInstaller(
         }
     }
 
+    /**
+     * Telemetry for an install/update that could not complete at [stage] (`download`, `probe`,
+     * `exports`, `save`): a Nuvio-converted one is a [PluginFailureKind.CONVERSION], any other an
+     * [PluginFailureKind.INSTALL]. [raw] (the probe's error) is cleaned by [PluginTelemetry].
+     */
+    private fun reportInstall(preview: InstallPreview, stage: String, detail: Map<String, String> = emptyMap(), raw: String? = null) {
+        val m = preview.manifest
+        val nuvio = preview.nuvioOrigin
+        PluginTelemetry.current.report(
+            PluginFailure(
+                m.id, "install:$stage", if (nuvio != null) PluginFailureKind.CONVERSION else PluginFailureKind.INSTALL,
+                raw = raw, detail = detail,
+                facts = PluginFacts(m.version, m.apiVersion, if (nuvio != null) "nuvio" else "repo", nuvio?.repo, nuvio?.scraperId),
+            ),
+        )
+    }
+
     private suspend fun previewFor(address: PluginAddress): InstallPreview {
         val bytes = try {
             fetcher.fetch(address.rawUrl(PluginStore.MANIFEST_FILE), ManifestParser.MAX_BYTES + 1)
@@ -274,7 +296,16 @@ class PluginInstaller(
         val json = bytes.toString(Charsets.UTF_8)
         val manifest = when (val r = ManifestParser.parse(json, knownPermissions)) {
             is ManifestResult.Valid -> r.manifest
-            is ManifestResult.Invalid -> throw InstallException(r.message)
+            is ManifestResult.Invalid -> {
+                // The repo has a kino-plugin.json, so its author meant a plugin: a field it got wrong is theirs to fix.
+                PluginTelemetry.current.report(
+                    PluginFailure(
+                        address.owner + "/" + address.repo, "install:manifest", PluginFailureKind.INSTALL,
+                        detail = mapOf("field" to r.field), facts = PluginFacts(null, null, "repo"),
+                    ),
+                )
+                throw InstallException(r.message)
+            }
         }
         verifySeals(address, manifest)
         return diffAgainstInstalled(address, manifest, json)

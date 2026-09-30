@@ -569,7 +569,50 @@ class AppGraph(context: Context) {
      * with `auth_required` before its runtime is even opened (spec §1.3).
      */
     val pluginCaller: PluginCaller by lazy {
-        SetupGatedCaller({ id -> pluginRegistry.find(id)?.needsSetup == true }, pluginRuntimes)
+        // Outermost, so every failed call is seen once (search, Home, browse, resolve, episodes, live):
+        // PluginTelemetry decides what is worth the owner's error board.
+        com.arkiv.player.data.plugin.ReportingPluginCaller(
+            SetupGatedCaller({ id -> pluginRegistry.find(id)?.needsSetup == true }, pluginRuntimes),
+        )
+    }
+
+    /** `owner/repo` (lowercase) of every recommended plugin, for [pluginFacts]' origin; read once, off the main thread. */
+    @Volatile private var pluginCatalogRepos: Set<String>? = null
+
+    private fun warmPluginCatalogRepos() {
+        if (pluginCatalogRepos != null) return
+        pluginCatalogRepos = runCatching { pluginCatalog.cachedOrSeed().catalog.entries.map { it.repo.lowercase() }.toSet() }.getOrNull()
+    }
+
+    /** What the error board may know about installed plugin [id] (see PluginFacts): memory only, safe on any thread. */
+    private fun pluginFacts(id: String): com.arkiv.player.data.plugin.PluginFacts? {
+        val p = pluginRegistry.find(id) ?: return null
+        val r = p.record
+        val repos = pluginCatalogRepos
+        val origin = when {
+            r.nuvioScraperId != null -> "nuvio"
+            repos == null -> "unknown"
+            PluginAddress.parse(r.address)?.let { "${it.owner}/${it.repo}".lowercase() in repos } == true -> "catalog"
+            else -> "community_or_manual"
+        }
+        return com.arkiv.player.data.plugin.PluginFacts(
+            version = r.version, apiVersion = p.manifest.apiVersion, origin = origin,
+            nuvioRepo = r.nuvioRepo, nuvioScraperId = r.nuvioScraperId,
+            privateHosts = p.userHosts.map { it.host }.toSet(),
+        )
+    }
+
+    /** Every text the person typed into plugin [id]'s settings (the Keystore too): read in the background, only to be removed from a report. */
+    private fun pluginSettingValues(id: String): List<String> {
+        val p = pluginRegistry.find(id) ?: return emptyList()
+        return pluginConfigStore.read(id, p.manifest.settings).values.values.flatMap { v ->
+            when (v) {
+                is String -> listOf(v)
+                is Map<*, *> -> v.values.filterIsInstance<String>()
+                is Iterable<*> -> v.flatMap { e -> if (e is Map<*, *>) e.values.filterIsInstance<String>() else listOfNotNull(e as? String) }
+                else -> emptyList()
+            }
+        }
     }
 
     /** "Ver más" talks to one plugin directly; null when it isn't usable any more. */
@@ -1696,6 +1739,24 @@ class AppGraph(context: Context) {
                     // No Play Services / no Cast support on this device: stays null, exactly as before.
                 }
         }
+        // Plugin failures to the owner's GlitchTip (a no-op where Crash is: debug builds, no DSN).
+        // Built and sent on IO: the facts touch the catalog file and the settings the Keystore.
+        com.arkiv.player.data.plugin.PluginTelemetry.current = com.arkiv.player.data.plugin.PluginTelemetry(
+            facts = ::pluginFacts,
+            sink = { e ->
+                com.arkiv.player.crash.Crash.report(
+                    com.arkiv.player.crash.PluginFailed(e.message), "plugin-failure",
+                    extras = e.extras, tags = e.tags, fingerprint = e.fingerprint,
+                )
+            },
+            privateValues = ::pluginSettingValues,
+            dispatch = { block ->
+                applicationScope.launch {
+                    warmPluginCatalogRepos()
+                    block()
+                }
+            },
+        )
     }
 
     companion object {
