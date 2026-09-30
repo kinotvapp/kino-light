@@ -13,6 +13,7 @@ for plugin authors: one manifest, one JavaScript file, no build step.
 | `browse` | "Ver más" on a Home row: the same query as the row, 50 titles per page, the page number as the cursor (`"2"`, `"3"`, …). |
 | `episodes` | The video files of an item, in natural order. Files named `S01E02` get that season and number; otherwise they are numbered 1, 2, 3 in order. |
 | `resolve` | The file to play: the item's own mp4/m4v/webm, or the best mp4 archive.org derived from the original (`.avi`, `.mpg`, `.mkv`, `.divx`...). Sibling `.vtt`/`.srt` files become subtitles. |
+| `download` | Declarative, no code: Kino offers the titles for offline viewing on phones and saves what `resolve` returns. That is always one progressive file (mp4, m4v or webm, with its `mime`), never an HLS/DASH manifest, so every title that plays can be downloaded. Installing or updating to a version with it shows "Puede descargar videos para verlos sin conexión". |
 
 Two things it does not try to be clever about, so do not copy them as intended behavior:
 an item found inside a collection or in the built-in rows that bundles several films is exposed as
