@@ -666,7 +666,7 @@ all or nothing.
 
 | Thing | Rules |
 | --- | --- |
-| `search` result | At most 100 items (an `Item[]`, or a `Page`). |
+| `search` result | At most 100 items (an `Item[]`, or a `Page`). A `live` item whose name shares too few words with the query (under 60% of the 3+ letter words of `q`, `originalTitle` or one of `altTitles`, the rule of `kino.rank.filterRelevant`) is dropped; movies and series never are. |
 | `browse` result | A `Page` of at most 100 items. |
 | `home` result | At most 20 rows of at most 60 items each. A row needs a unique `id` (same pattern as an item id) and a non-blank `title`; rows with no valid items are dropped. Kino shows them after its own rows, labelled with your plugin's name, and caches them for 6 hours (stale rows show while it refreshes; an answer with no valid rows, or over 2 MB, is not cached and is asked again next time). If `home()` fails you contribute no rows and Home is not blocked. |
 | `episodes` result | At most 5000 episodes. `number` is required and from 1 to 99999 (an episode numbered 0, such as a special, is dropped). `season` should be from 1 to 999; a missing or out-of-range season becomes 1. `ref` is required. A repeated season and number is dropped. Without a `title`, Kino shows "Capítulo N". |
@@ -709,8 +709,8 @@ It does **not** add a poster, a backdrop or seasons from TMDB -- those stay exac
   the only thing wrong with your `Stream` is that a URL (the video, its license, a subtitle or an
   audio track) is on an `https` host you did not declare, Kino asks them in the moment ("El video
   está en `<host>`, un servidor nuevo para este plugin. ¿Permitir?"), the same dialog a `kino.fetch`
-  to an undeclared host gets. "Permitir" adds that host to your plugin's approved hosts (within the
-  20-host limit) and the video plays; "Rechazar" (or Back) is remembered for your plugin -- the
+  to an undeclared host gets. "Permitir" adds that host to your plugin's approved hosts (there is no
+  cap on how many a person approves this way) and the video plays; "Rechazar" (or Back) is remembered for your plugin -- the
   video fails as described above, a subtitle or audio track is dropped -- and that host is never
   asked about again until the person chooses "Olvidar rechazos de host". An IP address, a local
   name, plain `http` or a stream broken in any other way is never asked about, and nothing is
@@ -880,7 +880,7 @@ unknown code becomes a plain error.
 `kino` is a global object, frozen, always there. Nothing else from the outside world is.
 
 ```js
-kino.apiVersion   // 2 -- the highest apiVersion this build of Kino understands, not your manifest's
+kino.apiVersion   // 4 -- the highest apiVersion this build of Kino understands, not your manifest's
 kino.appVersion   // the version of Kino, for example "1.42.0"
 kino.lang         // "es-CO"
 ```
