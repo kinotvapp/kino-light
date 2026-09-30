@@ -38,6 +38,8 @@ class NuvioPluginConverterTest {
         assertEquals(setOf("search", "episodes", "resolve"), manifest.capabilities)
         assertEquals(listOf("api.themoviedb.org", "fakesrc.example"), manifest.hosts)
         assertTrue(manifest.id.startsWith("nuvio-fakesrc-"))
+        assertEquals(4, manifest.apiVersion)
+        assertTrue(manifest.streamHostsAny)
     }
 
     /**

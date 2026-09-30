@@ -266,7 +266,8 @@ class NuvioPluginInstallerTest {
         val entry = NuvioScraperEntry("fakesrc", "FakeSrc", "providers/fakesrc.js", true, emptyList(), listOf("movie"), null, emptyList())
         val current = NuvioPluginConverter.convert(entry, scraperJs, repoSlug = "owner/nuvio-repo", tmdbApiKey = "test-key")
         val oldJson = org.json.JSONObject(current.manifestJson)
-            .put("capabilities", org.json.JSONArray(listOf("search", "resolve"))).put("hosts", org.json.JSONArray(hosts)).toString()
+            .put("capabilities", org.json.JSONArray(listOf("search", "resolve"))).put("hosts", org.json.JSONArray(hosts))
+            .put("apiVersion", 1).also { it.remove("streamHosts") }.toString()
         val oldManifest = (ManifestParser.parse(oldJson) as ManifestResult.Valid).manifest
         val oldScript = "export async function search(q) { return []; }\nexport async function resolve(r) { return { url: 'https://fakesrc.example/v.mp4' }; }"
         val origin = NuvioOrigin(repo = "owner/nuvio-repo", scraperId = "fakesrc", script = oldScript.toByteArray())
@@ -275,12 +276,24 @@ class NuvioPluginInstallerTest {
         oldManifest.id
     }
 
-    @Test fun `an old install that already declared TMDB updates straight to episodes, with nothing to approve`() = runBlocking {
+    @Test fun `an old install that already declared TMDB updates to episodes, asking only for the new any-host video permission`() = runBlocking {
         val id = installAsTheOldConverterDid(listOf("api.themoviedb.org", "fakesrc.example"))
-        assertEquals(UpdateOutcome.Applied("1.0.0"), liveNuvio().checkUpdate(id))
+        assertTrue(!store.get(id)!!.record.videoFromAnyHost)
+        val n = liveNuvio()
+        val outcome = n.checkUpdate(id)
+        assertTrue(outcome.toString(), outcome is UpdateOutcome.NeedsApproval)
+        val preview = (outcome as UpdateOutcome.NeedsApproval).preview
+        assertTrue(preview.newStreamHostsAny)
+        assertTrue(preview.newHosts.isEmpty())
+        assertTrue(store.get(id)!!.record.pendingStreamHostsAny)
+        // The consent sheet marks the red line as new.
+        assertTrue(PluginConsent.extraLines(preview).any { it.danger && it.isNew })
+        n.install(preview) // what approving the sheet does
         val record = store.get(id)!!.record
         assertEquals(listOf("search", "episodes", "resolve"), record.capabilities)
-        assertTrue(record.exports.containsAll(listOf("search", "episodes", "resolve")))
+        assertTrue(record.streamHostsAny)
+        assertTrue(record.videoFromAnyHost)
+        assertTrue(!record.pendingStreamHostsAny)
     }
 
     @Test fun `an old install without TMDB waits for approval of that one host, then gets episodes`() = runBlocking {

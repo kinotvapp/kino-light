@@ -116,11 +116,13 @@ object NuvioPluginConverter {
         val manifestJson = JSONObject()
             // Clipped to ManifestParser's own name limit: a longer Nuvio scraper name would otherwise make the whole manifest invalid.
             .put("id", id).put("name", scraper.name.trim().take(ManifestParser.MAX_NAME_CHARS).trim().ifEmpty { scraper.id.take(ManifestParser.MAX_NAME_CHARS) })
-            .put("version", "1.0.0").put("apiVersion", 1)
+            .put("version", "1.0.0").put("apiVersion", ManifestParser.STREAM_HOSTS_API_VERSION)
             .put("entry", "plugin.js")
             .put("description", description(scraper.name, repoSlug, warnings))
             .put("hosts", JSONArray(hosts))
             .put("capabilities", JSONArray(listOf("search", "episodes", "resolve")))
+            // Nuvio scrapers return videos from CDNs that change per title: the person approves "any video host" once, at install.
+            .put("streamHosts", ManifestParser.LIVE_STREAM_HOSTS_ANY)
             .toString()
 
         return NuvioConversionResult(script, manifestJson, hosts, warnings, scraperHosts = candidates)
