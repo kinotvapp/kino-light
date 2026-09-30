@@ -200,7 +200,7 @@ class PluginDns(
 /**
  * `kino.fetch` for one plugin: host-gated per hop against [hosts] (declared + the servers typed in
  * its settings; a settings change closes the runtime, so a new instance gets the new set), capped
- * (5 MB body, 60 requests per call, 15 s default / 30 s max), with the plugin's persistent
+ * (5 MB body, 60 requests per call -- 250 for a converted Nuvio scraper -- 15 s default / 30 s max), with the plugin's persistent
  * [cookies] jar.
  *
  * Redirects are followed HERE, not by OkHttp: OkHttp opens the connection to a redirect target
@@ -235,6 +235,8 @@ class PluginHttp(
     private val reactiveApproval: ReactiveApproval? = null,
     private val calls: PluginCallTracker? = null,
     private val log: (String) -> Unit = { android.util.Log.w("KinoPlugin", it) },
+    /** Requests (redirect hops included) one call may make; see [requestBudgetFor]. */
+    private val maxRequestsPerCall: Int = MAX_REQUESTS_PER_CALL,
 ) {
     /** Over a fixed host set of its own: tests, and any caller that shares it with nothing else. */
     constructor(
@@ -248,7 +250,8 @@ class PluginHttp(
         reactiveApproval: ReactiveApproval? = null,
         calls: PluginCallTracker? = null,
         log: (String) -> Unit = { android.util.Log.w("KinoPlugin", it) },
-    ) : this(base, pluginId, LiveHosts(hosts), appVersion, cookies, allowInsecureLocalhost, delegateDns, reactiveApproval, calls, log)
+        maxRequestsPerCall: Int = MAX_REQUESTS_PER_CALL,
+    ) : this(base, pluginId, LiveHosts(hosts), appVersion, cookies, allowInsecureLocalhost, delegateDns, reactiveApproval, calls, log, maxRequestsPerCall)
 
     /**
      * What this plugin may reach right now: declared + typed servers + anything approved reactively
@@ -417,8 +420,8 @@ class PluginHttp(
             val from = previous
             req.sealedTo?.let { allowed -> checkSealed(url, allowed) }
             ensureHostAllowed(from, url, trace)
-            if (requests.incrementAndGet() > MAX_REQUESTS_PER_CALL) {
-                throw invalid("demasiadas solicitudes en una sola llamada (máximo $MAX_REQUESTS_PER_CALL)")
+            if (requests.incrementAndGet() > maxRequestsPerCall) {
+                throw invalid("demasiadas solicitudes en una sola llamada (máximo $maxRequestsPerCall)")
             }
             executeTraced(callClient, buildRequest(url, method, body, req.headers), url.host, trace, sealed = req.sealedTo != null).use { resp ->
                 if (resp.code >= 400) trace?.answered(url.host, resp.code)
@@ -697,6 +700,17 @@ class PluginHttp(
         const val MAX_TIMEOUT_MS = 30_000L
         const val MAX_BODY_BYTES = 5 * 1024 * 1024
         const val MAX_REQUESTS_PER_CALL = 60
+        /**
+         * A converted Nuvio scraper's budget: its hoster resolvers race many mirrors (StreamWish,
+         * VOE, VidHide...) plus PoW and TMDB calls, so 60 cut real streams (latino audit 2026-09-30:
+         * areshd 3 of 8, entrepeliculasyseries 2 of 3). Same origin test as the longer Nuvio
+         * resolve timeout (`PluginContentSource.NUVIO_RESOLVE_TIMEOUT_MS`).
+         */
+        const val NUVIO_MAX_REQUESTS_PER_CALL = 250
+
+        /** [NUVIO_MAX_REQUESTS_PER_CALL] for a plugin converted from a Nuvio scraper, [MAX_REQUESTS_PER_CALL] otherwise. */
+        fun requestBudgetFor(record: InstalledRecord): Int =
+            if (record.nuvioScraperId != null) NUVIO_MAX_REQUESTS_PER_CALL else MAX_REQUESTS_PER_CALL
         const val MAX_REDIRECTS = 10
         val METHODS = listOf("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE")
         val ERROR_CODES = listOf("host_not_allowed", "timeout", "network", "too_large", "invalid_request")

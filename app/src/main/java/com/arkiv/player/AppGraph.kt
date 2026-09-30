@@ -661,6 +661,7 @@ class AppGraph(context: Context) {
                 rejectedHosts = plugin.record.rejectedHosts.toSet(),
             ),
             calls = calls,
+            maxRequestsPerCall = PluginHttp.requestBudgetFor(plugin.record),
         )
         pluginHttps[id] = http
         val storage = PluginStorage(java.io.File(dataDir, "storage.json"))
