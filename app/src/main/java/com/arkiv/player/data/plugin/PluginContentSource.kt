@@ -5,6 +5,7 @@ import com.arkiv.player.data.gateway.GatewayAudioTrack
 import com.arkiv.player.data.gateway.GatewayBlockedException
 import com.arkiv.player.data.gateway.GatewayEpisode
 import com.arkiv.player.data.gateway.GatewayException
+import com.arkiv.player.data.gateway.PluginBlockedException
 import com.arkiv.player.data.gateway.GatewayPage
 import com.arkiv.player.data.gateway.GatewayPlayable
 import com.arkiv.player.data.gateway.GatewayResult
@@ -72,7 +73,7 @@ class PluginContentSource(
      * INSTALLED record (`AppGraph` reads the registry): a grant made in the dialog right after this
      * very `resolve` must count for its answer. Defaults to the record this source was built with.
      */
-    private val anyVideoHostGranted: () -> Boolean = { plugin.record.anyVideoHost },
+    private val anyVideoHostGranted: () -> Boolean = { plugin.record.videoFromAnyHost },
 ) : ContentSource {
     private val id = plugin.manifest.id
     private val name = plugin.manifest.name
@@ -205,7 +206,7 @@ class PluginContentSource(
      */
     private suspend fun streamHostsFor(own: PluginRef): EffectiveHosts {
         val hosts = currentHosts()
-        if (own.kind == PluginRef.LIVE) return hosts.copy(anyPublicLiveHost = plugin.record.liveStreamHostsAny)
+        if (own.kind == PluginRef.LIVE) return hosts.copy(anyPublicLiveHost = plugin.record.liveStreamHostsAny || plugin.record.streamHostsAny)
         val context = currentCoroutineContext()
         val player = context[InteractivePluginCall] != null && context[BackgroundPluginCall] == null
         return if (player && anyVideoHostGranted()) hosts.copy(anyPublicVideoHost = true) else hosts
@@ -416,6 +417,7 @@ class UnusablePluginSource(private val access: PluginPlayback) : ContentSource {
     private fun blocked(ref: String): GatewayException {
         val pluginId = ref.removePrefix("${PluginRef.PREFIX}:").substringBefore(':', "").takeIf { it.isNotEmpty() }
         // Ready = it became usable after this call's source list was read: asking again works.
-        return GatewayException(access.accessFor(pluginId).blockedMessage() ?: "El plugin no está listo, inténtalo de nuevo")
+        val message = access.accessFor(pluginId).blockedMessage()
+        return if (message != null) PluginBlockedException(message) else GatewayException("El plugin no está listo, inténtalo de nuevo")
     }
 }

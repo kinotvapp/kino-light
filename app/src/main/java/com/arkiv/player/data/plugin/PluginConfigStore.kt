@@ -41,6 +41,7 @@ class PluginConfigStore(private val dataDir: (pluginId: String) -> File, private
         for (s in settings) {
             val value: Any? = when (s.type) {
                 SettingType.PASSWORD -> if (s.key in stored.secrets) secrets.get(secretKey(pluginId, s.key)) else null
+                SettingType.LIST -> listFrom(s, stored.values.opt(s.key))
                 else -> stored.values.opt(s.key)?.takeIf { it != JSONObject.NULL && PluginSettings.validateValue(s, it) == null }
             }
             val effective = value?.takeUnless { it is String && it.isEmpty() } ?: s.default
@@ -62,9 +63,13 @@ class PluginConfigStore(private val dataDir: (pluginId: String) -> File, private
     fun setupState(pluginId: String, settings: List<PluginSetting>): PluginSetupState {
         if (settings.isEmpty()) return PluginSetupState()
         val stored = readFile(pluginId)
-        val userHosts = settings.filter { it.type == SettingType.URL }
-            .mapNotNull { (stored.values.opt(it.key) as? String)?.let(PluginHosts::userHostOf) }
-            .distinct()
+        val userHosts = (
+            settings.filter { it.type == SettingType.URL }.mapNotNull { (stored.values.opt(it.key) as? String)?.let(PluginHosts::userHostOf) } +
+                settings.filter { it.type == SettingType.LIST }.flatMap { list ->
+                    val urlFields = list.fields.filter { it.type == SettingType.URL }
+                    (listFrom(list, stored.values.opt(list.key)) ?: emptyList()).flatMap { e -> urlFields.mapNotNull { f -> e[f.key]?.let(PluginHosts::userHostOf) } }
+                }
+            ).distinct()
         return PluginSetupState(userHosts, missing(pluginId, settings).map { it.key }, stored.revision)
     }
 
@@ -87,6 +92,7 @@ class PluginConfigStore(private val dataDir: (pluginId: String) -> File, private
         return settings.filter { s ->
             s.required && when (s.type) {
                 SettingType.PASSWORD -> s.key !in stored.secrets
+                SettingType.LIST -> listFrom(s, stored.values.opt(s.key)).isNullOrEmpty()
                 else -> (stored.values.opt(s.key) as? String).isNullOrBlank()
             }
         }
@@ -133,10 +139,13 @@ class PluginConfigStore(private val dataDir: (pluginId: String) -> File, private
      * KDoc for why that's what actually makes a user/password-only save visible to `reload()`'s
      * `StateFlow`.
      */
-    fun save(pluginId: String, settings: List<PluginSetting>, input: Map<String, Any?>): String? {
+    fun save(pluginId: String, settings: List<PluginSetting>, rawInput: Map<String, Any?>): String? {
+        // A list is trimmed and loses its blank entries before anything is checked or written.
+        val input = rawInput.toMutableMap()
+        for (s in settings) if (s.type == SettingType.LIST) PluginSettings.entriesOf(input[s.key])?.let { input[s.key] = cleanList(s, it) }
         for (s in settings) {
             val v = input[s.key]
-            if (v == null || (v is String && v.isBlank())) {
+            if (v == null || (v is String && v.isBlank()) || (v is List<*> && v.isEmpty())) {
                 if (s.required) return "Completa \"${s.label}\""
                 continue
             }
@@ -147,8 +156,10 @@ class PluginConfigStore(private val dataDir: (pluginId: String) -> File, private
         val setSecrets = ArrayList<String>()
         for (s in settings) {
             val v = input[s.key]
-            val blank = v == null || (v is String && v.isBlank())
-            if (s.type == SettingType.PASSWORD) {
+            val blank = v == null || (v is String && v.isBlank()) || (v is List<*> && v.isEmpty())
+            if (s.type == SettingType.LIST) {
+                if (!blank) values.put(s.key, JSONArray().also { a -> PluginSettings.entriesOf(v)!!.forEach { e -> a.put(JSONObject().also { o -> s.fields.forEach { f -> o.put(f.key, e[f.key].orEmpty()) } }) } })
+            } else if (s.type == SettingType.PASSWORD) {
                 if (blank) secrets.remove(secretKey(pluginId, s.key)) else {
                     secrets.put(secretKey(pluginId, s.key), v as String)
                     setSecrets += s.key
@@ -174,6 +185,21 @@ class PluginConfigStore(private val dataDir: (pluginId: String) -> File, private
         // Listing decrypts the whole store: if that fails, still remove the declared ones.
         val leftovers = runCatching { secrets.keys().filter { it.startsWith(prefix) } }.getOrDefault(emptyList())
         (declared + leftovers).toSet().forEach(secrets::remove)
+    }
+
+    /** [entries] trimmed, keeping only the list's own fields, without the entries whose every field is blank. */
+    private fun cleanList(s: PluginSetting, entries: List<Map<String, String>>): List<Map<String, String>> =
+        entries.map { e -> s.fields.associate { it.key to e[it.key].orEmpty().trim() } }.filter { e -> e.values.any { it.isNotEmpty() } }
+
+    /** A stored list as entries, or null when it is not one, or no longer fits the manifest (a field that became invalid, past `max`). */
+    private fun listFrom(s: PluginSetting, raw: Any?): List<Map<String, String>>? {
+        val array = raw as? JSONArray ?: return null
+        val entries = (0 until array.length()).map { i ->
+            val o = array.optJSONObject(i) ?: return null
+            s.fields.associate { it.key to (o.opt(it.key) as? String).orEmpty().trim() }
+        }
+        val clean = cleanList(s, entries)
+        return clean.takeIf { it.isNotEmpty() && PluginSettings.validateValue(s, it) == null }
     }
 
     private data class Stored(val values: JSONObject, val secrets: Set<String>, val revision: Int = 0)

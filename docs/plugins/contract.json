@@ -15,7 +15,7 @@
   "manifest": {
     "maxBytes": 16384,
     "idPattern": "^[a-z0-9][a-z0-9-]{1,39}$",
-    "reservedIds": ["magis", "ditu", "live", "local", "unknown", "plugin"],
+    "reservedIds": ["magis", "ditu", "live", "local", "unknown", "plugin", "own"],
     "nameMaxChars": 40,
     "descriptionMaxChars": 300,
     "authorMaxChars": 60,
@@ -31,6 +31,7 @@
     "pathSegmentPattern": "^[A-Za-z0-9._-]+$",
     "maxPathChars": 200,
     "liveStreamHosts": { "value": "any", "apiVersion": 3, "requires": "channels" },
+    "streamHosts": { "value": "any", "apiVersion": 4 },
     "discoverable": { "default": true },
     "secrets": { "apiVersion": 4, "namePattern": "^[A-Za-z][A-Za-z0-9_]{0,31}$", "maxSecrets": 16, "maxValueBytes": 4096, "prefix": "kino-sealed:v1:" }
   },
@@ -53,8 +54,10 @@
       "url": { "maxChars": 2048, "canBeRequired": true, "canHaveDefault": false },
       "password": { "maxChars": 500, "canBeRequired": true, "canHaveDefault": true },
       "toggle": { "canBeRequired": false, "canHaveDefault": true },
-      "select": { "canBeRequired": false, "canHaveDefault": true }
-    }
+      "select": { "canBeRequired": false, "canHaveDefault": true },
+      "list": { "canBeRequired": true, "canHaveDefault": false }
+    },
+    "list": { "apiVersion": 4, "defaultMaxEntries": 20, "maxEntries": 50, "maxFields": 4, "fieldTypes": ["text", "url"] }
   },
   "output": {
     "itemIdPattern": "^[A-Za-z0-9._~-]{1,128}$",
@@ -116,6 +119,7 @@
     "playlistFormats": ["m3u"],
     "epgFormats": ["xmltv"]
   },
+  "genres": ["peliculas", "series", "anime", "infantil", "documentales", "deportes", "noticias", "musica", "entretenimiento", "otros"],
   "discovery": { "topic": "kino-plugin", "maxResults": 30 },
   "search": {
     "types": ["movie", "series", "any"],

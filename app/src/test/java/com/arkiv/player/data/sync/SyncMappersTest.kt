@@ -4,6 +4,7 @@ import com.arkiv.player.data.gateway.LiveChannelKeys
 import com.arkiv.player.data.db.EpisodeEntity
 import com.arkiv.player.data.db.LiveFavoriteEntity
 import com.arkiv.player.data.db.LiveRecentEntity
+import com.arkiv.player.data.db.OwnLiveSourceEntity
 import com.arkiv.player.data.db.PlaybackEntity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -126,5 +127,41 @@ class SyncMappersTest {
         // And its echo, with no provider field at all, comes back as the same plugin row.
         assertEquals(pluginFav, jsonToLiveFavorite(oldPeer.push("plugin:own-server:c1")))
         assertEquals(LiveFavoriteEntity("c1", "RCN", 5, null, 10L, false), jsonToLiveFavorite(oldPeer.push("c1")))
+    }
+
+    private val ownSource = OwnLiveSourceEntity(
+        id = "3f1c2b7e-aaaa-bbbb-cccc-000000000001", kind = "PLAYLIST", name = "Mi lista",
+        url = "http://tv.example.com/get.php?u=ana&p=1", epgUrl = "http://tv.example.com/epg.xml",
+        userAgent = "VLC/3.0.20", refreshHours = 6, updatedAt = 77L, deleted = false,
+    )
+
+    @Test fun `an own live source round-trips, tombstone included`() {
+        assertEquals(ownSource, jsonToOwnLiveSource(ownLiveSourceToJson(ownSource)))
+        val gone = ownSource.copy(deleted = true, updatedAt = 99L)
+        assertEquals(gone, jsonToOwnLiveSource(ownLiveSourceToJson(gone)))
+        val single = OwnLiveSourceEntity("s2", "CHANNEL", "Uno", "https://a.example.com/x.m3u8", groupName = "Noticias", logo = "https://i.example.com/1.png")
+        assertEquals(single, jsonToOwnLiveSource(ownLiveSourceToJson(single)))
+    }
+
+    @Test fun `a hostile or garbled own source row is refused, never stored`() {
+        fun row(mutate: JSONObject.() -> Unit): JSONObject = ownLiveSourceToJson(ownSource).apply(mutate)
+        assertNull(jsonToOwnLiveSource(row { put("kind", "OTHER") }))
+        assertNull(jsonToOwnLiveSource(row { put("id", "") }))
+        assertNull(jsonToOwnLiveSource(row { put("id", "a:b") }))
+        assertNull(jsonToOwnLiveSource(row { put("url", "http://192.168.1.5/x.m3u8") }))
+        assertNull(jsonToOwnLiveSource(row { put("url", "file:///sdcard/x.m3u8") }))
+        assertNull(jsonToOwnLiveSource(row { put("name", "") }))
+    }
+
+    @Test fun `every field of a synced row goes through the same rules as the form`() {
+        fun row(mutate: JSONObject.() -> Unit): JSONObject = ownLiveSourceToJson(ownSource).apply(mutate)
+        assertNull(jsonToOwnLiveSource(row { put("epgUrl", "http://192.168.1.5/e.xml") }))
+        assertNull(jsonToOwnLiveSource(row { put("userAgent", "a\r\nX-Injected: 1") }))
+        assertNull(jsonToOwnLiveSource(row { put("referer", "ñandú") }))
+        assertNull(jsonToOwnLiveSource(row { put("id", "~x") }))
+        assertNull(jsonToOwnLiveSource(row { put("id", "x".repeat(65)) }))
+        assertNull(jsonToOwnLiveSource(row { put("name", "x".repeat(81)) }))
+        val leakyLogo = OwnLiveSourceEntity("s2", "CHANNEL", "Uno", "https://a.example.com/x.m3u8", logo = "http://192.168.1.9/l.png")
+        assertNull(jsonToOwnLiveSource(ownLiveSourceToJson(leakyLogo)))
     }
 }

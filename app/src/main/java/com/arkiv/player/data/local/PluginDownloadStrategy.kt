@@ -53,10 +53,7 @@ class PluginDownloadStrategy(
         // A background call: a queue against a slow server must never switch the plugin off
         // ("No responde") for the person's own search and Home.
         val playable = runCatching { withContext(BackgroundPluginCall) { source.resolve(ref) } }.getOrElse {
-            return DownloadOutcome.Failed(
-                it.message ?: "No se pudo resolver el video",
-                transient = DownloadRetryPolicy.isTransient(it),
-            )
+            return DownloadOutcome.Failed.ofResolve(it, "No se pudo resolver el video")
         }
         // Permanent: the stream's shape will not change, so the row ends `refused` (no retry, no report).
         // A live channel is read off the ref's kind: it has no end to save, whatever its stream looks like.

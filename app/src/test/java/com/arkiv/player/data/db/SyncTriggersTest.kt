@@ -46,6 +46,8 @@ class SyncTriggersTest {
             // to the real one.
             it.executeUpdate("CREATE TABLE live_favorites (code TEXT NOT NULL, provider TEXT NOT NULL DEFAULT 'xuper', updatedAt INTEGER NOT NULL DEFAULT 0, deleted INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(provider, code))")
             it.executeUpdate("CREATE TABLE live_recents (code TEXT NOT NULL, provider TEXT NOT NULL DEFAULT 'xuper', updatedAt INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(provider, code))")
+            // The person's own live sources: the seventh synced table (v34).
+            OwnLiveSourcesMigration.STATEMENTS.forEach { stmt -> it.executeUpdate(stmt) }
         }
     }
 
@@ -98,18 +100,20 @@ class SyncTriggersTest {
         assertEquals(555L, clockOf("items", "identifier", "a"))
     }
 
-    @Test fun `covers the six tables that sync`() {
+    @Test fun `covers the seven tables that sync`() {
         apply(SyncTriggers.ddl())
         execute("INSERT INTO episodes (id) VALUES ('e1')")
         execute("INSERT INTO playback (episodeId) VALUES ('e1')")
         execute("INSERT INTO skip_markers (id, itemId, episodeId) VALUES ('i1|', 'i1', '')")
         execute("INSERT INTO live_favorites (code) VALUES ('c1')")
         execute("INSERT INTO live_recents (code) VALUES ('c1')")
+        execute("INSERT INTO own_live_sources (id, kind, name, url) VALUES ('s1', 'CHANNEL', 'Uno', 'http://a.example.com/x.m3u8')")
         assertTrue(clockOf("episodes", "id", "e1") > 0)
         assertTrue(clockOf("playback", "episodeId", "e1") > 0)
         assertTrue(clockOf("skip_markers", "id", "i1|") > 0)
         assertTrue(clockOf("live_favorites", "code", "c1") > 0)
         assertTrue(clockOf("live_recents", "code", "c1") > 0)
+        assertTrue(clockOf("own_live_sources", "id", "s1") > 0)
     }
 
     @Test fun `sealing one marker doesn't move the clock of the series' other chapters`() {

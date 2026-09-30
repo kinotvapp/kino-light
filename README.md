@@ -33,3 +33,7 @@ app misma.
 Un solo módulo Android (Kotlin + Jetpack Compose). La UI vive en `app/src/main/java/.../ui`
 (pantallas de celular y de TV), el reproductor en `.../ui/player`, y la capa de datos (catálogo,
 biblioteca, descargas) en `.../data`. El emparejamiento celular↔TV por LAN está en `.../companion`.
+
+## Licencia
+
+El código de este repositorio se publica bajo la [licencia Apache 2.0](LICENSE). Copyright 2026 kinotvapp. Kino no incluye ni concede derechos sobre los contenidos de terceros a los que se conecta.

@@ -32,6 +32,7 @@ import androidx.media3.exoplayer.drm.DefaultDrmSessionManager
 import androidx.media3.exoplayer.drm.FrameworkMediaDrm
 import androidx.media3.exoplayer.drm.HttpMediaDrmCallback
 import androidx.media3.ui.PlayerView
+import com.arkiv.player.playback.withAudioFocus
 import com.arkiv.player.playback.fallbackRenderers
 import kotlinx.coroutines.delay
 
@@ -188,6 +189,7 @@ internal fun DituExoPlayer(
             .setMediaSourceFactory(
                 DashMediaSource.Factory(dataSourceFactory).setDrmSessionManagerProvider { drmManager },
             )
+            .withAudioFocus()
             .build()
             .also { player ->
                 player.setMediaItem(item)

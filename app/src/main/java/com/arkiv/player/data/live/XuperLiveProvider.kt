@@ -1,5 +1,6 @@
 package com.arkiv.player.data.live
 
+import com.arkiv.player.data.plugin.Genre
 import com.arkiv.player.data.gateway.LiveCatalogGateway
 import com.arkiv.player.data.gateway.LiveChannel
 import com.arkiv.player.data.gateway.LiveChannelKeys
@@ -29,7 +30,7 @@ class XuperLiveProvider(
     override fun hasGuide(): Boolean = true
 
     override suspend fun categories(includeAdults: Boolean): List<ProviderCategory> =
-        catalog.categories(includeAdults).map { ProviderCategory(it.id.toString(), it.name) }
+        catalog.categories(includeAdults).map { ProviderCategory(it.id.toString(), it.name, Genre.infer(it.name)) }
 
     override suspend fun channels(categoryId: String, force: Boolean): List<LiveChannel> =
         categoryId.toIntOrNull()?.let { catalog.channels(it, force) } ?: emptyList()

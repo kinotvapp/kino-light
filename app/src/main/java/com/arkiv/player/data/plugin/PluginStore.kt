@@ -47,6 +47,14 @@ data class InstalledRecord(
     val sealedSecrets: Boolean = false,
     /** A pending update newly declares `secrets`, shown on its consent sheet. */
     val pendingSealedSecrets: Boolean = false,
+    /**
+     * The person APPROVED the manifest's `"streamHosts": "any"` (apiVersion 4, in red at install):
+     * what this plugin plays may be on any public host. For a movie or an episode it is one of the two
+     * ways to [videoFromAnyHost]; for a live channel it relaxes `InstalledPlugin.liveHosts`.
+     */
+    val streamHostsAny: Boolean = false,
+    /** A pending update newly asks for `streamHosts: "any"`, shown on its consent sheet. */
+    val pendingStreamHostsAny: Boolean = false,
     /** Hosts the person explicitly said "no" to via reactive approval; never prompted again for this plugin. */
     val rejectedHosts: List<String> = emptyList(),
     /** Set together, both null for a normal (hand-written-repo) plugin: which Nuvio repo and scraper this was converted from. */
@@ -60,6 +68,16 @@ data class InstalledRecord(
      */
     val anyVideoHost: Boolean = false,
 ) {
+    /**
+     * THE one predicate behind "this plugin's video may come from any public server": the person
+     * granted the broad video permission ([anyVideoHost], video-host dialog) OR approved the author's
+     * `streamHosts: "any"` ([streamHostsAny], consent sheet). Both reach the same rule
+     * ([EffectiveHosts.anyPublicVideoHost]): the player may fetch the video, everything its manifest
+     * names, every redirect and its side subtitles/audio from any public host -- never `kino.fetch`,
+     * a DRM license, a download or the home network.
+     */
+    val videoFromAnyHost: Boolean get() = anyVideoHost || streamHostsAny
+
     fun toJson(): String = JSONObject()
         .put("address", address).put("version", version).put("sha256", sha256)
         .put("hosts", JSONArray(hosts)).put("installedAt", installedAt).put("enabled", enabled)
@@ -78,6 +96,8 @@ data class InstalledRecord(
         .put("pendingLiveStreamHostsAny", pendingLiveStreamHostsAny)
         .put("sealedSecrets", sealedSecrets)
         .put("pendingSealedSecrets", pendingSealedSecrets)
+        .put("streamHostsAny", streamHostsAny)
+        .put("pendingStreamHostsAny", pendingStreamHostsAny)
         .put("rejectedHosts", JSONArray(rejectedHosts))
         .put("nuvioRepo", nuvioRepo ?: JSONObject.NULL)
         .put("nuvioScraperId", nuvioScraperId ?: JSONObject.NULL)
@@ -107,6 +127,8 @@ data class InstalledRecord(
                 pendingLiveStreamHostsAny = o.optBoolean("pendingLiveStreamHostsAny"),
                 sealedSecrets = o.optBoolean("sealedSecrets"),
                 pendingSealedSecrets = o.optBoolean("pendingSealedSecrets"),
+                streamHostsAny = o.optBoolean("streamHostsAny"),
+                pendingStreamHostsAny = o.optBoolean("pendingStreamHostsAny"),
                 rejectedHosts = list("rejectedHosts"),
                 nuvioRepo = if (o.isNull("nuvioRepo")) null else o.optString("nuvioRepo").ifEmpty { null },
                 nuvioScraperId = if (o.isNull("nuvioScraperId")) null else o.optString("nuvioScraperId").ifEmpty { null },

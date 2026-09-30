@@ -70,7 +70,7 @@ class PluginLiveProviderTest {
         val caller = Caller { _, _ -> """[{"id":"news","title":"Noticias"},{"id":"kids","title":"Infantil"}]""" }
         val p = live(caller)
         assertEquals(null, p.initialCategory())
-        assertEquals(listOf(ProviderCategory("news", "Noticias"), ProviderCategory("kids", "Infantil")), p.categories(false))
+        assertEquals(listOf(ProviderCategory("news", "Noticias", "noticias"), ProviderCategory("kids", "Infantil", "infantil")), p.categories(false))
         assertEquals("news", p.initialCategory())
         p.categories(false)
         assertEquals(1, caller.calls.size)
@@ -228,7 +228,7 @@ class PluginLiveProviderTest {
         assertEquals(a, b)
         assertEquals(1, a.size)
         val (x, y) = cats.awaitAll()
-        assertEquals(listOf(ProviderCategory("news", "Noticias")), x)
+        assertEquals(listOf(ProviderCategory("news", "Noticias", "noticias")), x)
         assertEquals(x, y)
         assertEquals(2, caller.calls.size)
     }

@@ -2,7 +2,6 @@ package com.arkiv.player.playback
 
 import android.content.Context
 import android.util.Log
-import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
@@ -38,13 +37,9 @@ object LocalExoPlayer {
             .setEnableDecoderFallback(true)
             .setMediaCodecSelector(preference.codecSelector)
         val sources = preference.watch(DefaultMediaSourceFactory(DefaultDataSource.Factory(context)))
-        val audio = AudioAttributes.Builder()
-            .setUsage(C.USAGE_MEDIA)
-            .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
-            .build()
         return ExoPlayer.Builder(context, renderers)
             .setMediaSourceFactory(sources)
-            .setAudioAttributes(audio, /* handleAudioFocus = */ true)
+            .withAudioFocus()
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_LOCAL)
             .build()

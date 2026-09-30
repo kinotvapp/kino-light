@@ -14,9 +14,9 @@ import com.arkiv.player.ui.settings.AUDIO_LANGUAGES
 import com.arkiv.player.ui.settings.SUBTITLE_LANGUAGES
 
 /**
- * Audio and subtitle language on TV. The styling (size, colors, border) isn't here on purpose
- * -picking colors with the remote is awkward-, so it stays with whatever the TV already has
- * saved locally (no cloud sync, it no longer travels from the phone).
+ * Audio and subtitle language on TV, plus the subtitle style: the system's by default, or the
+ * person's own via [TvSubtitleStyleSection] (preset values that cycle on OK -- a remote has no
+ * slider). Saved locally (no cloud sync).
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -60,4 +60,5 @@ internal fun TvSettingsSubtitles() {
         val newMode = if (prefs.subtitleMode == SubtitleMode.AUTO) SubtitleMode.OFF else SubtitleMode.AUTO
         setPrefs(prefs.copy(subtitleMode = newMode))
     }
+    TvSubtitleStyleSection(prefs, onChange = ::setPrefs)
 }

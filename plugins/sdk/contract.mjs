@@ -129,6 +129,11 @@ export function validateManifest(text, { knownPermissions = contract.permissions
     if (!caps.includes(lsh.requires)) return bad("liveStreamHosts", `"liveStreamHosts" necesita la capacidad "${lsh.requires}"`);
     liveStreamHostsAny = true;
   }
+  let streamHostsAny = false;
+  if (o.streamHosts !== undefined && o.apiVersion >= m.streamHosts.apiVersion) {
+    if (o.streamHosts !== m.streamHosts.value) return bad("streamHosts", `El campo "streamHosts" solo admite "${m.streamHosts.value}"`);
+    streamHostsAny = true;
+  }
   // Only discovery reads it (never the runtime): valid at every apiVersion, exactly true or false.
   if (o.discoverable !== undefined && typeof o.discoverable !== "boolean") return bad("discoverable", 'El campo "discoverable" debe ser true o false');
   const discoverable = o.discoverable === undefined ? m.discoverable.default : o.discoverable;
@@ -155,12 +160,12 @@ export function validateManifest(text, { knownPermissions = contract.permissions
     if (!knownPermissions.includes(p)) return bad("permissions", `permiso desconocido: ${p.slice(0, 40)}`);
   }
   if (o.settings !== undefined && !Array.isArray(o.settings)) return bad("settings", 'El campo "settings" debe ser una lista');
-  const settingsError = validateSettings(o.settings || []);
+  const settingsError = validateSettings(o.settings || [], o.apiVersion);
   if (settingsError) return bad("settings", settingsError);
-  if (hosts.length === 0 && !(o.settings || []).some((x) => x.type === "url")) {
+  if (hosts.length === 0 && !(o.settings || []).some((x) => x.type === "url" || (x.type === "list" && Array.isArray(x.fields) && x.fields.some((f) => f.type === "url")))) {
     return bad("hosts", 'El campo "hosts" solo puede estar vacío si el plugin tiene un ajuste de tipo "url"');
   }
-  return { ok: true, manifest: { ...o, hosts: [...new Set(hosts)], capabilities: caps, permissions: o.permissions || [], settings: o.settings || [], insecureHosts, liveStreamHostsAny, discoverable, secrets } };
+  return { ok: true, manifest: { ...o, hosts: [...new Set(hosts)], capabilities: caps, permissions: o.permissions || [], settings: o.settings || [], insecureHosts, liveStreamHostsAny, streamHostsAny, discoverable, secrets } };
 }
 
 /**
@@ -177,7 +182,7 @@ function isWellFormedSeal(seal, s) {
   return raw.length >= overhead + 1 && raw.length <= overhead + s.maxValueBytes;
 }
 
-function validateSettings(list) {
+function validateSettings(list, apiVersion = contract.maxApiVersion) {
   const s = contract.settings;
   if (list.length > s.max) return `El plugin pide más de ${s.max} ajustes`;
   const keys = new Set();
@@ -195,6 +200,25 @@ function validateSettings(list) {
     if (typeof o.hint === "string" && o.hint.trim().length > s.hintMaxChars) return `La ayuda del ajuste "${key}" pasa de ${s.hintMaxChars} caracteres`;
     if (o.required !== undefined && typeof o.required !== "boolean") return `"required" del ajuste "${key}" debe ser true o false`;
     if (o.required === true && !type.canBeRequired) return `El ajuste "${key}" no puede ser obligatorio`;
+    if (o.fields !== undefined && o.type !== "list") return `Solo un ajuste de tipo list tiene "fields"`;
+    if (o.type === "list") {
+      const L = s.list;
+      if (apiVersion < L.apiVersion) return `El ajuste "${key}" es una lista: necesita apiVersion ${L.apiVersion}`;
+      if (o.max !== undefined && !(Number.isInteger(o.max) && o.max >= 1 && o.max <= L.maxEntries)) return `"max" del ajuste "${key}" va de 1 a ${L.maxEntries}`;
+      if (!Array.isArray(o.fields) || o.fields.length === 0 || o.fields.length > L.maxFields) return `El ajuste "${key}" necesita de 1 a ${L.maxFields} campos`;
+      const fkeys = new Set();
+      for (const f of o.fields) {
+        const fk = f && typeof f.key === "string" ? f.key : "";
+        if (!re(s.keyPattern).test(fk) || fkeys.has(fk)) return `Un campo del ajuste "${key}" tiene una clave inválida o repetida`;
+        fkeys.add(fk);
+        const fl = typeof f.label === "string" ? f.label.trim() : "";
+        if (!fl || fl.length > s.labelMaxChars) return `Un campo del ajuste "${key}" necesita un nombre de 1 a ${s.labelMaxChars} caracteres`;
+        if (!L.fieldTypes.includes(f.type)) return `Un campo del ajuste "${key}" debe ser de tipo ${L.fieldTypes.join(" o ")}`;
+        if (typeof f.hint === "string" && f.hint.trim().length > s.hintMaxChars) return `La ayuda de un campo del ajuste "${key}" pasa de ${s.hintMaxChars} caracteres`;
+        if (f.required !== undefined && typeof f.required !== "boolean") return `"required" de un campo del ajuste "${key}" debe ser true o false`;
+        if (f.default !== undefined && f.default !== null) return `Un campo del ajuste "${key}" no puede tener valor por defecto`;
+      }
+    }
     if (o.type === "select") {
       if (!Array.isArray(o.options) || o.options.length === 0) return `El ajuste "${key}" necesita opciones`;
       if (o.options.length > s.maxOptions) return `El ajuste "${key}" tiene más de ${s.maxOptions} opciones`;
@@ -336,7 +360,7 @@ function rows(value, ctx, drop) {
     let ref = typeof r.ref === "string" && r.ref ? r.ref : null;
     if (ref && !ctx.allowNext) { drop(`home: row ${id} has a ref but the plugin doesn't declare browse`); ref = null; }
     if (ref && ref.length > o().maxRefChars) { drop(`home: row ${id} ref too long`); ref = null; }
-    out.push({ id, title, ref, items: list });
+    out.push({ id, title, ref, items: list, genre: genreOf(r.genre) });
   });
   return out;
 }
@@ -391,6 +415,12 @@ function seasons(value, drop) {
 /** Up to `maxHeaders` request headers as the app keeps them: a token name, none of the forbidden ones, a string value with no line break. */
 const HEADER_NAME = /^[A-Za-z0-9-]{1,64}$/;
 const FORBIDDEN_HEADERS = ["host", "content-length", "transfer-encoding", "connection"];
+/** A declared `genre`, read as Genre.parse: the id when it is in the closed vocabulary (case and outer spaces ignored), else null. */
+function genreOf(raw) {
+  const g = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  return contract.genres.includes(g) ? g : null;
+}
+
 function headersOf(h) {
   const out = {};
   if (h === null || typeof h !== "object" || Array.isArray(h)) return out;
@@ -426,7 +456,7 @@ function stream(value, { manifest, servers, allowDrm, liveChannel = false }) {
   const drm = drmOf(value, check, allowDrm);
   // `liveStreamHosts: "any"` relaxes a live channel's own stream URL only; its subtitles, audio and
   // license stay on the strict rule below.
-  if (liveChannel && manifest.liveStreamHostsAny) {
+  if ((liveChannel && manifest.liveStreamHostsAny) || manifest.streamHostsAny) {
     if (!liveStreamUrlAllowed(manifest, servers)(value.url)) throw new Error("El video apunta a una dirección local");
   } else check(value.url, "El video");
   const expires = Number.isInteger(value.expiresInSeconds) && value.expiresInSeconds >= o().minExpiresInSeconds && value.expiresInSeconds <= o().maxExpiresInSeconds ? value.expiresInSeconds : 0;
@@ -492,7 +522,7 @@ export function liveStreamUrlAllowed(manifest, servers = []) {
   const typedNames = servers.map((s) => { try { return new URL(s).hostname; } catch { return null; } });
   return (url) => {
     if (strict(url)) return true;
-    if (!manifest.liveStreamHostsAny) return false;
+    if (!manifest.liveStreamHostsAny && !manifest.streamHostsAny) return false;
     let u;
     try { u = new URL(String(url)); } catch { return false; }
     if (u.protocol !== "http:" && u.protocol !== "https:") return false;
@@ -517,7 +547,7 @@ function playlistOf(p, { manifest, servers }, drop) {
   const refreshHours = h >= live().minRefreshHours && h <= live().maxRefreshHours ? h : live().defaultRefreshHours;
   const hideGroups = [...new Set((Array.isArray(p.hideGroups) ? p.hideGroups : []).slice(0, live().maxHideGroups)
     .map((g) => (typeof g === "string" ? g.trim().toLowerCase().slice(0, 100) : "")).filter(Boolean))];
-  return { url, headers: headersOf(p.headers), epgUrl, refreshHours, hideGroups, resolve: p.resolve === true };
+  return { url, headers: headersOf(p.headers), epgUrl, refreshHours, hideGroups, resolve: p.resolve === true, streamHeaders: headersOf(p.streamHeaders), genre: genreOf(p.genre) };
 }
 
 /** liveCategories(), read as PluginOutput.liveCategories: `{ categories, playlists }`. */
@@ -549,7 +579,7 @@ function liveCategories(value, ctx, drop) {
     if (seen.has(id)) return drop(`liveCategories: duplicate ${id} dropped`);
     seen.add(id);
     const cc = typeof c.country === "string" ? c.country.trim().toUpperCase() : "";
-    categories.push({ id, title, country: /^[A-Z]{2}$/.test(cc) ? cc : "" });
+    categories.push({ id, title, country: /^[A-Z]{2}$/.test(cc) ? cc : "", genre: genreOf(c.genre) });
   });
   return { categories, playlists };
 }

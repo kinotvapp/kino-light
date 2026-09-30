@@ -91,6 +91,13 @@ class DlnaFailure(message: String) : Exception(message)
  *  breadcrumbs. Reported once per viewing session. See `LiveQualityMonitor`. */
 class LivePlaybackQuality(message: String) : Exception(message)
 
+/** A film's playback showed something that comes with out-of-sync audio (an audio output that failed or starved, audio
+ *  tracks switched over and over, the position jumping by itself, many dropped frames). Nobody can measure a viewer's
+ *  "the audio is late", so this says what was going on, not that it happened: the audio outputs connected (Bluetooth,
+ *  HDMI), the audio and video format and decoder, how many external audio tracks were merged in, and the app's DNS
+ *  mode travel as extras. Sent at most once a day per device. See `VodSyncMonitor`. */
+class AvSyncSuspect(message: String) : Exception(message)
+
 /**
  * A live channel showed no picture (or a frozen one) on its hardware video decoder and was reopened with a software
  * one. The extras name the decoder and the device, so the chips that can't take the live streams show up on their

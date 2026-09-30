@@ -346,7 +346,7 @@ internal fun AppTab(onOpenDownloads: () -> Unit = {}) {
         Column(Modifier.weight(1f)) {
             Text("DNS seguro", style = MaterialTheme.typography.bodyLarge)
             Text(
-                "Si tu proveedor de internet bloquea canales o servicios, prueba con Google. Se aplica de inmediato.",
+                "Si tu proveedor de internet bloquea canales o servicios, prueba con Google. «Ninguno» usa el DNS de tu dispositivo, sin el de la app. Se aplica de inmediato.",
                 style = MaterialTheme.typography.bodySmall,
             )
         }

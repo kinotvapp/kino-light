@@ -27,8 +27,13 @@ class ManifestParserTest {
     }
 
     @Test fun `id rules`() {
-        listOf("A", "a", "-abc", "has_underscore", "x".repeat(41), "magis", "ditu", "live", "local", "unknown", "plugin")
+        listOf("A", "a", "-abc", "has_underscore", "x".repeat(41), "magis", "ditu", "live", "local", "unknown", "plugin", "own")
             .forEach { assertEquals(it, "id", invalidField(base().put("id", it))) }
+    }
+
+    @Test fun `the reserved id of the built-in live provider is the one OwnLive uses`() {
+        assertEquals("own", com.arkiv.player.data.live.OwnLive.PLUGIN_ID)
+        assertEquals("id", invalidField(base().put("id", com.arkiv.player.data.live.OwnLive.PLUGIN_ID)))
     }
 
     @Test fun `name must be 1 to 40 chars`() {
@@ -38,7 +43,7 @@ class ManifestParserTest {
 
     @Test fun `version must be semver`() = assertEquals("version", invalidField(base().put("version", "1.0")))
 
-    @Test fun `apiVersion 5 still needs a newer Kino`() {
+    @Test fun `apiVersion above the supported one says Kino must be updated`() {
         val r = ManifestParser.parse(base().put("apiVersion", 5).toString()) as ManifestResult.Invalid
         assertEquals("apiVersion", r.field)
         assertEquals("Este plugin necesita una versión más nueva de Kino", r.message)
@@ -191,6 +196,19 @@ class ManifestParserTest {
     @Test fun `not json and oversized are refused`() {
         assertEquals("kino-plugin.json", (ManifestParser.parse("{nope") as ManifestResult.Invalid).field)
         assertEquals("kino-plugin.json", invalidField(base().put("description", "x".repeat(17_000))))
+    }
+
+    @Test fun `streamHosts any needs apiVersion 4, no capability, and only the value any`() {
+        val ok = (ManifestParser.parse(base().put("apiVersion", 4).put("streamHosts", "any").toString()) as ManifestResult.Valid).manifest
+        assertTrue(ok.streamHostsAny)
+        for (api in 1..3) {
+            val old = (ManifestParser.parse(base().put("apiVersion", api).put("streamHosts", "any").toString()) as ManifestResult.Valid).manifest
+            assertEquals(false, old.streamHostsAny)
+        }
+        val other = ManifestParser.parse(base().put("apiVersion", 4).put("streamHosts", "all").toString()) as ManifestResult.Invalid
+        assertEquals("El campo \"streamHosts\" solo admite \"any\"", other.message)
+        assertEquals("streamHosts", other.field)
+        assertEquals(false, (ManifestParser.parse(base().put("apiVersion", 4).toString()) as ManifestResult.Valid).manifest.streamHostsAny)
     }
 
     @Test fun `liveStreamHosts any needs apiVersion 3 and the channels capability`() {

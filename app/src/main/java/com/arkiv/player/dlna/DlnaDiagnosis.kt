@@ -61,10 +61,18 @@ internal object DlnaDiagnosis {
             return if (s.lanHits == 0) NEVER_FETCHED else STOPPED_EARLY
         }
         if (s.lanHits == 0 && s.sincePlayMs >= NEVER_FETCHED_AFTER_MS && state != "PLAYING") return NEVER_FETCHED
-        if (state == "TRANSITIONING" && s.lanHits > 0 && s.sincePlayMs >= STUCK_LOADING_AFTER_MS) return STUCK_LOADING
+        // A vendor may prefix it (an LG webOS reports LG_TRANSITIONING while it loads).
+        if (state.endsWith("TRANSITIONING") && s.lanHits > 0 && s.sincePlayMs >= STUCK_LOADING_AFTER_MS) return STUCK_LOADING
         if (state == "PLAYING" && !s.userPaused && s.stalledMs >= STALL_AFTER_MS) return POSITION_STALLED
         return null
     }
+
+    /**
+     * A `Play` the renderer has not answered yet ([noHttpAnswer]: a timeout, not a refusal) while it is already fetching our media
+     * ([tvRequests] > 0). An LG webOS answers `Play` only once it has enough media, and with a slow CDN that took longer than the
+     * wait: the TV was loading and then played, and the cast used to be dropped as failed. The monitor judges it from here on.
+     */
+    fun playStillLoading(noHttpAnswer: Boolean, tvRequests: Int): Boolean = noHttpAnswer && tvRequests > 0
 
     /** What to tell the person, in Spanish, for each stage. */
     fun userMessage(stage: String): String = when (stage) {

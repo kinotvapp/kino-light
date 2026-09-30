@@ -102,11 +102,16 @@ fun PluginConsentDialog(preview: InstallPreview, onInstall: () -> Unit, onCancel
     }
 }
 
-/** "¿Desinstalar X?" — the library keeps its titles, which is said up front. Focus starts on "Cancelar". */
+/**
+ * "¿Desinstalar X?" — the library keeps its titles, which is said up front. The buttons are the TV's own [TvCompactAction], red while
+ * focused like every other dialog's, and focus starts on "Desinstalar": the person just chose "Desinstalar X", and a confirmation that
+ * started on "Cancelar" turned the natural second OK into a silent cancel, which TV-box users reported as "the plugin cannot be deleted".
+ * Back and "Cancelar" still cancel.
+ */
 @Composable
 fun PluginUninstallDialog(plugin: InstalledPlugin, onConfirm: () -> Unit, onCancel: () -> Unit) {
-    val cancelFocus = remember { FocusRequester() }
-    FocusWhenReady(cancelFocus)
+    val confirmFocus = remember { FocusRequester() }
+    FocusWhenReady(confirmFocus)
     Dialog(onDismissRequest = onCancel) {
         Surface(shape = RoundedCornerShape(16.dp), color = ArkivSurface, modifier = Modifier.widthIn(max = 480.dp)) {
             Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -115,9 +120,11 @@ fun PluginUninstallDialog(plugin: InstalledPlugin, onConfirm: () -> Unit, onCanc
                     "Lo que guardaste de este plugin se queda en tu biblioteca, pero no se va a poder ver hasta que lo vuelvas a instalar.",
                     style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary,
                 )
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End)) {
-                    TextButton(onClick = onCancel, modifier = Modifier.focusRequester(cancelFocus).focusRing()) { Text("Cancelar") }
-                    TextButton(onClick = onConfirm, modifier = Modifier.focusRing()) { Text("Desinstalar", color = ArkivRed) }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    com.arkiv.player.ui.tv.TvCompactAction(label = "Cancelar", modifier = Modifier.weight(1f), onClick = onCancel)
+                    com.arkiv.player.ui.tv.TvCompactAction(
+                        label = "Desinstalar", modifier = Modifier.weight(1f).focusRequester(confirmFocus), onClick = onConfirm,
+                    )
                 }
             }
         }
@@ -135,7 +142,8 @@ internal fun FocusWhenReady(requester: FocusRequester) {
     LaunchedEffect(requester) {
         delay(200)
         repeat(20) {
-            if (runCatching { requester.requestFocus() }.isSuccess) return@LaunchedEffect
+            // requestFocus() answers false, without throwing, while the requester's node is not yet placed in the dialog: only a true is done.
+            if (runCatching { requester.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
             delay(50)
         }
     }

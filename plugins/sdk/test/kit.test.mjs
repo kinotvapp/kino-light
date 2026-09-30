@@ -771,7 +771,7 @@ test("apiVersion 3: channels validates only on v3, and needs liveCategories + li
 test("checkOutput reads liveCategories, liveChannels and guide as the app does", () => {
   const m = { ...JSON.parse(manifest({ apiVersion: 3 })), capabilities: ["home", "resolve", "channels"] };
   const cats = checkOutput("liveCategories", [{ id: "news", title: "Noticias", country: "co" }, { id: "news", title: "x" }, { id: "a", title: "A", adult: true }], m);
-  assert.deepEqual(cats.value.categories, [{ id: "news", title: "Noticias", country: "CO" }]);
+  assert.deepEqual(cats.value.categories, [{ id: "news", title: "Noticias", country: "CO", genre: null }]);
   const page = checkOutput("liveChannels", { items: [
     { id: "c1", title: "Uno", ref: "r1", number: 7, categoryId: "news" },
     { id: "c2", title: "Dos", ref: "" },
@@ -808,6 +808,39 @@ test("checkOutput reads inline streams and playlist declarations as the app does
   // Strict like the app: only the boolean true, never the string "true"; an array epg is ignored.
   const stringy = checkOutput("liveCategories", { playlist: { url: "https://cdn.example.com/l.m3u", format: "m3u", resolve: "true", epg: [] } }, m);
   assert.deepEqual(stringy.value.playlists.map((p) => [p.resolve, p.epgUrl]), [[false, ""]]);
+});
+
+test("checkOutput reads a playlist's streamHeaders as the app does: filtered like a Stream's headers, apart from headers", () => {
+  const m = { ...JSON.parse(manifest({ apiVersion: 3, hosts: ["cdn.example.com"] })), capabilities: ["home", "resolve", "channels"] };
+  const withHeaders = checkOutput("liveCategories", { playlist: {
+    url: "https://cdn.example.com/l.m3u", format: "m3u", headers: { Authorization: "Bearer T" },
+    streamHeaders: { "User-Agent": "VLC/3.0.20", Referer: "https://cdn.example.com/", Host: "evil", "X-Bad": "a\nb" },
+  } }, m);
+  const playlist = withHeaders.value.playlists[0];
+  assert.deepEqual(playlist.headers, { Authorization: "Bearer T" });
+  assert.deepEqual(playlist.streamHeaders, { "User-Agent": "VLC/3.0.20", Referer: "https://cdn.example.com/" });
+  const without = checkOutput("liveCategories", { playlist: { url: "https://cdn.example.com/l.m3u", format: "m3u" } }, m);
+  assert.deepEqual(without.value.playlists[0].streamHeaders, {});
+});
+
+test("checkOutput reads genre on Home rows, live categories and playlists from the closed vocabulary", () => {
+  const m = { ...JSON.parse(manifest({ apiVersion: 3, hosts: ["cdn.example.com"] })), capabilities: ["home", "resolve", "channels"] };
+  const item = { id: "a", ref: "r", title: "A", kind: "movie" };
+  const home = checkOutput("home", [
+    { id: "r1", title: "Fútbol", genre: "Deportes", items: [item] },
+    { id: "r2", title: "Otra", genre: "sports", items: [item] },
+    { id: "r3", title: "Sin género", items: [item] },
+  ], m);
+  assert.deepEqual(home.value.map((r) => r.genre), ["deportes", null, null]);
+  const cats = checkOutput("liveCategories", [
+    { id: "n", title: "Noticias propias", genre: "noticias" },
+    { id: "x", title: "Raro", genre: "nope" },
+    { playlist: { url: "https://cdn.example.com/a.m3u", format: "m3u", genre: "infantil" } },
+    { playlist: { url: "https://cdn.example.com/b.m3u", format: "m3u" } },
+  ], m);
+  assert.deepEqual(cats.value.categories.map((c) => c.genre), ["noticias", null]);
+  assert.deepEqual(cats.value.playlists.map((p) => p.genre), ["infantil", null]);
+  assert.ok(contract.genres.includes("deportes") && !contract.genres.includes("sports"));
 });
 
 test("run.mjs builds the live arguments the app sends", async () => {
@@ -2009,4 +2042,35 @@ test("validate --run liveChannels follows the first ref through resolve as a liv
     rmSync(ok, { recursive: true, force: true });
     rmSync(local, { recursive: true, force: true });
   }
+});
+
+const listSetting = (extra = {}) => ({ key: "sources", label: "Direcciones", type: "list", fields: [{ key: "url", label: "Dirección", type: "url", required: true }, { key: "category", label: "Categoría", type: "text" }], ...extra });
+
+test("a list setting needs apiVersion 4 and valid fields, like the app", () => {
+  const m = (api, s) => validateManifest(JSON.stringify({ ...JSON.parse(manifest()), apiVersion: api, settings: [s] }));
+  assert.equal(m(4, listSetting()).ok, true);
+  assert.equal(m(3, listSetting()).message, 'El ajuste "sources" es una lista: necesita apiVersion 4');
+  assert.equal(m(4, listSetting({ max: 51 })).message, '"max" del ajuste "sources" va de 1 a 50');
+  assert.equal(m(4, listSetting({ fields: [] })).message, 'El ajuste "sources" necesita de 1 a 4 campos');
+  assert.equal(m(4, { key: "k", label: "x", type: "text", fields: [] }).message, 'Solo un ajuste de tipo list tiene "fields"');
+});
+
+test("the url fields of a list are the servers the plugin may reach", async () => {
+  const { createKino } = await import("../kino-shim.mjs");
+  const mf = { ...JSON.parse(manifest()), apiVersion: 4, hosts: [], settings: [listSetting()] };
+  const { kino, servers } = createKino(mf, { config: { sources: [{ url: " https://my.server:8443/x ", category: " A ", extra: "z" }, { url: "", category: "" }] } });
+  assert.deepEqual(kino.config.get("sources"), [{ url: "https://my.server:8443/x", category: "A" }]);
+  assert.deepEqual(servers, ["https://my.server:8443/x"]);
+});
+
+test("streamHosts any (apiVersion 4) lets a movie's stream be on any public host, and nothing else", () => {
+  const base = { ...JSON.parse(manifest()), apiVersion: 4, streamHosts: "any" };
+  const r = validateManifest(JSON.stringify(base));
+  assert.equal(r.ok, true);
+  assert.equal(r.manifest.streamHostsAny, true);
+  assert.equal(validateManifest(JSON.stringify({ ...base, streamHosts: "all" })).message, 'El campo "streamHosts" solo admite "any"');
+  assert.equal(validateManifest(JSON.stringify({ ...base, apiVersion: 3 })).manifest.streamHostsAny, false);
+  const out = checkOutput("resolve", { url: "https://cdn.random-tld.xyz/v.mp4" }, r.manifest, []);
+  assert.equal(out.value.url, "https://cdn.random-tld.xyz/v.mp4");
+  assert.throws(() => checkOutput("resolve", { url: "http://192.168.1.20/v.mp4" }, r.manifest, []), /local/);
 });

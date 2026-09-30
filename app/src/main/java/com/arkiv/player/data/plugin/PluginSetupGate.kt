@@ -59,6 +59,9 @@ object PluginConsent {
         if (m.liveStreamHostsAny) {
             out += ConsentLine("Puede reproducir canales desde cualquier servidor que indique su lista", danger = true, isNew = preview.isUpdate && preview.newLiveStreamHostsAny)
         }
+        if (m.streamHostsAny) {
+            out += ConsentLine("Puede reproducir video desde cualquier servidor que indique", danger = true, isNew = preview.isUpdate && preview.newStreamHostsAny)
+        }
         return out
     }
 }

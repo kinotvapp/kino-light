@@ -39,6 +39,7 @@ export function consentLines(m) {
   if (m.secrets && Object.keys(m.secrets).length) line("Usa datos sellados por su autor");
   (m.insecureHosts || []).forEach((h) => line(`Conexión sin cifrar con ${h}`, true));
   if (m.liveStreamHostsAny) line("Puede reproducir canales desde cualquier servidor que indique su lista", true);
+  if (m.streamHostsAny) line("Puede reproducir video desde cualquier servidor que indique", true);
   return out;
 }
 

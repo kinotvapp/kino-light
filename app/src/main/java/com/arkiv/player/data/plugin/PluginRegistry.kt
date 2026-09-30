@@ -42,14 +42,15 @@ data class InstalledPlugin(
      * [hosts] for a LIVE CHANNEL's stream: relaxed to any public host only when the INSTALLED
      * record says the person approved `liveStreamHosts: "any"` -- never from plugin output.
      */
-    val liveHosts: EffectiveHosts get() = hosts.copy(anyPublicLiveHost = record.liveStreamHostsAny)
+    val liveHosts: EffectiveHosts get() = hosts.copy(anyPublicLiveHost = record.liveStreamHostsAny || record.streamHostsAny)
 
     /**
-     * [hosts] for this plugin's VOD stream in the PLAYER: relaxed to any public host
-     * ([EffectiveHosts.anyPublicVideoHost]) only when the INSTALLED record says the person granted
-     * the broad video permission -- never from plugin output or the manifest.
+     * [hosts] for this plugin's VOD stream (a movie or an episode) in the PLAYER: relaxed to any
+     * public host ([EffectiveHosts.anyPublicVideoHost]) only when the INSTALLED record says so
+     * ([InstalledRecord.videoFromAnyHost]: the person granted the broad video permission, or approved
+     * the manifest's `streamHosts: "any"` in red at install) -- never from plugin output.
      */
-    val videoHosts: EffectiveHosts get() = hosts.copy(anyPublicVideoHost = record.anyVideoHost)
+    val videoHosts: EffectiveHosts get() = hosts.copy(anyPublicVideoHost = record.videoFromAnyHost)
 
     /** A required setting has no value: its calls fail with `auth_required` without running. */
     val needsSetup: Boolean get() = missingSettings.isNotEmpty()

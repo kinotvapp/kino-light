@@ -47,4 +47,10 @@ class ModalDnsTest {
         assertEquals(DnsMode.GOOGLE, DnsMode.fromKey("google"))
         assertEquals(DnsMode.SYSTEM, DnsMode.fromKey("system"))
     }
+
+    @Test
+    fun `the option that applies no DNS is named Ninguno`() {
+        assertEquals("Ninguno (el del dispositivo)", DnsMode.SYSTEM.label)
+        assertEquals("system", DnsMode.SYSTEM.key)
+    }
 }

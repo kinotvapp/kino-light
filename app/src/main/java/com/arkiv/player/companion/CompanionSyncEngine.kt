@@ -142,10 +142,25 @@ class CompanionSyncEngine(
         peerJob = null
     }
 
+    /**
+     * The tables the connected peer's last hello listed, with the id of THAT peer; null until one hello. A TV can
+     * accept a different controller, so tables announced by one peer never count for another: an older build
+     * that connects later has not said what it knows, and its SyncApply throws on a table it has never heard of.
+     */
+    @Volatile private var peerTables: Pair<String?, Set<String>>? = null
+
+    private fun peerKnows(table: String): Boolean {
+        if (table !in OPTIONAL_TABLES) return true
+        val known = peerTables ?: return false
+        return known.first == peer.value && table in known.second
+    }
+
     private suspend fun handleHello(env: Envelope) {
         val hello = SyncHello.fromPayload(env.payload)
+        peerTables = peer.value to hello.since.keys.toSet()
         var overallHwm = 0L
         for (table in TABLES) {
+            if (!peerKnows(table)) continue
             val sentHwm = pushTable(table, hello.since[table] ?: 0L)
             if (sentHwm > overallHwm) overallHwm = sentHwm
         }
@@ -165,7 +180,7 @@ class CompanionSyncEngine(
 
     private suspend fun pushIncremental() {
         for (table in TABLES) {
-            pushIncrementalTable(table)
+            if (peerKnows(table)) pushIncrementalTable(table)
         }
     }
 
@@ -212,11 +227,17 @@ class CompanionSyncEngine(
 
     private companion object {
         /**
-         * The six tables that travel through companion sync -- pinned to match [SyncApply]'s
+         * The seven tables that travel through companion sync -- pinned to match [SyncApply]'s
          * `when(table)` cases. Mirrors (doesn't share: that one is `private`)
          * `com.arkiv.player.data.db.SyncTriggers.TABLES`.
          */
-        val TABLES = listOf("items", "episodes", "playback", "skip_markers", "live_favorites", "live_recents")
+        val TABLES = listOf("items", "episodes", "playback", "skip_markers", "live_favorites", "live_recents", "own_live_sources")
+
+        /**
+         * Tables added after the first six. An older peer's SyncApply throws on a table it does not
+         * know, so these are pushed only to a peer whose hello lists them (see [peerKnows]).
+         */
+        val OPTIONAL_TABLES = setOf("own_live_sources")
 
         const val PUSH_DEBOUNCE_MS = 3000L
     }

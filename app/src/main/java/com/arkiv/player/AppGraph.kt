@@ -28,6 +28,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterIsInstance
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.take
@@ -114,6 +115,7 @@ class AppGraph(context: Context) {
                 .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
                 .dns(com.arkiv.player.data.net.DohDns)
                 .build(),
+            isOnline = { hasInternet.value },
         )
     }
 
@@ -588,7 +590,7 @@ class AppGraph(context: Context) {
             plugin, pluginCaller, plugin.hosts, xuperStreams,
             currentHosts = { currentPluginHosts(plugin) },
             streamHostApproval = streamHostApproval,
-            anyVideoHostGranted = { pluginRegistry.find(plugin.id)?.record?.anyVideoHost == true },
+            anyVideoHostGranted = { pluginRegistry.find(plugin.id)?.record?.videoFromAnyHost == true },
         )
 
     /**
@@ -1041,7 +1043,68 @@ class AppGraph(context: Context) {
                     currentHosts = { currentPluginHosts(p) },
                 )
             },
+            ownProvider = {
+                val root = java.io.File(appContext.cacheDir, "own-live")
+                com.arkiv.player.data.live.OwnLiveProvider(
+                    sources = { database.ownLiveSourceDao().all() },
+                    // The gated stream client with the own-hosts policy: public hosts only, http or https,
+                    // every redirect hop checked, a name that resolves into the LAN refused (PluginDns).
+                    fetcher = com.arkiv.player.data.live.PluginPlaylistFetcher(
+                        com.arkiv.player.data.plugin.PluginStreamHttp.client(pluginBaseHttp, com.arkiv.player.data.live.OwnLive.hosts),
+                    ),
+                    cacheDir = java.io.File(root, "own"),
+                    allCachesRoot = root,
+                    syncCache = { rows -> database.liveChannelCacheDao().replacePlaylistRows(com.arkiv.player.data.live.OwnLive.PROVIDER, rows) },
+                )
+            },
         )
+    }
+
+    /** "Probar" for the add dialog: the same gated client the own provider downloads with. */
+    val ownProbe: suspend (com.arkiv.player.data.live.OwnSourceForm) -> com.arkiv.player.data.live.OwnProbe by lazy {
+        val fetcher = com.arkiv.player.data.live.PluginPlaylistFetcher(
+            com.arkiv.player.data.plugin.PluginStreamHttp.client(pluginBaseHttp, com.arkiv.player.data.live.OwnLive.hosts),
+        )
+        val probe: suspend (com.arkiv.player.data.live.OwnSourceForm) -> com.arkiv.player.data.live.OwnProbe = { f ->
+            val headers = buildMap {
+                if (f.userAgent.isNotEmpty()) put("User-Agent", f.userAgent)
+                if (f.referer.isNotEmpty()) put("Referer", f.referer)
+            }
+            com.arkiv.player.data.live.OwnSourceProbe.run(f.kind, f.url.trim(), headers, fetcher)
+        }
+        probe
+    }
+
+    /**
+     * Whether the person has ANY live source: a provider from Xuper or a plugin, or at least one channel or list
+     * of their own. Home's empty state (and its "Agregar plugin" onboarding) depends on this and not on
+     * `liveModule.available`, which "Mis canales" keeps true for everyone.
+     */
+    val hasLiveSources: kotlinx.coroutines.flow.StateFlow<Boolean> by lazy {
+        kotlinx.coroutines.flow.combine(
+            liveModule.hasSourceProviders,
+            database.ownLiveSourceDao().flowAll().map { it.isNotEmpty() },
+        ) { providers, own -> providers || own }
+            .stateIn(applicationScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, liveModule.hasSourceProviders.value)
+    }
+
+    /**
+     * The browsable Home rows of every plugin but Xuper, as Categorías tiles ([genreTilesOf]). Shared: the tab's
+     * availability and its screens read this one flow, so the plugins' `home()` answers (cached 6 h) are asked once.
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val genreTiles: kotlinx.coroutines.flow.StateFlow<List<com.arkiv.player.ui.home.GenreTile>> by lazy {
+        pluginRegistry.plugins
+            .flatMapLatest { plugins ->
+                val xuperId = com.arkiv.player.ui.home.CategoriesViewModel.xuperPluginId(plugins)
+                pluginHomeRows.rows().map { rows -> com.arkiv.player.ui.home.genreTilesOf(rows, xuperId) }
+            }
+            .stateIn(applicationScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, emptyList())
+    }
+
+    /** The person's own live sources ("Mis canales"). */
+    val ownLiveStore: com.arkiv.player.data.live.OwnLiveStore by lazy {
+        com.arkiv.player.data.live.OwnLiveStore(database.ownLiveSourceDao())
     }
 
     /** The message the player shows for a Xuper channel while [xuperLive] is off, else null. */

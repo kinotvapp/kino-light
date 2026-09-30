@@ -234,6 +234,46 @@ class SearchViewModelSourcesTest {
         assertTrue(vm.sourcesState.value.failed.isEmpty())
         assertEquals(setOf("ditu"), vm.sourcesState.value.responded)
     }
+
+    // --- picking a title: the whole series, with no season and chapter step in between.
+
+    private fun card(kind: String) = TitleCard(
+        kind = kind, tmdbId = null, anilistId = null, title = "Título", posterUrl = "", year = "2020", overview = null,
+    )
+
+    private fun searchingVm() = vm(TestSource { listOf(SearchEvent.Done(1)) })
+
+    @Test fun `picking a series goes straight to its sources, the whole series`() = runTest {
+        val vm = searchingVm()
+        vm.pickTitle(card("series"))
+        advanceUntilIdle()
+        assertEquals(SearchPhase.RESULTS, vm.phase.value)
+        assertEquals(null, vm.refineSeason.value)
+        assertEquals(null, vm.refineEpisode.value)
+    }
+
+    @Test fun `picking an anime goes straight to its sources too`() = runTest {
+        val vm = searchingVm()
+        vm.pickTitle(card("anime"))
+        advanceUntilIdle()
+        assertEquals(SearchPhase.RESULTS, vm.phase.value)
+    }
+
+    @Test fun `picking a movie still goes straight to its sources`() = runTest {
+        val vm = searchingVm()
+        vm.pickTitle(card("movie"))
+        advanceUntilIdle()
+        assertEquals(SearchPhase.RESULTS, vm.phase.value)
+    }
+
+    @Test fun `Back from the sources of a series returns to the search and forgets the pick`() = runTest {
+        val vm = searchingVm()
+        vm.pickTitle(card("series"))
+        advanceUntilIdle()
+        vm.back()
+        assertEquals(SearchPhase.QUERY, vm.phase.value)
+        assertEquals(null, vm.selected.value)
+    }
 }
 
 /** A source whose flow the test builds, to be able to leave a source halfway through. */

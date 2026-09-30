@@ -273,7 +273,8 @@ internal fun TvPluginsContent(
 }
 
 /**
- * Hosts the Plugins view model for both TV entry points ([TvPluginsRoute] and [TvSettingsScreen]'s tab):
+ * Hosts the Plugins view model for [TvSettingsScreen]'s Plugins tab (reached from Ajustes, and from the Home
+ * rail's "Plugins", which opens Ajustes on that tab):
  * the full-screen Nuvio picker when [com.arkiv.player.ui.plugin.PluginsUiState.nuvioPicker] is open, drawn
  * as its OWN screen (never nested inside [chrome]'s own padded container -- the earlier double-inset bug:
  * the picker used to draw inside [TvPluginsContent]'s host, which already padded the "Plugins"/"Ajustes"
@@ -333,7 +334,7 @@ internal fun TvPluginsHost(chrome: @Composable (vm: PluginsViewModel, addRequest
     state.configuring?.let { PluginConfigDialog(it, isTv = true, vm = vm) }
 }
 
-/** The Plugins view model both TV entry points share ([TvPluginsHost]), scoped by the same key so either finds the same instance. */
+/** The Plugins view model of [TvPluginsHost], scoped by a fixed key. */
 @Composable
 private fun rememberPluginsViewModel(): PluginsViewModel {
     val graph = rememberGraph()
@@ -751,33 +752,3 @@ internal class KeepMarginBringIntoView(private val marginPx: Float) : BringIntoV
 internal fun scrollDistanceWithMargin(offset: Float, size: Float, containerSize: Float, margin: Float): Float =
     MinimalScrollBringIntoView.calculateScrollDistance(offset - margin, size + 2 * margin, containerSize)
 
-/**
- * The Plugins screen as its own TV route (`"plugins"`, reached from the "Plugins" button of the Home top bar --
- * see [TvHomeScreen]), not just the "Plugins" tab inside [TvSettingsScreen]: same title chrome and horizontal
- * padding as [TvSettingsScreen] (64/32 dp), so it reads as a screen of the same family, but no tab row above
- * it -- [TvPluginsContent] gets neither an [entryFocus] nor an [upFocus] to route through, since there is
- * nothing above it here. Initial focus lands on the content's own header (its selected tab chip); [onBack]
- * (Back) leaves the route -- [ArkivTvRoot] pops back to Home, which puts focus back on the "Plugins" button.
- * [onBack] only fires while this chrome is showing: the Nuvio picker ([TvPluginsHost]) takes over the whole
- * screen and handles its own Back (returns to this chrome, not to Home) while it is open.
- */
-@Composable
-internal fun TvPluginsRoute(onBack: () -> Unit) {
-    TvPluginsHost { vm, addRequested, onAddRequestedChange ->
-        BackHandler(onBack = onBack)
-        val entryFocus = remember { FocusRequester() }
-        LaunchedEffect(Unit) {
-            repeat(20) {
-                if (runCatching { entryFocus.requestFocus() }.isSuccess) return@LaunchedEffect
-                delay(50)
-            }
-        }
-        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 64.dp, vertical = 32.dp)) {
-            Text("Plugins", style = MaterialTheme.typography.headlineMedium, color = Color.White)
-            TvPluginsContent(
-                vm = vm, addRequested = addRequested, onAddRequestedChange = onAddRequestedChange,
-                modifier = Modifier.weight(1f).fillMaxWidth().padding(top = 16.dp), entryFocus = entryFocus,
-            )
-        }
-    }
-}

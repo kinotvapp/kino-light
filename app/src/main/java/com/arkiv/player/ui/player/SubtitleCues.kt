@@ -46,6 +46,16 @@ internal fun mergeBottomCueTexts(texts: List<String>): String =
 /** Comfortable base subtitle size, in sp, on a phone at [PlaybackPrefs.sizePercent] = 100. */
 internal const val BASE_SUBTITLE_SP = 20f
 
+/** The same, on a TV: read from across the room, so bigger. */
+internal const val TV_BASE_SUBTITLE_SP = 28f
+
+internal fun subtitleTextSizeSp(sizePercent: Int, isTv: Boolean): Float =
+    (if (isTv) TV_BASE_SUBTITLE_SP else BASE_SUBTITLE_SP) * sizePercent / 100f
+
+/** A TV follows the system's caption style until the person picks their own; a phone never does. */
+internal fun usesSystemSubtitleStyle(prefs: PlaybackPrefs, isTv: Boolean): Boolean =
+    isTv && !prefs.tvCustomStyle
+
 /**
  * Applies the app's own subtitle look (Ajustes → Subtítulos: size / colours / edge) to [this] view.
  *
@@ -56,18 +66,19 @@ internal const val BASE_SUBTITLE_SP = 20f
  * works and the default is sane) plus the app's colours/edge; embedded font sizes are ignored so the
  * app size always wins.
  *
- * TV is left exactly as it was: viewed from across the room with the video filling the screen, the
- * platform's fraction-of-height sizing is right, and the TV settings do not expose these controls
- * (see TvSettingsSubtitles).
+ * A TV starts on the system's own style (viewed from across the room with the video filling the
+ * screen, the platform's fraction-of-height sizing is right) and switches to the app's style only
+ * when [PlaybackPrefs.tvCustomStyle] is on (see TvSettingsSubtitles).
  */
 internal fun SubtitleView.applyArkivSubtitleStyle(prefs: PlaybackPrefs, isTv: Boolean) {
-    if (isTv) {
+    if (usesSystemSubtitleStyle(prefs, isTv)) {
+        setApplyEmbeddedFontSizes(true)
         setUserDefaultStyle()
         setUserDefaultTextSize()
         return
     }
     setApplyEmbeddedFontSizes(false)
-    setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, BASE_SUBTITLE_SP * prefs.sizePercent / 100f)
+    setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, subtitleTextSizeSp(prefs.sizePercent, isTv))
     setStyle(
         CaptionStyleCompat(
             prefs.textColor.toInt(),

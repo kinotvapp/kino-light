@@ -69,10 +69,11 @@ fun TvCategoriesScreen(
 
     val graph = rememberGraph()
     val vm: CategoriesViewModel = viewModel(
-        factory = viewModelFactory { initializer { CategoriesViewModel(graph.magisHomeCatalog, graph.pluginRegistry.plugins, graph.homeReloads) } },
+        factory = viewModelFactory { initializer { CategoriesViewModel(graph.magisHomeCatalog, graph.pluginRegistry.plugins, graph.homeReloads, graph.genreTiles) } },
     )
     val rows by vm.rows.collectAsStateWithLifecycle()
     val loading by vm.loading.collectAsStateWithLifecycle()
+    val genreSections by vm.genreSections.collectAsStateWithLifecycle()
 
     var featured by remember { mutableStateOf<Featured?>(null) }
     val navSound = rememberNavSound()
@@ -102,7 +103,7 @@ fun TvCategoriesScreen(
     val reducedEffects = rememberReducedEffects()
     val heroDrift by rememberHeroDrift(reducedEffects, HERO_DRIFT_MS)
 
-    if (loading && rows.isEmpty()) {
+    if (loading && rows.isEmpty() && genreSections.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator()
         }
@@ -122,6 +123,8 @@ fun TvCategoriesScreen(
         if (anime.isNotEmpty()) add(Section("anime", "Géneros · Anime", " · Anime", anime))
         val kids = rows.filter { it.id.startsWith("magis_g_infantil_") }
         if (kids.isNotEmpty()) add(Section("infantil", "Géneros · Infantil", " · Infantil", kids))
+        // Every other plugin's browsable Home rows, grouped by genre after Xuper's own tiles.
+        genreSections.forEach { g -> add(Section("genre-${g.genre}", g.label, "", g.tiles.map(vm::specOf))) }
     }
 
     Box(Modifier.fillMaxSize().background(ArkivBlack)) {

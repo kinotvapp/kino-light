@@ -297,4 +297,38 @@ class SyncApplyTest {
         sync.apply("live_recents", JSONObject().put("code", "c2").put("nombre", "RCN").put("vistoAt", 3).put("updatedAt", 20))
         assertEquals(setOf("plugin:own-server|c1", "xuper|c2"), recents.rows.keys)
     }
+
+    private fun ownRow(id: String, name: String, updatedAt: Long, deleted: Boolean = false) =
+        JSONObject().put("id", id).put("kind", "CHANNEL").put("name", name)
+            .put("url", "https://a.example.com/x.m3u8").put("updatedAt", updatedAt).put("deleted", deleted)
+
+    @Test fun `own live sources merge last-write-wins and a newer tombstone deletes`() = runTest {
+        val own = FakeOwnLiveSourceDao()
+        val sync = SyncApply(FakeItemDao(), FakePlaybackDao(), FakeSkipMarkerDao(), FakeLiveFavoriteDao(), FakeLiveRecentDao(), own)
+        sync.apply("own_live_sources", ownRow("s1", "Uno", 10))
+        sync.apply("own_live_sources", ownRow("s1", "Viejo", 5))          // older: dropped
+        assertEquals("Uno", own.rows.getValue("s1").name)
+        sync.apply("own_live_sources", ownRow("s1", "Uno", 20, deleted = true))
+        assertTrue(own.rows.getValue("s1").deleted)
+        sync.apply("own_live_sources", ownRow("s1", "Resucitado", 15))    // a stale device must not resurrect it
+        assertTrue(own.rows.getValue("s1").deleted)
+    }
+
+    @Test fun `an unreadable own source row is skipped`() = runTest {
+        val own = FakeOwnLiveSourceDao()
+        val sync = SyncApply(FakeItemDao(), FakePlaybackDao(), FakeSkipMarkerDao(), FakeLiveFavoriteDao(), FakeLiveRecentDao(), own)
+        sync.apply("own_live_sources", ownRow("a:b", "X", 10))
+        assertTrue(own.rows.isEmpty())
+    }
+}
+
+private class FakeOwnLiveSourceDao : com.arkiv.player.data.db.OwnLiveSourceDao {
+    val rows = HashMap<String, com.arkiv.player.data.db.OwnLiveSourceEntity>()
+    override fun flowAll() = kotlinx.coroutines.flow.flowOf(rows.values.filter { !it.deleted })
+    override suspend fun all() = rows.values.filter { !it.deleted }
+    override suspend fun get(id: String) = rows[id]
+    override suspend fun save(s: com.arkiv.player.data.db.OwnLiveSourceEntity) { rows[s.id] = s }
+    override suspend fun delete(id: String) { rows[id]?.let { rows[id] = it.copy(deleted = true) } }
+    override suspend fun count() = rows.values.count { !it.deleted }
+    override suspend fun getSince(cursor: Long) = rows.values.filter { it.updatedAt > cursor }.sortedBy { it.updatedAt }
 }

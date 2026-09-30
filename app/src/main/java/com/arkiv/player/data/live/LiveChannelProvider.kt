@@ -6,8 +6,11 @@ import com.arkiv.player.playback.PluginLiveChannel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
-/** One category of one provider. [id] is the provider's own (Xuper's portal number as text, a plugin's string id). */
-data class ProviderCategory(val id: String, val name: String)
+/**
+ * One category of one provider. [id] is the provider's own (Xuper's portal number as text, a plugin's string id).
+ * [genre] is a [com.arkiv.player.data.plugin.Genre] id, declared by the plugin or guessed from [name]; null = unknown.
+ */
+data class ProviderCategory(val id: String, val name: String, val genre: String? = null)
 
 /** What a screen shows for a provider: its chip/section and the badge on its channels. */
 data class LiveProviderTab(val id: String, val name: String, val color: Long)

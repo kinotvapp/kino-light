@@ -25,9 +25,8 @@ private const val GATEWAY_BATCH_SIZE = 25
 private const val GW = "ArkivGateway"
 
 /**
- * ViewModel for the unified search wizard: QUERY phase (TMDB + AniList), REFINE step (optional
- * S/E), and RESULTS phase (search on Magis and Caracol at once, with S/E injected if given, or
- * just by name).
+ * ViewModel for the unified search wizard: QUERY phase (TMDB + AniList) and RESULTS phase (search on Magis and Caracol at
+ * once, by name; [runSourceSearch] still takes a season and an episode, but nothing passes them any more).
  */
 class SearchViewModel(
     private val tmdbApi: TmdbApi,
@@ -194,20 +193,20 @@ class SearchViewModel(
                 text?.takeIf { it.isNotBlank() && selected.value == null }?.let { searchSourcesByText(it) }
                 return@launch
             }
-            pickTitle(card)   // movie -> RESULTS; series/anime -> REFINE
+            pickTitle(card)   // every kind goes straight to RESULTS
         }
     }
 
-    /** Picks a card: movies go straight to RESULTS; series/anime move to REFINE. */
+    /**
+     * Picks a card and searches its sources, whatever it is. A series or an anime is searched WHOLE, not by season and
+     * chapter: the sources almost never can be searched that way, and the step that asked for it only made the results
+     * harder to reach.
+     */
     fun pickTitle(card: TitleCard) {
         inHistory { searchHistory.addTitle(card.toRecent()) }
         _selected.value = card
         _searchedByText.value = false
-        if (card.kind == "movie") {
-            runSourceSearch(null, null)
-        } else {
-            _phase.value = SearchPhase.REFINE
-        }
+        runSourceSearch(null, null)
     }
 
     /**
@@ -345,14 +344,13 @@ class SearchViewModel(
         }
     }
 
-    /** Goes back one step: from RESULTS to REFINE (or QUERY if the card was a movie), from REFINE to QUERY. */
+    /** Goes back one step: from RESULTS to the search. */
     fun back() {
         when (_phase.value) {
             SearchPhase.RESULTS -> {
                 sourceJob?.cancel()
-                _phase.value = if (_selected.value?.kind == "movie") SearchPhase.QUERY else SearchPhase.REFINE
+                _phase.value = SearchPhase.QUERY
             }
-            SearchPhase.REFINE -> _phase.value = SearchPhase.QUERY
             SearchPhase.QUERY -> Unit
         }
         if (_phase.value == SearchPhase.QUERY) {

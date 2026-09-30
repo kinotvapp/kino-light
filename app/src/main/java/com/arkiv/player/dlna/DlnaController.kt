@@ -102,6 +102,11 @@ class DlnaController(
         @Volatile var unreachablePolls = 0
         @Volatile var wasPlaying = false
         @Volatile var idleSince = 0L
+        /** The SOAP rejection that ended this cast, for [DirectPlayFallback]: the step, the UPnP code and the HTTP status. */
+        @Volatile var soapRejection: Triple<String, Int?, Int>? = null
+        /** While a fallback may still recover this cast, its failure report waits here instead of being sent. */
+        @Volatile var deferReport = false
+        @Volatile var pendingReport: (() -> Unit)? = null
     }
 
     @Volatile
@@ -344,7 +349,16 @@ class DlnaController(
             val sinkMimes = fetchSinkMimes(device)
             if (sinkMimes.isNotEmpty() && DlnaXml.isSupported(container.mime, sinkMimes)) {
                 DlnaLog.i("cast: renderer already lists ${container.mime} (${sinkMimes.size} types): skipping the remux")
-                return playViaProxy(device, archiveUrl, container, title)
+                // A TV can list a container and still refuse the file (an LG webOS answered Play with 501 Action Failed): its
+                // rejection is held back, and if it is the kind a real MP4 fixes, the remux below is tried before giving up.
+                if (playViaProxy(device, archiveUrl, container, title, deferReport = true)) return true
+                val direct = cast
+                val why = direct?.soapRejection
+                if (why == null || !DirectPlayFallback.shouldRemux(why.first, why.second, why.third)) {
+                    direct?.pendingReport?.invoke()
+                    return false
+                }
+                DlnaLog.w("cast: the TV rejected the file as it is (${why.first} upnp=${why.second}): retrying through the remux")
             }
             // Remux into a real MP4, the exact same fix already shipped for Chromecast and the same
             // on-disk cache (see RemuxPolicy/TsRemuxer) -- a title already remuxed for the Chromecast
@@ -374,8 +388,10 @@ class DlnaController(
         archiveUrl: String,
         container: com.arkiv.player.playback.Container,
         title: String,
+        deferReport: Boolean = false,
     ): Boolean {
         val c = beginCast(device, kind = "vod-proxy", mime = container.mime, title = title, source = archiveUrl)
+        c.deferReport = deferReport
         val ip = wifiIp() ?: return failPreflight(c, "no_wifi_ip", "No se detectó la red WiFi del teléfono", "wifiEnabled=${wifi.isWifiEnabled}")
         proxy.setTarget(archiveUrl, container.mime)
         val port = proxy.ensureStarted()
@@ -469,7 +485,10 @@ class DlnaController(
             Thread.sleep(600L + 600L * attempt)
             play = playSoap(c.device)
         }
-        if (!play.ok) return failSoap(c, "play", play)
+        if (!play.ok) {
+            if (!DlnaDiagnosis.playStillLoading(noHttpAnswer = play.error != null, tvRequests = DlnaLog.lanHits.get())) return failSoap(c, "play", play)
+            DlnaLog.w("cast: Play has not answered yet but the TV already made ${DlnaLog.lanHits.get()} request(s): keeping the cast, the monitor will judge it")
+        }
 
         c.playAtMs = SystemClock.elapsedRealtime()
         DlnaLog.i("cast: Play accepted, watching the renderer's transport state")
@@ -609,6 +628,7 @@ class DlnaController(
             r.fault?.code != null -> "La TV rechazó el video: ${DlnaXml.describeError(r.fault.code)} (código ${r.fault.code})"
             else -> "La TV rechazó el video (HTTP ${r.http})"
         }
+        c.soapRejection = Triple(stage, r.fault?.code, r.http)
         report(
             c, "dlna cast failed: $stage", why,
             "http_code" to r.http.toString(),
@@ -632,24 +652,27 @@ class DlnaController(
         if (c.reported) return
         c.reported = true
         val since = if (c.playAtMs > 0) SystemClock.elapsedRealtime() - c.playAtMs else 0L
-        Crash.report(
-            DlnaFailure(message),
-            "dlna-failure",
-            extras = buildMap {
-                put("kind", c.kind)
-                put("mime", c.mime)
-                put("manufacturer", c.device.manufacturer)
-                put("model", c.device.model)
-                put("transport_state", c.lastState ?: "")
-                put("transport_status", c.lastStatus ?: "")
-                put("tv_requests", DlnaLog.lanHits.get().toString())
-                put("bytes_served", DlnaLog.lanBytes.get().toString())
-                put("since_play_ms", since.toString())
-                put("sink_mimes", c.sinkMimes.take(12).joinToString(","))
-                put("mime_listed", DlnaXml.isSupported(c.mime, c.sinkMimes).toString())
-                extras.forEach { (k, v) -> put(k, v) }
-            },
-        )
+        val send = {
+            Crash.report(
+                DlnaFailure(message),
+                "dlna-failure",
+                extras = buildMap {
+                    put("kind", c.kind)
+                    put("mime", c.mime)
+                    put("manufacturer", c.device.manufacturer)
+                    put("model", c.device.model)
+                    put("transport_state", c.lastState ?: "")
+                    put("transport_status", c.lastStatus ?: "")
+                    put("tv_requests", DlnaLog.lanHits.get().toString())
+                    put("bytes_served", DlnaLog.lanBytes.get().toString())
+                    put("since_play_ms", since.toString())
+                    put("sink_mimes", c.sinkMimes.take(12).joinToString(","))
+                    put("mime_listed", DlnaXml.isSupported(c.mime, c.sinkMimes).toString())
+                    extras.forEach { (k, v) -> put(k, v) }
+                },
+            )
+        }
+        if (c.deferReport) c.pendingReport = send else send()
     }
 
     // ------------------------------------------------------------------ monitor

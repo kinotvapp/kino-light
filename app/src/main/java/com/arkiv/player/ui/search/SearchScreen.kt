@@ -97,10 +97,9 @@ import com.arkiv.player.ui.titleinfo.titleTap
 import kotlinx.coroutines.launch
 
 /**
- * Unified search wizard: QUERY phase (search box + TMDB/anime cards), REFINE step (optional
- * season/chapter) and RESULTS phase (multi-source search in Caracol and the installed plugins for the chosen
- * card, with S/E injected if given, or by name alone otherwise — the latter surfaces
- * whole-season/series packs).
+ * Unified search wizard: QUERY phase (search box + TMDB/anime cards) and RESULTS phase (multi-source search in Caracol
+ * and the installed plugins for the chosen card, by name alone: for a series that surfaces the whole-season/series
+ * packs).
  */
 @Composable
 fun SearchScreen(
@@ -216,7 +215,7 @@ fun SearchScreen(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
             ) {
                 IconButton(onClick = {
-                    if (phase == SearchPhase.REFINE || phase == SearchPhase.RESULTS) vm.back() else onBack()
+                    if (phase == SearchPhase.RESULTS) vm.back() else onBack()
                 }) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver", tint = Color.White)
                 }
@@ -239,9 +238,6 @@ fun SearchScreen(
             }
 
             when (phase) {
-                SearchPhase.REFINE -> selected?.let { card ->
-                    RefineContent(card = card, onContinue = { season, episode -> vm.runSourceSearch(season, episode) })
-                }
                 SearchPhase.RESULTS -> ResultsContent(
                     title = resultTitle,
                     posterUrl = resultPoster,
@@ -580,82 +576,8 @@ private fun kindColor(kind: String): Color = when (kind) {
     else -> Color(0xFFBA68C8)
 }
 
-/** REFINE phase: optional season/chapter (series) or optional episode (anime) before RESULTS. */
-@Composable
-private fun RefineContent(card: TitleCard, onContinue: (season: Int?, episode: Int?) -> Unit) {
-    var seasonText by remember(card) { mutableStateOf("") }
-    var episodeText by remember(card) { mutableStateOf("") }
-
-    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-        Row(modifier = Modifier.padding(top = 8.dp)) {
-            Box(
-                modifier = Modifier.height(180.dp).aspectRatio(2f / 3f)
-                    .clip(RoundedCornerShape(8.dp)).background(ArkivSurfaceHigh),
-            ) {
-                AsyncImage(
-                    model = card.posterUrl,
-                    contentDescription = card.title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
-            Column(Modifier.padding(start = 16.dp)) {
-                Text(card.title, style = MaterialTheme.typography.titleLarge, color = Color.White)
-                if (card.year.isNotBlank()) {
-                    Text(card.year, style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary)
-                }
-            }
-        }
-
-        Spacer(Modifier.size(24.dp))
-
-        when (card.kind) {
-            "series" -> {
-                OutlinedTextField(
-                    value = seasonText,
-                    onValueChange = { seasonText = it.filter(Char::isDigit) },
-                    label = { Text("Temporada (opcional)") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                )
-                OutlinedTextField(
-                    value = episodeText,
-                    onValueChange = { episodeText = it.filter(Char::isDigit) },
-                    label = { Text("Capítulo (opcional)") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
-                )
-                Button(
-                    onClick = { onContinue(seasonText.toIntOrNull(), episodeText.toIntOrNull()) },
-                    colors = ButtonDefaults.buttonColors(containerColor = ArkivRed),
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text("Continuar") }
-            }
-            "anime" -> {
-                OutlinedTextField(
-                    value = episodeText,
-                    onValueChange = { episodeText = it.filter(Char::isDigit) },
-                    label = { Text("Episodio (opcional)") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
-                )
-                Button(
-                    onClick = { onContinue(null, episodeText.toIntOrNull()) },
-                    colors = ButtonDefaults.buttonColors(containerColor = ArkivRed),
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text("Continuar") }
-            }
-            else -> Unit // "movie" doesn't reach REFINE: pickTitle() sends it straight to RESULTS.
-        }
-    }
-}
-
 /**
- * RESULTS phase: multi-source search (Caracol and plugins) for the chosen card, with S/E injected if it
- * came from REFINE or by name alone otherwise. Reuses SourceSectionHeader (same collapsible
+ * RESULTS phase: multi-source search (Caracol and plugins) for the chosen card, by name alone. Reuses SourceSectionHeader (same collapsible
  * pattern as CineDetailScreen's bottom sheet).
  */
 @Composable

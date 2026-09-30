@@ -30,10 +30,7 @@ class MagisDownloadStrategy(
             ?: return DownloadOutcome.Failed("No se encontró la fuente de Xuper")
 
         val playable = runCatching { gateway.resolve(ref) }.getOrElse {
-            return DownloadOutcome.Failed(
-                it.message ?: "No se pudo resolver la fuente de Xuper",
-                transient = DownloadRetryPolicy.isTransient(it),
-            )
+            return DownloadOutcome.Failed.ofResolve(it, "No se pudo resolver la fuente de Xuper")
         }
         if (playable.url.isBlank()) {
             return DownloadOutcome.Failed("Xuper no devolvió un archivo descargable")

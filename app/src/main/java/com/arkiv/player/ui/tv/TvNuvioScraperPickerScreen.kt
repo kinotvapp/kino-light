@@ -92,7 +92,7 @@ private const val LIST_WIDTH_FRACTION = 0.4f
  * first grid version read too cramped, with cards cut off and no room for names). Drawn as its own screen --
  * the SAME single outer margin every other TV content screen uses ([TvHomeScreen]'s 48/28 dp), never nested
  * inside the Plugins screen's own padded container (that double inset was the earlier bug): the caller
- * ([TvPluginsRoute], [TvSettingsScreen]) shows this INSTEAD of its normal padded chrome while the picker is open.
+ * ([TvSettingsScreen]'s Plugins tab) shows this INSTEAD of its normal padded chrome while the picker is open.
  *
  * Left: a compact, independently scrolling list, one line per scraper (small icon-less avatar, name, a
  * check mark once installed, dimmed when the manifest disabled it). Right: the detail of whichever row has

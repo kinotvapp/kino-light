@@ -4,6 +4,7 @@ import com.arkiv.player.data.db.ArkivDatabase
 import com.arkiv.player.data.db.ItemDao
 import com.arkiv.player.data.db.LiveFavoriteDao
 import com.arkiv.player.data.db.LiveRecentDao
+import com.arkiv.player.data.db.OwnLiveSourceDao
 import com.arkiv.player.data.db.PlaybackDao
 import com.arkiv.player.data.db.SkipMarkerDao
 import org.json.JSONObject
@@ -25,7 +26,7 @@ import org.json.JSONObject
  * defaults, because those columns are excluded from the wire (see `SyncMappers`' KDoc). Upserting
  * that decoded entity as-is would WIPE the device's own data (the "new episodes" badge counter, a
  * download's file paths...). For `items`/`episodes` ONLY, the incoming entity is overlaid on top
- * of the LOCAL row's device-local columns before upserting. The other four tables (`playback`,
+ * of the LOCAL row's device-local columns before upserting. The other five tables (`own_live_sources` among them) (`playback`,
  * `skip_markers`, `live_favorites`, `live_recents`) are entirely shared columns, so they adopt the
  * whole decoded row -- including a tombstone (`deleted=true`), which is just a row like any other:
  * a newer tombstone wins and marks the local row deleted, same as any other field.
@@ -36,6 +37,7 @@ class SyncApply(
     private val skipMarkerDao: SkipMarkerDao,
     private val liveFavoriteDao: LiveFavoriteDao,
     private val liveRecentDao: LiveRecentDao,
+    private val ownLiveSourceDao: OwnLiveSourceDao? = null,
 ) {
     /** Production convenience: pulls the DAOs out of the Room database. */
     constructor(db: ArkivDatabase) : this(
@@ -44,6 +46,7 @@ class SyncApply(
         db.skipMarkerDao(),
         db.liveFavoriteDao(),
         db.liveRecentDao(),
+        db.ownLiveSourceDao(),
     )
 
     suspend fun apply(table: String, row: JSONObject) {
@@ -54,6 +57,7 @@ class SyncApply(
             "skip_markers" -> applyMarker(row)
             "live_favorites" -> applyLiveFavorite(row)
             "live_recents" -> applyLiveRecent(row)
+            "own_live_sources" -> applyOwnLiveSource(row)
             else -> throw IllegalArgumentException("SyncApply: unknown table \"$table\"")
         }
     }
@@ -111,6 +115,15 @@ class SyncApply(
         val local = liveFavoriteDao.get(incoming.provider, incoming.code)
         if (!LwwMerge.pickWinner(local?.updatedAt ?: Long.MIN_VALUE, incoming.updatedAt)) return
         liveFavoriteDao.save(incoming)
+    }
+
+    private suspend fun applyOwnLiveSource(row: JSONObject) {
+        val dao = ownLiveSourceDao ?: return
+        // A row this build can't accept (hostile or garbled) is skipped, never stored.
+        val incoming = jsonToOwnLiveSource(row) ?: return
+        val local = dao.get(incoming.id)
+        if (!LwwMerge.pickWinner(local?.updatedAt ?: Long.MIN_VALUE, incoming.updatedAt)) return
+        dao.save(incoming)
     }
 
     private suspend fun applyLiveRecent(row: JSONObject) {

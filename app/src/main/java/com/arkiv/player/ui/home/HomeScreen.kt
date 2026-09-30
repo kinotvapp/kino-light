@@ -215,8 +215,9 @@ fun HomeScreen(
     }
     // The module's providers right now: a switched-off plugin's recents leave the row (they are kept, not deleted).
     val liveOn by graph.liveModule.available.collectAsStateWithLifecycle()
+    val liveSources by graph.hasLiveSources.collectAsStateWithLifecycle()
     val installedPlugins by graph.pluginAdmin.plugins.collectAsStateWithLifecycle()
-    val homeEmpty = homeShowsEmptyState(installedPlugins, pluginRows.size, liveOn)
+    val homeEmpty = homeShowsEmptyState(installedPlugins, pluginRows.size, liveSources)
     val emptyCopy = homeEmptyCopy(installedPlugins, isTv = false)
     val liveTabs by graph.liveModule.tabs.collectAsStateWithLifecycle()
     // null = no row (empty module, or no channel to list yet); never just "Ver más canales".
@@ -724,6 +725,7 @@ private fun PluginRow(
                     modifier = Modifier.width(sizes.posterWidth),
                     // A live channel says so on its card (red, like the native live row); a title wears nothing here.
                     badge = com.arkiv.player.ui.catalog.liveBadge(item),
+                    isNew = com.arkiv.player.data.gateway.ShelveTime.hasNewBadge(item.extra["badges"]),
                     onClick = { onOpen(item) },
                     onLongClick = { onOpen(item) },
                 )

@@ -171,6 +171,11 @@ data class CatalogItem(
     val description: String = "",
     /** Chapters the season declares (`volumnCount`, else `updateCount`); 0 for movies/unknown. */
     val episodeCount: Int = 0,
+    /**
+     * When the portal put it on the shelf (its `shelveTime`, epoch ms), or 0 when unknown -- an older snapshot, or a
+     * portal that did not send one. What "NUEVO" and the order of "Recién agregadas" are decided from: see [ShelveTime].
+     */
+    val shelvedAtMs: Long = 0L,
 ) {
     /**
      * Whether its chapters have to be requested before playing, instead of playing it directly.

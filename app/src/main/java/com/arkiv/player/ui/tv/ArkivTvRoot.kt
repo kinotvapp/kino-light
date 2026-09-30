@@ -166,7 +166,7 @@ fun ArkivTvRoot(
                 onPlayEpisode = { goToPlayer(it) },
                 onPlayLive = { liveCode -> goToLiveChannel(liveCode) },
                 onOpenSettings = { navController.navigate("settings") },
-                onOpenPlugins = { navController.navigate("plugins") },
+                onOpenPlugins = { navController.navigate("settings?tab=PLUGINS") },
                 onOpenSearch = { navController.navigate("search") },
                 onOpenLibrary = { navController.navigate("library") },
                 onOpenLive = { navController.navigate("live") },
@@ -265,6 +265,13 @@ fun ArkivTvRoot(
             }
         }
         composable("categorias_home") {
+            // Categorías is the Xuper catalog: with Xuper off there is nothing to show, so a route reached anyway leaves.
+            val installed by graph.pluginAdmin.plugins.collectAsStateWithLifecycle()
+            val genreTiles by graph.genreTiles.collectAsStateWithLifecycle()
+            if (!com.arkiv.player.ui.categoriesTabAvailable(installed, genreTiles.isNotEmpty())) {
+                LaunchedEffect(Unit) { navController.popBackStack() }
+                return@composable
+            }
             TvCategoriesScreen(
                 onBrowse = { navController.navigate(com.arkiv.player.ui.plugin.PluginMoreTarget.route(it)) },
                 onOpenSearchRoute = { navController.navigate(it) },
@@ -309,11 +316,11 @@ fun ArkivTvRoot(
                 onPlayEpisode = { goToPlayer(it) },
             )
         }
-        composable("settings") {
-            TvSettingsScreen()
-        }
-        composable("plugins") {
-            TvPluginsRoute(onBack = { navController.popBackStack() })
+        composable(
+            "settings?tab={tab}",
+            arguments = listOf(navArgument("tab") { type = NavType.StringType; nullable = true; defaultValue = null }),
+        ) { entry ->
+            TvSettingsScreen(initialTab = entry.arguments?.getString("tab"))
         }
         composable("player/{episodeId}") { entry ->
             val episodeId = Uri.decode(entry.arguments?.getString("episodeId").orEmpty())
@@ -330,7 +337,6 @@ fun ArkivTvRoot(
             PlayerScreen(
                 episodeId = episodeId,
                 onBack = { navController.popBackStack() },
-                onOpenEpisodes = { navController.popBackStack() },
                 onNextEpisode = { goToPlayer(it) },
                 isTv = true,
                 // The player leaves: after configuring, Back returns to where the title was.

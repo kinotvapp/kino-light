@@ -64,13 +64,14 @@ fun CategoriesScreen(
 ) {
     val graph = rememberGraph()
     val vm: CategoriesViewModel = viewModel(
-        factory = viewModelFactory { initializer { CategoriesViewModel(graph.magisHomeCatalog, graph.pluginRegistry.plugins, graph.homeReloads) } },
+        factory = viewModelFactory { initializer { CategoriesViewModel(graph.magisHomeCatalog, graph.pluginRegistry.plugins, graph.homeReloads, graph.genreTiles) } },
     )
     fun onBrowseRow(spec: CategorySpec) {
         vm.browseTarget(spec)?.let(onBrowse)
     }
     val rows by vm.rows.collectAsStateWithLifecycle()
     val loading by vm.loading.collectAsStateWithLifecycle()
+    val genreSections by vm.genreSections.collectAsStateWithLifecycle()
 
     var query by remember { mutableStateOf("") }
     val focusManager = LocalFocusManager.current
@@ -78,6 +79,14 @@ fun CategoriesScreen(
     val displayRows = remember(rows, query) {
         if (query.isBlank()) rows
         else rows.filter { it.title.contains(query.trim(), ignoreCase = true) }
+    }
+
+    // The other plugins' browsable rows, grouped by genre, filtered by the same search box.
+    val shownSections = remember(genreSections, query) {
+        if (query.isBlank()) genreSections
+        else genreSections.mapNotNull { s ->
+            s.tiles.filter { it.title.contains(query.trim(), ignoreCase = true) }.takeIf { it.isNotEmpty() }?.let { s.copy(tiles = it) }
+        }
     }
 
     val fixed = displayRows.filter { MagisHomeClassifier.isFeatured(it.id) }
@@ -189,7 +198,18 @@ fun CategoriesScreen(
             }
         }
 
-        if (displayRows.isEmpty()) {
+        shownSections.forEach { section ->
+            item(span = { GridItemSpan(maxLineSpan) }, key = "genre-${section.genre}") { SectionLabel(section.label) }
+            items(section.tiles, key = { "${it.pluginId}::${it.ref}" }) { tile ->
+                CategoryCard(
+                    title = tile.title,
+                    imageUrl = tile.previewUrl,
+                    onClick = { vm.browseTarget(vm.specOf(tile))?.let(onBrowse) },
+                )
+            }
+        }
+
+        if (displayRows.isEmpty() && shownSections.isEmpty()) {
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Box(Modifier.fillMaxWidth().padding(top = 32.dp), contentAlignment = Alignment.Center) {
                     Text(

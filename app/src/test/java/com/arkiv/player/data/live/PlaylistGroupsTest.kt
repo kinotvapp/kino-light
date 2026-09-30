@@ -31,6 +31,17 @@ class PlaylistGroupsTest {
         assertEquals(group(list("#EXTINF:-1 group-title=\"Noticias\",Dos", "https://l.example.com/2.m3u8")).byCategory.values.single().single().code, news[1].code)
     }
 
+    @Test fun `a group's genre is guessed from its title, else the playlist's declared genre`() {
+        val g = group(list(
+            "#EXTINF:-1 group-title=\"Noticias 24h\",A", "https://l.example.com/1.m3u8",
+            "#EXTINF:-1 group-title=\"Zzz\",B", "https://l.example.com/2.m3u8",
+        ), PluginPlaylist("https://l.example.com/a.m3u", genre = "deportes"))
+        assertEquals(listOf("noticias", "deportes"), g.categories.map { it.genre })
+        assertEquals(listOf(null, null), group(list(
+            "#EXTINF:-1 group-title=\"Zzz\",B", "https://l.example.com/2.m3u8",
+        )).categories.map { it.genre } + listOf(null))
+    }
+
     @Test fun `a repeated tvg-id falls back to the hash, so both variants stay`() {
         val g = group(list(
             "#EXTINF:-1 tvg-id=\"uno.co\",Uno HD", "https://l.example.com/hd.m3u8",
@@ -92,8 +103,8 @@ class PlaylistGroupsTest {
         assertEquals("http://192.168.2.6:8096/img/poster/canal-7.png", channels.getValue("TuServidor").logo)
         assertEquals(null, channels.getValue("OtraLan").logo)
         assertEquals("https://cdn.example.com/c.png", channels.getValue("Publico").logo)
-        // Plain http on an undeclared public host: the plugin image rule requires https there too.
-        assertEquals(null, channels.getValue("PublicoHttp").logo)
+        // Plain http on a public host is fine too: a logo is display only (the plugin image rule).
+        assertEquals("http://cdn.example.com/c.png", channels.getValue("PublicoHttp").logo)
     }
 
     @Test fun `what the parse filtered is counted, and a parse cut by its time budget is a cut list`() {

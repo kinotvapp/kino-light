@@ -50,4 +50,23 @@ class HomeCatalogCodecTest {
         assertTrue(HomeCatalogCodec.decode("").isEmpty())
         assertTrue(HomeCatalogCodec.decode("{}").isEmpty())
     }
+
+    @Test
+    fun `the upload date survives the snapshot`() {
+        val dated = movie.copy(shelvedAtMs = 1_790_570_751_000L)
+        val decoded = HomeCatalogCodec.decode(HomeCatalogCodec.encode(listOf(MagisHomeRow("r", "R", listOf(dated), listOf(dated)))))
+        assertEquals(1_790_570_751_000L, decoded.single().shown.single().shelvedAtMs)
+    }
+
+    @Test
+    fun `a snapshot saved before the date existed reads it as unknown`() {
+        val old = """[{"id":"r","title":"R","shown":[{"id":"c1","title":"T","durationS":0,"adult":false,"ref":"x","type":"movie","genres":[],"description":"","episodeCount":0}],"all":[]}]"""
+        assertEquals(0L, HomeCatalogCodec.decode(old).single().shown.single().shelvedAtMs)
+    }
+
+    @Test
+    fun `an item with no date writes no date field`() {
+        val json = HomeCatalogCodec.encode(listOf(MagisHomeRow("r", "R", listOf(movie), listOf(movie))))
+        assertTrue("shelvedAt" !in json)
+    }
 }

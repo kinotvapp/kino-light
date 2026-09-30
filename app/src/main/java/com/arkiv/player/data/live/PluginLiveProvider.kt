@@ -1,5 +1,6 @@
 package com.arkiv.player.data.live
 
+import com.arkiv.player.data.plugin.Genre
 import com.arkiv.player.data.db.LiveChannelCacheEntity
 import com.arkiv.player.data.gateway.GatewayException
 import com.arkiv.player.data.gateway.GatewayPlayable
@@ -191,7 +192,7 @@ class PluginLiveProvider(
     private suspend fun categoriesNow(): List<ProviderCategory> {
         val catalog = catalog()
         lock.withLock {
-            pluginCategories = catalog.categories.map { ProviderCategory(it.id, it.title) }
+            pluginCategories = catalog.categories.map { ProviderCategory(it.id, it.title, Genre.of(it.genre, it.title)) }
             categoriesKnown = true
             reconcile(catalog.playlists)
         }
@@ -361,7 +362,7 @@ class PluginLiveProvider(
         for (page in 1..PluginLiveContract.MAX_PAGES_PER_CATEGORY) {
             val arg = JSONObject().put("categoryId", categoryId).put("cursor", cursor ?: JSONObject.NULL).toString()
             val out = PluginCalls.callOrThrow(caller, pluginId, name, "liveChannels", arg, PluginLiveContract.CHANNELS_TIMEOUT_MS)
-            val p = PluginOutput.liveChannels(out, currentHosts().copy(anyPublicLiveHost = plugin.record.liveStreamHostsAny), allowDrm) { log("[$pluginId] $it") }
+            val p = PluginOutput.liveChannels(out, currentHosts().copy(anyPublicLiveHost = plugin.record.liveStreamHostsAny || plugin.record.streamHostsAny), allowDrm) { log("[$pluginId] $it") }
             val fresh = p.items.filter { seenIds.add(it.id) }
             items += fresh
             val next = p.next ?: break
@@ -581,7 +582,13 @@ class PluginLiveProvider(
         if (source.playlist.resolve) {
             return opening(channel, known.copy(ref = PluginRef(pluginId, channel.code, PluginRef.LIVE, entry.url).encode()), null)
         }
-        val stream = PluginStream(url = entry.url, headers = PluginOutput.headersOf(JSONObject(entry.headers as Map<*, *>)))
+        val entryHeaders = PluginOutput.headersOf(JSONObject(entry.headers as Map<*, *>))
+        // The list's streamHeaders (a User-Agent, a Referer) under the entry's own: a header the entry names wins,
+        // whatever its spelling ("user-agent" replaces "User-Agent").
+        val headers = LinkedHashMap<String, String>()
+        source.playlist.streamHeaders.forEach { (k, v) -> if (entryHeaders.keys.none { it.equals(k, ignoreCase = true) }) headers[k] = v }
+        headers.putAll(entryHeaders)
+        val stream = PluginStream(url = entry.url, headers = headers)
         return opening(channel, known, PluginContentSource.livePlayable(stream))
     }
 

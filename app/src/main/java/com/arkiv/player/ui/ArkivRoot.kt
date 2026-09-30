@@ -16,11 +16,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.ViewAgenda
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.VideoLibrary
@@ -42,6 +43,8 @@ import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
@@ -115,14 +118,23 @@ private val TABS = listOf(
  * live module has at least one provider ([liveModule], see `AppGraph.liveModule.available`):
  * Xuper while its plugin is on, plus any installed plugin with `channels`. Pure for the test.
  */
-internal fun visibleTabRoutes(isColombia: Boolean, liveModule: Boolean): List<String> =
+internal fun visibleTabRoutes(isColombia: Boolean, liveModule: Boolean, categoriesModule: Boolean = true): List<String> =
     TABS.map { it.route }.filter { route ->
         when (route) {
             "caracol" -> isColombia
             "live" -> liveModule
+            "categorias_home" -> categoriesModule
             else -> true
         }
     }
+
+/**
+ * "Categorías" lists the Xuper catalog's genres and featured rows (`CategoriesViewModel`) and, grouped by genre, the
+ * browsable Home rows of every other plugin ([hasGenreTiles]). With neither there is nothing to list, so the tab (and
+ * the TV rail's entry) is there only while the Xuper plugin is usable or some plugin has a row to browse.
+ */
+internal fun categoriesTabAvailable(plugins: List<com.arkiv.player.data.plugin.InstalledPlugin>, hasGenreTiles: Boolean): Boolean =
+    com.arkiv.player.ui.home.CategoriesViewModel.xuperPluginId(plugins) != null || hasGenreTiles
 
 /** Whether tapping the top bar's logo goes to Inicio: on every section but Inicio itself. */
 internal fun logoGoesHome(currentRoute: String?): Boolean = currentRoute != null && currentRoute != "home"
@@ -144,8 +156,11 @@ fun ArkivRoot(
     val isColombia = remember { com.arkiv.player.ui.live.deviceCountry(context) == "CO" }
     // "En vivo" follows the live module (Xuper or any plugin with channels), without a restart.
     val liveOn by graph.liveModule.available.collectAsStateWithLifecycle()
-    val tabs = remember(isColombia, liveOn) {
-        val routes = visibleTabRoutes(isColombia, liveOn)
+    val installedForTabs by graph.pluginRegistry.plugins.collectAsStateWithLifecycle()
+    val genreTiles by graph.genreTiles.collectAsStateWithLifecycle()
+    val categoriesOn = categoriesTabAvailable(installedForTabs, genreTiles.isNotEmpty())
+    val tabs = remember(isColombia, liveOn, categoriesOn) {
+        val routes = visibleTabRoutes(isColombia, liveOn, categoriesOn)
         TABS.filter { it.route in routes }
     }
 
@@ -196,6 +211,8 @@ fun ArkivRoot(
     }
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
+    // The En vivo screen's buttons live in the app bar (guide, Recargar, "+"); this is what they share with the screen.
+    val liveChrome = com.arkiv.player.ui.live.rememberLiveChromeState()
     val isTab = currentRoute in TABS.map { it.route }
 
     // A single definition of "go to a tab", so the rail and the bar can't diverge in behavior
@@ -340,14 +357,49 @@ fun ArkivRoot(
                         }
                     },
                     actions = {
+                        if (currentRoute == "live") {
+                            var addMenu by remember { androidx.compose.runtime.mutableStateOf(false) }
+                            if (liveChrome.hasGuide) {
+                                IconButton(onClick = { liveChrome.toggleGuide() }) {
+                                    Icon(
+                                        imageVector = if (liveChrome.guideMode) Icons.Default.GridView else Icons.Default.ViewAgenda,
+                                        contentDescription = if (liveChrome.guideMode) "Ver como grilla" else "Ver guía de programación",
+                                        tint = if (liveChrome.guideMode) ArkivRed else Color.White,
+                                    )
+                                }
+                            }
+                            IconButton(onClick = { liveChrome.requestReload() }) {
+                                Icon(Icons.Default.Refresh, contentDescription = "Recargar canales", tint = Color.White)
+                            }
+                            Box {
+                                IconButton(onClick = { addMenu = true }) {
+                                    Icon(Icons.Default.Add, contentDescription = com.arkiv.player.ui.live.OwnSourcesCopy.ADD_MENU, tint = Color.White)
+                                }
+                                DropdownMenu(expanded = addMenu, onDismissRequest = { addMenu = false }) {
+                                    DropdownMenuItem(
+                                        text = { Text(com.arkiv.player.ui.live.OwnSourcesCopy.ADD_CHANNEL) },
+                                        onClick = { addMenu = false; liveChrome.request(com.arkiv.player.ui.live.LiveChromeAction.ADD_CHANNEL) },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text(com.arkiv.player.ui.live.OwnSourcesCopy.ADD_PLAYLIST) },
+                                        onClick = { addMenu = false; liveChrome.request(com.arkiv.player.ui.live.LiveChromeAction.ADD_PLAYLIST) },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text(com.arkiv.player.ui.live.OwnSourcesCopy.MY_SOURCES) },
+                                        onClick = { addMenu = false; liveChrome.request(com.arkiv.player.ui.live.LiveChromeAction.MANAGE) },
+                                    )
+                                }
+                            }
+                        }
                         if (currentRoute == "home") {
                             IconButton(onClick = { graph.reloadHomeCatalog() }) {
                                 Icon(Icons.Default.Refresh, contentDescription = "Recargar catálogo", tint = Color.White)
                             }
                             IconButton(onClick = { navController.navigate("kinobot") }) {
+                                // The sparkles are the generic "AI assistant" icon; a speech bubble did not say it was an AI.
                                 Icon(
-                                    Icons.AutoMirrored.Filled.Chat,
-                                    contentDescription = "Kinobot",
+                                    Icons.Default.AutoAwesome,
+                                    contentDescription = "Kinobot, el asistente de IA",
                                     tint = Color.White,
                                 )
                             }
@@ -404,6 +456,7 @@ fun ArkivRoot(
                     // account, goToLiveChannel sends the tap to Ajustes instead (see its KDoc).
                     onOpenChannel = { liveCode -> goToLiveChannel(liveCode) },
                     contentPadding = padding,
+                    chrome = liveChrome,
                 )
             }
             composable("caracol") {
@@ -437,7 +490,11 @@ fun ArkivRoot(
                 com.arkiv.player.ui.plugin.PluginsDrawerScreen(contentPadding = padding)
             }
             composable("categorias_home") {
-                com.arkiv.player.ui.home.CategoriesScreen(
+                // Guard, like "live": a route reached while Xuper is off (it was on screen when Xuper went, or restored
+                // state) goes back to Inicio instead of showing an empty screen.
+                if (!categoriesOn) {
+                    LaunchedEffect(Unit) { TABS.firstOrNull { it.route == "home" }?.let(::goToTab) }
+                } else com.arkiv.player.ui.home.CategoriesScreen(
                     contentPadding = padding,
                     onBrowse = { navController.navigate(com.arkiv.player.ui.plugin.PluginMoreTarget.route(it)) },
                 )
@@ -557,16 +614,9 @@ fun ArkivRoot(
             }
             composable("player/{episodeId}") { entry ->
                 val episodeId = Uri.decode(entry.arguments?.getString("episodeId").orEmpty())
-                val itemId = episodeId.substringBefore("::")
                 PlayerScreen(
                     episodeId = episodeId,
                     onBack = { navController.popBackStack() },
-                    onOpenEpisodes = {
-                        navController.navigate("detail/${Uri.encode(itemId)}") {
-                            popUpTo("player/{episodeId}") { inclusive = true }
-                            launchSingleTop = true
-                        }
-                    },
                     onNextEpisode = { goToPlayer(it) },
                     // The player leaves: after configuring, Back returns to where the title was.
                     // No destination at all for the recognized Xuper plugin -- see

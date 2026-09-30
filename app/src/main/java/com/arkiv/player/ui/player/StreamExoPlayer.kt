@@ -52,10 +52,13 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.ui.SubtitleView
+import com.arkiv.player.playback.withAudioFocus
 import com.arkiv.player.playback.LiveErrorKind
 import com.arkiv.player.playback.MpegTs
 import com.arkiv.player.playback.SourceKind
 import com.arkiv.player.playback.TsDurationProbe
+import com.arkiv.player.playback.VodSyncMonitor
+import com.arkiv.player.playback.VodSyncStats
 import com.arkiv.player.playback.fallbackRenderers
 import com.arkiv.player.ui.rememberGraph
 import kotlinx.coroutines.delay
@@ -343,6 +346,7 @@ internal fun StreamExoPlayer(
         val player = ExoPlayer.Builder(context, fallbackRenderers(context))
             .setMediaSourceFactory(mediaSourceFactory)
             .setLoadControl(loadControl)
+            .withAudioFocus()
             .build()
         val built = PreparedSource(player, mediaItem, mediaSourceFactory, drmSoftwareLevelRefused)
         // Unchanged from before audio tracks existed when [audioTracks] is empty: same mediaItem,
@@ -355,6 +359,8 @@ internal fun StreamExoPlayer(
     // shrinks, when [fallbackAudioTracks] blames one (or all) of them for a player error -- never
     // restored within the same playback, so a track already found unusable is not retried.
     var activeAudioTracks by remember(prepared) { mutableStateOf(audioTracks) }
+    // Re-prepares already spent on a stuck VOD player (see PlayerErrorRoute.STUCK_RETRY); per prepared source.
+    var stuckRetries by remember(prepared) { mutableStateOf(0) }
 
     var videoAspectRatio by remember(exoPlayer) { mutableFloatStateOf(0f) }
     // Read inside the layout listener below, which is built once (`remember`) and outlives every
@@ -399,6 +405,19 @@ internal fun StreamExoPlayer(
             wantsToPlay = exoPlayer.playWhenReady,
         )
         Log.i(TAG, "DisposableEffect hooked · state=${exoPlayer.playbackState} isPlaying=${exoPlayer.isPlaying}")
+
+        // A film (not a plugin's live channel) is watched for the signs of out-of-sync audio: one report at most, and
+        // a device sends one a day. See [VodSyncMonitor].
+        val syncMonitor = if (onLiveError == null) {
+            VodSyncMonitor(
+                player = exoPlayer,
+                context = context,
+                sourceTag = crashTag,
+                externalAudioTracks = { activeAudioTracks.size },
+                mayReport = { VodSyncStats.mayReport(System.currentTimeMillis(), graph.settings.avSyncReportedAtMs) },
+                onReported = { graph.settings.avSyncReportedAtMs = System.currentTimeMillis() },
+            ).also { exoPlayer.addAnalyticsListener(it) }
+        } else null
 
         val listener = object : Player.Listener {
 
@@ -501,6 +520,8 @@ internal fun StreamExoPlayer(
                     drmSoftwareRefused = prepared.drmSoftwareLevelRefused.get(),
                     audioTracksActive = activeAudioTracks.isNotEmpty(),
                     askableHost = undeclared != null,
+                    stuck = isStuckPlayer(error),
+                    stuckRetriesLeft = MAX_STUCK_RETRIES - stuckRetries,
                 )
                 when (route) {
                     // The player stays stopped on this error while the person decides; a "yes"
@@ -509,6 +530,15 @@ internal fun StreamExoPlayer(
                         val position = exoPlayer.currentPosition.coerceAtLeast(0L)
                         Log.w(TAG, "request refused: ${undeclared!!.host} is not declared by ${undeclared.pluginId} -> asking at ${position}ms")
                         onUndeclaredHost!!(undeclared.host, position)
+                    }
+                    // The player's own watchdog found it stuck (playing with no progress, or buffering and not loading), on a VOD:
+                    // rebuild the source at the same position, up to twice, before the person sees an error. Most of these follow
+                    // an audio sink discontinuity on a TV box, after which the AudioTrack is dead until the renderer is re-enabled.
+                    PlayerErrorRoute.STUCK_RETRY -> {
+                        stuckRetries++
+                        val at = exoPlayer.currentPosition.coerceAtLeast(0L)
+                        Log.w(TAG, "player stuck ($msg) → re-preparing at ${at}ms, retry $stuckRetries/$MAX_STUCK_RETRIES")
+                        applyAudioTracks(prepared, activeAudioTracks, at, playWhenReady = exoPlayer.playWhenReady)
                     }
                     // A live channel's playlist-level error (behind the live window, reset, stuck) is
                     // never an audio track's fault: it is fixed in place before anything is blamed.
@@ -561,6 +591,10 @@ internal fun StreamExoPlayer(
 
         onDispose {
             Log.i(TAG, "onDispose · pos=${exoPlayer.currentPosition}ms isPlaying=${exoPlayer.isPlaying}")
+            syncMonitor?.let {
+                runCatching { it.finish() }
+                exoPlayer.removeAnalyticsListener(it)
+            }
             exoPlayer.removeListener(listener)
             exoPlayer.removeAnalyticsListener(decoderLog)
             exoPlayer.clearVideoTextureView(textureView)
@@ -975,3 +1009,6 @@ internal fun fallbackAudioTracks(tracks: List<ResolvedAudioTrack>, failureText: 
 /** [error]'s message, and every cause behind it: where [fallbackAudioTracks] looks for a URL. */
 internal fun playbackFailureText(error: Throwable): String =
     generateSequence(error) { it.cause }.joinToString(" | ") { it.toString() }
+
+/** How many times a stuck VOD player is re-prepared in place before its error reaches the person. */
+private const val MAX_STUCK_RETRIES = 2

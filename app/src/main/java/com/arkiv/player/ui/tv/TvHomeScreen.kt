@@ -60,7 +60,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -101,6 +107,7 @@ import com.arkiv.player.ui.home.HomeViewModel
 import com.arkiv.player.ui.home.TvHomeLanding
 import com.arkiv.player.ui.home.emptyStateNeedsRefocus
 import com.arkiv.player.ui.home.homeEmptyCopy
+import com.arkiv.player.ui.categoriesTabAvailable
 import com.arkiv.player.ui.home.homeShowsEmptyState
 import com.arkiv.player.ui.home.HOME_LOADING_LINE
 import com.arkiv.player.ui.home.TV_HOME_VISIBLE_ROWS
@@ -239,13 +246,16 @@ internal enum class TvHomeBack {
     /** Scroll the rows back to the top and put focus on the default landing, staying on Home. */
     SCROLL_TO_TOP,
 
+    /** Put focus on the menu rail, opening it. From there the next Back is [EXIT_FLOW]. */
+    OPEN_MENU,
+
     /** Today's behaviour, handled by the nav host: press Back twice to leave the app. */
     EXIT_FLOW,
 }
 
 /**
- * Back on the TV Home: someone deep in the rows goes back to the top first, and only from there does
- * Back start the exit flow. "Deep" is a scrolled rows list, or focus on a row below the first one.
+ * Back on the TV Home: someone deep in the rows goes back to the top first, from the top of the content Back
+ * opens the menu rail, and only from the rail does Back start the exit flow. "Deep" is a scrolled rows list, or focus on a row below the first one.
  * Focus already on the default landing (`tvHomeDefaultLanding`'s target) counts as the top even if
  * the list is scrolled (the empty state's button can sit below other rows), and the Back right after
  * a scroll to the top never scrolls again, so a landing that fails can't trap the person on Home.
@@ -257,6 +267,9 @@ internal fun tvHomeBackAction(
     focusOnLanding: Boolean,
     justScrolledToTop: Boolean,
 ): TvHomeBack = when {
+    // Content that has focus at the top of Home (the first row, or the default landing wherever it sits) hands Back
+    // to the rail before anything else, even right after a scroll to the top: the menu is the way out of the content.
+    focusInRows && (focusOnLanding || (listAtTop && focusedRowIsFirst)) -> TvHomeBack.OPEN_MENU
     justScrolledToTop || focusOnLanding -> TvHomeBack.EXIT_FLOW
     !listAtTop -> TvHomeBack.SCROLL_TO_TOP
     focusInRows && !focusedRowIsFirst -> TvHomeBack.SCROLL_TO_TOP
@@ -406,7 +419,7 @@ fun TvHomeScreen(
     /** Plays a live channel directly (channel code), without going through "En vivo". */
     onPlayLive: (String) -> Unit,
     onOpenSettings: () -> Unit,
-    /** "Plugins" of the top bar: opens the Plugins screen as its own route (see [TvPluginsRoute]). */
+    /** Ajustes already on its Plugins tab, so the rail reaches them without walking the tab row. */
     onOpenPlugins: () -> Unit,
     onOpenSearch: () -> Unit,
     onOpenLibrary: () -> Unit,
@@ -501,8 +514,10 @@ fun TvHomeScreen(
     }
     // The module's providers right now: a switched-off plugin's recents leave the row (they are kept, not deleted).
     val liveOn by graph.liveModule.available.collectAsStateWithLifecycle()
+    val liveSources by graph.hasLiveSources.collectAsStateWithLifecycle()
+    val genreTiles by graph.genreTiles.collectAsStateWithLifecycle()
     val installedPlugins by graph.pluginAdmin.plugins.collectAsStateWithLifecycle()
-    val homeEmpty = homeShowsEmptyState(installedPlugins, pluginRows.size, liveOn)
+    val homeEmpty = homeShowsEmptyState(installedPlugins, pluginRows.size, liveSources)
     val emptyCopy = homeEmptyCopy(installedPlugins, isTv = true)
     val homeEmptyNow by rememberUpdatedState(homeEmpty)
     val emptySourcesFocus = remember { FocusRequester() }
@@ -701,14 +716,6 @@ fun TvHomeScreen(
     // anything. Within the bar it lands on "Buscar": looking something up is the first thing a
     // person reaches for, and the rest of the bar is one D-pad press to the right.
     val barFocus = remember { FocusRequester() }
-    // "Plugins" of the top bar: Back from its own route ([TvPluginsRoute], via ArkivTvRoot's "plugins"
-    // composable) lands back here with focus on THIS button, not the default landing -- see the
-    // `returningFromPlugins` effect below, right after `cardRestored`/`landOnDefault` reads it.
-    // `rememberSaveable`: this whole composable is disposed while "plugins" is the current NavHost
-    // destination and rebuilt when Home is entered again, so a plain `remember` would forget it.
-    var returningFromPlugins by rememberSaveable { mutableStateOf(false) }
-    val pluginsFocus = remember { FocusRequester() }
-    var pluginsLandingFocused by remember { mutableStateOf(false) }
     // A live surface can take away the node that holds focus while this screen is showing: the
     // "Xuper" button (the Xuper gate closes, e.g. its plugin gets marked damaged), the "En vivo"
     // button (the live module empties) or the channels row (its last channel's provider went).
@@ -747,13 +754,20 @@ fun TvHomeScreen(
     val firstFocusKey = continueWatching.firstOrNull()?.episodeId
     // Real focus on the first "Continuar viendo" card (the FIRST_CARD landing), for Back's rule below.
     var firstCardFocused by remember { mutableStateOf(false) }
+    // True while focus is anywhere inside the rows zone (its LazyColumn); also how a landing on the content is confirmed.
+    var rowsHaveFocus by remember { mutableStateOf(false) }
+    // Attached to the rows LazyColumn: requesting it puts focus on the first focusable card in there.
+    val rowsEnter = remember { FocusRequester() }
 
     /**
      * Puts focus on the default landing (`tvHomeDefaultLanding`): the first "Continuar viendo" card, the
      * empty state's button, or the top bar. Used on opening and by Back's scroll to the top.
      */
-    suspend fun landOnDefault() {
+    suspend fun landOnDefault(contentFirst: Boolean = false) {
         var landed = false
+        // With no card to land on the default is the rail, which opens as soon as it holds focus. On opening, the
+        // person should see the content, so [contentFirst] aims at the first card and only falls back to the rail.
+        var aimedAtContent = false
         repeat(20) {
             if (landed) return@repeat
             val landing = tvHomeDefaultLanding(homeEmptyNow, hasContinueCard = firstFocusKey != null)
@@ -776,29 +790,26 @@ fun TvHomeScreen(
                     )
                     emptySourcesFocus
                 }
-                TvHomeLanding.TOP_BAR -> barFocus
+                TvHomeLanding.TOP_BAR -> if (contentFirst) {
+                    aimedAtContent = true
+                    runCatching { rowsListState.scrollToItem(0) }
+                    rowsEnter
+                } else {
+                    barFocus
+                }
             }
             val requested = runCatching { target.requestFocus() }.isSuccess
-            landed = tvHomeLandingHeld(landing, requested, emptySourcesFocused)
+            landed = if (aimedAtContent) rowsHaveFocus else tvHomeLandingHeld(landing, requested, emptySourcesFocused)
             if (!landed) delay(50)
         }
+        // The rows never took focus (still skeletons, say): the rail is a landing that always works.
+        if (aimedAtContent && !landed) runCatching { barFocus.requestFocus() }
     }
 
     // True once focus is back on the card `cardToRestore` names: from then on the default landing
     // below must not take it away (a late "Continuar viendo" changes `firstFocusKey`).
     var cardRestored by remember { mutableStateOf(false) }
     LaunchedEffect(firstFocusKey) {
-        // Back from the "Plugins" route: focus goes straight to that button, not the default landing a
-        // card restore or an empty cardToRestore would otherwise pick.
-        if (returningFromPlugins) {
-            returningFromPlugins = false
-            retryFocus(
-                isAlreadyFocused = { pluginsLandingFocused },
-                wait = { delay(WAIT_BETWEEN_FOCUS_ATTEMPTS_MS) },
-                request = { pluginsFocus.requestFocus() },
-            )
-            return@LaunchedEffect
-        }
         delay(200)
         if (cardToRestore != null && !cardRestored) {
             val pluginCards = {
@@ -825,7 +836,7 @@ fun TvHomeScreen(
             }
         }
         if (cardRestored) return@LaunchedEffect
-        landOnDefault()
+        landOnDefault(contentFirst = true)
     }
 
     // Fixed-size cards and rows: the rows zone measures EXACTLY 2 rows (label + landscape card),
@@ -850,7 +861,6 @@ fun TvHomeScreen(
     // Back deep in the rows goes back to the top first ([tvHomeBackAction]); from the top, the nav
     // host's double-Back-to-exit runs as before. This handler is registered after the nav host's, so
     // it wins while enabled; dialogs (the OTA update) have their own window and keep Back first.
-    var rowsHaveFocus by remember { mutableStateOf(false) }
     // The rows list item (by key) holding focus, null while focus is outside the rows.
     var focusedRowKey by remember { mutableStateOf<Any?>(null) }
     var justScrolledToTop by remember { mutableStateOf(false) }
@@ -877,6 +887,9 @@ fun TvHomeScreen(
                 justScrolledToTop = justScrolledToTop,
             )
         }
+    }
+    BackHandler(enabled = backAction == TvHomeBack.OPEN_MENU) {
+        runCatching { barFocus.requestFocus() }
     }
     BackHandler(enabled = backAction == TvHomeBack.SCROLL_TO_TOP) {
         justScrolledToTop = true
@@ -964,70 +977,15 @@ fun TvHomeScreen(
             }
         }
 
-        Column(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize().padding(start = TV_RAIL_CONTENT_START)) {
             // --- FIXED HERO (doesn't scroll; stays immovable up top, takes up the leftover space) ---
-            Column(Modifier.fillMaxWidth().weight(1f).padding(horizontal = 48.dp, vertical = 28.dp)) {
-                // Top bar.
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    KinoWordmark(height = 34.dp, modifier = Modifier.padding(end = 16.dp))
-                    TvNavButton(
-                        icon = Icons.Default.Search,
-                        label = "Buscar",
-                        onClick = onOpenSearch,
-                        modifier = Modifier.focusRequester(barFocus).onFocusChanged { barLandingFocused = it.isFocused },
-                    )
-                    TvNavButton(
-                        icon = Icons.Default.Extension,
-                        label = "Plugins",
-                        onClick = {
-                            returningFromPlugins = true
-                            onOpenPlugins()
-                        },
-                        modifier = Modifier.focusRequester(pluginsFocus).onFocusChanged { pluginsLandingFocused = it.isFocused },
-                    )
-                    TvNavButton(icon = Icons.Default.Refresh, label = "Recargar", onClick = { graph.reloadHomeCatalog() })
-                    TvNavButton(
-                        icon = Icons.Default.GridView,
-                        label = "Categorías",
-                        onClick = onOpenCategoriasHome,
-                    )
-                    // The native Xuper catalog tree ("categorias" route) and the live guide only
-                    // while the Xuper plugin is on, like the rest of its native surfaces.
-                    if (xuperLive) {
-                        TvNavButton(
-                            icon = Icons.Default.PlayCircle,
-                            label = "Xuper",
-                            onClick = onOpenCategorias,
-                        )
-                    }
-                    TvNavButton(
-                        icon = Icons.Default.VideoLibrary,
-                        label = "Mi biblioteca",
-                        onClick = onOpenLibrary,
-                    )
-                    // The live guide follows the whole module: Xuper or any plugin with channels.
-                    if (liveOn) {
-                        TvNavButton(
-                            icon = Icons.Default.LiveTv,
-                            label = "En vivo",
-                            onClick = onOpenLive,
-                        )
-                    }
-                    if (isColombia) {
-                        TvNavButton(icon = Icons.Default.Tv, label = "Caracol", onClick = onOpenCaracol)
-                    }
-                    // No "Torrent" button: this branch has no torrents, and ArkivTvRoot registers
-                    // no "torrent" route.
-                    TvNavButton(icon = Icons.Default.Settings, label = "Ajustes", onClick = onOpenSettings)
-                }
-
-                Spacer(Modifier.weight(1f))
-
-                // Focused item's title/description, bottom left.
+            // Vertically centred: with the top bar gone (it is a rail now) the hero starts at the top of the screen, and
+            // text pushed to the bottom left the whole upper half empty.
+            Column(
+                Modifier.fillMaxWidth().weight(1f).padding(horizontal = 48.dp, vertical = 28.dp),
+                verticalArrangement = Arrangement.Center,
+            ) {
+                // Focused item's title/description, centred vertically on the left.
                 featured?.let { f ->
                     Text(
                         f.title,
@@ -1082,6 +1040,7 @@ fun TvHomeScreen(
                         .fillMaxWidth()
                         .height(rowsRegionHeight)
                         .padding(top = rowsTopPad)
+                        .focusRequester(rowsEnter)
                         .onFocusChanged {
                             rowsHaveFocus = it.hasFocus
                             if (!it.hasFocus) focusedRowKey = null
@@ -1302,6 +1261,7 @@ fun TvHomeScreen(
                                             modifier = if (cardKey == cardToRestore) Modifier.focusRequester(returnFocus) else Modifier,
                                             badge = live ?: row.pluginName,
                                             badgeColor = if (live != null) ArkivRed else androidx.compose.ui.graphics.Color(row.color),
+                                            isNew = com.arkiv.player.data.gateway.ShelveTime.hasNewBadge(item.extra["badges"]),
                                             onFocus = {
                                                 navSound()
                                                 featured = pluginCardFeatured(row, item)
@@ -1349,6 +1309,54 @@ fun TvHomeScreen(
             }
         }
 
+        // The navigation, as a rail on the left. "Buscar" keeps `barFocus`, so the landing and the refocus rules above
+        // keep working: they were written for the old top bar and only the shape of the bar changed.
+        val reloadFocus = remember { FocusRequester() }
+        val railItems = buildList {
+            add(
+                TvRailItem(
+                    Icons.Default.Search, "Buscar", onOpenSearch,
+                    Modifier.focusRequester(barFocus).onFocusChanged { barLandingFocused = it.isFocused }
+                        // Right from the top of the rail goes to the reload button in the corner (nothing else can reach it).
+                        .onPreviewKeyEvent { e ->
+                            if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionRight) {
+                                reloadFocus.requestFocus()
+                                true
+                            } else {
+                                false
+                            }
+                        },
+                ),
+            )
+            if (categoriesTabAvailable(installedPlugins, genreTiles.isNotEmpty())) add(TvRailItem(Icons.Default.GridView, "Categorías", onOpenCategoriasHome))
+            if (xuperLive) add(TvRailItem(Icons.Default.PlayCircle, "Xuper", onOpenCategorias))
+            add(TvRailItem(Icons.Default.VideoLibrary, "Mi biblioteca", onOpenLibrary))
+            if (liveOn) add(TvRailItem(Icons.Default.LiveTv, "En vivo", onOpenLive))
+            if (isColombia) add(TvRailItem(Icons.Default.Tv, "Caracol", onOpenCaracol))
+            add(TvRailItem(Icons.Default.Extension, "Plugins", onOpenPlugins))
+            add(TvRailItem(Icons.Default.Settings, "Ajustes", onOpenSettings))
+        }
+        TvSideRail(railItems, Modifier.align(Alignment.CenterStart))
+        // Reload sits in the top right corner, away from the navigation: it is an action on the screen, not a place to go.
+        Surface(
+            onClick = { graph.reloadHomeCatalog() },
+            modifier = Modifier.align(Alignment.TopEnd).padding(top = 24.dp, end = 32.dp).size(48.dp)
+                .focusRequester(reloadFocus)
+                .focusProperties { left = barFocus },
+            shape = ClickableSurfaceDefaults.shape(CircleShape),
+            colors = ClickableSurfaceDefaults.colors(
+                containerColor = ArkivBlack.copy(alpha = 0.55f),
+                contentColor = Color.White,
+                focusedContainerColor = ArkivRed,
+                focusedContentColor = Color.White,
+                pressedContainerColor = ArkivRed,
+                pressedContentColor = Color.White,
+            ),
+        ) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Icon(Icons.Default.Refresh, contentDescription = "Recargar", modifier = Modifier.size(26.dp))
+            }
+        }
     }
 }
 

@@ -112,7 +112,7 @@ class StreamHostApproval(
         // Never for a fetch or a license, whatever the caller asks.
         val offer = offerAnyVideoHost && reason != HostApprovalReason.FETCH && reason != HostApprovalReason.LICENSE
         // Granted meanwhile (an earlier question of this same Stream, another title): nothing to ask.
-        if (offer && record.anyVideoHost) return StreamHostDecision.APPROVED_ANY_VIDEO_HOST
+        if (offer && record.videoFromAnyHost) return StreamHostDecision.APPROVED_ANY_VIDEO_HOST
         if (host in record.rejectedHosts) {
             log("[$pluginId] $reason host $host: refused before, not asked again")
             return StreamHostDecision.REJECTED

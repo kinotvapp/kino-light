@@ -36,9 +36,9 @@ export const TABLES = {
   ]),
   settings: () => table(["type", "value", "can be `required`", "can have a `default`", "longest value"], Object.entries(c.settings.types).map(([t, v]) => [
     `\`${t}\``,
-    t === "toggle" ? "`true` / `false`" : t === "select" ? "one of the `options` values" : "text",
+    t === "toggle" ? "`true` / `false`" : t === "select" ? "one of the `options` values" : t === "list" ? "a list of entries, each an object of the list's `fields`" : "text",
     v.canBeRequired ? "yes" : "no (always has a value)",
-    v.canHaveDefault ? "yes" : "no (use `hint` for an example)",
+    v.canHaveDefault ? "yes" : t === "list" ? "no" : "no (use `hint` for an example)",
     v.maxChars ? `${n(v.maxChars)} characters` : "—",
   ])),
   crypto: () => table(["Function", "Algorithms"], [

@@ -10,16 +10,19 @@ class PlayerErrorRouteTest {
         drmError: Boolean = false,
         drmSoftwareRefused: Boolean = false,
         audio: Boolean = false,
+        stuck: Boolean = false,
+        stuckRetriesLeft: Int = 0,
         askHost: Boolean = false,
-    ) = playerErrorRoute(live, liveInPlace, drmError, drmSoftwareRefused, audio, askHost)
+    ) = playerErrorRoute(live, liveInPlace, drmError, drmSoftwareRefused, audio, stuck, stuckRetriesLeft, askableHost = askHost)
 
     // A request refused ONLY because its host is undeclared (and askable) is a question for the
-    // person, not an audio track's fault, a live cut or a final error: asking comes first.
+    // person, not an audio track's fault, a live cut, a stuck re-prepare or a final error: asking comes first.
     @Test fun `an askable undeclared host is asked about before anything else is blamed`() {
         assertEquals(PlayerErrorRoute.ASK_HOST, route(askHost = true))
         assertEquals(PlayerErrorRoute.ASK_HOST, route(askHost = true, audio = true))
         assertEquals(PlayerErrorRoute.ASK_HOST, route(askHost = true, live = true, liveInPlace = true))
         assertEquals(PlayerErrorRoute.ASK_HOST, route(askHost = true, live = true))
+        assertEquals(PlayerErrorRoute.ASK_HOST, route(askHost = true, stuck = true, stuckRetriesLeft = 2))
     }
 
     @Test fun `a VOD error with nothing to blame is final`() {
@@ -52,5 +55,28 @@ class PlayerErrorRouteTest {
 
     @Test fun `in-place is only for a live channel`() {
         assertEquals(PlayerErrorRoute.FINAL, route(liveInPlace = true))
+    }
+
+    @Test fun `a VOD player stuck with retries left is re-prepared in place, before anything is blamed`() {
+        assertEquals(PlayerErrorRoute.STUCK_RETRY, route(stuck = true, stuckRetriesLeft = 2))
+        assertEquals(PlayerErrorRoute.STUCK_RETRY, route(stuck = true, stuckRetriesLeft = 1, audio = true))
+    }
+
+    @Test fun `a stuck VOD player out of retries falls to the usual routes`() {
+        assertEquals(PlayerErrorRoute.FINAL, route(stuck = true, stuckRetriesLeft = 0))
+        assertEquals(PlayerErrorRoute.DROP_AUDIO, route(stuck = true, stuckRetriesLeft = 0, audio = true))
+    }
+
+    @Test fun `stuck retries are for VOD only and never for a DRM failure`() {
+        assertEquals(PlayerErrorRoute.LIVE_CUT, route(live = true, stuck = true, stuckRetriesLeft = 2))
+        assertEquals(PlayerErrorRoute.DRM_FINAL, route(drmError = true, stuck = true, stuckRetriesLeft = 2))
+    }
+
+    @Test fun `only the player's own stuck watchdog counts as stuck`() {
+        val runtimeCheck = 1003
+        assertEquals(true, isStuckPlayer(runtimeCheck, listOf("Unexpected runtime error", "Player stuck playing with no progress for 10000 ms")))
+        assertEquals(true, isStuckPlayer(runtimeCheck, listOf("Player stuck buffering and not loading for 4000 ms")))
+        assertEquals(false, isStuckPlayer(runtimeCheck, listOf("flush() is valid only at Executing states")))
+        assertEquals(false, isStuckPlayer(2000, listOf("Player stuck playing with no progress for 10000 ms")))
     }
 }

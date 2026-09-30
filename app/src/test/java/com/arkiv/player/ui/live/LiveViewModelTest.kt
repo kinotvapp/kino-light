@@ -220,7 +220,9 @@ private class FakeProvider(
     }
     override suspend fun knownChannels() = known
     override fun hasUnloadedCategories() = unloaded
+    val forced = mutableListOf<Boolean>()
     override suspend fun channels(categoryId: String, force: Boolean): List<LiveChannel> {
+        forced += force
         channelsGate?.await()
         return channelsByCategory[categoryId].orEmpty()
     }
@@ -602,6 +604,39 @@ class LiveViewModelAsyncTest {
         advanceUntilIdle()
         assertEquals(before + 2, cache.saves)
         assertEquals(listOf("c1", "c2"), cache.byCategory(tvId, "news").map { it.code })
+    }
+
+    @Test
+    fun `reload on the own channels re-lists the categories, even from an empty section`() = runTest(dispatcher) {
+        val own = FakeProvider(com.arkiv.player.data.live.OwnLive.PROVIDER, "Mis canales")
+        val vm = LiveViewModel(FakeModule(own), FakeFavoriteDao(), FakeCacheDao())
+        advanceUntilIdle()
+        assertTrue(vm.state.value.categories.isEmpty())
+        // The person just saved a source: the provider now lists a category it did not have.
+        own.categoriesResult = listOf(ProviderCategory("own:1", "Canales sueltos"))
+        own.channelsByCategory["own:1"] = listOf(ch("s1", own.id))
+        vm.reload()
+        advanceUntilIdle()
+        assertEquals(listOf("own:1"), vm.state.value.categories.map { it.id })
+        assertEquals(listOf("s1"), vm.state.value.channels.map { it.code })
+        // And a source added later shows its category without leaving the screen.
+        own.categoriesResult = own.categoriesResult + ProviderCategory("~ab.g", "Deportes")
+        vm.reload()
+        advanceUntilIdle()
+        assertEquals(listOf("own:1", "~ab.g"), vm.state.value.categories.map { it.id })
+    }
+
+    @Test
+    fun `reload on the own channels forces the provider to download its lists again`() = runTest(dispatcher) {
+        val own = FakeProvider(com.arkiv.player.data.live.OwnLive.PROVIDER, "Mis canales", categoriesResult = listOf(ProviderCategory("own:1", "Canales sueltos")))
+        own.channelsByCategory["own:1"] = listOf(ch("s1", own.id))
+        val vm = LiveViewModel(FakeModule(own), FakeFavoriteDao(), FakeCacheDao())
+        advanceUntilIdle()
+        own.forced.clear()
+        vm.reload()
+        advanceUntilIdle()
+        assertTrue("Recargar must force a fresh download", own.forced.contains(true))
+        assertEquals(listOf("s1"), vm.state.value.channels.map { it.code })
     }
 
     @Test

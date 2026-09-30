@@ -179,6 +179,11 @@ class SettingsStore(context: Context) : com.arkiv.player.data.onboarding.Onboard
     }
 
     /** The app version (code) whose startup profile was already reported: each device reports once per release. See `StartupProfiler`. */
+    /** When this device last sent an audio-sync report (epoch ms, 0 = never): at most one a day, see `VodSyncStats.mayReport`. */
+    var avSyncReportedAtMs: Long
+        get() = prefs.getLong(KEY_AV_SYNC_REPORTED_AT, 0L)
+        set(value) { prefs.edit().putLong(KEY_AV_SYNC_REPORTED_AT, value).apply() }
+
     val startupProfileReportedVersion: Int get() = prefs.getInt(KEY_STARTUP_PROFILE_VERSION, 0)
 
     fun markStartupProfileReported(versionCode: Int) {
@@ -316,6 +321,7 @@ class SettingsStore(context: Context) : com.arkiv.player.data.onboarding.Onboard
         private const val KEY_STARTUP_PROFILE_VERSION = "perfil_arranque_version"
         private const val KEY_UI_SOUNDS = "sonidos_interfaz"
         private const val KEY_DNS_MODE = "dns_modo"
+        private const val KEY_AV_SYNC_REPORTED_AT = "av_sync_reportado_ms"
 
         /** The encrypted file `SecureDeviceStore` used to write (deleted in Task 9). */
         private const val OLD_ACCOUNTS_STORE_FILE = "arkiv_pb_secure"

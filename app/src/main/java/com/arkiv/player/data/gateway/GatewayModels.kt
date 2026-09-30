@@ -1,6 +1,12 @@
 package com.arkiv.player.data.gateway
 
-class GatewayException(message: String, cause: Throwable? = null) : RuntimeException(message, cause)
+open class GatewayException(message: String, cause: Throwable? = null) : RuntimeException(message, cause)
+
+/**
+ * The plugin a saved ref belongs to is switched off, uninstalled or damaged: the person's own doing, told to them in the message
+ * ("Activa el plugin X para ver esto"), never a bug. Downloads queued before it happened end with it, and it is not reported.
+ */
+class PluginBlockedException(message: String) : GatewayException(message)
 
 /**
  * Same shape as [GatewayException], but for a rejection the portal itself explains as a

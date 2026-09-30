@@ -46,6 +46,8 @@ fun PosterCard(
     meta: String? = null,
     /** Already has (at least) one episode saved on the device; draws the "saved" checkmark. */
     saved: Boolean = false,
+    /** Uploaded in the last 48 h (see `ShelveTime`): draws "NUEVO" in the bottom start corner, the one nothing else uses. */
+    isNew: Boolean = false,
     onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit,
 ) {
@@ -68,6 +70,13 @@ fun PosterCard(
                     text = badge,
                     color = badgeColor,
                     modifier = Modifier.align(Alignment.TopStart).padding(6.dp),
+                )
+            }
+            if (isNew) {
+                TypeBadge(
+                    text = com.arkiv.player.data.gateway.ShelveTime.NEW_BADGE,
+                    color = ArkivRed,
+                    modifier = Modifier.align(Alignment.BottomStart).padding(6.dp),
                 )
             }
             // Informational, not an action: it only signals the item already has something saved

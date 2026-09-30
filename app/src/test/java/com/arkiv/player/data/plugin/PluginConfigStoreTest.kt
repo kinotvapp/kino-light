@@ -214,4 +214,63 @@ class PluginConfigStoreTest {
         val json = org.json.JSONObject(store.read("jf", settings).toJson())
         assertEquals(setOf("server", "user", "password", "hd", "quality"), json.keys().asSequence().toSet())
     }
+
+    private val sources = PluginSetting(
+        "sources", "Direcciones", SettingType.LIST, max = 3,
+        fields = listOf(PluginSetting("url", "Dirección", SettingType.URL, required = true), PluginSetting("category", "Categoría", SettingType.TEXT)),
+    )
+    private fun entry(url: String, category: String = "") = mapOf("url" to url, "category" to category)
+
+    @Test fun `a list is saved as an array of entries and read back as the same entries`() {
+        val list = listOf(entry(" https://archive.org/details/a ", " Cine "), entry("https://archive.org/details/b"))
+        assertNull(store.save("arc", listOf(sources), mapOf("sources" to list)))
+        val file = File(tmp.root, "arc/config.json").readText()
+        assertTrue(file, file.contains("\"sources\":[{"))
+        assertEquals(
+            listOf(entry("https://archive.org/details/a", "Cine"), entry("https://archive.org/details/b")),
+            store.read("arc", listOf(sources)).values["sources"],
+        )
+    }
+
+    @Test fun `an empty list is nothing saved, and reads back as no entries`() {
+        assertNull(store.save("arc", listOf(sources), mapOf("sources" to emptyList<Map<String, String>>())))
+        assertFalse(File(tmp.root, "arc/config.json").readText().contains("sources"))
+        assertNull(store.read("arc", listOf(sources)).values["sources"])
+    }
+
+    @Test fun `a list with a bad entry is refused and nothing is written`() {
+        val reason = store.save("arc", listOf(sources), mapOf("sources" to listOf(entry("https://ok.example/a"), entry("no es una url"))))
+        assertTrue(reason!!.contains("Dirección"))
+        assertFalse(File(tmp.root, "arc/config.json").exists())
+    }
+
+    @Test fun `entries of a list past its max are refused`() {
+        val many = (1..4).map { entry("https://ok.example/$it") }
+        assertTrue(store.save("arc", listOf(sources), mapOf("sources" to many))!!.contains("3"))
+    }
+
+    @Test fun `entries with every field blank are dropped on save`() {
+        assertNull(store.save("arc", listOf(sources), mapOf("sources" to listOf(entry("https://ok.example/a"), entry("", "")))))
+        assertEquals(listOf(entry("https://ok.example/a")), store.read("arc", listOf(sources)).values["sources"])
+    }
+
+    @Test fun `a stored list that no longer fits the manifest reads as empty`() {
+        File(tmp.root, "arc").mkdirs()
+        File(tmp.root, "arc/config.json").writeText("""{"values":{"sources":[{"url":"no es una url"}]},"secrets":[],"revision":1}""")
+        assertNull(store.read("arc", listOf(sources)).values["sources"])
+    }
+
+    @Test fun `a required list with no entries is missing`() {
+        val required = sources.copy(required = true)
+        assertEquals(listOf("sources"), store.missing("arc", listOf(required)).map { it.key })
+        store.save("arc", listOf(required), mapOf("sources" to listOf(entry("https://ok.example/a"))))
+        assertEquals(emptyList<String>(), store.missing("arc", listOf(required)).map { it.key })
+    }
+
+    @Test fun `the plugin gets the list as a JSON array of objects`() {
+        store.save("arc", listOf(sources), mapOf("sources" to listOf(entry("https://ok.example/a", "Uno"))))
+        val json = org.json.JSONObject(store.read("arc", listOf(sources)).toJson())
+        assertEquals("Uno", json.getJSONArray("sources").getJSONObject(0).getString("category"))
+        assertEquals("https://ok.example/a", json.getJSONArray("sources").getJSONObject(0).getString("url"))
+    }
 }

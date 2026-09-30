@@ -21,7 +21,11 @@ data class PluginItem(
 )
 
 /** [ref] non-null only when the plugin declares `browse`: the row gets "Ver más". */
-data class PluginRow(val id: String, val title: String, val items: List<PluginItem>, val ref: String? = null)
+data class PluginRow(
+    val id: String, val title: String, val items: List<PluginItem>, val ref: String? = null,
+    /** A declared [Genre] id, or null (none given, or not in the vocabulary). */
+    val genre: String? = null,
+)
 
 /** A page of items; [next] is the opaque cursor the app passes back, or null at the end. */
 data class PluginPage(val items: List<PluginItem>, val next: String?)
@@ -85,7 +89,7 @@ data class PluginStream(
 )
 
 /** A section of the En vivo tab (apiVersion 3, `channels`). [country] is ISO 3166 alpha-2 uppercase, or "". */
-data class PluginLiveCategory(val id: String, val title: String, val country: String = "")
+data class PluginLiveCategory(val id: String, val title: String, val country: String = "", val genre: String? = null)
 
 /**
  * One channel of a `liveChannels` page (apiVersion 3). It plays either through `resolve([ref])`
@@ -119,6 +123,14 @@ data class PluginPlaylist(
     val refreshHours: Int = PluginLiveContract.DEFAULT_REFRESH_HOURS,
     val hideGroups: Set<String> = emptySet(),
     val resolve: Boolean = false,
+    /**
+     * Headers the PLAYER sends for every channel of this list (a `User-Agent` some channels insist on, a `Referer`),
+     * as a Stream's `headers` do. Apart from [headers] on purpose: those carry the list's own credentials and go only
+     * to the list's host, never to the many hosts the channels are on. A header an M3U entry names itself wins.
+     */
+    val streamHeaders: Map<String, String> = emptyMap(),
+    /** A declared [Genre] for every group this list produces (an inferred one is used when null). */
+    val genre: String? = null,
 )
 
 /** What a `liveCategories()` answer holds: the plugin's own sections and the playlists it declares. */
@@ -278,7 +290,7 @@ object PluginOutput {
                 ref.length > MAX_REF_CHARS -> null.also { log("home: row $id ref too long") }
                 else -> ref
             }
-            out += PluginRow(id, title, items, kept)
+            out += PluginRow(id, title, items, kept, Genre.parse(o.opt("genre")))
         }
         return out
     }
@@ -383,7 +395,7 @@ object PluginOutput {
             if (o.opt("adult") == true) { log("liveCategories: $id adult, dropped"); continue }
             if (!seen.add(id)) { log("liveCategories: duplicate $id dropped"); continue }
             val country = (o.opt("country") as? String)?.trim()?.uppercase()?.takeIf { COUNTRY.matches(it) }.orEmpty()
-            categories += PluginLiveCategory(id, title, country)
+            categories += PluginLiveCategory(id, title, country, Genre.parse(o.opt("genre")))
         }
         return PluginLiveCatalog(categories, playlists)
     }
@@ -403,7 +415,11 @@ object PluginOutput {
             (0 until minOf(a.length(), PluginLiveContract.MAX_HIDE_GROUPS))
                 .mapNotNull { (a.opt(it) as? String)?.trim()?.lowercase()?.take(100)?.takeIf(String::isNotEmpty) }.toSet()
         } ?: emptySet()
-        return PluginPlaylist(url, headersOf(p.optJSONObject("headers")), epg, hours, hide, p.opt("resolve") == true)
+        return PluginPlaylist(
+            url, headersOf(p.optJSONObject("headers")), epg, hours, hide, p.opt("resolve") == true,
+            streamHeaders = headersOf(p.optJSONObject("streamHeaders")),
+            genre = Genre.parse(p.opt("genre")),
+        )
     }
 
     /**
@@ -727,9 +743,12 @@ object PluginOutput {
         }.trim().take(max)
 
     /**
-     * https, ≤ [MAX_IMAGE_URL_CHARS] chars, and never an IP literal or a local name: a poster must
-     * not be a LAN probe. The exception is a URL on a server the person typed (scheme, host and
-     * port exactly): their own Jellyfin's posters are that server's.
+     * http or https, ≤ [MAX_IMAGE_URL_CHARS] chars, on a public name or a public IPv4 address, and
+     * never the home network or a local name (over http, not even a name without a dot): a poster must not be a LAN probe. Plain http is fine
+     * because a picture is display only (Coil sends none of the person's headers or cookies with it)
+     * and many catalogs and IPTV lists host their art that way; https-only left their images blank.
+     * The exception is a URL on a server the person typed (scheme, host and port exactly): their own
+     * Jellyfin's posters are that server's.
      */
     private fun image(o: JSONObject, key: String, hosts: EffectiveHosts): String = imageUrl((o.opt(key) as? String).orEmpty(), hosts)
 
@@ -739,7 +758,10 @@ object PluginOutput {
         if (v.length > MAX_IMAGE_URL_CHARS) return ""
         val url = v.toHttpUrlOrNull() ?: return ""
         if (hosts.userHostFor(url) != null) return v
-        if (url.scheme != "https" || !v.startsWith("https://")) return ""
-        return if (HostRules.isLocalAddress(url.host)) "" else v
+        if (!v.startsWith("https://") && !v.startsWith("http://")) return ""
+        if (HostRules.isPublicIpv4Literal(url.host)) return v
+        if (HostRules.isLocalAddress(url.host)) return ""
+        // Cleartext to a single-label name (`router`, `nas`) is a device on the home network by another name.
+        return if (url.scheme == "http" && '.' !in url.host) "" else v
     }
 }

@@ -28,7 +28,16 @@ sealed interface DownloadOutcome {
          * never crash-reported (see [DownloadRetryPolicy.reports]).
          */
         val expected: Boolean = false,
-    ) : DownloadOutcome
+    ) : DownloadOutcome {
+        companion object {
+            /** A `resolve` that threw: the person's switched-off plugin is [expected], a network trouble [transient], the rest a report. */
+            fun ofResolve(e: Throwable, fallback: String) = Failed(
+                e.message ?: fallback,
+                transient = DownloadRetryPolicy.isTransient(e),
+                expected = e is com.arkiv.player.data.gateway.PluginBlockedException,
+            )
+        }
+    }
 }
 
 /**

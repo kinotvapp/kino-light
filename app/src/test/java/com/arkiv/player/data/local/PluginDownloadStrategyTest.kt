@@ -74,6 +74,21 @@ class PluginDownloadStrategyTest {
 
     private suspend fun DownloadStrategy.run(id: String = episodeId) = download(id, false, tmp.root) { _, _ -> }
 
+    @Test fun `a plugin the person switched off is an expected failure, not a report`() = runBlocking {
+        val off = FakeSource { throw com.arkiv.player.data.gateway.PluginBlockedException("Activa el plugin Demo para ver esto") }
+        val outcome = strategy(off).run() as DownloadOutcome.Failed
+        assertEquals("Activa el plugin Demo para ver esto", outcome.reason)
+        assertTrue("never crash-reported", outcome.expected)
+        assertFalse(DownloadRetryPolicy.reports(outcome.transient, outcome.permanent, outcome.expected))
+    }
+
+    @Test fun `any other resolve failure still reports`() = runBlocking {
+        val broken = FakeSource { throw GatewayException("El plugin devolvió basura") }
+        val outcome = strategy(broken).run() as DownloadOutcome.Failed
+        assertFalse(outcome.expected)
+        assertTrue(DownloadRetryPolicy.reports(outcome.transient, outcome.permanent, outcome.expected))
+    }
+
     @Test fun `downloads the resolved stream with its headers into a file named after the episode`() = runBlocking {
         server.enqueue(MockResponse().setBody("VIDEO-BYTES"))
         val source = FakeSource { playable("/v.mp4", headers = mapOf("Referer" to "https://site.example/", "X-Token" to "abc")) }

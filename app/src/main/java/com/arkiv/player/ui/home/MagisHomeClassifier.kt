@@ -109,9 +109,8 @@ object MagisHomeClassifier {
         item.genres.mapNotNull { GENRES[it.trim()] }.distinctBy { it.first }
 
     /**
-     * "Recién agregadas · Películas": the newest plain-year movie section ("2026") as the portal
-     * orders it. Measured 2026-09-28: strictly newest-first by `shelveTime`, about 3 uploads a day,
-     * so the portal's order IS the upload order and is never re-sorted.
+     * "Recién agregadas · Películas": the newest plain-year movie section ("2026"), newest upload first ([newestFirst]).
+     * About 3 uploads a day; the portal only sends the section's first 10.
      *
      * Release rows deliberately do NOT apply cross-root kind precedence: a 2026 anime film listed
      * in Películas' year section belongs here, not hidden by Anime's claim. Anime/Infantil get no
@@ -119,7 +118,7 @@ object MagisHomeClassifier {
      */
     private fun recentMoviesRow(sectionsOf: Map<MagisKind, List<CatalogSection>>): MagisHomeRow? =
         plainYearSection(sectionsOf.getValue(MagisKind.PELICULAS))?.let { items ->
-            row("magis_recent_${MagisKind.PELICULAS.root}", "Recién agregadas · ${MagisKind.PELICULAS.label}", items)
+            row("magis_recent_${MagisKind.PELICULAS.root}", "Recién agregadas · ${MagisKind.PELICULAS.label}", newestFirst(items))
         }
 
     /**
@@ -130,7 +129,7 @@ object MagisHomeClassifier {
      */
     private fun updatedSeriesRow(sectionsOf: Map<MagisKind, List<CatalogSection>>): MagisHomeRow? =
         plainYearSection(sectionsOf.getValue(MagisKind.SERIES))?.let { items ->
-            row("magis_new_${MagisKind.SERIES.root}", "Series con capítulos nuevos", items)
+            row("magis_new_${MagisKind.SERIES.root}", "Series con capítulos nuevos", newestFirst(items))
         }
 
     /**
@@ -145,6 +144,14 @@ object MagisHomeClassifier {
             .firstOrNull { it.isNotEmpty() } ?: return null
         return row("magis_new_${MagisKind.PELICULAS.root}", "Estrenos de cine", items)
     }
+
+    /**
+     * [items] newest upload first, by their own `shelveTime`. Measured 2026-09-29: the portal's order is NOT strictly
+     * chronological (a title shelved on the 26th sat above one shelved on the 28th), so once the date is known it decides.
+     * A title with no date keeps its place in the portal's order, after the dated ones; with no dates at all nothing moves.
+     */
+    private fun newestFirst(items: List<CatalogItem>): List<CatalogItem> =
+        if (items.any { it.shelvedAtMs > 0 }) items.sortedByDescending { it.shelvedAtMs } else items
 
     private fun row(id: String, title: String, items: List<CatalogItem>) =
         MagisHomeRow(id = id, title = title, shown = items.take(MAX_ROW_SIZE), all = items)

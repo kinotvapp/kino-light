@@ -36,6 +36,10 @@ class PluginContractParityTest {
         assertEquals(ManifestParser.OPTIONAL_EXPORTS_FOR, optional.keys().asSequence().associateWith { k -> optional.strings(k).toSet() })
     }
 
+    @Test fun `the genre vocabulary`() {
+        assertEquals(Genre.IDS, c.strings("genres"))
+    }
+
     @Test fun `manifest rules`() {
         val m = obj("manifest")
         assertEquals(ManifestParser.MAX_BYTES, m.getInt("maxBytes"))
@@ -59,6 +63,9 @@ class PluginContractParityTest {
         assertEquals(ManifestParser.LIVE_STREAM_HOSTS_ANY, lsh.getString("value"))
         assertEquals(ManifestParser.LIVE_STREAM_HOSTS_API_VERSION, lsh.getInt("apiVersion"))
         assertEquals(ManifestParser.CHANNELS, lsh.getString("requires"))
+        val sh = m.getJSONObject("streamHosts")
+        assertEquals(ManifestParser.LIVE_STREAM_HOSTS_ANY, sh.getString("value"))
+        assertEquals(ManifestParser.STREAM_HOSTS_API_VERSION, sh.getInt("apiVersion"))
         assertEquals(ManifestParser.DISCOVERABLE_DEFAULT, m.getJSONObject("discoverable").getBoolean("default"))
         val secrets = m.getJSONObject("secrets")
         assertEquals(ManifestParser.SECRETS_API_VERSION, secrets.getInt("apiVersion"))
@@ -86,6 +93,12 @@ class PluginContractParityTest {
         assertEquals(PluginSettings.MAX_OPTIONS, s.getInt("maxOptions"))
         assertEquals(PluginSettings.MAX_OPTION_VALUE_CHARS, s.getInt("optionValueMaxChars"))
         assertEquals(PluginSettings.MAX_OPTION_LABEL_CHARS, s.getInt("optionLabelMaxChars"))
+        val l = s.getJSONObject("list")
+        assertEquals(PluginSettings.LIST_API_VERSION, l.getInt("apiVersion"))
+        assertEquals(PluginSettings.DEFAULT_LIST_ENTRIES, l.getInt("defaultMaxEntries"))
+        assertEquals(PluginSettings.MAX_LIST_ENTRIES, l.getInt("maxEntries"))
+        assertEquals(PluginSettings.MAX_LIST_FIELDS, l.getInt("maxFields"))
+        assertEquals(listOf("text", "url"), l.strings("fieldTypes"))
         val types = s.getJSONObject("types")
         assertEquals(SettingType.entries.map { it.wire }.toSet(), types.keys().asSequence().toSet())
         SettingType.entries.forEach { t ->
@@ -205,7 +218,7 @@ class PluginContractParityTest {
 
     @Test fun `every section of the contract is checked here`() {
         assertEquals(
-            setOf("\$comment", "apiVersion", "maxApiVersion", "capabilities", "manifest", "hostRules", "permissions", "settings", "output", "live", "discovery", "search", "timeoutsMs", "runtime", "fetch", "cookies", "storage", "crypto", "sleep", "errors"),
+            setOf("\$comment", "apiVersion", "maxApiVersion", "capabilities", "manifest", "hostRules", "permissions", "settings", "output", "live", "genres", "discovery", "search", "timeoutsMs", "runtime", "fetch", "cookies", "storage", "crypto", "sleep", "errors"),
             c.keys().asSequence().toSet(),
         )
     }

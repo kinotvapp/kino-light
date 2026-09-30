@@ -109,4 +109,25 @@ class PlaybackPrefsTest {
         assertFalse(base.sameLanguagesAs(base.copy(audioLangs = listOf(TrackLang.JAPANESE, TrackLang.LATINO))))
     }
 
+
+    @Test fun theTvUsesTheSystemStyleUnlessTheyChooseOtherwise() {
+        assertFalse(PlaybackPrefs().tvCustomStyle)
+    }
+
+    @Test fun theChoiceOfAStyleOnTheTvSurvivesTheRoundTrip() {
+        val p = PlaybackPrefs(tvCustomStyle = true, sizePercent = 150)
+        assertEquals(p, PlaybackPrefs.fromJson(p.toJson()))
+        assertTrue(PlaybackPrefs.fromJson(p.toJson())!!.tvCustomStyle)
+    }
+
+    /** Prefs saved before the TV could choose: the system style, as they always had. */
+    @Test fun aSavedJsonWithoutTheChoiceMeansTheSystemStyle() {
+        val old = """{"language":"es","sizePercent":120,"textColor":4294967295,"backgroundColor":2147483648,"edge":1}"""
+        assertFalse(PlaybackPrefs.fromJson(old)!!.tvCustomStyle)
+    }
+
+    @Test fun changingTheStyleAloneNeverCountsAsChangingTheLanguages() {
+        val a = PlaybackPrefs()
+        assertTrue(a.sameLanguagesAs(a.copy(tvCustomStyle = true, sizePercent = 200)))
+    }
 }
