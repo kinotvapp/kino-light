@@ -37,6 +37,17 @@ class NuvioResolveTimeoutTest {
         )
     }
 
+    @Test fun `the download queue's resolve gets twice the player's limit`() {
+        fun downloadTimeout(record: InstalledRecord): Long {
+            var asked = 0L
+            val source = PluginContentSource(InstalledPlugin(manifest, record, null), { _, fn, _, t -> if (fn == "resolve") asked = t; """{"url":"https://example.com/v.mp4"}""" }, log = {})
+            runBlocking { kotlinx.coroutines.withContext(BackgroundPluginCall + PluginDownloadCall) { source.resolve(movie) } }
+            return asked
+        }
+        assertEquals(90_000L, downloadTimeout(record.copy(nuvioRepo = "D3PR3D4DOR/pelisplus-latino-nuvio", nuvioScraperId = "pelisplushd")))
+        assertEquals(40_000L, downloadTimeout(record))
+    }
+
     @Test fun `the player keeps the person informed through a long resolve`() {
         assertEquals("Resolviendo fuente PelisPlusHD…", resolvingText("PelisPlusHD", 0L))
         assertEquals("Resolviendo fuente PelisPlusHD…", resolvingText("PelisPlusHD", 4_999L))
