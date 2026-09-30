@@ -25,3 +25,4 @@ graft/
 
 # Local stand-in for kino.storage written by plugins/sdk/run.mjs
 plugins/**/.kino-storage.json
+plugins/**/.kino-secrets.json

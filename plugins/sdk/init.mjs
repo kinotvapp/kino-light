@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Scaffolds a new plugin: node sdk/init.mjs <folder> [--id my-plugin] [--name "Mi plugin"] [--host example.com]
-// Writes kino-plugin.json, plugin.js (every function, commented), README.md and test/plugin.test.mjs
-// (a replay-based test: record once with --record, then it runs offline). Never overwrites a file.
+// Writes kino-plugin.json, plugin.js (every function, commented), README.md, test/plugin.test.mjs
+// (a replay-based test: record once with --record, then it runs offline) and a .gitignore for the
+// kit's local stand-ins (.kino-storage.json, .kino-cookies.json, .kino-secrets.json). Never overwrites a file.
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +11,7 @@ export function scaffold(folder, { id, name, host = "example.com" } = {}) {
   const dir = resolve(folder);
   const pluginId = id || basename(dir).toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "mi-plugin";
   const files = {
+    ".gitignore": "# Local stand-ins the kit writes; never commit a real secret value.\n.kino-storage.json\n.kino-cookies.json\n.kino-secrets.json\n",
     "kino-plugin.json": JSON.stringify({
       id: pluginId,
       name: name || pluginId,

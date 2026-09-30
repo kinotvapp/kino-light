@@ -103,6 +103,7 @@ async function main() {
   const { kino, servers, resetBudget, saveTape } = createKino(manifest, {
     storageFile: join(dir, ".kino-storage.json"),
     cookiesFile: join(dir, ".kino-cookies.json"),
+    secretsFile: join(dir, ".kino-secrets.json"),
     config,
     record: opts.record && resolve(opts.record),
     replay: opts.replay && resolve(opts.replay),

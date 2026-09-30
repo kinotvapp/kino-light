@@ -7,6 +7,12 @@
 // kino.html.select exists only in the app (it uses Jsoup); a host that resolves to a private
 // address is not refused; the cookie jar keeps name/value/domain/path/expiry/secure but not every
 // RFC 6265 corner; nothing enforces the per-call time or memory limits.
+//
+// Sealed secrets (spec 2026-09-29-plugin-sealed-secrets-design.md §5, §6): this kit can never open
+// a seal -- only the app, with the native private key, can -- so it reads the PLAIN values straight
+// from `.kino-secrets.json` next to the manifest (`{ "<name>": "<value>" }`, written by hand during
+// development; `seal.mjs` only ever produces the sealed string that goes in the manifest) and
+// simulates the app's marker, substitution, declared-host-and-https and redaction rules on top of that.
 import { createCipheriv, createDecipheriv, createHash, createHmac, pbkdf2Sync, randomBytes, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -27,6 +33,127 @@ export function kinoError(code, message) {
 
 export { hostMatches as hostAllowed };
 
+// --- sealed secrets: the same encodings, marker shape and redaction the app's PluginSecrets uses
+// (spec 2026-09-29-plugin-sealed-secrets §5, §6). The kit never opens a seal: it reads the plain
+// value straight from .kino-secrets.json, so it can simulate substitution and redaction without
+// the app's X25519 native bridge. ---
+
+const SEALED_CRYPTO_REFUSED = "no se puede usar un dato sellado aquí";
+
+/** RFC 3986 unreserved bytes percent-encoded (UTF-8, uppercase hex): a URL path segment or query value. */
+function encodeUrlComponent(value) {
+  let out = "";
+  for (const byte of Buffer.from(value, "utf8")) {
+    const ch = String.fromCharCode(byte);
+    if ((byte >= 0x41 && byte <= 0x5a) || (byte >= 0x61 && byte <= 0x7a) || (byte >= 0x30 && byte <= 0x39) || ch === "-" || ch === "." || ch === "_" || ch === "~") out += ch;
+    else out += "%" + byte.toString(16).toUpperCase().padStart(2, "0");
+  }
+  return out;
+}
+
+/** Inside a JSON string, without the surrounding quotes. */
+function encodeJsonStringBody(value) {
+  let out = "";
+  for (const ch of value) {
+    const code = ch.codePointAt(0);
+    if (ch === '"') out += '\\"';
+    else if (ch === "\\") out += "\\\\";
+    else if (ch === "\n") out += "\\n";
+    else if (ch === "\r") out += "\\r";
+    else if (ch === "\t") out += "\\t";
+    else if (ch === "\b") out += "\\b";
+    else if (ch === "\f") out += "\\f";
+    else if (code < 0x20) out += "\\u00" + code.toString(16).padStart(2, "0");
+    else out += ch;
+  }
+  return out;
+}
+
+/** `java.net.URLEncoder.encode(value, "UTF-8")`: a form's own encoding, "+" for a space. */
+function javaFormEncode(value) {
+  let out = "";
+  for (const byte of Buffer.from(value, "utf8")) {
+    const ch = String.fromCharCode(byte);
+    if ((byte >= 0x41 && byte <= 0x5a) || (byte >= 0x61 && byte <= 0x7a) || (byte >= 0x30 && byte <= 0x39) || ch === "-" || ch === "_" || ch === "." || ch === "*") out += ch;
+    else if (byte === 0x20) out += "+";
+    else out += "%" + byte.toString(16).toUpperCase().padStart(2, "0");
+  }
+  return out;
+}
+
+function encodeSealedValue(value, encoding) {
+  if (encoding === "url") return encodeUrlComponent(value);
+  if (encoding === "json") return encodeJsonStringBody(value);
+  return value;
+}
+
+/**
+ * Every form [redact] replaces for an opened [plain] value: what [substitute] writes (raw, the URL
+ * encoding, the JSON encoding), and how a server commonly echoes a value back (URLEncoder's form
+ * encoding and its "%20" twin, base64 and base64url, with and without padding).
+ */
+function echoForms(plain) {
+  const bytes = Buffer.from(plain, "utf8");
+  const b64 = bytes.toString("base64");
+  const b64url = b64.replace(/\+/g, "-").replace(/\//g, "_");
+  const form = javaFormEncode(plain);
+  return new Set([
+    plain, encodeUrlComponent(plain), encodeJsonStringBody(plain),
+    form, form.replace(/\+/g, "%20"),
+    b64, b64.replace(/=+$/, ""), b64url, b64url.replace(/=+$/, ""),
+  ]);
+}
+
+const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * One runtime's sealed secrets: [manifest.secrets]' names, each given a marker
+ * (`__kinoSecret_<name>_<nonce>__`) random per runtime. The kit reads plain values from
+ * [secretsFile] (`.kino-secrets.json`, `{ "<name>": "<value>" }`), opening each lazily on first
+ * substitution; a name declared in the manifest but missing there throws. Null when the manifest
+ * declares no secrets, exactly like the app's `pluginSecretsFor`.
+ */
+function pluginSecretsFor(manifest, secretsFile) {
+  const names = Object.keys(manifest.secrets || {});
+  if (names.length === 0) return null;
+  const nonce = randomBytes(8).toString("hex");
+  const markers = Object.fromEntries(names.map((n) => [n, `__kinoSecret_${n}_${nonce}__`]));
+  const values = loadJson(secretsFile, {});
+  const opened = {};
+  const marker = (name) => markers[name];
+  const containsMarker = (text) => typeof text === "string" && Object.values(markers).some((m) => text.includes(m));
+  const isMarker = (text) => typeof text === "string" && Object.values(markers).includes(text);
+  function plainOf(name) {
+    if (!(name in opened)) {
+      if (!Object.prototype.hasOwnProperty.call(values, name)) {
+        throw new Error(`falta el valor del secreto ${name} en .kino-secrets.json`);
+      }
+      opened[name] = String(values[name]);
+    }
+    return opened[name];
+  }
+  function substitute(text, encoding = "raw") {
+    let out = text;
+    for (const [name, m] of Object.entries(markers)) if (out.includes(m)) out = out.split(m).join(encodeSealedValue(plainOf(name), encoding));
+    return out;
+  }
+  function redact(text) {
+    if (typeof text !== "string") return text;
+    const forms = new Map();
+    for (const [name, plain] of Object.entries(opened)) {
+      if (!plain) continue;
+      for (const f of echoForms(plain)) if (!forms.has(f)) forms.set(f, markers[name]);
+    }
+    if (forms.size === 0) return text;
+    let found = false;
+    for (const f of forms.keys()) if (text.includes(f)) { found = true; break; }
+    if (!found) return text;
+    const pattern = new RegExp([...forms.keys()].sort((a, b) => b.length - a.length).map(escapeRegExp).join("|"), "g");
+    return text.replace(pattern, (m) => forms.get(m));
+  }
+  return { marker, containsMarker, isMarker, substitute, redact, sealedHosts: manifest.hosts || [] };
+}
+
 const loadJson = (file, fallback) => (file && existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : fallback);
 const saveJson = (file, value) => {
   if (!file) return;
@@ -40,7 +167,7 @@ const saveJson = (file, value) => {
  * exchanges, so a test can run offline and give the same answers every time. [fetchImpl]: the
  * network itself (tests point it at a local server).
  */
-export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", storageFile = null, cookiesFile = null, config = {}, record = null, replay = null, fetchImpl = globalThis.fetch } = {}) {
+export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", storageFile = null, cookiesFile = null, secretsFile = null, config = {}, record = null, replay = null, fetchImpl = globalThis.fetch } = {}) {
   const f = contract.fetch;
   const storage = loadJson(storageFile, {});
   // An entry is a bare string (permanent, the format before ttlMs existed) or { v, e } (expires at
@@ -60,6 +187,11 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", stora
   const tape = replay ? loadJson(replay, null) : record ? [] : null;
   if (replay && !tape) throw new Error(`--replay: ${replay} not found`);
   let requests = 0;
+
+  // A plugin whose manifest declares secrets: markers, substitution, the declared-host-and-https
+  // rule (checkSealedHost below) and redaction, all simulated without opening the seal.
+  const pluginSecrets = pluginSecretsFor(manifest, secretsFile);
+  const redact = (text) => (pluginSecrets ? pluginSecrets.redact(text) : text);
 
   const values = {};
   for (const s of manifest.settings || []) {
@@ -146,18 +278,35 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", stora
 
   function response(status, url, headerList, bytes) {
     const headers = {};
-    for (const [k, v] of headerList) if (!k.startsWith("set-cookie")) headers[k] = headers[k] ? headers[k] + ", " + v : v;
+    for (const [k, v] of headerList) if (!k.startsWith("set-cookie")) headers[k] = headers[k] ? headers[k] + ", " + redact(v) : redact(v);
     const buf = Buffer.from(bytes);
     const type = headers["content-type"];
     const charset = /charset=([^;]+)/i.exec(type || "");
     const decode = () => (charset && !/utf-?8/i.test(charset[1]) ? new TextDecoder(charset[1].trim()).decode(buf) : buf.toString("utf8"));
     return Object.freeze({
-      ok: status >= 200 && status < 300, status, url, headers: Object.freeze(headers),
-      text: () => (textual(type) ? decode() : buf.toString("utf8")),
-      json: () => JSON.parse(textual(type) ? decode() : buf.toString("utf8")),
+      ok: status >= 200 && status < 300, status, url: redact(url), headers: Object.freeze(headers),
+      text: () => redact(textual(type) ? decode() : buf.toString("utf8")),
+      json: () => JSON.parse(redact(textual(type) ? decode() : buf.toString("utf8"))),
       base64: () => buf.toString("base64"),
     });
   }
+
+  /**
+   * One hop of a request carrying a sealed value (spec §5): only to a host the MANIFEST declares
+   * (never a typed server or one approved reactively -- the app has no reactive approval in the
+   * kit either), and only over https -- checked before the ordinary [gate], which still applies on
+   * top for a request that carries no secret.
+   */
+  function checkSealedHost(u, allowed) {
+    if (!hostMatches(u.hostname, allowed)) {
+      throw kinoError("host_not_allowed", "este plugin no puede enviar datos sellados a " + u.hostname.slice(0, 100));
+    }
+    if (u.protocol !== "https:") {
+      throw kinoError("host_not_allowed", "este plugin no puede enviar datos sellados sin https a " + u.hostname.slice(0, 100));
+    }
+  }
+
+  const badHeaderChar = (ch) => { const cp = ch.codePointAt(0); return cp !== 9 && (cp < 0x20 || cp > 0x7e); };
 
   async function fetchGated(url, opts = {}) {
     const o = opts || {};
@@ -167,13 +316,57 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", stora
     if (!f.redirectModes.includes(redirect)) throw kinoError("invalid_request", 'redirect debe ser "follow" o "manual"');
     const headers = {};
     for (const k of Object.keys(o.headers || {})) headers[k] = String(o.headers[k]);
-    let body = requestBody(o.body, headers);
+    let carriesSecret = false;
+    // A form's fields are substituted RAW here, before requestBody's own percent-encoding -- the
+    // same order the app follows (substitute, then let the wire encoding of that context run).
+    let bodyInput = o.body;
+    if (pluginSecrets && bodyInput && typeof bodyInput === "object" && bodyInput.form && typeof bodyInput.form === "object") {
+      const substitutedForm = {};
+      let changed = false;
+      for (const [fk, fv] of Object.entries(bodyInput.form)) {
+        let key = String(fk), val = String(fv);
+        if (pluginSecrets.containsMarker(key)) { key = pluginSecrets.substitute(key); changed = true; }
+        if (pluginSecrets.containsMarker(val)) { val = pluginSecrets.substitute(val); changed = true; }
+        substitutedForm[key] = val;
+      }
+      if (changed) { carriesSecret = true; bodyInput = { ...bodyInput, form: substitutedForm }; }
+    }
+    let body = requestBody(bodyInput, headers);
     const size = String(url).length + JSON.stringify(headers).length + (body ? (typeof body === "string" ? body.length : body.length * 2) : 0);
     if (size > f.maxRequestChars) throw kinoError("too_large", `solicitud demasiado grande (más de ${kb(f.maxRequestChars)})`);
     let current;
     try { current = new URL(String(url)); } catch { throw kinoError("invalid_request", "URL inválida: " + String(url).slice(0, 200)); }
+    if (pluginSecrets) {
+      // Headers: substituted raw, then refused if the plain value put a character OkHttp can't
+      // send in a header (a line break or anything else outside tab/space..tilde) -- named only by
+      // the header, never the value.
+      for (const name of Object.keys(headers)) {
+        if (!pluginSecrets.containsMarker(headers[name])) continue;
+        carriesSecret = true;
+        const substituted = pluginSecrets.substitute(headers[name]);
+        if ([...substituted].some(badHeaderChar)) {
+          throw kinoError("invalid_request", `el encabezado ${name.slice(0, 40)} no puede llevar este dato sellado: tiene caracteres no permitidos`);
+        }
+        headers[name] = substituted;
+      }
+      // The body: JSON-string-escaped inside a JSON body (it sits inside an already-serialized JSON
+      // string), raw in a text body (a form body was already substituted above, before encoding).
+      if (typeof body === "string" && pluginSecrets.containsMarker(body)) {
+        carriesSecret = true;
+        const isJson = bodyInput && typeof bodyInput === "object" && "json" in bodyInput;
+        body = pluginSecrets.substitute(body, isJson ? "json" : "raw");
+      }
+      // The URL: only the path and the query (never the scheme, userinfo, host, port or fragment --
+      // a plain value must never become a host name, looked up in DNS or logged as one).
+      if (pluginSecrets.containsMarker(current.pathname) || pluginSecrets.containsMarker(current.search)) {
+        carriesSecret = true;
+        if (pluginSecrets.containsMarker(current.pathname)) current.pathname = pluginSecrets.substitute(current.pathname, "url");
+        if (pluginSecrets.containsMarker(current.search)) current.search = pluginSecrets.substitute(current.search, "url");
+      }
+    }
     let previous = null;
     for (let hop = 0; hop <= f.maxRedirects; hop++) {
+      if (carriesSecret) checkSealedHost(current, pluginSecrets.sealedHosts);
       gate(current, previous);
       if (++requests > f.maxRequestsPerCall) throw kinoError("invalid_request", `demasiadas solicitudes en una sola llamada (máximo ${f.maxRequestsPerCall})`);
       if (!Object.keys(headers).some((k) => k.toLowerCase() === "user-agent")) headers["User-Agent"] = `Kino/${appVersion} (plugin ${manifest.id})`;
@@ -196,7 +389,12 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", stora
           r = await fetchImpl(current, { method, headers: sendHeaders, body: ["POST", "PUT", "PATCH"].includes(method) ? body ?? "" : undefined, redirect: "manual", signal: controller.signal });
           bytes = Buffer.from(await r.arrayBuffer());
         } catch (e) {
-          throw kinoError(controller.signal.aborted ? "timeout" : "network", controller.signal.aborted ? "la solicitud tardó demasiado" : "error de red: " + String(e.message).slice(0, 200));
+          if (controller.signal.aborted) throw kinoError("timeout", "la solicitud tardó demasiado");
+          // Not cut to 200 chars for a sealed request: its detail may quote what the server echoed
+          // back, and a value straddling the cut would leave a piece redaction can't recognize --
+          // redacted whole here, then kinoError's own cap still applies.
+          const detail = redact(String(e.message));
+          throw kinoError("network", "error de red: " + (carriesSecret ? detail : detail.slice(0, 200)));
         } finally {
           clearTimeout(timer);
         }
@@ -233,9 +431,26 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", stora
     if (!k.encodings.includes(enc)) throw kinoError("crypto_error", "codificación desconocida: " + String(enc).slice(0, 20));
     return b.toString(enc === "utf8" ? "utf8" : enc);
   };
+  // A marker in `data`, `iv` or `aad` is refused whatever the key is (spec §5): those are paths
+  // that hand the value back or let it be computed (a sealed iv or aad falls to CBC-vs-ECB /
+  // GHASH's E_K(0), even under a sealed key). Checked before anything else, exactly like the app.
+  const sealedIn = (v) => typeof v === "string" && pluginSecrets && pluginSecrets.containsMarker(v);
+  const refuseSealedDataLike = (p) => {
+    if (sealedIn(p.data) || sealedIn(p.iv) || sealedIn(p.aad)) throw kinoError("crypto_error", SEALED_CRYPTO_REFUSED);
+  };
+  /** A key-like string (cipher key, hmac key, pbkdf2 password/salt) substituted if it holds a marker. */
+  const openKeyLike = (v) => (sealedIn(v) ? pluginSecrets.substitute(v) : v);
+  const redactOut = (v) => (pluginSecrets ? pluginSecrets.redact(v) : v);
+
   function cipher(decrypt, alg, p = {}) {
+    if (pluginSecrets) {
+      refuseSealedDataLike(p);
+      // A cipher key must be EXACTLY one marker, nothing before or after it: the rest of a longer
+      // key would be known, and peeling it off shrinks the search to the secret alone.
+      if (sealedIn(p.key) && !pluginSecrets.isMarker(p.key)) throw kinoError("crypto_error", SEALED_CRYPTO_REFUSED);
+    }
     if (!k.ciphers.includes(alg)) throw kinoError("crypto_error", "cifrado desconocido: " + String(alg).slice(0, 20));
-    const key = buf(p.key, p.keyEncoding || "utf8", "key");
+    const key = buf(openKeyLike(p.key), p.keyEncoding || "utf8", "key");
     const data = buf(p.data, p.inputEncoding || (decrypt ? "base64" : "utf8"), "data");
     const bits = alg.startsWith("des") ? 192 : Number(alg.split("-")[1]);
     if (key.length * 8 !== bits) throw kinoError("crypto_error", `la clave de ${alg} debe tener ${bits / 8} bytes, tiene ${key.length}`);
@@ -244,19 +459,23 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", stora
     const padding = p.padding === undefined ? "pkcs7" : p.padding;
     if (padding !== "pkcs7" && padding !== "none") throw kinoError("crypto_error", "relleno desconocido: " + String(padding).slice(0, 20));
     try {
+      let result;
       if (mode === "gcm") {
         const c = decrypt ? createDecipheriv(alg, key, iv) : createCipheriv(alg, key, iv);
         if (p.aad !== undefined) c.setAAD(buf(p.aad, p.aadEncoding || "utf8", "aad"));
         if (decrypt) {
           if (data.length < 16) throw kinoError("crypto_error", "al texto cifrado le falta la etiqueta de 16 bytes");
           c.setAuthTag(data.subarray(data.length - 16));
-          return out(Buffer.concat([c.update(data.subarray(0, data.length - 16)), c.final()]), p.outputEncoding || "utf8");
+          result = out(Buffer.concat([c.update(data.subarray(0, data.length - 16)), c.final()]), p.outputEncoding || "utf8");
+        } else {
+          result = out(Buffer.concat([c.update(data), c.final(), c.getAuthTag()]), p.outputEncoding || "base64");
         }
-        return out(Buffer.concat([c.update(data), c.final(), c.getAuthTag()]), p.outputEncoding || "base64");
+      } else {
+        const c = decrypt ? createDecipheriv(alg, key, iv) : createCipheriv(alg, key, iv);
+        if (mode !== "ctr") c.setAutoPadding(padding === "pkcs7");
+        result = out(Buffer.concat([c.update(data), c.final()]), p.outputEncoding || (decrypt ? "utf8" : "base64"));
       }
-      const c = decrypt ? createDecipheriv(alg, key, iv) : createCipheriv(alg, key, iv);
-      if (mode !== "ctr") c.setAutoPadding(padding === "pkcs7");
-      return out(Buffer.concat([c.update(data), c.final()]), p.outputEncoding || (decrypt ? "utf8" : "base64"));
+      return redactOut(result);
     } catch (e) {
       if (e.code && String(e.code).startsWith("KinoError")) throw e;
       if (e.name && e.name.startsWith("KinoError")) throw e;
@@ -265,14 +484,19 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", stora
   }
   const crypto = Object.freeze({
     hash(alg, data, p = {}) {
+      if (sealedIn(String(data))) throw kinoError("crypto_error", SEALED_CRYPTO_REFUSED);
       if (!k.hashes.includes(alg)) throw kinoError("crypto_error", "algoritmo de hash desconocido: " + String(alg).slice(0, 20));
-      return out(createHash(alg).update(buf(String(data), p.inputEncoding || "utf8", "data")).digest(), p.outputEncoding || "hex");
+      return redactOut(out(createHash(alg).update(buf(String(data), p.inputEncoding || "utf8", "data")).digest(), p.outputEncoding || "hex"));
     },
     hmac(alg, key, data, p = {}) {
+      if (sealedIn(String(data))) throw kinoError("crypto_error", SEALED_CRYPTO_REFUSED);
       if (!k.hashes.includes(alg)) throw kinoError("crypto_error", "algoritmo de hmac desconocido: " + String(alg).slice(0, 20));
-      const keyBuf = buf(String(key), p.keyEncoding || "utf8", "key");
+      // Unlike a cipher key, the hmac key may join a marker with other text (e.g. OAuth 1's
+      // `consumerSecret&tokenSecret`): HMAC mixes its whole key through a hash, so a known part
+      // never splits the unknown one off.
+      const keyBuf = buf(openKeyLike(String(key)), p.keyEncoding || "utf8", "key");
       if (!keyBuf.length) throw kinoError("crypto_error", "la clave del hmac está vacía");
-      return out(createHmac(alg, keyBuf).update(buf(String(data), p.inputEncoding || "utf8", "data")).digest(), p.outputEncoding || "hex");
+      return redactOut(out(createHmac(alg, keyBuf).update(buf(String(data), p.inputEncoding || "utf8", "data")).digest(), p.outputEncoding || "hex"));
     },
     encrypt: (alg, p) => cipher(false, alg, p),
     decrypt: (alg, p) => cipher(true, alg, p),
@@ -280,13 +504,15 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", stora
       if (!k.pbkdf2Hashes.includes(hash)) throw kinoError("crypto_error", "hash de pbkdf2 desconocido: " + String(hash).slice(0, 20));
       if (!Number.isInteger(iterations) || iterations < 1 || iterations > k.pbkdf2MaxIterations) throw kinoError("crypto_error", `iteraciones de pbkdf2 entre 1 y ${k.pbkdf2MaxIterations}`);
       if (!Number.isInteger(keyLength) || keyLength < 1 || keyLength > k.pbkdf2MaxKeyBytes) throw kinoError("crypto_error", `longitud de clave de pbkdf2 entre 1 y ${k.pbkdf2MaxKeyBytes} bytes`);
-      return out(pbkdf2Sync(buf(String(password), p.keyEncoding || "utf8", "password"), buf(String(salt), p.inputEncoding || "utf8", "salt"), iterations, keyLength, hash), p.outputEncoding || "hex");
+      // password and salt may both join a marker with other text, same reasoning as the hmac key.
+      const password0 = openKeyLike(String(password)), salt0 = openKeyLike(String(salt));
+      return redactOut(out(pbkdf2Sync(buf(password0, p.keyEncoding || "utf8", "password"), buf(salt0, p.inputEncoding || "utf8", "salt"), iterations, keyLength, hash), p.outputEncoding || "hex"));
     },
     randomBytes(n, enc = "hex") {
       if (!Number.isInteger(n) || n < 1 || n > k.randomMaxBytes) throw kinoError("crypto_error", `randomBytes acepta de 1 a ${k.randomMaxBytes} bytes`);
-      return out(randomBytes(n), enc);
+      return redactOut(out(randomBytes(n), enc));
     },
-    uuid: () => randomUUID(),
+    uuid: () => redactOut(randomUUID()),
   });
 
   const kino = Object.freeze({
@@ -336,7 +562,7 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", stora
         let u;
         try { u = new URL(String(url)); gate(u, null); } catch { return null; }
         const c = cookieJar.filter((x) => cookieMatches(x, u) && x.name === String(name)).pop();
-        return c ? c.value : null;
+        return c ? redact(c.value) : null;
       },
       clear() { cookieJar.length = 0; saveJson(cookiesFile, cookieJar); },
     }),
@@ -347,8 +573,17 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", stora
       if (!Number.isInteger(ms) || ms < 0 || ms > contract.sleep.maxMs) throw kinoError("invalid_request", `kino.sleep acepta de 0 a ${contract.sleep.maxMs} ms`);
       await new Promise((resolve) => setTimeout(resolve, ms));
     },
+    // apiVersion 4: a marker for a secret the manifest's `secrets` declares (spec §5). A name is at
+    // most 32 characters, so cutting to 64 before the lookup can never turn an undeclared name into
+    // a declared one -- the same cut the app's prelude applies.
+    secret(name) {
+      const s = String(name).slice(0, 64);
+      const m = pluginSecrets && pluginSecrets.marker(s);
+      if (!m) throw new Error("este plugin no declara el secreto " + s.slice(0, 40));
+      return m;
+    },
     error: (code, message) => kinoError(code, message),
-    log: (...args) => writeErr("[kino.log]", ...args),
+    log: (...args) => writeErr("[kino.log]", ...args.map((a) => (typeof a === "string" ? redact(a) : a))),
   });
 
   return {
