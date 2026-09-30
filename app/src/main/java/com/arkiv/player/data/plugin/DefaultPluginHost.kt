@@ -25,7 +25,8 @@ import java.util.Base64
  * hosts only, over https only ([PluginHttp.Request.sealedTo]); [crypto] takes markers in its
  * key-like fields only. What goes back to the plugin -- the final URL, headers, text body (and its
  * base64 twin), an error message, a cookie value, a `kino.crypto` answer -- and every `kino.log`
- * line have any opened value, in every form [PluginSecrets.redact] knows, swapped back for its marker.
+ * line have any declared value (opened for that, see [PluginSecrets]), in every form [PluginSecrets.redact]
+ * knows, swapped back for its marker.
  */
 class DefaultPluginHost(
     private val pluginId: String,

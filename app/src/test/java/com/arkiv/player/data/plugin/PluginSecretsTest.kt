@@ -117,13 +117,11 @@ class PluginSecretsTest {
         assertEquals(forms.joinToString(" ") { m }, s.redact(forms.joinToString(" ")))
     }
 
-    @Test fun `redact sees a value opened after its last use, and hands back text with none untouched`() {
+    @Test fun `redact sees every declared value, used or not, and hands back text with none untouched`() {
         val s = secrets()
         val a = s.marker("apiKey")!!
         val t = s.marker("token")!!
         s.substitute(a)
-        assertEquals("$a t-456", s.redact("k-123 t-456"))
-        s.substitute(t)
         assertEquals("$a $t", s.redact("k-123 t-456"))
         val clean = "nothing to see " + "x".repeat(1000)
         org.junit.Assert.assertSame(clean, s.redact(clean))
@@ -131,11 +129,106 @@ class PluginSecretsTest {
         assertTrue(s.containsValue("..t-456.."))
     }
 
-    @Test fun `redact puts the marker back in place of an opened value`() {
+    // A value can reach the plugin before this runtime ever used it: a cookie a previous runtime's
+    // request set, or a server echoing it to a request that didn't carry it. So the first redaction
+    // of any text opens every declared seal (once each), not only the ones used so far.
+    @Test fun `redact puts the marker back in place of a value this runtime never used`() {
         val s = secrets()
-        val a = s.marker("apiKey")!!
-        assertEquals("seen k-123", s.redact("seen k-123"))
-        s.substitute(a)
-        assertEquals("seen $a twice $a", s.redact("seen k-123 twice k-123"))
+        assertEquals("seen ${s.marker("apiKey")} twice ${s.marker("apiKey")} and ${s.marker("token")}", s.redact("seen k-123 twice k-123 and t-456"))
+        assertTrue(secrets().containsValue("..k-123.."))
+    }
+
+    @Test fun `the first non-empty redaction opens every seal once, and nothing opens them again`() {
+        val opens = AtomicInteger()
+        val s = secrets(agreement = { peer -> opens.incrementAndGet(); TestSealing.agreement.sharedSecret(peer) })
+        assertEquals("", s.redact(""))
+        assertFalse(s.containsValue(""))
+        assertEquals(0, opens.get())
+        assertEquals("x", s.redact("x"))
+        assertEquals(2, opens.get())
+        s.redact("k-123")
+        s.containsValue("t-456")
+        s.substitute(s.marker("apiKey")!! + s.marker("token")!!)
+        assertEquals(2, opens.get())
+    }
+
+    @Test fun `a seal that won't open leaves redaction working and substitution failing, and is tried once`() {
+        val opens = AtomicInteger()
+        val s = secrets(agreement = { peer ->
+            opens.incrementAndGet()
+            if (peer.contentEquals(ephemeralOf(sealed.getValue("token")))) throw SealException(SealedSecrets.NO_NATIVE_MESSAGE)
+            TestSealing.agreement.sharedSecret(peer)
+        })
+        assertEquals("${s.marker("apiKey")} t-456", s.redact("k-123 t-456"))
+        assertEquals("${s.marker("apiKey")} t-456", s.redact("k-123 t-456"))
+        assertEquals(2, opens.get())
+        org.junit.Assert.assertThrows(SealException::class.java) { s.substitute(s.marker("token")!!) }
+    }
+
+    private fun ephemeralOf(seal: String): ByteArray =
+        java.util.Base64.getUrlDecoder().decode(seal.removePrefix(SealedSecrets.PREFIX_V1)).copyOfRange(0, 32)
+
+    @Test fun `redact knows the JSON echo forms - an escaped slash and non-ASCII as uXXXX in either case`() {
+        val key = "ab/cd+ef=="
+        val accented = "clé/ñ\u0001"
+        val s = PluginSecrets(
+            mapOf("key" to TestSealing.seal(key, binding, "key"), "accented" to TestSealing.seal(accented, binding, "accented")),
+            binding, TestSealing.agreement, listOf("api.example.com"), recipient = TestSealing.TEST_PUBLIC,
+        )
+        val k = s.marker("key")!!
+        val a = s.marker("accented")!!
+        // PHP's json_encode (\/ and lowercase \u), Python's json.dumps (lowercase \u), and uppercase \u.
+        val echoes = mapOf(
+            "ab\\/cd+ef==" to k,
+            "cl\\u00e9\\/\\u00f1\\u0001" to a,
+            "cl\\u00e9/\\u00f1\\u0001" to a,
+            "cl\\u00E9/\\u00F1\\u0001" to a,
+            "cl\\u00E9\\/\\u00F1\\u0001" to a,
+            "clé\\/ñ\\u0001" to a,
+        )
+        for ((echo, marker) in echoes) assertEquals(echo, "{\"v\":\"$marker\"}", s.redact("{\"v\":\"$echo\"}"))
+        // Past the BMP: a surrogate pair, each half escaped.
+        val emoji = "k\uD83D\uDE00y"
+        val e = PluginSecrets(
+            mapOf("e" to TestSealing.seal(emoji, binding, "e")), binding, TestSealing.agreement, listOf("api.example.com"), recipient = TestSealing.TEST_PUBLIC,
+        )
+        assertEquals("[${e.marker("e")}]", e.redact("[k\\ud83d\\ude00y]"))
+        assertEquals("[${e.marker("e")}]", e.redact("[k\\uD83D\\uDE00y]"))
+    }
+
+    // At the caps: 16 secrets of 4096 bytes, each full of characters every encoding changes, all
+    // opened, echoed in every form inside a multi-megabyte text. One pass must finish well inside a
+    // plugin call's time, and leave no form of any value behind.
+    @Test fun `redaction at the caps is complete and fast`() {
+        fun tricky(i: Int): String {
+            val unit = "\"\\ñ/+ é$i<"
+            val sb = StringBuilder()
+            while (sb.toString().toByteArray().size < 4096) sb.append(unit)
+            var v = sb.toString()
+            while (v.toByteArray().size > 4096) v = v.dropLast(1)
+            return v
+        }
+        val values = (0 until SealedSecrets.MAX_SECRETS).associate { "s$it" to tricky(it) }
+        values.values.forEach { assertTrue(it.toByteArray().size in 4090..4096) }
+        val s = PluginSecrets(
+            values.mapValues { (name, v) -> TestSealing.seal(v, binding, name) }, binding, TestSealing.agreement,
+            listOf("api.example.com"), recipient = TestSealing.TEST_PUBLIC,
+        )
+        val forms = values.values.flatMap { PluginSecrets.echoForms(it) }
+        val text = buildString {
+            for (f in forms) append("filler ").append(f).append(' ')
+            append("x".repeat(2_500_000))
+        }
+        assertTrue(text.length.toString(), text.length > 3_000_000)
+        s.redact("warm up")
+        val started = System.nanoTime()
+        val out = s.redact(text)
+        val ms = (System.nanoTime() - started) / 1_000_000
+        for ((name, v) in values) {
+            for (f in PluginSecrets.echoForms(v)) assertFalse("$name form left", f in out)
+            assertTrue(s.marker(name)!! in out)
+        }
+        println("redaction at the caps: $ms ms for ${text.length} chars")
+        assertTrue("redaction took $ms ms", ms < 10_000)
     }
 }

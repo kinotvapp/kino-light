@@ -163,7 +163,7 @@ class PluginCryptoApiTest {
     private val plain = mapOf(
         "aesKey" to "0123456789abcdef", "aesIv" to "fedcba9876543210", "desKey" to "0123456789abcdefghijklmn", "short" to "8bytes!!", "hmacKey" to "hm4c-k3y", "password" to "p4ss", "salt" to "s4lt-v4lue",
     )
-    /** How many seals were opened: a marker left as text opens none. */
+    /** How many seals were opened: once each at most (the first redaction opens them all), however they are used. */
     private val opens = java.util.concurrent.atomic.AtomicInteger()
     private val secrets = PluginSecrets(
         plain.mapValues { (name, value) -> TestSealing.seal(value, "owner/repo", name) }, "owner/repo",
@@ -244,13 +244,15 @@ class PluginCryptoApiTest {
             ),
             answers.map { it.optString("error") },
         )
-        assertEquals("no seal opened", 0, opens.get())
+        // Redacting each answer opens every seal once (so a value in it would come back as its
+        // marker), never once per answer: nothing here opened one to substitute it.
+        assertEquals(plain.size, opens.get())
         // And through the JS API: the prelude refuses an unknown encoding before anything crosses.
         assertEquals(
             "[\"crypto_error\",\"codificación desconocida: ${m.take(20)}\"]",
             sealedHome("try { kino.crypto.hash('md5', 'x', { outputEncoding: s('aesKey') }) } catch (e) { return [e.code, e.message] }"),
         )
-        assertEquals("no seal opened", 0, opens.get())
+        assertEquals(plain.size, opens.get())
     }
 
     @Test fun `pbkdf2 with a sealed salt under a plain password still refuses a marker in data`() {
@@ -360,6 +362,15 @@ class PluginCryptoApiTest {
                 return { m: s('hmacKey'), out: kino.crypto.decrypt('aes-128-ecb', { key: '$plainKey', keyEncoding: 'hex', data: '$ct' }) };
                 """,
             ),
+        )
+        assertEquals(out.getString("m"), out.getString("out"))
+    }
+
+    @Test fun `a crypto result that is a declared value this runtime never used comes back as its marker`() {
+        val plainKey = "2b7e151628aed2a6abf7158809cf4f3c"
+        val ct = expected(JSONObject().put("op", "encrypt").put("alg", "aes-128-ecb").put("key", plainKey).put("keyEnc", "hex").put("data", plain["password"]))
+        val out = JSONObject(
+            sealedHome("return { m: s('password'), out: kino.crypto.decrypt('aes-128-ecb', { key: '$plainKey', keyEncoding: 'hex', data: '$ct' }) }"),
         )
         assertEquals(out.getString("m"), out.getString("out"))
     }

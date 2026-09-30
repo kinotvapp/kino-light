@@ -34,9 +34,13 @@ class PluginSecretsRuntimeTest {
     /** Every line both loggers wrote: [PluginHttp]'s and [DefaultPluginHost]'s (`kino.log`, `console`). */
     private val logs = java.util.concurrent.CopyOnWriteArrayList<String>()
 
-    private fun home(body: String, secrets: PluginSecrets? = this.secrets): String = runBlocking {
+    private fun home(
+        body: String,
+        secrets: PluginSecrets? = this.secrets,
+        cookieFile: java.io.File = tmp.root.resolve("c-${System.nanoTime()}.json"),
+    ): String = runBlocking {
         val hosts = EffectiveHosts(listOf("localhost"))
-        val cookies = PluginCookies(tmp.root.resolve("c-${System.nanoTime()}.json"), hosts)
+        val cookies = PluginCookies(cookieFile, hosts)
         val http = PluginHttp(OkHttpClient(), "test", hosts, "1.0", cookies = cookies, allowInsecureLocalhost = true, log = { logs += it })
         val host = DefaultPluginHost(
             "test", http, PluginStorage(tmp.root.resolve("s-${System.nanoTime()}.json")), cookies = cookies,
@@ -85,6 +89,42 @@ class PluginSecretsRuntimeTest {
         assertFalse(out, "k-123" in out)
         val m = secrets.marker("apiKey")!!
         assertEquals(JSONArray().put(m).put("$base/search?api_key=$m").put("your key is $m").toString(), out)
+    }
+
+    /** A fresh runtime's secrets for the same seals: its own nonce, nothing opened yet. */
+    private fun freshSecrets() = PluginSecrets(
+        mapOf("apiKey" to TestSealing.seal("k-123", "owner/repo", "apiKey")), "owner/repo", TestSealing.agreement,
+        sealedHosts = listOf("localhost"), recipient = TestSealing.TEST_PUBLIC,
+    )
+
+    @Test fun `a cookie set in an earlier runtime comes back as the marker in the next one, before any use`() {
+        val jar = tmp.root.resolve("shared-cookies.json")
+        server.enqueue(MockResponse().setBody("ok").addHeader("Set-Cookie", "sid=k-123; Path=/"))
+        val first = freshSecrets()
+        home("await kino.fetch('http://localhost:${server.port}/login?k=' + kino.secret('apiKey')); return 'ok'", secrets = first, cookieFile = jar)
+        assertEquals("/login?k=k-123", server.takeRequest().path)
+        // The next runtime never calls kino.secret: the cookie still reads as ITS marker.
+        val second = freshSecrets()
+        val out = home("return kino.cookies.get('http://localhost:${server.port}/', 'sid')", secrets = second, cookieFile = jar)
+        assertEquals("\"${second.marker("apiKey")}\"", out)
+    }
+
+    @Test fun `a server echoing the value to a request without markers hands the plugin the marker`() {
+        server.enqueue(MockResponse().setBody("session k-123").addHeader("X-Echo", "k-123"))
+        val s = freshSecrets()
+        val out = JSONArray(
+            home(
+                """
+                const r = await kino.fetch('http://localhost:${server.port}/whoami');
+                kino.log('saw ' + r.text());
+                return [r.text(), r.headers['x-echo'], atob(r.base64())];
+                """,
+                secrets = s,
+            ),
+        )
+        val m = s.marker("apiKey")!!
+        assertEquals(JSONArray().put("session $m").put(m).put("session $m").toString(), out.toString())
+        assertFalse(logs.toString(), logs.any { "k-123" in it })
     }
 
     // --- Redaction (spec §5): every form of an opened value comes back to the plugin as its marker. ---

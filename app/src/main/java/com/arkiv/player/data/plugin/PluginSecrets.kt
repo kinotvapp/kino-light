@@ -11,9 +11,12 @@ import java.util.Base64
  * concatenation, `JSON.stringify`, `encodeURIComponent` and form encoding unchanged, and carries no
  * information about the value. [nonce] is chosen once per runtime, so a marker copied from another
  * runtime (or guessed from the docs) is just text here. [substitute] swaps a marker for the plain
- * value at the last moment, in Kotlin; each seal is opened at most once, on first use, and kept in
- * memory for this runtime only. [redact] swaps an opened value back for its marker in what returns
- * to the plugin.
+ * value at the last moment, in Kotlin. [redact] swaps a value back for its marker in what returns
+ * to the plugin. Each seal is opened at most once per runtime and kept in memory for it only: on the
+ * first [substitute] that needs it, or -- all of them at once -- on the first [redact] or
+ * [containsValue] of non-empty text. Redaction can't wait for a value's first use: a cookie an
+ * earlier runtime's request set, or a server echoing the value to a request that never carried it,
+ * reaches the plugin before this runtime ever substituted anything.
  *
  * A request [DefaultPluginHost] substituted a value into may reach only [sealedHosts] -- the hosts
  * the MANIFEST declares, never one approved reactively, a server the person typed or the broad
@@ -31,6 +34,9 @@ class PluginSecrets(
 ) {
     private val markers: Map<String, String> = sealed.keys.associateWith { "__kinoSecret_${it}_${nonce}__" }
     private val opened = HashMap<String, String>()
+    /** Seals [openAll] couldn't open (no native X25519 on this build): not tried again for redaction. Guarded by [opened]. */
+    private val unopenable = HashSet<String>()
+    @Volatile private var allOpened = false
 
     /** This runtime's marker for [name]; null when the manifest doesn't declare it. */
     fun marker(name: String): String? = markers[name]
@@ -61,20 +67,47 @@ class PluginSecrets(
     }
 
     /**
-     * [text] with every opened plain value, in every form [echoForms] lists, replaced by its marker.
+     * [text] with every declared plain value, in every form [echoForms] lists, replaced by its marker.
      * One pass, longest form first at each position: a value that is a prefix of another leaves no
      * tail, and a marker just put in is never scanned again. Exact occurrences only: a server that
      * transforms the value any other way (case, hashing, another escaping) is not caught. [text]
      * itself comes back when it holds none: the regex runs only after a plain search found a form.
      */
     fun redact(text: String): String {
+        if (text.isEmpty()) return text
+        openAll()
         val r = redaction()
         if (!r.foundIn(text)) return text
         return r.pattern!!.replace(text) { r.forms.getValue(it.value) }
     }
 
-    /** True when [text] holds an opened value in any form [redact] replaces. */
-    fun containsValue(text: String): Boolean = redaction().foundIn(text)
+    /** True when [text] holds a declared value in any form [redact] replaces. */
+    fun containsValue(text: String): Boolean {
+        if (text.isEmpty()) return false
+        openAll()
+        return redaction().foundIn(text)
+    }
+
+    /**
+     * Opens every declared seal not opened yet, once per runtime (one X25519 each). A seal that
+     * won't open is skipped: this build can't open it for [substitute] either, so its value can't
+     * have been sent from here -- and [substitute] still reports that failure itself.
+     */
+    private fun openAll() {
+        if (allOpened) return
+        synchronized(opened) {
+            if (allOpened) return
+            for ((name, seal) in sealed) {
+                if (name in opened || name in unopenable) continue
+                try {
+                    opened[name] = SealedSecrets.open(seal, binding, name, agreement, recipient)
+                } catch (e: SealException) {
+                    unopenable += name
+                }
+            }
+            allOpened = true
+        }
+    }
 
     /** Every form of the values opened so far, each mapped to its marker, and one pattern for all of them. */
     private class Redaction(val openedCount: Int, val forms: Map<String, String>) {
@@ -104,19 +137,53 @@ class PluginSecrets(
         private val random = SecureRandom()
         private const val HEX = "0123456789ABCDEF"
 
+        private const val HEX_LOWER = "0123456789abcdef"
+
         /**
          * Every form [redact] replaces: what [substitute] writes (each [Encoding]), and how a server
          * commonly echoes a value back -- `URLEncoder`'s form encoding (`+` for a space) and the same
-         * with `%20`, and the UTF-8 bytes in base64 and base64url, with and without padding.
+         * with `%20`; the UTF-8 bytes in base64 and base64url, with and without padding; and inside a
+         * JSON string with `/` escaped as `\/` (PHP's `json_encode`), with every non-ASCII character
+         * as `\uXXXX` (PHP, Python's `json.dumps`, a surrogate pair as two), in lowercase and
+         * uppercase hex, and each combination of those.
          */
-        private fun echoForms(plain: String): Set<String> {
+        internal fun echoForms(plain: String): Set<String> {
             val bytes = plain.toByteArray(Charsets.UTF_8)
             val form = URLEncoder.encode(plain, "UTF-8")
-            return Encoding.entries.mapTo(LinkedHashSet()) { encode(plain, it) } + listOf(
+            val json = LinkedHashSet<String>()
+            for (hex in listOf(HEX, HEX_LOWER)) for (slash in listOf(false, true)) for (nonAscii in listOf(false, true)) {
+                json += jsonEscape(plain, slash, nonAscii, hex)
+            }
+            return Encoding.entries.mapTo(LinkedHashSet()) { encode(plain, it) } + json + listOf(
                 form, form.replace("+", "%20"),
                 Base64.getEncoder().encodeToString(bytes), Base64.getEncoder().withoutPadding().encodeToString(bytes),
                 Base64.getUrlEncoder().encodeToString(bytes), Base64.getUrlEncoder().withoutPadding().encodeToString(bytes),
             )
+        }
+
+        /**
+         * [value] inside a JSON string, without the quotes: `"` and `\` escaped, the short escapes for
+         * the usual control characters and `\u00XX` for the rest; `/` too when [slash], and every
+         * character past ASCII as `\uXXXX` when [nonAscii]. [hex] picks the digits' case.
+         */
+        private fun jsonEscape(value: String, slash: Boolean, nonAscii: Boolean, hex: String): String = buildString {
+            for (ch in value) {
+                when {
+                    ch == '"' -> append("\\\"")
+                    ch == '\\' -> append("\\\\")
+                    ch == '/' && slash -> append("\\/")
+                    ch == '\n' -> append("\\n")
+                    ch == '\r' -> append("\\r")
+                    ch == '\t' -> append("\\t")
+                    ch == '\b' -> append("\\b")
+                    ch == '\u000C' -> append("\\f")
+                    ch < ' ' || (nonAscii && ch.code > 0x7F) -> {
+                        val c = ch.code
+                        append("\\u").append(hex[c shr 12 and 0xF]).append(hex[c shr 8 and 0xF]).append(hex[c shr 4 and 0xF]).append(hex[c and 0xF])
+                    }
+                    else -> append(ch)
+                }
+            }
         }
 
         fun encode(value: String, encoding: Encoding): String = when (encoding) {
@@ -132,21 +199,7 @@ class PluginSecrets(
                     }
                 }
             }
-            Encoding.JSON_STRING -> buildString {
-                for (ch in value) {
-                    when {
-                        ch == '"' -> append("\\\"")
-                        ch == '\\' -> append("\\\\")
-                        ch == '\n' -> append("\\n")
-                        ch == '\r' -> append("\\r")
-                        ch == '\t' -> append("\\t")
-                        ch == '\b' -> append("\\b")
-                        ch == '\u000C' -> append("\\f")
-                        ch < ' ' -> append("\\u00").append(HEX[ch.code shr 4]).append(HEX[ch.code and 0xF])
-                        else -> append(ch)
-                    }
-                }
-            }
+            Encoding.JSON_STRING -> jsonEscape(value, slash = false, nonAscii = false, hex = HEX)
         }
 
         /** 16 lowercase hex characters (64 random bits). */
