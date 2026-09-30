@@ -91,9 +91,23 @@ object NuvioPluginConverter {
         // Priority order BEFORE the cap: the remote list's entries this scraper names (its current,
         // rotated domain), then its own literals, then the rest of a shared remote list. Every
         // candidate is validated first, so no garbage ever occupies one of the MAX_HOSTS slots.
-        val candidates = (remoteHosts.preferred + NuvioHostExtractor.extractHosts(scraperSource) + remoteHosts.others)
+        val literals = NuvioHostExtractor.extractHosts(scraperSource)
+        val unranked = (remoteHosts.preferred + literals + remoteHosts.others)
             .filter(NuvioHostExtractor::isPlausibleHost)
             .distinct()
+        // Over the cap, source order alone could cut the scraper's OWN site: a bundle lists its shared
+        // hoster resolvers first and its entry module last (cuevanaubd names 98 hosts, its API host
+        // `cuevana.unbuendato.com` near the end). So the literals that look like its own site
+        // ([NuvioHostExtractor.primaryHosts]: an address-named constant, or a URL with a query built
+        // at runtime) move ahead of the other literals; the remote list's preferred hosts stay first.
+        // Whatever still falls past the cap is asked for at runtime (reactive approval).
+        val candidates = if ((unranked - TMDB_HOST).size + 1 > ManifestParser.MAX_HOSTS) {
+            val primary = NuvioHostExtractor.primaryHosts(scraperSource).toSet()
+            val (ownSite, rest) = literals.partition { it in primary }
+            (remoteHosts.preferred + ownSite + rest + remoteHosts.others)
+                .filter(NuvioHostExtractor::isPlausibleHost)
+                .distinct()
+        } else unranked
         // TMDB is the ADAPTER's own dependency (every search's artwork, every series' episode list),
         // so it holds the first slot whatever the scraper names: the cap can never push it out.
         val all = listOf(TMDB_HOST) + (candidates - TMDB_HOST)

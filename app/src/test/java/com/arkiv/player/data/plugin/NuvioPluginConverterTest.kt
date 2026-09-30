@@ -103,6 +103,48 @@ class NuvioPluginConverterTest {
         assertTrue(result.warnings.any { "más de 20 dominios" in it })
     }
 
+    /**
+     * Shaped like cigna26's real `cuevana.js` (cuevanaubd): an esbuild bundle whose shared hoster
+     * resolvers come first and name many hosts, and whose own entry module, at the very end, builds its
+     * API URL with a query. In source order that host was the 26th and the cap cut it.
+     */
+    private val bundledManyHostsSource = buildString {
+        append("var require_resolvers = __commonJS({\n")
+        (1..24).forEach { append("  function resolveHoster$it(id) { return fetch(`https://hoster$it.example/e/${'$'}{id}`); }\n") }
+        append("  var MIRRORS = [\"mirror-a.example\", \"mirror-b.example\"];\n")
+        append("});\n")
+        append("// src/cuevana_unbuendato/index.js\n")
+        append("function getStreams(tmdbId, mediaType, season, episode) {\n")
+        append("  let apiUrl = `https://cuevana.unbuendato.com/?id=${'$'}{tmdbId}`;\n")
+        append("  return fetch(apiUrl).then(function (r) { return []; });\n")
+        append("}\n")
+        append("module.exports = { getStreams: getStreams };\n")
+    }
+
+    @Test fun `over the cap the scraper's own site outranks the hosts its resolvers name first`() {
+        assertTrue(NuvioHostExtractor.extractHosts(bundledManyHostsSource).indexOf("cuevana.unbuendato.com") >= ManifestParser.MAX_HOSTS)
+        val result = NuvioPluginConverter.convert(scraper, bundledManyHostsSource, repoSlug = "owner/repo", tmdbApiKey = "k")
+        val manifest = (ManifestParser.parse(result.manifestJson) as ManifestResult.Valid).manifest
+        assertEquals(ManifestParser.MAX_HOSTS, manifest.hosts.size)
+        assertEquals(listOf("api.themoviedb.org", "cuevana.unbuendato.com", "hoster1.example"), manifest.hosts.take(3))
+        // The rest keep their source order; what no longer fits is asked for at runtime.
+        assertEquals("hoster18.example", manifest.hosts.last())
+        assertTrue(result.warnings.any { "más de 20 dominios" in it })
+    }
+
+    @Test fun `under the cap the source order is kept as is`() {
+        val small = bundledManyHostsSource.lines().filterNot { Regex("hoster(\\d+)").find(it)?.groupValues?.get(1)?.toInt()?.let { n -> n > 3 } == true }
+            .joinToString("\n")
+        val result = NuvioPluginConverter.convert(scraper, small, repoSlug = "owner/repo", tmdbApiKey = "k")
+        assertEquals(
+            listOf(
+                "api.themoviedb.org", "hoster1.example", "hoster2.example", "hoster3.example",
+                "mirror-a.example", "mirror-b.example", "cuevana.unbuendato.com",
+            ),
+            result.hosts,
+        )
+    }
+
     @Test fun `the host-cap warning reaches the manifest description the consent sheet shows`() {
         val remote = NuvioRemoteHosts(emptyList(), (1..30).map { "mirror$it.example" })
         val longName = scraper.copy(name = "N".repeat(80))

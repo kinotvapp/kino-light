@@ -151,4 +151,19 @@ class NuvioHostExtractorTest {
         )
         assertEquals(NuvioRemoteHosts.NONE, NuvioHostExtractor.parseDomainsJson("not json", ""))
     }
+
+    @Test fun `primary hosts are address-named constants and URLs with a runtime query, not embed paths`() {
+        val source = """
+            const BASE_URL = "https://areshd.com";
+            var cfg = { apiUrl: 'https://api.site.example/v1', label: "https://not-an-address.example" };
+            const DOMAIN = "pelis182.net";
+            fetch(`https://vidhide.example/e/${'$'}{id}`);
+            fetch(`https://cuevana.unbuendato.com/?id=${'$'}{rawId}`);
+            fetch("https://plain.example/list");
+        """.trimIndent()
+        assertEquals(
+            listOf("areshd.com", "api.site.example", "pelis182.net", "cuevana.unbuendato.com"),
+            NuvioHostExtractor.primaryHosts(source),
+        )
+    }
 }

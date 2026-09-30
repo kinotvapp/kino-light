@@ -64,6 +64,31 @@ object NuvioHostExtractor {
             .distinct()
 
     /**
+     * The hosts that look like the scraper's OWN site rather than a hoster/CDN it resolves embeds on,
+     * in first-seen order. Two shapes count, both read off the raw source (the caller keeps only
+     * what [extractHosts] also found, so a match inside a comment never adds anything):
+     *  - a string assigned to a name that says it's an address -- one containing `url`, `host`,
+     *    `domain`, `base`, `site` or `api` (`const BASE_URL = "https://areshd.com"`, `MAIN_URL:`,
+     *    `apiUrl = "…"`, `DOMAIN = "pelis182.net"`);
+     *  - a template URL whose QUERY carries an expression (`` `https://cuevana.unbuendato.com/?id=${id}` ``,
+     *    `` `https://site/?s=${query}` ``): the site's own search/lookup, while embed hosts are
+     *    usually built on a path (`/e/${id}`).
+     * Only used to rank candidates when a scraper names more than the 20 hosts a manifest can declare.
+     */
+    fun primaryHosts(source: String): List<String> {
+        val found = ArrayList<String>()
+        ADDRESS_ASSIGNMENT.findAll(source).forEach { found += hostsInLiteral(it.groupValues[1]) }
+        QUERY_TEMPLATE_URL.findAll(source).forEach { m -> normalize(m.groupValues[1])?.let { found += it } }
+        return found.distinct()
+    }
+
+    private val ADDRESS_ASSIGNMENT = Regex(
+        """(?<![A-Za-z0-9_$])(?=[A-Za-z_$])[A-Za-z0-9_$]*?(?:url|host|domain|base|site|api)[A-Za-z0-9_$]*\s*[:=]\s*["'`]([^"'`\n]+)["'`]""",
+        RegexOption.IGNORE_CASE,
+    )
+    private val QUERY_TEMPLATE_URL = Regex("""`https?://([a-z0-9.-]+)[^`\s]*\?[^`\s]*\$\{""", RegexOption.IGNORE_CASE)
+
+    /**
      * A candidate [ManifestParser] would accept as a declared host AND that looks like a real public
      * domain: its last label is letters (or punycode) and isn't a file extension.
      */
