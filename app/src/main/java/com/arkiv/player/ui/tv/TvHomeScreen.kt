@@ -33,6 +33,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.LiveTv
@@ -59,7 +60,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -412,6 +419,8 @@ fun TvHomeScreen(
     /** Plays a live channel directly (channel code), without going through "En vivo". */
     onPlayLive: (String) -> Unit,
     onOpenSettings: () -> Unit,
+    /** Ajustes already on its Plugins tab, so the rail reaches them without walking the tab row. */
+    onOpenPlugins: () -> Unit,
     onOpenSearch: () -> Unit,
     onOpenLibrary: () -> Unit,
     onOpenLive: () -> Unit,
@@ -1302,22 +1311,52 @@ fun TvHomeScreen(
 
         // The navigation, as a rail on the left. "Buscar" keeps `barFocus`, so the landing and the refocus rules above
         // keep working: they were written for the old top bar and only the shape of the bar changed.
+        val reloadFocus = remember { FocusRequester() }
         val railItems = buildList {
             add(
                 TvRailItem(
                     Icons.Default.Search, "Buscar", onOpenSearch,
-                    Modifier.focusRequester(barFocus).onFocusChanged { barLandingFocused = it.isFocused },
+                    Modifier.focusRequester(barFocus).onFocusChanged { barLandingFocused = it.isFocused }
+                        // Right from the top of the rail goes to the reload button in the corner (nothing else can reach it).
+                        .onPreviewKeyEvent { e ->
+                            if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionRight) {
+                                reloadFocus.requestFocus()
+                                true
+                            } else {
+                                false
+                            }
+                        },
                 ),
             )
-            add(TvRailItem(Icons.Default.Refresh, "Recargar", { graph.reloadHomeCatalog() }))
             if (categoriesTabAvailable(installedPlugins, genreTiles.isNotEmpty())) add(TvRailItem(Icons.Default.GridView, "Categorías", onOpenCategoriasHome))
             if (xuperLive) add(TvRailItem(Icons.Default.PlayCircle, "Xuper", onOpenCategorias))
             add(TvRailItem(Icons.Default.VideoLibrary, "Mi biblioteca", onOpenLibrary))
             if (liveOn) add(TvRailItem(Icons.Default.LiveTv, "En vivo", onOpenLive))
             if (isColombia) add(TvRailItem(Icons.Default.Tv, "Caracol", onOpenCaracol))
+            add(TvRailItem(Icons.Default.Extension, "Plugins", onOpenPlugins))
             add(TvRailItem(Icons.Default.Settings, "Ajustes", onOpenSettings))
         }
         TvSideRail(railItems, Modifier.align(Alignment.CenterStart))
+        // Reload sits in the top right corner, away from the navigation: it is an action on the screen, not a place to go.
+        Surface(
+            onClick = { graph.reloadHomeCatalog() },
+            modifier = Modifier.align(Alignment.TopEnd).padding(top = 24.dp, end = 32.dp).size(48.dp)
+                .focusRequester(reloadFocus)
+                .focusProperties { left = barFocus },
+            shape = ClickableSurfaceDefaults.shape(CircleShape),
+            colors = ClickableSurfaceDefaults.colors(
+                containerColor = ArkivBlack.copy(alpha = 0.55f),
+                contentColor = Color.White,
+                focusedContainerColor = ArkivRed,
+                focusedContentColor = Color.White,
+                pressedContainerColor = ArkivRed,
+                pressedContentColor = Color.White,
+            ),
+        ) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Icon(Icons.Default.Refresh, contentDescription = "Recargar", modifier = Modifier.size(26.dp))
+            }
+        }
     }
 }
 

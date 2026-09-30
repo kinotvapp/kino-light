@@ -60,7 +60,7 @@ private enum class TvSettingsTab(val label: String) {
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-fun TvSettingsScreen() {
+fun TvSettingsScreen(initialTab: String? = null) {
     val graph = rememberGraph()
     val magisAccount = graph.magisAccount
     // Reactive: this can flip WHILE the person is sitting on this screen (the next catalog call
@@ -97,7 +97,7 @@ fun TvSettingsScreen() {
         return
     }
 
-    var tab by rememberSaveable { mutableStateOf(TvSettingsTab.SUBTITLES) }
+    var tab by rememberSaveable { mutableStateOf(TvSettingsTab.entries.firstOrNull { it.name == initialTab } ?: TvSettingsTab.SUBTITLES) }
     // One scroll per tab: with a single shared one, entering "Account" from the bottom of
     // "Subtitles" left the screen starting halfway down.
     val scroll = rememberSaveable(tab, saver = ScrollState.Saver) { ScrollState(0) }
