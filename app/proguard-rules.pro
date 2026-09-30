@@ -47,3 +47,11 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefile MyApplication
+
+# The credentials .so binds NativeCredentialResolver's natives BY NAME in JNI_OnLoad
+# (RegisterNatives). The default rules only keep native NAMES, not unused natives: one R8 shrinks
+# away (e.g. sealAgree before its first caller ships) makes RegisterNatives fail, and then the whole
+# library refuses to load. Keep every declared native.
+-keepclasseswithmembers class com.arkiv.player.data.credentials.NativeCredentialResolver {
+    native <methods>;
+}

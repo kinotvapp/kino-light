@@ -24,6 +24,10 @@
         <receiver
             android:name="com.arkiv.player.debug.HostApprovalProbe"
             android:exported="true" />
+        <!-- Runs the native X25519 self-test and opens a seal without logging its value; see SealSelfTestProbe. -->
+        <receiver
+            android:name="com.arkiv.player.debug.SealSelfTestProbe"
+            android:exported="true" />
         <!-- Plays one URL with the plugin player's ExoPlayer setup and logs the decoder's view; see StreamProbeActivity. -->
         <activity
             android:name="com.arkiv.player.debug.StreamProbeActivity"

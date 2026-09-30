@@ -348,15 +348,24 @@ fun writeSecretsHeader(bindCert: Boolean, outputDir: File) {
         }
         return masked.joinToString(", ") { "0x%02x".format(it) }
     }
-    fun field(name: String, value: String, bindThisField: Boolean): String {
-        val bytes = value.toByteArray(Charsets.UTF_8)
-        return "static const unsigned char $name[] = { ${maskedLiteral(bytes, bindThisField)} };\n" +
+    fun field(name: String, bytes: ByteArray, bindThisField: Boolean): String =
+        "static const unsigned char $name[] = { ${maskedLiteral(bytes, bindThisField)} };\n" +
             "static const int ${name}_LEN = ${bytes.size};\n"
+    fun field(name: String, value: String, bindThisField: Boolean): String =
+        field(name, value.toByteArray(Charsets.UTF_8), bindThisField)
+    // Empty stays empty (a build without the key still compiles; native reports "no key"). A
+    // malformed value fails the build without echoing it: a wrong key would silently break seals.
+    fun hexToBytes(hex: String): ByteArray {
+        if (hex.isEmpty()) return ByteArray(0)
+        require(hex.length % 2 == 0 && hex.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }) {
+            "a hex value in .env is malformed (value not shown)"
+        }
+        return ByteArray(hex.length / 2) { i -> hex.substring(i * 2, i * 2 + 2).toInt(16).toByte() }
     }
     val content = buildString {
         appendLine("// GENERATED -- do not edit by hand, never committed (see .gitignore).")
         appendLine("// Regenerated before every native build. Arrays are XOR-masked; the GEN_NATIVE_*")
-        appendLine("// credential halves are additionally cert-bound in release (bindCert=$bindCert).")
+        appendLine("// credential halves and GEN_PLUGIN_SEAL_KEY are additionally cert-bound in release (bindCert=$bindCert).")
         appendLine("#pragma once")
         append(field("GEN_BLOB_KEY", readEnv("CREDENTIALS_BLOB_KEY"), false)) // never cert-bound: the blob is shared
         append(field("GEN_NATIVE_3DES", nativeHalf(readEnv("IPTV_3DES_KEY")), true))
@@ -368,6 +377,8 @@ fun writeSecretsHeader(bindCert: Boolean, outputDir: File) {
         // useless, native field -- resolve() just returns "" for it, same as any missing key.
         append(field("GEN_NATIVE_FALLBACK_EMAIL", nativeHalf(readEnv("MAGIS_FALLBACK_EMAIL")), true))
         append(field("GEN_NATIVE_FALLBACK_PASSWORD", nativeHalf(readEnv("MAGIS_FALLBACK_PASSWORD")), true))
+        // X25519 private key that opens plugin seals (spec 2026-09-29-plugin-sealed-secrets §3).
+        append(field("GEN_PLUGIN_SEAL_KEY", hexToBytes(readEnv("PLUGIN_SEAL_PRIVATE_KEY")), bindThisField = true))
     }
     outputDir.resolve("generated_secrets.h").writeText(content)
 }

@@ -23,8 +23,8 @@ object SealedSecrets {
     const val MAX_SECRETS = 16
     val NAME = Regex("^[A-Za-z][A-Za-z0-9_]{0,31}$")
 
-    /** Kino's v1 public key. Set in Task 2 from the generated production key pair. */
-    val KINO_PUBLIC_KEY_V1: ByteArray = ByteArray(32)
+    /** Kino's v1 (production) public key; its private half lives only in the native library. */
+    val KINO_PUBLIC_KEY_V1: ByteArray = hex("b13ecf6d231a75bf57ca21d977075c74f914b4416653cf89940897a29393e65c")
 
     /** Shown to the person when this device build has no native X25519 to open seals with (Task 2, Task 4). */
     const val NO_NATIVE_MESSAGE = "este Kino no puede abrir datos sellados"
@@ -78,4 +78,6 @@ object SealedSecrets {
         mac.init(SecretKeySpec(prk, "HmacSHA256"))
         return mac.doFinal(info + byteArrayOf(1)).copyOf(32).also { prk.fill(0) }
     }
+
+    private fun hex(s: String): ByteArray = ByteArray(s.length / 2) { i -> s.substring(i * 2, i * 2 + 2).toInt(16).toByte() }
 }

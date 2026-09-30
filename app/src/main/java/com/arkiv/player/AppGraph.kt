@@ -489,6 +489,9 @@ class AppGraph(context: Context) {
     /** Bridges a plugin's undeclared-host prompt to the dialog `MainActivity` collects from [HostApprovalCenter.pending]. */
     val hostApprovalCenter: HostApprovalCenter by lazy { HostApprovalCenter() }
 
+    /** The X25519 step of opening plugin seals ([SealedSecrets]); the private key stays native. */
+    val sealAgreement: X25519Agreement by lazy { com.arkiv.player.data.credentials.NativeSealAgreement }
+
     /**
      * The ONLY place `reload()`'s Keystore correctness (finding 5) actually touches the Keystore
      * (fix round 2, new breakage 1): `warmUpCredentials()` calls this on IO, BEFORE `contentSource`
