@@ -27,7 +27,8 @@ data class NuvioConversionResult(
 internal enum class NuvioLibrary(val file: String, private val trigger: Regex, val binding: String = "") {
     // Any mention: `require("cheerio-without-node-native")`, its `cheerio`/`react-native-cheerio` aliases.
     CHEERIO("cheerio.js", Regex("cheerio")),
-    CRYPTO_JS("crypto-js.js", Regex("crypto-js")),
+    // Also any `crypto.subtle` use: the shim's Web Crypto computes SHA-384 (digest and HMAC) with it.
+    CRYPTO_JS("crypto-js.js", Regex("""crypto-js|\bsubtle\b""")),
     // The global (`Buffer.from(...)`) or the module; never `ArrayBuffer`/`messageBuffer` (no word boundary).
     BUFFER("buffer.js", Regex("""\bBuffer\b|["'`]buffer["'`]"""), binding = "var Buffer = __nuvioLibBuffer.Buffer;\n");
 
