@@ -1,6 +1,7 @@
 package com.arkiv.player.ui.plugin
 
 import androidx.compose.foundation.border
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -48,56 +49,106 @@ import kotlinx.coroutines.delay
  * The consent sheet: what the plugin is, WHICH HOSTS it will talk to, and that nobody verified
  * it. Nothing beyond the manifest has been downloaded yet. On an update only the new hosts are
  * marked "nuevo". Focus starts on "Cancelar".
+ *
+ * A Nuvio scraper can declare 20 hosts, which made the sheet taller than a TV screen, so the host
+ * list folds to its first [CONSENT_HOSTS_COLLAPSED] rows (the new ones of an update first) behind
+ * "Ver todos" ([pluginConsentHostSummary]). The permission warnings and the "no verificado" line sit
+ * ABOVE the list, so neither folding nor a long expanded list ever takes them out of view. The body
+ * scrolls on its own while "Cancelar" / "Instalar" stay pinned below it, reachable at any height.
+ * On a D-pad the expanded rows are focusable, so the remote can walk (and scroll) through them and
+ * on to the buttons; folded, they are plain text and the toggle is the only stop on the way.
  */
 @Composable
 fun PluginConsentDialog(preview: InstallPreview, onInstall: () -> Unit, onCancel: () -> Unit) {
     val m = preview.manifest
     val cancelFocus = remember { FocusRequester() }
     FocusWhenReady(cancelFocus)
+    var hostsExpanded by remember(preview) { mutableStateOf(false) }
     Dialog(onDismissRequest = onCancel) {
         Surface(shape = RoundedCornerShape(16.dp), color = ArkivSurface, modifier = Modifier.widthIn(max = 520.dp)) {
-            Column(Modifier.padding(24.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(
-                    if (preview.isUpdate) "Actualizar ${m.name}" else "Instalar ${m.name}",
-                    style = MaterialTheme.typography.titleLarge, color = Color.White, fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                    listOfNotNull("versión ${m.version}", m.author.takeIf { it.isNotBlank() }?.let { "de $it" }).joinToString(" · "),
-                    style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary,
-                )
-                if (m.description.isNotBlank()) Text(m.description, style = MaterialTheme.typography.bodyMedium, color = Color.White)
-                val protectedLine = pluginConsentProtectedLine(preview.address.canonical)
-                if (protectedLine != null) {
-                    Text(protectedLine, style = MaterialTheme.typography.bodyMedium, color = Color.White)
-                } else pluginConsentHosts(m.hosts).takeIf { it.isNotEmpty() }?.let { hosts ->
-                    // None left (only the person's own server): the url-setting line below says it all.
-                    Text("Se va a conectar con:", style = MaterialTheme.typography.titleSmall, color = Color.White)
-                    hosts.forEach { host ->
+            Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Column(
+                    Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Text(
+                        if (preview.isUpdate) "Actualizar ${m.name}" else "Instalar ${m.name}",
+                        style = MaterialTheme.typography.titleLarge, color = Color.White, fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        listOfNotNull("versión ${m.version}", m.author.takeIf { it.isNotBlank() }?.let { "de $it" }).joinToString(" · "),
+                        style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary,
+                    )
+                    if (m.description.isNotBlank()) Text(m.description, style = MaterialTheme.typography.bodyMedium, color = Color.White)
+                    // Permissions (each with the warning icon), passwords and typed servers: spec §1.2-1.3.
+                    com.arkiv.player.data.plugin.PluginConsent.extraLines(preview).forEach { line ->
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text(host, style = MaterialTheme.typography.bodyMedium, color = Color.White)
-                            if (preview.isUpdate && host in preview.newHosts) MetaChip("nuevo", ArkivRed, strong = true)
+                            if (line.warning) {
+                                Icon(Icons.Filled.Warning, contentDescription = "Advertencia", tint = ArkivRed)
+                            }
+                            // weight(fill = false): a line long enough to wrap used to take the whole row and squeeze the
+                            // "nuevo" chip out of sight; weighted, the text wraps in what is left and the chip always shows.
+                            Text(
+                                line.text, style = MaterialTheme.typography.bodyMedium, color = if (line.danger) ArkivRed else Color.White,
+                                modifier = Modifier.weight(1f, fill = false),
+                            )
+                            if (line.isNew) MetaChip("nuevo", ArkivRed, strong = true)
                         }
                     }
-                }
-                // Permissions (each with the warning icon), passwords and typed servers: spec §1.2-1.3.
-                com.arkiv.player.data.plugin.PluginConsent.extraLines(preview).forEach { line ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        if (line.warning) {
-                            Icon(Icons.Filled.Warning, contentDescription = "Advertencia", tint = ArkivRed)
-                        }
-                        Text(line.text, style = MaterialTheme.typography.bodyMedium, color = if (line.danger) ArkivRed else Color.White)
-                        if (line.isNew) MetaChip("nuevo", ArkivRed, strong = true)
+                    Text(
+                        "Plugin no verificado: solo instálalo si confías en quien lo hizo.",
+                        style = MaterialTheme.typography.bodySmall, color = ArkivRed,
+                    )
+                    val protectedLine = pluginConsentProtectedLine(preview.address.canonical)
+                    if (protectedLine != null) {
+                        Text(protectedLine, style = MaterialTheme.typography.bodyMedium, color = Color.White)
+                    } else pluginConsentHosts(m.hosts).takeIf { it.isNotEmpty() }?.let { hosts ->
+                        // None left (only the person's own server): the url-setting line above says it all.
+                        ConsentHostList(
+                            hosts = hosts,
+                            newHosts = if (preview.isUpdate) preview.newHosts else emptyList(),
+                            expanded = hostsExpanded,
+                            onToggle = { hostsExpanded = !hostsExpanded },
+                        )
                     }
                 }
-                Text(
-                    "Plugin no verificado: solo instálalo si confías en quien lo hizo.",
-                    style = MaterialTheme.typography.bodySmall, color = ArkivRed,
-                )
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End)) {
                     TextButton(onClick = onCancel, modifier = Modifier.focusRequester(cancelFocus).focusRing()) { Text("Cancelar") }
                     Button(onClick = onInstall, modifier = Modifier.focusRing()) { Text(if (preview.isUpdate) "Actualizar" else "Instalar") }
                 }
             }
+        }
+    }
+}
+
+/** The consent sheet's host rows under their heading, folded per [pluginConsentHostSummary], with the "Ver todos" / "Ver menos" toggle. */
+@Composable
+private fun ConsentHostList(hosts: List<String>, newHosts: List<String>, expanded: Boolean, onToggle: () -> Unit) {
+    val summary = pluginConsentHostSummary(hosts, newHosts, expanded)
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                pluginConsentHostsHeader(hosts.size, summary.collapsible),
+                style = MaterialTheme.typography.titleSmall, color = Color.White, modifier = Modifier.weight(1f),
+            )
+            if (summary.collapsible) {
+                TextButton(onClick = onToggle, modifier = Modifier.focusRing()) { Text(if (expanded) "Ver menos" else "Ver todos") }
+            }
+        }
+        summary.visible.forEach { host ->
+            Row(
+                // Only an expanded list needs D-pad stops: they are what lets the remote scroll a long one.
+                (if (expanded) Modifier.focusRing().focusable() else Modifier).padding(horizontal = 4.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                // Weighted like the permission lines: a long host wraps instead of pushing its "nuevo" chip out.
+                Text(host, style = MaterialTheme.typography.bodyMedium, color = Color.White, modifier = Modifier.weight(1f, fill = false))
+                if (host in newHosts) MetaChip("nuevo", ArkivRed, strong = true)
+            }
+        }
+        pluginConsentHiddenHostsLine(summary)?.let {
+            Text(it, style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary, modifier = Modifier.padding(horizontal = 4.dp))
         }
     }
 }

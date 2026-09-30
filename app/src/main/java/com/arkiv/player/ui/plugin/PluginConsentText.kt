@@ -40,3 +40,53 @@ fun pluginConsentProtectedLine(address: String): String? =
  * reach is the server the person types -- means the sheet shows no header at all.
  */
 fun pluginConsentHosts(hosts: List<String>): List<String> = hosts.filterNot(PluginHosts::isReservedInvalid)
+
+/** How many hosts the consent sheet lists before the rest folds behind "Ver todos". */
+const val CONSENT_HOSTS_COLLAPSED = 3
+
+/**
+ * What the consent sheet's host section shows. [visible] is the rows drawn right now; [hiddenCount]
+ * (and how many of those are new, [hiddenNewCount]) is what the "y N más" line summarizes while
+ * collapsed; [collapsible] says whether the "Ver todos" / "Ver menos" toggle exists at all.
+ */
+data class ConsentHostSummary(
+    val visible: List<String>,
+    val hiddenCount: Int,
+    val hiddenNewCount: Int,
+    val collapsible: Boolean,
+)
+
+/**
+ * The consent sheet's host list, folded to [limit] rows unless [expanded]. The new hosts of an
+ * update ([newHosts], empty on a fresh install) come first, so the collapsed view shows what the
+ * person has not approved yet rather than hosts they already did; the order is otherwise kept.
+ * At most [limit] hosts means no toggle and nothing hidden.
+ */
+fun pluginConsentHostSummary(
+    hosts: List<String>,
+    newHosts: Collection<String>,
+    expanded: Boolean,
+    limit: Int = CONSENT_HOSTS_COLLAPSED,
+): ConsentHostSummary {
+    val (fresh, known) = hosts.partition { it in newHosts }
+    val ordered = fresh + known
+    val collapsible = ordered.size > limit
+    val visible = if (collapsible && !expanded) ordered.take(limit) else ordered
+    val hidden = ordered.drop(visible.size)
+    return ConsentHostSummary(visible, hidden.size, hidden.count { it in newHosts }, collapsible)
+}
+
+/** The heading above the host rows: the total is said up front whenever some of them can be folded away. */
+fun pluginConsentHostsHeader(count: Int, collapsible: Boolean): String =
+    if (collapsible) "Se va a conectar con $count servidores:" else "Se va a conectar con:"
+
+/** The collapsed sheet's "y N más" line, naming how many of the folded hosts are new; null when nothing is hidden. */
+fun pluginConsentHiddenHostsLine(summary: ConsentHostSummary): String? {
+    if (summary.hiddenCount == 0) return null
+    val news = when (summary.hiddenNewCount) {
+        0 -> ""
+        1 -> " (1 nuevo)"
+        else -> " (${summary.hiddenNewCount} nuevos)"
+    }
+    return "y ${summary.hiddenCount} más$news"
+}
