@@ -1245,6 +1245,90 @@ test("--record never writes a plain secret value (or a random marker another run
   assert.equal(again.headers["x-echo"], repMarker);
 });
 
+test("record→replay tape leaks no form of a secret with JSON/URL-tricky characters (quote, backslash, a control byte, +/=, space, non-ASCII)", async () => {
+  // JSON body context: every tricky category at once.
+  const jsonSecret = "My\\Pass\"word +/=\tñ";
+  // Header context: the same tricky categories minus a control byte and non-ASCII (a header can't carry those).
+  const headerSecret = 'Bearer "tok\\en+va/lue=x y';
+  const { dir } = withSecretsFile({ jsonKey: jsonSecret, headerKey: headerSecret });
+  const m = JSON.parse(manifest({ hosts: ["api.example.com"], secrets: { jsonKey: "x", headerKey: "x" } }));
+  const secretsFile = join(dir, ".kino-secrets.json");
+  const tape = join(dir, "tape.json");
+  const fetchImpl = async () => new Response(JSON.stringify({ echoedJson: jsonSecret, echoedHeader: headerSecret }), {
+    status: 200, headers: { "content-type": "application/json" },
+  });
+
+  const rec = createKino(m, { secretsFile, record: tape, fetchImpl });
+  const jsonMarker = rec.kino.secret("jsonKey");
+  const headerMarker = rec.kino.secret("headerKey");
+  const live = await rec.kino.fetch(`https://api.example.com/x?k=${headerMarker}`, {
+    method: "POST",
+    headers: { Authorization: headerMarker },
+    body: { json: { key: jsonMarker } },
+  });
+  rec.saveTape();
+  assert.equal(live.json().echoedJson, jsonMarker);
+  assert.equal(live.json().echoedHeader, headerMarker);
+
+  // Every form the app/kit's redaction knows, PLUS the doubly-JSON-escaped form a naive
+  // "compose the key, then redact the whole string" bug produces for a value that itself needed
+  // JSON escaping (this is exactly what leaked before the fix: canonicalizing after JSON.stringify
+  // wrapped the body a second time, so the once-escaped echo form no longer matched anywhere).
+  const jsonEscapeOnce = (s) => JSON.stringify(s).slice(1, -1);
+  const formsOf = (plain) => {
+    const bytes = Buffer.from(plain, "utf8");
+    const once = jsonEscapeOnce(plain);
+    return [plain, once, jsonEscapeOnce(once), encodeURIComponent(plain), bytes.toString("base64"), bytes.toString("base64url")];
+  };
+  const tapeText = readFileSync(tape, "utf8");
+  for (const plain of [jsonSecret, headerSecret]) {
+    for (const form of formsOf(plain)) assert.ok(!tapeText.includes(form), `tape leaked a form of a secret: ${JSON.stringify(form)}`);
+  }
+  // Not even this runtime's own (random-nonce) marker -- a fresh --replay process gets a different one.
+  assert.ok(!tapeText.includes(jsonMarker) && !tapeText.includes(headerMarker), tapeText);
+  assert.match(tapeText, /kino-secret:jsonKey/);
+  assert.match(tapeText, /kino-secret:headerKey/);
+
+  // A second, independent runtime (its own random nonce) replays the very same tape file offline.
+  const rep = createKino(m, { secretsFile, replay: tape, fetchImpl: () => { throw new Error("replay must not touch the network"); } });
+  const jsonMarker2 = rep.kino.secret("jsonKey");
+  const headerMarker2 = rep.kino.secret("headerKey");
+  assert.notEqual(jsonMarker2, jsonMarker);
+  const again = await rep.kino.fetch(`https://api.example.com/x?k=${headerMarker2}`, {
+    method: "POST",
+    headers: { Authorization: headerMarker2 },
+    body: { json: { key: jsonMarker2 } },
+  });
+  assert.equal(again.json().echoedJson, jsonMarker2);
+  assert.equal(again.json().echoedHeader, headerMarker2);
+});
+
+test("redaction never builds a giant regex: 16 secrets of 4096 quote/backslash/non-ASCII bytes, all opened at once, redact cleanly", async () => {
+  const bigTrickyValue = (i) => {
+    const unit = `"\\ñ${i}`;
+    let s = "";
+    while (Buffer.byteLength(s, "utf8") < 4096) s += unit;
+    while (Buffer.byteLength(s, "utf8") > 4096) s = s.slice(0, -1);
+    return s;
+  };
+  const names = Array.from({ length: 16 }, (_, i) => `s${i}`);
+  const values = Object.fromEntries(names.map((n, i) => [n, bigTrickyValue(i)]));
+  const { dir } = withSecretsFile(values);
+  const m = JSON.parse(manifest({ hosts: ["api.example.com"], secrets: Object.fromEntries(names.map((n) => [n, "x"])) }));
+  const fetchImpl = async () => new Response(names.map((n) => values[n]).join("|"), { status: 200, headers: { "content-type": "text/plain" } });
+  const { kino } = createKino(m, { secretsFile: join(dir, ".kino-secrets.json"), fetchImpl });
+  const markers = Object.fromEntries(names.map((n) => [n, kino.secret(n)]));
+  // One request whose query substitutes (and so opens) all 16 secrets at once.
+  const query = names.map((n) => `${n}=${markers[n]}`).join("&");
+  const r = await kino.fetch(`https://api.example.com/x?${query}`);
+  assert.equal(r.status, 200);
+  const text = r.text();
+  for (const n of names) {
+    assert.ok(!text.includes(values[n]), `${n}'s plain value leaked`);
+    assert.ok(text.includes(markers[n]), `${n}'s marker missing`);
+  }
+});
+
 test("the size cap is checked before substitution for a form body too, like the app's own prelude", async () => {
   const secretValue = "x".repeat(4096); // the largest a sealed secret's plaintext can ever be
   const { dir } = withSecretsFile({ apiKey: secretValue });

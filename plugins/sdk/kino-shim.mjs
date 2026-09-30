@@ -104,8 +104,6 @@ function echoForms(plain) {
   ]);
 }
 
-const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
 /**
  * One runtime's sealed secrets: [manifest.secrets]' names, each given a marker
  * (`__kinoSecret_<name>_<nonce>__`) random per runtime. The kit reads plain values from
@@ -137,20 +135,28 @@ function pluginSecretsFor(manifest, secretsFile) {
     for (const [name, m] of Object.entries(markers)) if (out.includes(m)) out = out.split(m).join(encodeSealedValue(plainOf(name), encoding));
     return out;
   }
-  /** Every opened value, in every form, replaced by [placeholderFor](name); [text] unchanged when nothing opened is found. */
+  /**
+   * Every opened value, in every form, replaced by [placeholderFor](name). Plain substring
+   * search-and-replace (`indexOf`/`split`/`join`), never a regex: the caps (16 secrets, 4096 bytes
+   * each, ~9 forms, one of them up to 3x on non-ASCII bytes) can build a combined alternation past
+   * V8's regex size limit -- measured, not hypothetical. Forms are still applied longest first (one
+   * full pass over [text] per form, mutating it before the next, shorter form's pass runs), so a
+   * value that is a prefix of another leaves no tail, and a placeholder just substituted in is never
+   * rescanned for a shorter form of the SAME value. [text] unchanged when nothing opened is found in it.
+   */
   function redactWith(text, placeholderFor) {
     if (typeof text !== "string") return text;
-    const forms = new Map();
+    const forms = [];
     for (const [name, plain] of Object.entries(opened)) {
       if (!plain) continue;
-      for (const f of echoForms(plain)) if (!forms.has(f)) forms.set(f, placeholderFor(name));
+      const placeholder = placeholderFor(name);
+      for (const f of echoForms(plain)) forms.push([f, placeholder]);
     }
-    if (forms.size === 0) return text;
-    let found = false;
-    for (const f of forms.keys()) if (text.includes(f)) { found = true; break; }
-    if (!found) return text;
-    const pattern = new RegExp([...forms.keys()].sort((a, b) => b.length - a.length).map(escapeRegExp).join("|"), "g");
-    return text.replace(pattern, (m) => forms.get(m));
+    if (forms.length === 0) return text;
+    forms.sort((a, b) => b[0].length - a[0].length);
+    let out = text;
+    for (const [f, placeholder] of forms) if (out.includes(f)) out = out.split(f).join(placeholder);
+    return out;
   }
   const redact = (text) => redactWith(text, (name) => markers[name]);
   // A stable, nonce-free placeholder for [record]/[replay]'s tape (spec §6): the marker itself is
@@ -158,8 +164,10 @@ function pluginSecretsFor(manifest, secretsFile) {
   // `--replay` process gets a different nonce than the `--record` one that made the tape) -- and a
   // record-time nonce baked into a committed fixtures.json would be a small, pointless leak of its
   // own. Keyed by name only, so two runtimes that open the same secret from the same
-  // .kino-secrets.json always agree on it. `\0` can't appear in a marker, a plugin's own text, or
-  // anything this kit reads as JSON, so it never collides with real content.
+  // .kino-secrets.json always agree on it. A real NUL byte can't come from a marker or an opened
+  // value's own forms, and no plugin or server text this kit handles has a legitimate reason to hold
+  // one -- but a HAND-EDITED tape file's `\u0000` JSON escape decodes to one, so this is a
+  // replay-only, self-inflicted collision risk, not a guarantee against arbitrary input.
   const canonicalToken = (name) => `\u0000kino-secret:${name}\u0000`;
   const redactToCanonical = (text) => redactWith(text, canonicalToken);
   /** The reverse of [redactToCanonical]'s placeholder: THIS runtime's own marker, for a taped answer read back on replay. */
@@ -401,8 +409,12 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", stora
       // key and tape are unchanged.
       const canon = (text) => (pluginSecrets ? pluginSecrets.redactToCanonical(text) : text);
       const uncanon = (text) => (pluginSecrets ? pluginSecrets.fromCanonical(text) : text);
-      const rawKey = JSON.stringify([method, current.toString(), typeof body === "string" ? body : body ? body.toString("base64") : null]);
-      const key = canon(rawKey);
+      // Each piece is canonicalized BEFORE it is composed into the key's JSON array, never after: a
+      // JSON body already holds a value in its OWN (single) JSON-string escaping, and stringifying
+      // it a second time as one element of this array would escape it again (a `"` or `\` doubled),
+      // so an echo form that only matches the single-escaped text would silently miss the doubled one.
+      const bodyKeyPart = typeof body === "string" ? canon(body) : body ? canon(body.toString("base64")) : null;
+      const key = JSON.stringify([canon(method), canon(current.toString()), bodyKeyPart]);
       let status, headerList, bytes;
       const taped = tape && replay ? tape.find((t) => t.key === key) : null;
       if (replay) {
