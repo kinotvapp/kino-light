@@ -130,8 +130,9 @@ class PluginContentSource(
         return flow {
             val t0 = System.currentTimeMillis()
             emit(SearchEvent.SourceStart(source, label = name))
+            val query = queryJson(ctx)
             val out = try {
-                caller.call(id, "search", queryJson(ctx), SEARCH_TIMEOUT_MS)
+                caller.call(id, "search", query, SEARCH_TIMEOUT_MS)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -151,7 +152,7 @@ class PluginContentSource(
                 return@flow
             }
             log("[$id] search ok after ${System.currentTimeMillis() - t0} ms")
-            val page = PluginOutput.page(out, PluginOutput.MAX_SEARCH_ITEMS, allowSeries, allowNext, currentHosts(), allowLive) { log("[$id] $it") }
+            val page = searchPageOf(out, query)
             page.items.forEach { emit(SearchEvent.ResultEvent(source, resultFrom(plugin, it))) }
             emit(SearchEvent.SourceDone(source, page.items.size, System.currentTimeMillis() - t0, more = page.next))
         }
@@ -161,7 +162,15 @@ class PluginContentSource(
     suspend fun searchPage(queryJson: String, cursor: String): GatewayPage {
         val arg = runCatching { JSONObject(queryJson) }.getOrElse { JSONObject() }.put("cursor", cursor.take(PluginOutput.MAX_CURSOR_CHARS))
         val out = callOrThrow("search", arg.toString(), SEARCH_TIMEOUT_MS)
-        return pageOf(PluginOutput.page(out, PluginOutput.MAX_SEARCH_ITEMS, allowSeries, allowNext, currentHosts(), allowLive) { log("[$id] $it") })
+        return pageOf(searchPageOf(out, queryJson))
+    }
+
+    /** A search answer as shown: checked like any page, minus the channels unrelated to the query ([LiveSearchRelevance]). */
+    private fun searchPageOf(out: String, queryJson: String): PluginPage {
+        val page = PluginOutput.page(out, PluginOutput.MAX_SEARCH_ITEMS, allowSeries, allowNext, currentHosts(), allowLive) { log("[$id] $it") }
+        val kept = LiveSearchRelevance.filter(page.items, LiveSearchRelevance.queryForms(queryJson))
+        if (kept.size < page.items.size) log("[$id] search: dropped ${page.items.size - kept.size} live channel(s) unrelated to the query")
+        return page.copy(items = kept)
     }
 
     override suspend fun browse(ref: String, cursor: String?): GatewayPage {
