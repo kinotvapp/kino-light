@@ -181,6 +181,34 @@ class NuvioPluginInstallerTest {
         assertTrue(e.message.orEmpty().contains("ningún dominio"))
     }
 
+    @Test fun `a failed Nuvio import never reports the owner or repo the person typed`() = runBlocking {
+        val events = mutableListOf<PluginTelemetry.Event>()
+        PluginTelemetry.current = PluginTelemetry(facts = { null }, sink = { events += it })
+        try {
+            // The repo stage: a typo / private repo -- nothing was even read.
+            runCatching { nuvio.previewScraper("pepito-perez/mis-scrapers", "fakesrc") }
+            // A later stage on a repo that is not one of the well-known public ones.
+            val noHosts = NuvioPluginInstaller(installer, fetcher(mapOf(
+                "https://raw.githubusercontent.com/pepito-perez/nohosts/HEAD/manifest.json" to manifestJson,
+                "https://raw.githubusercontent.com/pepito-perez/nohosts/HEAD/providers/fakesrc.js" to
+                    "function getStreams() { return []; } module.exports = { getStreams: getStreams };",
+            )), tmdbApiKey = "k")
+            runCatching { noHosts.previewScraper("pepito-perez/nohosts", "fakesrc") }
+            assertEquals(2, events.size)
+            events.forEach { e ->
+                val all = (e.extras.values + e.tags.values + e.fingerprint + e.message).joinToString(" ")
+                assertTrue(all, "pepito" !in all && "mis-scrapers" !in all && "nohosts" !in all)
+                assertEquals(NuvioPluginInstaller.NUVIO_IMPORT_ID, e.tags["plugin_id"])
+                assertNull(e.extras["nuvio_repo"])
+            }
+            assertEquals(listOf("nuvio:repo", "nuvio:no_domains"), events.map { it.extras["function"] })
+            assertNull(events[0].extras["nuvio_scraper"])
+            assertEquals("fakesrc", events[1].extras["nuvio_scraper"])
+        } finally {
+            PluginTelemetry.current = PluginTelemetry.NONE
+        }
+    }
+
     @Test fun `a real object-shaped domains json puts the scraper's own rotated domain first`() = runBlocking {
         val domainsUrl = "https://raw.githubusercontent.com/phisher98/TVVVV/refs/heads/main/domains.json"
         val js = """

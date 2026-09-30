@@ -598,7 +598,9 @@ class AppGraph(context: Context) {
         return com.arkiv.player.data.plugin.PluginFacts(
             version = r.version, apiVersion = p.manifest.apiVersion, origin = origin,
             nuvioRepo = r.nuvioRepo, nuvioScraperId = r.nuvioScraperId,
-            privateHosts = p.userHosts.map { it.host }.toSet(),
+            // The person's own servers (URL settings) and every host they approved themselves at
+            // playback (installed hosts the manifest never declared): never named in a report.
+            privateHosts = p.userHosts.map { it.host }.toSet() + (r.hosts - p.manifest.hosts.toSet()),
         )
     }
 
@@ -1747,6 +1749,8 @@ class AppGraph(context: Context) {
                 com.arkiv.player.crash.Crash.report(
                     com.arkiv.player.crash.PluginFailed(e.message), "plugin-failure",
                     extras = e.extras, tags = e.tags, fingerprint = e.fingerprint,
+                    // Telemetry, not a crash: never in the local crash store (it would evict real ones).
+                    local = false,
                 )
             },
             privateValues = ::pluginSettingValues,
@@ -1757,6 +1761,9 @@ class AppGraph(context: Context) {
                 }
             },
         )
+        // Warmed now, not on the first plugin failure: until then the player's reports
+        // (`PluginTelemetry.describe`) would all say `plugin_origin=unknown`.
+        applicationScope.launch { warmPluginCatalogRepos() }
     }
 
     companion object {

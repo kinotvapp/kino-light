@@ -75,13 +75,21 @@ class NuvioPluginInstaller(
 
     suspend fun previewScraper(input: String, scraperId: String): InstallPreview {
         val typed = PluginAddress.parse(input) ?: throw InstallException("Dirección de repositorio inválida")
-        // Telemetry: every way this conversion fails is one issue per (repo, scraper, stage).
-        val key = typed.owner + "/" + typed.repo + "#" + scraperId
+        // Telemetry: every way this conversion fails is one issue per (repo, scraper, stage) -- but the
+        // repo is named only when it is a well-known public one (PluginTelemetry.PUBLIC_NUVIO_REPOS).
+        // Any other `owner/repo` is what the person typed (often their own account): it is never the
+        // plugin id, the fingerprint or `nuvio_repo`, only the constant [NUVIO_IMPORT_ID]. The `repo`
+        // stage (it could not even be read: a typo, a private repo) never names the scraper either.
+        val repoSlug = typed.owner + "/" + typed.repo
+        val publicRepo = PluginTelemetry.publicNuvioRepo(repoSlug)
         fun failed(stage: String, message: String, detail: Map<String, String> = emptyMap(), raw: String? = null): InstallException {
+            val resolved = stage != "repo"
+            val id = if (publicRepo != null && resolved) "$publicRepo#$scraperId" else NUVIO_IMPORT_ID
             PluginTelemetry.current.report(
                 PluginFailure(
-                    key, "nuvio:$stage", PluginFailureKind.CONVERSION, raw = raw, detail = detail,
-                    facts = PluginFacts(null, null, "nuvio", typed.owner + "/" + typed.repo, scraperId),
+                    id, "nuvio:$stage", PluginFailureKind.CONVERSION, raw = raw, detail = detail,
+                    facts = PluginFacts(null, null, "nuvio", publicRepo, scraperId.takeIf { resolved }),
+                    privateText = listOf(repoSlug, typed.owner, typed.repo),
                 ),
             )
             return InstallException(message)
@@ -198,6 +206,8 @@ class NuvioPluginInstaller(
     }
 
     companion object {
+        /** The telemetry plugin id of a Nuvio import whose repo may not be named (see `previewScraper`). */
+        const val NUVIO_IMPORT_ID = "nuvio-import"
         const val MANIFEST_FILE = "manifest.json"
         const val MAX_MANIFEST_BYTES = 256 * 1024
 

@@ -18,7 +18,8 @@ package com.arkiv.player.data.plugin
  *    scraper's "[StreamWish2]") are stripped, repeatedly, in any order.
  * 3. URLs are removed, spaces collapsed, and a ":" "," ";" or "-" left dangling at the end dropped.
  * 4. What is left is shown only if it reads as words: at least two words of two or more letters,
- *    none of the characters code is made of (`{}()[]<>=;$_\`"|\\/`), and none of JavaScript's own
+ *    none of the characters code is made of (`{}()[]<>=;$_\`"|\\/`; a plain "(aside in words)" after a
+ *    space is allowed), and none of JavaScript's own
  *    words (undefined, null, NaN, function, prototype, "is not defined", "unexpected token") -- "cannot read property
  *    'x' of undefined" tells the person nothing. Otherwise there is no reason, just the lead.
  * 5. It is cut at a word boundary with "…" so the whole sentence fits in [MAX_CHARS].
@@ -59,7 +60,9 @@ object PluginErrorText {
             .trim()
             .trimEnd(':', ',', ';', '-', '–')
             .trim()
-        if (text.isEmpty() || CODE_CHARS.containsMatchIn(text) || CODE_WORDS.containsMatchIn(text)) return null
+        // A plain parenthetical aside ("Servidor caído (intenta luego)") is prose, not code: judged without it.
+        val probe = text.replace(PROSE_ASIDE, " ")
+        if (text.isEmpty() || CODE_CHARS.containsMatchIn(probe) || CODE_WORDS.containsMatchIn(text)) return null
         if (WORD.findAll(text).count() < 2) return null
         return text
     }
@@ -85,4 +88,7 @@ object PluginErrorText {
     private val CODE_CHARS = Regex("[{}()\\[\\]<>=;\$_`\"|\\\\/]")
     private val CODE_WORDS = Regex("\\b(?:undefined|null|NaN|function|prototype|is not defined|unexpected token)\\b")
     private val WORD = Regex("\\p{L}{2,}")
+
+    /** "(intenta luego)" after a space: words, digits and light punctuation only -- never `f(x)` or `(a, b) =>`. */
+    private val PROSE_ASIDE = Regex("(?<=\\s)\\((?=[^)]*\\p{L}{2,})[\\p{L}\\p{N} ,.¿?¡!'%-]{1,60}\\)(?=[\\s.,:!?]|$)")
 }

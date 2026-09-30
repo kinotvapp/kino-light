@@ -1,5 +1,6 @@
 package com.arkiv.player.data.plugin
 
+import com.arkiv.player.crash.PrivateText
 import com.arkiv.player.crash.SentryScrubber
 import kotlinx.coroutines.CancellationException
 
@@ -58,7 +59,9 @@ data class PluginFailure(
 /**
  * What the owner may know about a plugin: nothing the person typed. [origin] is `nuvio`, `catalog`
  * (a recommended one), `community_or_manual` (any other repo: the record doesn't say which) or
- * `unknown`. [privateHosts] are the person's own servers (settings they typed): never sent.
+ * `unknown`. [privateHosts] are the person's own servers (settings they typed) and the hosts they
+ * approved themselves: never sent. [nuvioRepo] is sent only when it is a well-known public repo
+ * ([PluginTelemetry.PUBLIC_NUVIO_REPOS]).
  */
 data class PluginFacts(
     val version: String?,
@@ -124,16 +127,25 @@ class PluginTelemetry(
     private var sent = 0
 
     /** Reports [failure] unless its key was reported within the window or the session cap is reached. Never throws. */
-    fun report(failure: PluginFailure) {
+    fun report(failure: PluginFailure) = submit(failure) { emptyList() }
+
+    /**
+     * A failed plugin call: reported when [failureOf] finds it worth it. Never throws, so the caller's
+     * own exception is always the one that propagates; the call's argument ([argJson], up to 64 KB) is
+     * parsed only for an admitted event, in the background.
+     */
+    fun reportCall(pluginId: String, function: String, error: Throwable, elapsedMs: Long? = null, argJson: String? = null) {
         runCatching {
-            if (!admit(failure)) return
-            dispatch { runCatching { sink.send(eventOf(failure)) } }
+            val failure = failureOf(pluginId, function, error, elapsedMs) ?: return
+            submit(failure) { argTexts(argJson) }
         }
     }
 
-    /** A failed plugin call: reported when [failureOf] finds it worth it. */
-    fun reportCall(pluginId: String, function: String, error: Throwable, elapsedMs: Long? = null, argJson: String? = null) {
-        failureOf(pluginId, function, error, elapsedMs)?.let { report(it.copy(privateText = argTexts(argJson))) }
+    private fun submit(failure: PluginFailure, privateText: () -> List<String>) {
+        runCatching {
+            if (!admit(failure)) return
+            dispatch { runCatching { sink.send(eventOf(failure.copy(privateText = failure.privateText + privateText()))) } }
+        }
     }
 
     /** The plugin's facts, for another report that wants plugin tags (the player's): ids, versions, origin only. */
@@ -165,7 +177,7 @@ class PluginTelemetry(
         extras["function"] = function
         extras["kind"] = kind
         failure.elapsedMs?.takeIf { it >= 0 }?.let { extras["elapsed_ms"] = it.toString() }
-        publicHost(failure.host, f)?.let { extras["host"] = it }
+        publicHost(failure.host, f, values)?.let { extras["host"] = it }
         cleanReason(failure.raw, values + failure.privateText, f.privateHosts)?.let { extras["reason"] = it }
         failure.detail.forEach { (k, v) -> extras[safeWord(k)] = safeWord(v) }
         return Event(
@@ -290,28 +302,41 @@ class PluginTelemetry(
             whole.flatMap { WORDS.findAll(it).map { m -> m.value }.toList() }.filter { it.length >= MIN_PRIVATE_WORD_CHARS }.distinct()
                 .forEach { w -> text = Regex("(?<![\\p{L}\\p{N}])" + Regex.escape(w) + "(?![\\p{L}\\p{N}])", RegexOption.IGNORE_CASE).replace(text, "[private]") }
             text = SentryScrubber.redactSensitiveText(text) ?: return null
-            text = EMAIL.replace(text, "[email]")
-            text = IPV4.replace(text, "[ip]")
-            text = HOSTNAME_IN_TEXT.replace(text, "[host]")
-            text = LONG_TOKEN.replace(text, "[id]")
+            text = PrivateText.scrubAddresses(text)
             return text.trim().take(MAX_REASON_CHARS).ifEmpty { null }
         }
 
-        /** [host] when it may be named: a public DNS name that isn't one of the person's own servers. */
-        fun publicHost(host: String?, facts: PluginFacts): String? {
+        /**
+         * [host] when it may be named: a public DNS name that isn't one of the person's own servers
+         * ([PluginFacts.privateHosts]: typed in a URL setting, or approved by the person at playback)
+         * and that no setting value mentions ([privateValues]: a server typed into a TEXT setting).
+         */
+        fun publicHost(host: String?, facts: PluginFacts, privateValues: List<String> = emptyList()): String? {
             val h = host?.trim()?.lowercase()?.trimEnd('.')?.takeIf { it.isNotEmpty() && it.length <= 253 } ?: return null
             if (HostRules.isLocalAddress(h)) return null
             if (facts.privateHosts.any { it.equals(h, ignoreCase = true) }) return null
+            if (privateValues.any { it.contains(h, ignoreCase = true) }) return null
             if (!HOSTNAME.matches(h)) return null
             return h
         }
+
+        /**
+         * The well-known public Nuvio provider repos: the only `owner/repo` a report may name for a
+         * Nuvio plugin. Any other repo -- typed by the person, often their own account -- is left out
+         * (the origin still says `nuvio`, the scraper id stays). Lowercase.
+         */
+        val PUBLIC_NUVIO_REPOS = setOf("yoruix/nuvio-providers", "tapframe/nuvio-providers")
+
+        /** [repo] (`owner/repo`, maybe with `@ref`) when it is one of [PUBLIC_NUVIO_REPOS], else null. */
+        fun publicNuvioRepo(repo: String?): String? =
+            repo?.substringBefore('@')?.trim()?.lowercase()?.takeIf { it in PUBLIC_NUVIO_REPOS }
 
         private fun factExtras(id: String, f: PluginFacts): Map<String, String> = buildMap {
             put("plugin_id", id)
             f.version?.let { put("plugin_version", safeWord(it)) }
             f.apiVersion?.let { put("plugin_api", it.toString()) }
             put("plugin_origin", f.origin)
-            f.nuvioRepo?.let { put("nuvio_repo", safeWord(it)) }
+            publicNuvioRepo(f.nuvioRepo)?.let { put("nuvio_repo", safeWord(it)) }
             f.nuvioScraperId?.let { put("nuvio_scraper", safeWord(it)) }
         }
 
@@ -342,10 +367,6 @@ class PluginTelemetry(
         private val WORDS = Regex("[\\p{L}\\p{N}]+")
         private val UNSAFE_ID = Regex("[^A-Za-z0-9._/@:-]")
         private val HOSTNAME = Regex("^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z][a-z0-9-]{0,62}$")
-        private val EMAIL = Regex("[\\w.+-]+@[\\w-]+(?:\\.[\\w-]+)+")
-        private val IPV4 = Regex("\\b\\d{1,3}(?:\\.\\d{1,3}){3}(?::\\d+)?\\b")
-        private val HOSTNAME_IN_TEXT = Regex("\\b(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)+[A-Za-z]{2,}(?::\\d+)?\\b")
-        private val LONG_TOKEN = Regex("\\b(?=[A-Za-z0-9_-]*\\d)[A-Za-z0-9_-]{16,}\\b")
     }
 }
 

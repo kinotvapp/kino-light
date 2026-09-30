@@ -82,6 +82,10 @@ object Crash {
      * [tags] are searchable Sentry tags (low-cardinality values only); [fingerprint], when given,
      * replaces GlitchTip's own grouping: one issue per fingerprint, whatever the message or stack
      * (see `PluginTelemetry`). Both Sentry only.
+     *
+     * [local] false skips the local [guard] store: for telemetry that is not a crash (plugin
+     * failures, up to 30 a process), which would otherwise evict the real crash reports queued
+     * there (the store keeps only the newest few) and read the logcat for each.
      */
     fun report(
         error: Throwable,
@@ -89,8 +93,9 @@ object Crash {
         extras: Map<String, String> = emptyMap(),
         tags: Map<String, String> = emptyMap(),
         fingerprint: List<String>? = null,
+        local: Boolean = true,
     ) {
-        guard?.report(error, tag)
+        if (local) guard?.report(error, tag)
         reportToSentry(error, tag, extras, tags, fingerprint)
     }
 

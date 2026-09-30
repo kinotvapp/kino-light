@@ -154,6 +154,62 @@ class PluginTelemetryTest {
         assertEquals(1, events.size)
     }
 
+    @Test fun `the reporting caller never replaces the plugin's own exception, whatever telemetry does`() = runBlocking {
+        val original = PluginThrownException("Error: falló el sitio de verdad")
+        // Every seam of the telemetry throws: the facts, the setting values, the sink, the dispatch.
+        PluginTelemetry.current = PluginTelemetry(
+            facts = { error("facts boom") }, sink = { error("sink boom") }, privateValues = { error("values boom") },
+            dispatch = { error("dispatch boom") },
+        )
+        val caller = ReportingPluginCaller { _, _, _, _ -> throw original }
+        val thrown = runCatching { caller.call("p", "search", "{not json", 1000) }.exceptionOrNull()
+        assertTrue(thrown === original)
+        // And a failure whose own text can't even be read (failureOf itself throws).
+        val unreadable = object : PluginException("x") { override val message: String get() = error("message boom") }
+        PluginTelemetry.current = telemetry()
+        val caller2 = ReportingPluginCaller { _, _, _, _ -> throw unreadable }
+        assertTrue(runCatching { caller2.call("p", "home", "null", 1000) }.exceptionOrNull() === unreadable)
+    }
+
+    @Test fun `the call's argument is removed from the reason, and only parsed for an admitted event`() {
+        var parsedFor = 0
+        val t = PluginTelemetry(facts = { facts }, sink = { events += it }, clock = { now }, dispatch = { parsedFor++; it() })
+        repeat(3) { t.reportCall("p", "search", thrown("Error: no hay resultados para casa de papel hoy"), argJson = """{"q":"casa de papel"}""") }
+        assertEquals(1, parsedFor)
+        assertEquals(1, events.size)
+        val reason = events[0].extras["reason"].orEmpty()
+        assertFalse(reason, "casa" in reason || "papel" in reason)
+    }
+
+    @Test fun `IPv6 literals, LAN IPs and URLs never survive cleaning`() {
+        val r = PluginTelemetry.cleanReason("Error: No se pudo conectar a 2800:484:1a2b::5 ni a fe80::1 ni a 10.0.0.7 esta vez")!!
+        assertFalse(r, "2800" in r || "fe80" in r || "10.0.0.7" in r)
+        assertTrue(r, "[ip]" in r)
+        // A clock time is not an address.
+        assertEquals("el sitio cerró a las 12:30:45 hoy", PluginTelemetry.cleanReason("el sitio cerró a las 12:30:45 hoy"))
+    }
+
+    @Test fun `a host typed into a text setting or approved by the person is never named`() {
+        assertNull(PluginTelemetry.publicHost("jelly.casa-perez.net", facts, privateValues = listOf("https://jelly.casa-perez.net:8096")))
+        assertNull(PluginTelemetry.publicHost("cdn.aprobado.com", facts.copy(privateHosts = facts.privateHosts + "cdn.aprobado.com")))
+        val trace = PluginCallTrace().apply { refused("jelly.casa-perez.net", PluginCallTrace.Refusal.NOT_ASKED) }
+        val e = PluginScriptException("x").also { it.trace = trace }
+        val event = telemetry(values = listOf("jelly.casa-perez.net")).eventOf(PluginTelemetry.failureOf("p", "search", e)!!)
+        assertNull(event.extras["host"])
+    }
+
+    @Test fun `a Nuvio repo is named only when it is a well-known public one`() {
+        val t = telemetry()
+        fun repoOf(repo: String) = t.eventOf(
+            PluginFailure("nuvio-x", "resolve", PluginFailureKind.THROWN, facts = PluginFacts("1", 4, "nuvio", repo, "fakesrc")),
+        ).extras
+        assertEquals("yoruix/nuvio-providers", repoOf("yoruix/nuvio-providers@main")["nuvio_repo"])
+        val mine = repoOf("pepito-perez/mis-scrapers")
+        assertNull(mine["nuvio_repo"])
+        assertEquals("fakesrc", mine["nuvio_scraper"])
+        assertEquals("nuvio", mine["plugin_origin"])
+    }
+
     @Test fun `NONE reports nothing`() {
         PluginTelemetry.NONE.reportCall("p", "search", thrown("Error: algo falló aquí"))
         assertTrue(events.isEmpty())

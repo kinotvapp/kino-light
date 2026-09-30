@@ -46,6 +46,14 @@ class PluginErrorTextTest {
         assertEquals("PelisPlusHD no pudo obtener el video", shown(PluginThrownException("TypeError: not a function\n    at a (plugin.js:3)")))
     }
 
+    @Test fun `a plain parenthetical aside is prose, a call is still code`() {
+        assertEquals("Servidor caído (intenta luego)", PluginErrorText.reason("Servidor caído (intenta luego)"))
+        assertEquals("Sin enlaces (código 3), prueba otro", PluginErrorText.reason("Error: Sin enlaces (código 3), prueba otro"))
+        assertNull(PluginErrorText.reason("Error: fallo en f (x) => y"))
+        assertNull(PluginErrorText.reason("Error: falló llamar foo(bar) aquí"))
+        assertNull(PluginErrorText.reason("Error: fallo al leer (a.b[0]) del sitio"))
+    }
+
     @Test fun `an empty or blank message is just the lead`() {
         assertNull(PluginErrorText.reason(null))
         assertNull(PluginErrorText.reason(""))
