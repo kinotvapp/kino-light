@@ -41,25 +41,23 @@ object RemuxPolicy {
      */
     const val INPUT_LOAD_RETRIES = 8
 
-    /** Attempts of a whole export that fails before it has written anything worth keeping. */
+    /** Attempts of a whole export that fails before a TV plays it. */
     const val EXPORT_ATTEMPTS = 3
 
-    /** Below this much written, a failed export is a failed START, and starting again is cheap. */
-    const val RETRY_MAX_WRITTEN_BYTES = 4L * 1024 * 1024
-
     /**
-     * Should an export that failed with [errorCode] (media3 `ExportException.errorCode`) after
-     * writing [writtenBytes] be started again, it being attempt [attempt] (0-based)?
+     * Should an export that failed with [errorCode] (media3 `ExportException.errorCode`) be started
+     * again, it being attempt [attempt] (0-based) and [onAir] whether a TV already plays it?
      *
      * Only failures of the INPUT or of time are retried: 1000 (unspecified: the asset loader's
      * source error lands here), 2xxx (I/O) and 7002 (muxing timeout). A decoder, encoder or muxer
-     * refusing the stream (3xxx-6xxx, 7001) fails the same way every time. And only at the start:
-     * past [RETRY_MAX_WRITTEN_BYTES] the TV may already be playing the file, which a new run would
-     * pull from under it -- the input's own retries ([INPUT_LOAD_RETRIES]) cover the middle.
+     * refusing the stream (3xxx-6xxx, 7001) fails the same way every time. And never under a TV
+     * playing it: a new run starts the file over from an empty one -- the input's own retries
+     * ([INPUT_LOAD_RETRIES]) cover the middle. That used to be judged by the bytes written (4 MB),
+     * which a TV can already be playing from (review 2026-10-01); whether it is, is known.
      */
-    fun retryExport(attempt: Int, errorCode: Int, writtenBytes: Long): Boolean {
+    fun retryExport(attempt: Int, errorCode: Int, onAir: Boolean): Boolean {
         if (attempt + 1 >= EXPORT_ATTEMPTS) return false
-        if (writtenBytes > RETRY_MAX_WRITTEN_BYTES) return false
+        if (onAir) return false
         return errorCode == 1000 || errorCode in 2000..2999 || errorCode == 7002
     }
 

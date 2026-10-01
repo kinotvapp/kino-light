@@ -79,6 +79,8 @@ class TsRemuxer(
      * is not being cast.
      */
     private val pace: (key: String) -> Boolean = { false },
+    /** Is the remux of `key` what a TV is playing right now? Then a failed export is not run again. */
+    private val onAir: (key: String) -> Boolean = { false },
 ) {
 
     private val folder = File(cacheDir, RemuxPolicy.FOLDER)
@@ -165,7 +167,7 @@ class TsRemuxer(
         var attempt = 0
         while (true) {
             val result = export(inputUri, key, audio)
-            if (result !is RemuxResult.Failed || !RemuxPolicy.retryExport(attempt, result.code, result.writtenBytes)) {
+            if (result !is RemuxResult.Failed || !RemuxPolicy.retryExport(attempt, result.code, onAir(key))) {
                 return result
             }
             val wait = RemuxPolicy.retryDelayMs(attempt)
@@ -269,7 +271,9 @@ class TsRemuxer(
                             exception: ExportException,
                         ) {
                             val written = runCatching { partial.length() }.getOrDefault(0L)
-                            runCatching { partial.delete() }
+                            // A TV playing it keeps what was written (until the cast falls back
+                            // or ends); deleted, its next segment 404'd. A later run reuses it.
+                            if (!onAir(key)) runCatching { partial.delete() }
                             // The code matters more than the message: it tells "this device cannot"
                             // from "this file cannot", and only the second is worth giving up on.
                             Log.w(TAG, "remux failed (code=${exception.errorCode}, ${written}B written): ${exception.message}", exception)

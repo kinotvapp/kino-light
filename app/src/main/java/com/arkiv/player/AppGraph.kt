@@ -1605,6 +1605,8 @@ class AppGraph(context: Context) {
             applicationScope,
             // A remux being cast only runs a bounded lead ahead of the TV (RemuxPacing).
             pace = { key -> remuxHlsServer.remuxShouldWait(key) },
+            // Never restarted from scratch under a TV that is already playing it.
+            onAir = { key -> remuxHlsServer.onAir(key) },
         )
     }
 
