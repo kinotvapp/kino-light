@@ -57,6 +57,12 @@ data class PluginManifest(
      * opens it (see [SealedSecrets]).
      */
     val secrets: Map<String, String> = emptyMap(),
+    /**
+     * apiVersion 5's `sealedEntry`: [entry] names a `.kjs` file (the entry script sealed to Kino and
+     * signed by its author, see [SealedCode]) instead of a plain `.js`. False for every plugin
+     * written before it existed, so nothing about them changes.
+     */
+    val entrySealed: Boolean = false,
 )
 
 sealed interface ManifestResult {
@@ -78,7 +84,11 @@ object ManifestParser {
      * `PluginOutput.LIVE_API_VERSION`), never on this one: raising it must
      * not move an older gate.
      */
-    const val SUPPORTED_API = 4
+    const val SUPPORTED_API = 5
+    /** `sealedEntry` (the entry script sealed to Kino and signed by its author, [SealedCode]) arrived with apiVersion 5. */
+    const val SEALED_CODE_API_VERSION = 5
+    const val BOTH_ENTRIES = "Usa \"entry\" o \"sealedEntry\", no los dos"
+    const val SEALED_ENTRY_PATH = "El campo \"sealedEntry\" debe ser una ruta relativa a un archivo .kjs"
     /** The `{ "host", "insecureHttp": true }` host object arrived with apiVersion 2. */
     const val INSECURE_HOST_API_VERSION = 2
     /** The `secrets` field (sealed values a plugin may ask for with `kino.secret(name)`) arrived with apiVersion 4. */
@@ -171,9 +181,20 @@ object ManifestParser {
         if (api > SUPPORTED_API) return invalid("apiVersion", "Este plugin necesita una versión más nueva de Kino")
         if (api < 1) return invalid("apiVersion", "El campo \"apiVersion\" debe ser 1 o mayor")
 
-        val entry = o.optString("entry")
-        if (!isSafeRelativePath(entry) || !entry.endsWith(".js")) {
-            return invalid("entry", "El campo \"entry\" debe ser una ruta relativa a un archivo .js")
+        // Below apiVersion 5 `sealedEntry` is unknown and ignored like any other field: an older
+        // manifest reaches the `entry` rule exactly as it always did.
+        val entrySealed = api >= SEALED_CODE_API_VERSION && o.has("sealedEntry")
+        val entry = if (entrySealed) {
+            if (o.has("entry")) return invalid("entry", BOTH_ENTRIES)
+            val sealed = o.opt("sealedEntry") as? String ?: ""
+            if (!isSafeRelativePath(sealed) || !sealed.endsWith(SealedCode.EXTENSION)) return invalid("sealedEntry", SEALED_ENTRY_PATH)
+            sealed
+        } else {
+            o.optString("entry").also { entry ->
+                if (!isSafeRelativePath(entry) || !entry.endsWith(".js")) {
+                    return invalid("entry", "El campo \"entry\" debe ser una ruta relativa a un archivo .js")
+                }
+            }
         }
 
         val hostsJson = o.optJSONArray("hosts") ?: return invalid("hosts", "Falta el campo \"hosts\"")
@@ -292,7 +313,7 @@ object ManifestParser {
                 homepage = text(o, "homepage", MAX_HOMEPAGE_CHARS), hosts = hosts, capabilities = caps,
                 color = color?.uppercase(), icon = icon, permissions = permissions, settings = settings,
                 insecureHosts = insecureHosts, liveStreamHostsAny = liveStreamHostsAny, streamHostsAny = streamHostsAny, fetchHostsAny = fetchHostsAny, discoverable = discoverable,
-                secrets = secrets,
+                secrets = secrets, entrySealed = entrySealed,
             ),
         )
     }
