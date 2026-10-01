@@ -515,7 +515,8 @@ class CastSessionManager(
 
     /**
      * "Ver en el celular": ends the session like the cast button does, so the player resumes on the
-     * phone -- from [receiverPositionMs], since the receiver itself no longer reports one.
+     * phone. The receiver no longer reports a position, so the phone picks up where its own player
+     * was left; the progress saved while casting (up to the drop) is kept as it is.
      */
     fun watchOnPhone() {
         _trouble.value = null
@@ -525,19 +526,6 @@ class CastSessionManager(
     /** The message was dismissed without choosing: the session is left as it is. */
     fun dismissTrouble() {
         _trouble.value = null
-    }
-
-    /**
-     * The receiver's media id -- or, once it dropped its media on its own and reports none, the one
-     * last asked of it whose position is known. Main thread (reads the CastPlayer).
-     */
-    fun receiverMediaId(): String? =
-        player.currentMediaItem?.mediaId ?: pending?.episodeId?.takeIf { idleWatch.lastKnownMs(it) != null }
-
-    /** The receiver's position, or the last one it reported once it reports none. Main thread. */
-    fun receiverPositionMs(): Long {
-        if (player.currentMediaItem != null) return player.currentPosition
-        return pending?.episodeId?.let { idleWatch.lastKnownMs(it) } ?: player.currentPosition
     }
 
     /**
