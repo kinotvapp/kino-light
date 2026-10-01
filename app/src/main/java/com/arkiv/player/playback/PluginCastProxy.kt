@@ -31,6 +31,13 @@ import java.util.concurrent.ConcurrentHashMap
  * token is a 403. Tokens die after [IDLE_TTL_MS] without a request, after [MAX_AGE_MS], on [stop],
  * and past [MAX_SESSIONS] the least recently used one makes room.
  *
+ * HLS ([Shape.HLS]): the origin is served at `/t/<token>/index.m3u8`, REWRITTEN by
+ * [HlsPlaylistRewriter] so that every variant, segment, key and init section it names points back
+ * here as `/t/<token>/r/<n>.<ext>`. `n` indexes the urls THIS proxy found in a playlist it fetched
+ * for that token: a token reaches its stream and what the stream's own playlists name, never an
+ * arbitrary url. Each of those fetches goes through the same gated client with the same headers,
+ * so a segment on another host is fetched only when the plugin's host rules allow that host.
+ *
  * One title = one token ([register] is keyed by the episode): registering it again with a NEW url
  * (the plugin re-resolved an expiring link) swaps the origin under the same token, so a renderer
  * that is already pulling it picks the new link up on its next request.
@@ -42,8 +49,41 @@ class PluginCastProxy(
     private val clock: () -> Long = System::currentTimeMillis,
     private val log: (String) -> Unit = { runCatching { android.util.Log.w(TAG, it) } },
 ) {
-    /** How the origin is served: as it is ([FILE], byte ranges passed through). */
-    enum class Shape { FILE }
+    /** How the origin is served: as it is ([FILE], byte ranges passed through) or as a rewritten [HLS] playlist. */
+    enum class Shape { FILE, HLS }
+
+    /**
+     * The urls a token's playlists named, by index: the only upstream urls besides the origin that
+     * token can reach. Bounded: a live channel keeps adding segments, the oldest are forgotten.
+     */
+    internal class Derived {
+        private val byUrl = LinkedHashMap<String, Int>()
+        private val byIndex = HashMap<Int, Pair<String, HlsPlaylistRewriter.Kind>>()
+        private var next = 0
+
+        @Synchronized
+        fun add(url: String, kind: HlsPlaylistRewriter.Kind): Int {
+            byUrl[url]?.let { return it }
+            val n = next++
+            byUrl[url] = n
+            byIndex[n] = url to kind
+            while (byUrl.size > MAX_DERIVED) {
+                val oldest = byUrl.entries.iterator().next()
+                byIndex.remove(oldest.value)
+                byUrl.remove(oldest.key)
+            }
+            return n
+        }
+
+        @Synchronized
+        fun get(n: Int): Pair<String, HlsPlaylistRewriter.Kind>? = byIndex[n]
+
+        @Synchronized
+        fun clear() {
+            byUrl.clear()
+            byIndex.clear()
+        }
+    }
 
     internal class Session(
         @Volatile var origin: String,
@@ -56,6 +96,7 @@ class PluginCastProxy(
         val createdAt: Long,
     ) {
         @Volatile var lastUsedAt: Long = createdAt
+        val derived = Derived()
     }
 
     private val sessions = ConcurrentHashMap<String, Session>()
@@ -119,6 +160,8 @@ class PluginCastProxy(
                 session.origin = origin
                 session.headers = headers.toMap()
                 session.hosts = hosts
+                // The old link's playlists named urls that may have expired with it.
+                session.derived.clear()
             }
             session.mime = mime
             token
@@ -213,7 +256,7 @@ class PluginCastProxy(
                     writeEmpty(out, 403, "Forbidden")
                     return@runCatching
                 }
-                val (_, session) = resolved
+                val (token, session) = resolved
                 if (req.method == "OPTIONS") {
                     writeEmpty(out, 204, "No Content", cors = true)
                     return@runCatching
@@ -223,11 +266,22 @@ class PluginCastProxy(
                     return@runCatching
                 }
                 val route = ArchiveCacheProxy.routeIn(req.path).substringBefore('?')
-                if (!route.startsWith("/$MEDIA_ROUTE")) {
-                    writeEmpty(out, 404, "Not Found")
-                    return@runCatching
+                when {
+                    session.shape == Shape.FILE && route.startsWith("/$MEDIA_ROUTE") ->
+                        passthrough(session, session.origin, req, out, session.mime)
+                    session.shape == Shape.HLS && route == "/$HLS_ROUTE" ->
+                        servePlaylist(token, session, session.origin, req, out)
+                    session.shape == Shape.HLS && route.startsWith("/$DERIVED_ROUTE/") -> {
+                        val n = route.removePrefix("/$DERIVED_ROUTE/").substringBefore('.').toIntOrNull()
+                        val target = n?.let(session.derived::get)
+                        when {
+                            target == null -> writeEmpty(out, 404, "Not Found")
+                            target.second == HlsPlaylistRewriter.Kind.PLAYLIST -> servePlaylist(token, session, target.first, req, out)
+                            else -> passthrough(session, target.first, req, out, mimeForSegment(target.first))
+                        }
+                    }
+                    else -> writeEmpty(out, 404, "Not Found")
                 }
-                passthrough(session, session.origin, req, out, session.mime)
             }.onFailure { e -> log("serve failed: ${e.javaClass.simpleName}") }
         }
     }
@@ -284,6 +338,56 @@ class PluginCastProxy(
         }
     }
 
+    /**
+     * [url] (the origin or a playlist one of its playlists named), fetched through the gated client
+     * and rewritten so everything it names comes back here under [token].
+     */
+    private fun servePlaylist(token: String, session: Session, url: String, req: Incoming, out: OutputStream) {
+        val response = try {
+            session.client.newCall(upstream(session, url).build()).execute()
+        } catch (e: java.io.IOException) {
+            refusedOrFailed(e, url, out)
+            return
+        }
+        val (finalUrl, body) = response.use { resp ->
+            if (resp.code !in 200..299) {
+                log("upstream playlist answered ${resp.code} (${hostOf(url)})")
+                writeEmpty(out, resp.code, resp.message.ifEmpty { "Error" })
+                return
+            }
+            val source = resp.body?.source()
+            if (source == null || source.request(MAX_PLAYLIST_BYTES + 1L)) {
+                log("upstream playlist missing or larger than $MAX_PLAYLIST_BYTES bytes (${hostOf(url)})")
+                writeEmpty(out, 502, "Bad Gateway")
+                return
+            }
+            resp.request.url.toString() to source.readUtf8()
+        }
+        if (!HlsPlaylistRewriter.isPlaylist(body)) {
+            log("upstream answered something that isn't an HLS playlist (${hostOf(url)})")
+            writeEmpty(out, 502, "Bad Gateway")
+            return
+        }
+        val rewritten = HlsPlaylistRewriter.rewrite(body, finalUrl) { absolute, kind ->
+            val n = session.derived.add(absolute, kind)
+            "$TOKEN_PREFIX$token/$DERIVED_ROUTE/$n${derivedExtension(absolute, kind)}"
+        }
+        if (rewritten == null) {
+            writeEmpty(out, 502, "Bad Gateway")
+            return
+        }
+        val bytes = rewritten.toByteArray(Charsets.UTF_8)
+        val head = "HTTP/1.1 200 OK\r\n" +
+            "Content-Type: $MIME_HLS\r\n" +
+            "Content-Length: ${bytes.size}\r\n" +
+            "Cache-Control: no-cache\r\n" +
+            CORS_HEADERS +
+            "Connection: close\r\n\r\n"
+        out.write(head.toByteArray(Charsets.US_ASCII))
+        if (req.method != "HEAD") out.write(bytes)
+        out.flush()
+    }
+
     /** A GET of [url] with the stream's headers (never anything the renderer sent but its Range). */
     private fun upstream(session: Session, url: String): Request.Builder =
         Request.Builder().url(url).apply {
@@ -321,6 +425,20 @@ class PluginCastProxy(
         /** The origin's route: `/t/<token>/media.<ext>` (an extension, so a renderer that sniffs names gets it right). */
         private const val MEDIA_ROUTE = "media"
 
+        /** An HLS origin's route: `/t/<token>/index.m3u8`. */
+        private const val HLS_ROUTE = "index.m3u8"
+
+        /** What an HLS origin's playlists named: `/t/<token>/r/<n>.<ext>`. */
+        private const val DERIVED_ROUTE = "r"
+
+        const val MIME_HLS = "application/vnd.apple.mpegurl"
+
+        /** A live channel names a few segments every few seconds: a day of them fits. */
+        const val MAX_DERIVED = 50_000
+
+        /** No playlist is anywhere near this; a body that is, isn't one. */
+        private const val MAX_PLAYLIST_BYTES = 8L * 1024 * 1024
+
         const val IDLE_TTL_MS = 4L * 60 * 60 * 1000
         const val MAX_AGE_MS = 24L * 60 * 60 * 1000
         const val MAX_SESSIONS = 8
@@ -343,11 +461,32 @@ class PluginCastProxy(
         private val HOP_BY_HOP = setOf("connection", "host", "content-length", "transfer-encoding", "range", "accept-encoding")
 
         /** How a stream the receiver is told is [mime] gets served. */
-        fun shapeFor(@Suppress("UNUSED_PARAMETER") mime: String): Shape = Shape.FILE
+        fun shapeFor(mime: String): Shape = if (mime.equals(MIME_HLS, ignoreCase = true)) Shape.HLS else Shape.FILE
 
         private fun routeFor(shape: Shape, mime: String): String = when (shape) {
             Shape.FILE -> "$MEDIA_ROUTE.${extensionFor(mime)}"
+            Shape.HLS -> HLS_ROUTE
         }
+
+        private val SIMPLE_EXTENSION = Regex("[a-z0-9]{1,5}")
+
+        /** `.m3u8` for a playlist, the url's own extension for media when it has a plain one, else none. */
+        private fun derivedExtension(url: String, kind: HlsPlaylistRewriter.Kind): String {
+            if (kind == HlsPlaylistRewriter.Kind.PLAYLIST) return ".m3u8"
+            val ext = url.toHttpUrlOrNull()?.encodedPath?.substringAfterLast('/')?.substringAfterLast('.', "")?.lowercase().orEmpty()
+            return if (SIMPLE_EXTENSION.matches(ext)) ".$ext" else ""
+        }
+
+        /** A segment's type when its server only says `application/octet-stream`. */
+        private fun mimeForSegment(url: String): String =
+            when (url.toHttpUrlOrNull()?.encodedPath?.substringAfterLast('.')?.lowercase()) {
+                "ts" -> "video/mp2t"
+                "m4s", "mp4", "m4v", "cmfv" -> "video/mp4"
+                "aac" -> "audio/aac"
+                "m4a", "cmfa" -> "audio/mp4"
+                "vtt", "webvtt" -> "text/vtt"
+                else -> "application/octet-stream"
+            }
 
         private fun extensionFor(mime: String): String = when (mime.lowercase()) {
             "video/webm" -> "webm"

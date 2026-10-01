@@ -452,8 +452,8 @@ private fun PlayerContent(
     // through `PluginCastProxy` or straight to the receiver, and null when it can't be cast (DRM,
     // DASH, an unknown format). EVERY cast path (Chromecast, remux, DLNA) reads this, never
     // `magisItem`, so the plugin carve-out is decided in one place: `castableStreamItem`.
-    // Out of line (`castShapeFor`): `remember`'s block is inlined, and PlayerContent is at ART's verifier limit.
-    val castMagis: PlayerData? = remember(magisItem) { castShapeFor(magisItem, graph) }
+    // Out of line (`rememberCastShape`): `remember`'s block is inlined, and PlayerContent is at ART's verifier limit.
+    val castMagis: PlayerData? = rememberCastShape(magisItem, graph)
     var magisPlayer by remember { mutableStateOf<Player?>(null) }
     var magisTextureView by remember { mutableStateOf<android.view.TextureView?>(null) }
     // Task 1 (light-magis pruning): live channel, same pattern as magisItem/magisPlayer.

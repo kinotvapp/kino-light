@@ -56,13 +56,18 @@ class PluginCastModeTest {
         assertEquals(PluginCastMode.Direct(MIME_HLS), pluginCastModeFor(plugin("https://cdn.example/play?id=1", mime = "application/x-mpegURL")))
     }
 
-    @Test fun `an HLS the receiver may not be pointed at directly has no cast yet`() {
-        // Needs headers.
-        assertTrue(pluginCastModeFor(plugin("https://cdn.example/a.m3u8", headers = referer)) is PluginCastMode.None)
-        // Undeclared host, plain http, a private IP literal: the TV is never pointed there.
-        assertTrue(pluginCastModeFor(plugin("https://other.example/a.m3u8")) is PluginCastMode.None)
-        assertTrue(pluginCastModeFor(plugin("http://cdn.example/a.m3u8")) is PluginCastMode.None)
-        assertTrue(pluginCastModeFor(plugin("https://192.168.1.1/a.m3u8", hosts = listOf("192.168.1.1"))) is PluginCastMode.None)
+    @Test fun `an HLS the receiver may not be pointed at directly goes through the proxy, playlists rewritten`() {
+        val proxied = PluginCastMode.ViaProxy(MIME_HLS)
+        // Needs headers (most Nuvio hosters: Referer/Origin).
+        assertEquals(proxied, pluginCastModeFor(plugin("https://cdn.example/a.m3u8", headers = referer)))
+        // Undeclared host, plain http, a private IP literal: the TV is never pointed there; the
+        // proxy's gated client decides (and refuses what the phone's player would refuse).
+        assertEquals(proxied, pluginCastModeFor(plugin("https://other.example/a.m3u8")))
+        assertEquals(proxied, pluginCastModeFor(plugin("http://cdn.example/a.m3u8")))
+        assertEquals(proxied, pluginCastModeFor(plugin("https://192.168.1.1/a.m3u8", hosts = listOf("192.168.1.1"))))
+        // A plugin live channel's HLS too.
+        val live = plugin("https://cdn.example/live.m3u8", headers = referer, episodeId = PluginIds.liveEpisodeId("someone", "c"))
+        assertEquals(proxied, pluginCastModeFor(live))
     }
 
     @Test fun `DASH and a format nothing tells apart have no cast`() {

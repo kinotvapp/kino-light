@@ -15,7 +15,8 @@ internal sealed interface PluginCastMode {
 
     /**
      * Through [com.arkiv.player.playback.PluginCastProxy]: the phone fetches with the plugin's gated
-     * client and headers, the TV only ever sees a token URL. [mime] is what the receiver is told.
+     * client and headers, the TV only ever sees a token URL. [mime] is what the receiver is told; an
+     * HLS one is served as a rewritten playlist whose every URI points back to the proxy.
      */
     data class ViaProxy(val mime: String) : PluginCastMode
 
@@ -72,7 +73,7 @@ internal fun directCastAllowed(item: PlayerData): Boolean {
  * | DRM (Widevine or ClearKey)                 | None                    |
  * | progressive file (mp4/webm/mkv/ts…)        | ViaProxy (headers or not) |
  * | HLS, no headers, host allowed for the TV   | Direct                  |
- * | HLS that needs headers                     | None (not yet)          |
+ * | HLS that needs headers (or can't go direct) | ViaProxy, playlists rewritten |
  * | DASH, or a format nothing tells apart      | None                    |
  *
  * [directAllowed] is [directCastAllowed] outside tests.
@@ -92,7 +93,9 @@ internal fun pluginCastModeFor(
         PluginStreamFormat.FILE -> PluginCastMode.ViaProxy(mime)
         PluginStreamFormat.HLS -> when {
             item.requestHeaders.isEmpty() && directAllowed(item) -> PluginCastMode.Direct(MIME_HLS)
-            else -> PluginCastMode.None("hls that needs headers")
+            // Headers (Referer, cookies...) the receiver can't send, or a host the TV must not be
+            // pointed at: every playlist, segment, key and map through the proxy's gated client.
+            else -> PluginCastMode.ViaProxy(MIME_HLS)
         }
         PluginStreamFormat.DASH -> PluginCastMode.None("dash")
         PluginStreamFormat.UNKNOWN -> PluginCastMode.None("unknown format")

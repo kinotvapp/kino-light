@@ -6,7 +6,9 @@ import okhttp3.Dns
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -169,6 +171,117 @@ class PluginCastProxyTest {
             assertFalse(line, line.contains(token))
             assertFalse(line, line.contains("TOPSECRET") || line.contains("secret-ref"))
             assertFalse(line, line.contains("movie.mp4") || line.contains("sig=abc"))
+        }
+    }
+
+    // --- HLS (playlists rewritten) ---
+
+    /** Serves a master, a media playlist (relative + absolute + other-host URIs), a key, an init map and segments. */
+    private fun serveHls(otherBase: String = "https://cdn.example") {
+        origin.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when (request.path!!.substringBefore('?')) {
+                "/hls/master.m3u8" -> MockResponse().setBody(
+                    "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\nlow/index.m3u8?sig=abc\n",
+                ).setHeader("Content-Type", "application/vnd.apple.mpegurl")
+                "/hls/low/index.m3u8" -> MockResponse().setBody(
+                    "#EXTM3U\n#EXT-X-MAP:URI=\"init.mp4\"\n#EXT-X-KEY:METHOD=AES-128,URI=\"/keys/k.key\"\n" +
+                        "#EXTINF:6,\nseg1.ts\n#EXTINF:6,\nhttp://localhost:${origin.port}/abs/seg2.ts\n" +
+                        "#EXTINF:6,\n$otherBase/seg3.ts\n#EXT-X-ENDLIST\n",
+                )
+                "/hls/low/init.mp4" -> MockResponse().setBody("INIT")
+                "/keys/k.key" -> MockResponse().setBody("KEY0123456789ABC")
+                "/hls/low/seg1.ts" -> MockResponse().setBody("SEG1")
+                "/abs/seg2.ts" -> MockResponse().setBody("SEG2")
+                "/seg3.ts" -> MockResponse().setBody("SEG3")
+                else -> MockResponse().setResponseCode(404)
+            }
+        }
+    }
+
+    private fun registerHls(key: String = "plugin:p:m1::0") =
+        proxy.register(key, originUrl("/hls/master.m3u8?sig=abc"), secretHeaders, localhostHosts, PluginCastProxy.Shape.HLS, PluginCastProxy.MIME_HLS)!!
+
+    private fun base(url: String) = url.substringBefore("/t/")
+
+    private val tokenUri = Regex("""/t/[0-9a-f]+/r/[^"\s]+""")
+
+    @Test fun `an HLS stream is served as playlists whose every URI comes back under the same token`() {
+        serveHls()
+        val url = registerHls()
+        assertTrue(url.endsWith("/index.m3u8"))
+        val token = url.substringAfter("/t/").substringBefore('/')
+        val master = get(url).use { r ->
+            assertEquals(200, r.code)
+            assertEquals(PluginCastProxy.MIME_HLS, r.header("Content-Type"))
+            r.body!!.string()
+        }
+        assertFalse(master, master.contains("localhost") || master.contains("sig=abc"))
+        val variant = master.lines().single { it.startsWith("/t/") }
+        assertEquals("/t/$token/r/0.m3u8", variant)
+        val media = get(base(url) + variant).use { it.body!!.string() }
+        assertFalse(media, media.contains("localhost") || media.contains("cdn.example"))
+        val uris = tokenUri.findAll(media).map { it.value }.toList()
+        assertEquals(5, uris.size)
+        assertTrue(uris.all { it.startsWith("/t/$token/r/") })
+        // Map, key and the two same-host segments are fetched through the proxy with the plugin's headers.
+        assertEquals("INIT", get(base(url) + uris[0]).use { it.body!!.string() })
+        assertEquals("KEY0123456789ABC", get(base(url) + uris[1]).use { it.body!!.string() })
+        get(base(url) + uris[2]).use {
+            assertEquals("SEG1", it.body!!.string())
+            assertEquals("video/mp2t", it.header("Content-Type"))
+        }
+        assertEquals("SEG2", get(base(url) + uris[3]).use { it.body!!.string() })
+        // The segment on a host the plugin never declared is refused by its gate, before any connection.
+        val before = origin.requestCount
+        get(base(url) + uris[4]).use { assertEquals(403, it.code) }
+        assertEquals(before, origin.requestCount)
+        repeat(origin.requestCount) {
+            val r = origin.takeRequest()
+            assertEquals(r.path, "https://site.example/secret-ref", r.getHeader("Referer"))
+            assertEquals(r.path, "sid=TOPSECRET", r.getHeader("Cookie"))
+        }
+    }
+
+    @Test fun `a segment on another host is fetched when the plugin's rules allow that host`() {
+        serveHls(otherBase = "http://cdn.example:${origin.port}")
+        val hosts = EffectiveHosts(listOf("localhost", "cdn.example"), insecure = setOf("cdn.example"))
+        val url = proxy.register("k", originUrl("/hls/low/index.m3u8"), emptyMap(), hosts, PluginCastProxy.Shape.HLS, PluginCastProxy.MIME_HLS)!!
+        val media = get(url).use { it.body!!.string() }
+        val third = tokenUri.findAll(media).map { it.value }.toList()[4]
+        // http://cdn.example:<port>/seg3.ts: another host, declared (and approved for http): fetched.
+        get(base(url) + third).use { assertEquals("SEG3", it.body!!.string()) }
+    }
+
+    @Test fun `a token reaches only what its own playlists named`() {
+        serveHls()
+        val a = registerHls("a")
+        val b = registerHls("b")
+        get(a).use { it.body!!.string() }
+        // Nothing named yet under b: index 0 is unknown there even though a has one.
+        get(b.substringBeforeLast('/') + "/r/0.m3u8").use { assertEquals(404, it.code) }
+        get(a.substringBeforeLast('/') + "/r/0.m3u8").use { assertEquals(200, it.code) }
+        get(a.substringBeforeLast('/') + "/r/99.ts").use { assertEquals(404, it.code) }
+        get(a.substringBeforeLast('/') + "/r/x").use { assertEquals(404, it.code) }
+        // An HLS token has no media route.
+        get(a.substringBeforeLast('/') + "/media.mp4").use { assertEquals(404, it.code) }
+    }
+
+    @Test fun `an upstream that isn't a playlist is not passed off as one`() {
+        origin.enqueue(MockResponse().setBody("<html>blocked</html>"))
+        get(registerHls()).use { assertEquals(502, it.code) }
+    }
+
+    @Test fun `HLS logs never carry a token, a header, a path or a query`() {
+        serveHls()
+        val url = registerHls()
+        val variant = get(url).use { it.body!!.string() }.lines().single { it.startsWith("/t/") }
+        val media = get(base(url) + variant).use { it.body!!.string() }
+        tokenUri.findAll(media).forEach { get(base(url) + it.value).use { } }
+        val token = url.substringAfter("/t/").substringBefore('/')
+        assertTrue(logs.isNotEmpty())
+        for (line in logs) {
+            assertFalse(line, line.contains(token) || line.contains("TOPSECRET") || line.contains("secret-ref"))
+            assertFalse(line, line.contains("seg3.ts") || line.contains("sig=abc") || line.contains("/hls/"))
         }
     }
 }

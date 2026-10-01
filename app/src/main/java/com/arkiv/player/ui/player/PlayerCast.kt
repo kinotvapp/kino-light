@@ -11,8 +11,9 @@ import com.arkiv.player.playback.SourceKind
  *
  * A plugin title casts unless [pluginCastModeFor] says [PluginCastMode.None]: the official Xuper
  * plugin's VOD exactly as before ([castsAsXuper]), any other plugin's progressive file through
- * `PluginCastProxy` (the plugin's gated client, never a plain fetch) and its header-free HLS straight
- * to the receiver. DRM, DASH and formats nothing tells apart stay without the buttons.
+ * `PluginCastProxy` (the plugin's gated client, never a plain fetch), its HLS that needs headers there too
+ * (playlists rewritten) and a header-free HLS straight to the receiver. DRM, DASH and formats nothing
+ * tells apart stay without the buttons.
  *
  * Orientation is deliberately not an input: the buttons live in the controls overlay, so they show
  * (portrait and landscape alike) only while the controls are up and hide with them.
@@ -112,6 +113,11 @@ internal fun castShapeFor(item: PlayerData?, graph: com.arkiv.player.AppGraph): 
             },
         )
     }
+
+/** [castShapeFor], remembered per item. A call of its own so `PlayerContent` carries no inlined `remember`. */
+@androidx.compose.runtime.Composable
+internal fun rememberCastShape(item: PlayerData?, graph: com.arkiv.player.AppGraph): PlayerData? =
+    androidx.compose.runtime.remember(item) { castShapeFor(item, graph) }
 
 /** Loopback authority `PluginCastProxy` writes; [pluginCastUri] respells only these. */
 private const val LOOPBACK = "http://127.0.0.1:"
