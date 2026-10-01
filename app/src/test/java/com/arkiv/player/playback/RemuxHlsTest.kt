@@ -104,6 +104,18 @@ class RemuxHlsTest {
     }
 
     @Test
+    fun `the cast waits for the person's position and never falls back to the start`() {
+        // Not covered yet, still within the wait: keep waiting.
+        assertNull(RemuxHls.castStart(1_420_918L, 750.0, 30.0, waitedSec = 45))
+        // Covered with the lead: exactly there.
+        assertEquals(1_420_918L, RemuxHls.castStart(1_420_918L, 1_460.0, 30.0, waitedSec = 100))
+        // Waited out: the furthest point covered, not 0:00.
+        assertEquals(720_000L, RemuxHls.castStart(1_420_918L, 750.0, 30.0, waitedSec = RemuxHls.RESUME_WAIT_SEC))
+        // A person at the start goes as soon as the lead is there.
+        assertEquals(0L, RemuxHls.castStart(0L, 30.0, 30.0, waitedSec = 1))
+    }
+
+    @Test
     fun `the receiver is never loaded at exactly zero`() {
         assertEquals(1L, RemuxHls.loadStartMs(0L))
         assertEquals(499_521L, RemuxHls.loadStartMs(499_521L))

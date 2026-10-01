@@ -52,9 +52,16 @@ class CastIdleWatch(private val clock: () -> Long = System::currentTimeMillis) {
     private var lastOwnLoadAt = Long.MIN_VALUE / 2
     private var stoppedOnPurpose = false
 
-    /** A genuinely new request: full budget again, and another title's position is forgotten. */
-    fun onNewMedia(episodeId: String) {
-        if (episodeId != this.episodeId) lastKnownMs = null
+    /**
+     * A genuinely new request starting at [startMs]: full budget again, and the last known
+     * position becomes that start -- the freshest one there is, since the request was built from
+     * where the person was. Keeping the receiver's position from an EARLIER load of the same title
+     * retried a new cast from where the previous session had been (`Retry(fromMs=511422)` for a
+     * load sent from 642833 ms, 2026-10-01); a start of 0 knows nothing, and a retry then uses the
+     * request's own start.
+     */
+    fun onNewMedia(episodeId: String, startMs: Long = 0L) {
+        lastKnownMs = startMs.takeIf { it > 0L }
         this.episodeId = episodeId
         retried = false
         asking = false

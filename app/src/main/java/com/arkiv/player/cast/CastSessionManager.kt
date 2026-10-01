@@ -276,7 +276,7 @@ class CastSessionManager(
     fun setMedia(request: CastRequest) {
         generation++
         pending = request
-        idleWatch.onNewMedia(request.episodeId)
+        idleWatch.onNewMedia(request.episodeId, if (request.asLive) 0L else request.startPositionMs)
         retryingSince = 0L
         _trouble.value = null
         // Without this line "nothing was ever asked of the receiver" and "it was asked and refused"
@@ -518,6 +518,12 @@ class CastSessionManager(
         android.util.Log.w(TAG, "the retry never played · ${RETRY_STALL_MS}ms → $decision")
         if (decision is CastIdleWatch.Decision.Ask) _trouble.value = Trouble(r.title, retrying = false)
     }
+
+    /**
+     * The freshest position known for [episodeId] while it is the cast title: what the receiver
+     * last reported, else where its load started; null for anything else. Main thread.
+     */
+    fun lastKnownPositionMs(episodeId: String): Long? = idleWatch.lastKnownMs(episodeId)
 
     /** "Reintentar": one more load from where the receiver last was. */
     fun retryAfterTrouble() {

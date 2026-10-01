@@ -463,8 +463,13 @@ object RemuxHls {
      */
     const val START_LEAD_SEC = 30.0
 
-    /** How long the cast waits for the remux to reach the phone's position before starting at 0:00. */
-    const val RESUME_WAIT_SEC = 45
+    /**
+     * How long the cast waits ("Preparándolo para la TV") for the remux to reach the phone's
+     * position before settling for the nearest point it has reached. It used to be 45 s and then
+     * start at 0:00 -- a person at minute 23 found the film starting over (2026-10-01). Four
+     * minutes at the ~12x measured covers ~48 min of title; past that, see [castStart].
+     */
+    const val RESUME_WAIT_SEC = 240
 
     /** Fragments [first]..[last] (inclusive) of the index, served as one segment. */
     data class Segment(val first: Int, val last: Int, val durationSec: Double)
@@ -639,6 +644,19 @@ object RemuxHls {
      * start reads as "none given" there, so the beginning is asked for as 1 ms.
      */
     fun loadStartMs(startMs: Long): Long = startMs.coerceAtLeast(1L)
+
+    /**
+     * Where to start the receiver on a remux the phone was at [wantedMs] of, having waited
+     * [waitedSec] for it, or null to keep waiting. Exactly [wantedMs] once the remux covers it
+     * with [leadSec] to spare; after [maxWaitSec] the furthest point the remux covers with that
+     * lead, never past [wantedMs] -- never 0:00 just because the wait ran out.
+     */
+    fun castStart(wantedMs: Long, availableSec: Double, leadSec: Double, waitedSec: Int, maxWaitSec: Int = RESUME_WAIT_SEC): Long? {
+        startIfCovered(wantedMs, availableSec, leadSec)?.let { return it }
+        if (waitedSec < maxWaitSec) return null
+        val nearest = ((availableSec - leadSec) * 1000.0).toLong()
+        return if (nearest > 0L) minOf(nearest, wantedMs) else null
+    }
 
     /** A phone seek while the remux is still being written, held inside what can be played. */
     fun clampSeek(targetMs: Long, availableSec: Double, complete: Boolean, marginSec: Double = 10.0): Long {

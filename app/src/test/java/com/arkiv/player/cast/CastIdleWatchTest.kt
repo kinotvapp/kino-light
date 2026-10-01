@@ -111,6 +111,23 @@ class CastIdleWatchTest {
     }
 
     @Test
+    fun `a new load of the same title forgets the previous session's position for its own start`() {
+        watch.onNewMedia(ep, 499_521L)
+        playingAt(511_422L)
+        // The person went on watching on the phone and cast again from 642833 ms.
+        watch.onNewMedia(ep, 642_833L)
+        assertEquals(642_833L, watch.lastKnownMs(ep))
+        assertEquals(Decision.Retry(642_833L), watch.onIdle(Idle.ERROR, ep, twoHours))
+    }
+
+    @Test
+    fun `a load from the very start knows no position yet`() {
+        watch.onNewMedia(ep, 100_000L)
+        watch.onNewMedia(ep, 0L)
+        assertNull(watch.lastKnownMs(ep))
+    }
+
+    @Test
     fun `positions of another title are not taken as this one's`() {
         watch.onNewMedia(ep)
         watch.onPosition("someone-else", 999_000, playing = true)
