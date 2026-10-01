@@ -28,6 +28,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterIsInstance
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -318,6 +319,8 @@ class AppGraph(context: Context) {
                 )
             }
                 .onFailure { android.util.Log.w("KinoPlugin", "warm-up: Xuper plugin not auto-installed: ${it.javaClass.simpleName}") }
+            // Plugin sync: a row for every plugin installed before sync existed, and versions a background update brought.
+            runCatching { pluginSyncMirror.backfill() }
             // The migration step ran (or failed): an updating device's picker decision may be made now.
             _pickerDecisionReady.value = true
             // Start the live gate's watcher now (it's eager but lazily built): from here on,
@@ -496,7 +499,11 @@ class AppGraph(context: Context) {
 
     /** Reads each plugin's `config.json` (never the Keystore) for its typed servers and "Falta configurar". */
     val pluginRegistry: PluginRegistry by lazy {
-        PluginRegistry(pluginStore) { p -> pluginConfigStore.setupState(p.manifest.id, p.manifest.settings) }.also { it.reload() }
+        PluginRegistry(pluginStore) { p -> pluginConfigStore.setupState(p.manifest.id, p.manifest.settings) }.also {
+            it.reload()
+            // A host approved or refused on the spot, the broad video permission: recorded for the person's other devices.
+            it.onPersonApproval = { id -> pluginSyncMirror.recordApprovals(id) }
+        }
     }
 
     /** Bridges a plugin's undeclared-host prompt to the dialog `MainActivity` collects from [HostApprovalCenter.pending]. */
@@ -839,7 +846,18 @@ class AppGraph(context: Context) {
         )
     }
 
+    /**
+     * Every screen's [PluginAdmin]: [basePluginAdmin] plus plugin sync -- the person's installs,
+     * switches, uninstalls, approvals and settings saves are recorded for their other devices
+     * ([com.arkiv.player.data.plugin.sync.PluginSyncMirror]). A plugin installed from the
+     * "Plugins de tus otros aparatos" list then takes what those devices said about it.
+     */
     val pluginAdmin: PluginAdmin by lazy {
+        com.arkiv.player.data.plugin.sync.SyncingPluginAdmin(basePluginAdmin, pluginSyncMirror) { id -> pluginSyncReconciler.onIncoming(id) }
+    }
+
+    /** The plugin admin WITHOUT sync recording: what plugin sync itself uses, so its changes never echo back. */
+    private val basePluginAdmin: DefaultPluginAdmin by lazy {
         DefaultPluginAdmin(
             pluginRegistry, pluginInstaller, pluginUpdateCoordinator, pluginRuntimes, pluginConfigStore,
             forgetHomeCache = ::forgetPluginHomeCache,
@@ -852,6 +870,39 @@ class AppGraph(context: Context) {
                 }
             },
         )
+    }
+
+    private val pluginSyncHost: com.arkiv.player.data.plugin.sync.PluginSyncHost by lazy {
+        com.arkiv.player.data.plugin.sync.DefaultPluginSyncHost(pluginRegistry, basePluginAdmin, pluginInstaller, nuvioPluginInstaller, pluginConfigStore)
+    }
+
+    /** Records the person's plugin actions in `plugin_installs` for companion sync (see [pluginAdmin]). */
+    val pluginSyncMirror: com.arkiv.player.data.plugin.sync.PluginSyncMirror by lazy {
+        com.arkiv.player.data.plugin.sync.PluginSyncMirror(database.pluginInstallDao(), pluginSyncHost, applicationScope)
+    }
+
+    /** Applies the plugin rows another of the person's devices sent: silent installs within what they approved there. */
+    val pluginSyncReconciler: com.arkiv.player.data.plugin.sync.PluginSyncReconciler by lazy {
+        com.arkiv.player.data.plugin.sync.PluginSyncReconciler(
+            database.pluginInstallDao(), pluginSyncHost, applicationScope,
+            // Nothing is installed or removed before warm-up has read the plugins and their secrets.
+            awaitReady = { warmedUp.first { it } },
+        )
+    }
+
+    /** On every foreground start: retries the plugins from other devices a previous try could not install. Never on Main. */
+    fun retryPluginSync() {
+        applicationScope.launch {
+            warmedUp.first { it }
+            pluginSyncReconciler.retryPending()
+        }
+    }
+
+    /** "Plugins de tus otros aparatos": what the person has on another device and not on this one. */
+    val peerPluginOffers: kotlinx.coroutines.flow.StateFlow<List<com.arkiv.player.data.plugin.sync.PeerPluginOffer>> by lazy {
+        kotlinx.coroutines.flow.combine(database.pluginInstallDao().flowAll(), pluginRegistry.plugins, pluginSyncReconciler.statuses) { rows, installed, statuses ->
+            com.arkiv.player.data.plugin.sync.peerOffers(rows, installed.map { it.id }.toSet(), statuses)
+        }.stateIn(applicationScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, emptyList())
     }
 
     /**
@@ -1514,7 +1565,7 @@ class AppGraph(context: Context) {
         com.arkiv.player.data.sync.RoomSyncSource(database)
     }
     val syncApply: com.arkiv.player.data.sync.SyncApply by lazy {
-        com.arkiv.player.data.sync.SyncApply(database)
+        com.arkiv.player.data.sync.SyncApply(database) { id -> pluginSyncReconciler.onIncoming(id) }
     }
     val syncCursorStore: com.arkiv.player.data.sync.SyncCursorStore by lazy {
         com.arkiv.player.data.sync.SyncCursorStore(appContext)

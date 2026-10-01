@@ -268,6 +268,31 @@ data class OwnLiveSourceEntity(
 )
 
 /**
+ * One plugin the person installed on one of their devices, mirrored from `plugins/<id>/installed.json`
+ * so companion sync can carry it to their other devices (last-write-wins by [updatedAt], [deleted] is
+ * the uninstall tombstone). It names WHERE the plugin comes from ([address], or the Nuvio repo and
+ * scraper) and what the person approved ([approvedJson], a `PluginReach`), never its code: the
+ * receiving device fetches and checks that itself. [settingsJson] holds only the settings that are not
+ * private (no passwords, no typed servers). [version]/[sha256] are information: a newer one on the
+ * other device triggers an update check here.
+ */
+@Entity(tableName = "plugin_installs")
+data class PluginInstallEntity(
+    @PrimaryKey val id: String,
+    val address: String,
+    val name: String,
+    val nuvioRepo: String? = null,
+    val nuvioScraperId: String? = null,
+    val version: String,
+    val sha256: String = "",
+    val enabled: Boolean = true,
+    val approvedJson: String = "{}",
+    val settingsJson: String = "{}",
+    val updatedAt: Long = 0,
+    val deleted: Boolean = false,
+)
+
+/**
  * Local cache of the channel catalog, so the section opens instantly and keeps showing the
  * grid even when the gateway is slow or down. **Doesn't travel through sync**: it's rebuildable
  * cache, not user data, and putting it in the snapshot would mean sending 1,000 rows between

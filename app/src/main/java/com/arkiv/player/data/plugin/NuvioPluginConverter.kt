@@ -70,13 +70,12 @@ private const val NODE_CRYPTO = """["'`](?:node:)?crypto["'`]"""
  * ([NuvioScraperEntry.filename]) is only ever fetched separately, as input to [convert].
  */
 object NuvioPluginConverter {
-    fun convert(
-        scraper: NuvioScraperEntry,
-        scraperSource: String,
-        repoSlug: String,
-        remoteHosts: NuvioRemoteHosts = NuvioRemoteHosts.NONE,
-    ): NuvioConversionResult {
-        val slug = scraper.id.lowercase().replace(Regex("[^a-z0-9-]"), "-").trim('-').ifEmpty { "scraper" }
+    /**
+     * The plugin id a scraper of [repoSlug] (the resolved repo address, `InstalledRecord.nuvioRepo`)
+     * converts to: the same on every device, so a synced row can be checked against it.
+     */
+    fun idFor(scraperId: String, repoSlug: String): String {
+        val slug = scraperId.lowercase().replace(Regex("[^a-z0-9-]"), "-").trim('-').ifEmpty { "scraper" }
         val hash = sha256Hex(repoSlug.toByteArray(Charsets.UTF_8)).take(6)
         // The hash disambiguates the same scraper id across two different Nuvio repos: its space is
         // reserved FIRST, so a long slug is what shrinks -- capping the whole "nuvio-<slug>-<hash>"
@@ -85,7 +84,16 @@ object NuvioPluginConverter {
         val idPrefix = "nuvio-"
         val idSuffix = "-$hash"
         val maxSlugLen = (40 - idPrefix.length - idSuffix.length).coerceAtLeast(1)
-        val id = idPrefix + slug.take(maxSlugLen).trimEnd('-').ifEmpty { "s" } + idSuffix
+        return idPrefix + slug.take(maxSlugLen).trimEnd('-').ifEmpty { "s" } + idSuffix
+    }
+
+    fun convert(
+        scraper: NuvioScraperEntry,
+        scraperSource: String,
+        repoSlug: String,
+        remoteHosts: NuvioRemoteHosts = NuvioRemoteHosts.NONE,
+    ): NuvioConversionResult {
+        val id = idFor(scraper.id, repoSlug)
 
         // Priority order BEFORE the cap: the remote list's entries this scraper names (its current,
         // rotated domain), then its own literals, then the rest of a shared remote list. Every

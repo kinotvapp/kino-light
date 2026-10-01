@@ -53,6 +53,24 @@ class PluginRegistryTest {
         assertEquals(listOf("pa", "pd"), registry.usable().map { it.id })
     }
 
+    @Test fun `the person's on-the-spot approvals are announced, a peer's grants are not`() {
+        install("pa", "A")
+        val announced = mutableListOf<String>()
+        registry.onPersonApproval = { announced += it }
+        registry.addApprovedHost("pa", "new.example.com")
+        registry.rejectHost("pa", "bad.example.com")
+        registry.setAnyVideoHost("pa", true)
+        assertEquals(listOf("pa", "pa", "pa"), announced)
+
+        announced.clear()
+        registry.applyPeerGrants("pa", listOf("peer.example.com", "example.com"), listOf("other.example.com"), anyVideoHost = false)
+        assertTrue(announced.isEmpty())
+        val r = registry.find("pa")!!.record
+        assertEquals(listOf("example.com", "new.example.com", "peer.example.com"), r.hosts)
+        assertEquals(listOf("other.example.com"), r.rejectedHosts)
+        assertFalse(r.anyVideoHost)
+    }
+
     @Test fun `enabling clears no responde`() {
         install("pc", "C") { copy(unresponsive = true, enabled = false) }
         registry.setEnabled("pc", true)

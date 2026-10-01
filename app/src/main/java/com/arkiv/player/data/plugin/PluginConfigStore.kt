@@ -174,6 +174,59 @@ class PluginConfigStore(private val dataDir: (pluginId: String) -> File, private
     }
 
     /**
+     * The person's own answers to the settings that travel to their other devices
+     * ([com.arkiv.player.data.plugin.sync.SharedSettings.isShared]): only what they set, never a
+     * default, never a password or a typed server.
+     */
+    fun sharedValues(pluginId: String, settings: List<PluginSetting>): Map<String, Any> {
+        val stored = readFile(pluginId)
+        val out = LinkedHashMap<String, Any>()
+        for (s in settings.filter(com.arkiv.player.data.plugin.sync.SharedSettings::isShared)) {
+            val value: Any? = if (s.type == SettingType.LIST) listFrom(s, stored.values.opt(s.key))
+            else stored.values.opt(s.key)?.takeIf { it != JSONObject.NULL && PluginSettings.validateValue(s, it) == null }
+            if (value != null && !(value is String && value.isEmpty())) out[s.key] = value
+        }
+        return out
+    }
+
+    /**
+     * Writes the shared answers another of the person's devices sent ([incoming]) over this device's:
+     * each shared setting the other device has a value for takes it when it fits this manifest; one it
+     * has no value for keeps this device's (a device that never configured the plugin must not wipe
+     * the answers given here). Passwords, typed servers and anything this manifest does not declare as
+     * shared are left exactly as they are. Returns whether anything changed (and the revision moved);
+     * a value that does not fit is skipped, never stored.
+     */
+    fun applyShared(pluginId: String, settings: List<PluginSetting>, incoming: Map<String, Any>): Boolean {
+        val shared = settings.filter(com.arkiv.player.data.plugin.sync.SharedSettings::isShared)
+        if (shared.isEmpty()) return false
+        val current = sharedValues(pluginId, settings)
+        val wanted = LinkedHashMap<String, Any>(current)
+        for (s in shared) {
+            val v = incoming[s.key] ?: continue
+            val clean: Any = if (s.type == SettingType.LIST) PluginSettings.entriesOf(v)?.let { cleanList(s, it) } ?: continue else v
+            if (clean is String && clean.isBlank()) continue
+            if (clean is List<*> && clean.isEmpty()) continue
+            if (PluginSettings.validateValue(s, clean) != null) continue
+            wanted[s.key] = if (clean is String) clean.trim() else clean
+        }
+        if (wanted == current) return false
+        val stored = readFile(pluginId)
+        val values = JSONObject(stored.values.toString())
+        for (s in shared) {
+            val v = wanted[s.key]
+            when {
+                v == null -> values.remove(s.key)
+                s.type == SettingType.LIST -> values.put(s.key, JSONArray().also { a -> PluginSettings.entriesOf(v)!!.forEach { e -> a.put(JSONObject().also { o -> s.fields.forEach { f -> o.put(f.key, e[f.key].orEmpty()) } }) } })
+                else -> values.put(s.key, v)
+            }
+        }
+        val json = JSONObject().put("values", values).put("secrets", JSONArray(stored.secrets.toList())).put("revision", stored.revision + 1)
+        writeFileAtomically(File(dataDir(pluginId), FILE_NAME), json.toString().toByteArray(Charsets.UTF_8))
+        return true
+    }
+
+    /**
      * Uninstall: the file (usually already gone with the data dir) and every secret of the plugin —
      * the ones [settings] declares AND any `plugin.<id>.` key an earlier version declared and a
      * later update renamed or dropped (spec §1.3: uninstall deletes both).

@@ -270,6 +270,29 @@ class CompanionSyncEngineTest {
         testScheduler.advanceUntilIdle()
     }
 
+    @Test fun `plugin installs go only to a peer that announced them, not to one that knows only own sources`() = runTest {
+        val incoming = MutableSharedFlow<Envelope>(extraBufferCapacity = 8)
+        val sent = mutableListOf<Envelope>()
+        val source = FakeSyncSource()
+        source.addRow("plugin_installs", JSONObject().put("id", "archive").put("updatedAt", 10L))
+        val (apply, _) = fakeSyncApply()
+        val engine = CompanionSyncEngine(this, incoming, { sent += it }, source, apply, SyncCursorStore(FakeContext()), MutableSharedFlow(extraBufferCapacity = 8))
+        engine.start(MutableStateFlow<String?>(null))
+        testScheduler.advanceUntilIdle()
+        fun tablesSent(): List<String> = sent.filter { it.type == TYPE_SYNC_ROWS }.map { SyncRows.fromPayload(it.payload).table }
+
+        incoming.emit(newEnvelope(TYPE_SYNC_HELLO, SyncHello(mapOf("playback" to 0L, "own_live_sources" to 0L)).toPayload()))
+        testScheduler.advanceUntilIdle()
+        assertTrue("plugin_installs" !in tablesSent())
+
+        incoming.emit(newEnvelope(TYPE_SYNC_HELLO, SyncHello(mapOf("playback" to 0L, "plugin_installs" to 0L)).toPayload()))
+        testScheduler.advanceUntilIdle()
+        assertTrue("plugin_installs" in tablesSent())
+
+        engine.stop()
+        testScheduler.advanceUntilIdle()
+    }
+
     @Test fun `our hello lists every table, the new one included`() = runTest {
         val incoming = MutableSharedFlow<Envelope>(extraBufferCapacity = 8)
         val sent = mutableListOf<Envelope>()
@@ -282,6 +305,7 @@ class CompanionSyncEngineTest {
         testScheduler.advanceUntilIdle()
         val hello = SyncHello.fromPayload(sent.first { it.type == TYPE_SYNC_HELLO }.payload)
         assertTrue("own_live_sources" in hello.since.keys)
+        assertTrue("plugin_installs" in hello.since.keys)
         engine.stop()
         testScheduler.advanceUntilIdle()
     }

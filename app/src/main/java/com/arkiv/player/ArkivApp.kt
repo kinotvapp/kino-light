@@ -193,6 +193,7 @@ class ArkivApp : Application(), ImageLoaderFactory {
                     companion.startHost()
                     companion.startReceiving(resolver, resolver::openPlayer)
                     companion.startSync(graph.roomSyncSource, graph.syncApply, graph.syncCursorStore)
+                    graph.retryPluginSync()
                 }
                 override fun onStop(owner: androidx.lifecycle.LifecycleOwner) {
                     companion.stopSync()
@@ -205,6 +206,7 @@ class ArkivApp : Application(), ImageLoaderFactory {
                 override fun onStart(owner: androidx.lifecycle.LifecycleOwner) {
                     companion.startAutoConnect()
                     companion.startSync(graph.roomSyncSource, graph.syncApply, graph.syncCursorStore)
+                    graph.retryPluginSync()
                 }
                 override fun onStop(owner: androidx.lifecycle.LifecycleOwner) {
                     companion.stopSync()

@@ -960,3 +960,27 @@ interface OwnLiveSourceDao {
     @Query(QUERY_OWN_LIVE_SOURCES_SINCE)
     suspend fun getSince(cursor: Long): List<OwnLiveSourceEntity>
 }
+
+internal const val QUERY_PLUGIN_INSTALLS_SINCE =
+    "SELECT * FROM plugin_installs WHERE updatedAt > :cursor ORDER BY updatedAt ASC"
+
+@Dao
+interface PluginInstallDao {
+    /** Every row, tombstones included: the "other devices" list filters them itself. */
+    @Query("SELECT * FROM plugin_installs ORDER BY name COLLATE NOCASE")
+    fun flowAll(): Flow<List<PluginInstallEntity>>
+
+    @Query("SELECT * FROM plugin_installs")
+    suspend fun all(): List<PluginInstallEntity>
+
+    /** Includes tombstones: sync reads the row as it is. */
+    @Query("SELECT * FROM plugin_installs WHERE id = :id")
+    suspend fun get(id: String): PluginInstallEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun save(row: PluginInstallEntity)
+
+    /** Sync push: rows touched after [cursor], oldest first. */
+    @Query(QUERY_PLUGIN_INSTALLS_SINCE)
+    suspend fun getSince(cursor: Long): List<PluginInstallEntity>
+}

@@ -127,6 +127,22 @@ class DefaultPluginAdmin(
         PluginSettingsForm(p, config.read(id, p.manifest.settings).values)
     }
 
+    /**
+     * Plugin sync: overlays the shared settings another of the person's devices sent
+     * ([PluginConfigStore.applyShared]: never a password or a typed server) and, when anything
+     * changed, refreshes the plugin in the same order as [saveSettings]. Returns whether it changed.
+     */
+    suspend fun applySharedSettings(id: String, values: Map<String, Any>): Boolean = withContext(io) {
+        val p = registry.find(id) ?: return@withContext false
+        if (!config.applyShared(id, p.manifest.settings, values)) return@withContext false
+        forgetHomeCache(id)
+        registry.reload()
+        forgetSession(id)
+        runtimes.close(id)
+        afterSessionClosed(id)
+        true
+    }
+
     override suspend fun saveSettings(id: String, values: Map<String, Any?>): String? = withContext(io) {
         val p = registry.find(id) ?: return@withContext "El plugin ya no está instalado"
         config.save(id, p.manifest.settings, values)?.let { return@withContext it }

@@ -8,6 +8,7 @@ import com.arkiv.player.data.db.LiveFavoriteDao
 import com.arkiv.player.data.db.LiveRecentDao
 import com.arkiv.player.data.db.OwnLiveSourceDao
 import com.arkiv.player.data.db.PlaybackDao
+import com.arkiv.player.data.db.PluginInstallDao
 import com.arkiv.player.data.db.SkipMarkerDao
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -34,11 +35,12 @@ class RoomSyncSource(
     private val liveRecentDao: LiveRecentDao,
     private val db: ArkivDatabase? = null,
     private val ownLiveSourceDao: OwnLiveSourceDao? = null,
+    private val pluginInstallDao: PluginInstallDao? = null,
 ) : SyncSource {
 
     /** Production convenience: pulls the DAOs, and the database itself (for [changes]), out of Room. */
     constructor(db: ArkivDatabase) : this(
-        db.itemDao(), db.playbackDao(), db.skipMarkerDao(), db.liveFavoriteDao(), db.liveRecentDao(), db, db.ownLiveSourceDao(),
+        db.itemDao(), db.playbackDao(), db.skipMarkerDao(), db.liveFavoriteDao(), db.liveRecentDao(), db, db.ownLiveSourceDao(), db.pluginInstallDao(),
     )
 
     override suspend fun changedSince(table: String, cursor: Long): List<JSONObject> = when (table) {
@@ -49,6 +51,7 @@ class RoomSyncSource(
         "live_favorites" -> liveFavoriteDao.getLiveFavoritesSince(cursor).map(::liveFavoriteToJson)
         "live_recents" -> liveRecentDao.getLiveRecentsSince(cursor).map(::liveRecentToJson)
         "own_live_sources" -> ownLiveSourceDao?.getSince(cursor)?.map(::ownLiveSourceToJson).orEmpty()
+        "plugin_installs" -> pluginInstallDao?.getSince(cursor)?.map(::pluginInstallToJson).orEmpty()
         else -> emptyList()
     }
 
@@ -67,7 +70,7 @@ class RoomSyncSource(
     val changes: Flow<Unit> = callbackFlow {
         val database = checkNotNull(db) { "RoomSyncSource.changes requires a real ArkivDatabase" }
         val obs = object : InvalidationTracker.Observer(
-            "items", "episodes", "playback", "skip_markers", "live_favorites", "live_recents", "own_live_sources",
+            "items", "episodes", "playback", "skip_markers", "live_favorites", "live_recents", "own_live_sources", "plugin_installs",
         ) {
             override fun onInvalidated(tables: Set<String>) { trySend(Unit) }
         }

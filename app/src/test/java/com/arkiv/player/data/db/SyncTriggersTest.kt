@@ -48,6 +48,8 @@ class SyncTriggersTest {
             it.executeUpdate("CREATE TABLE live_recents (code TEXT NOT NULL, provider TEXT NOT NULL DEFAULT 'xuper', updatedAt INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(provider, code))")
             // The person's own live sources: the seventh synced table (v34).
             OwnLiveSourcesMigration.STATEMENTS.forEach { stmt -> it.executeUpdate(stmt) }
+            // The installed plugins: the eighth synced table (v35).
+            PluginInstallsMigration.STATEMENTS.forEach { stmt -> it.executeUpdate(stmt) }
         }
     }
 
@@ -100,7 +102,7 @@ class SyncTriggersTest {
         assertEquals(555L, clockOf("items", "identifier", "a"))
     }
 
-    @Test fun `covers the seven tables that sync`() {
+    @Test fun `covers the eight tables that sync`() {
         apply(SyncTriggers.ddl())
         execute("INSERT INTO episodes (id) VALUES ('e1')")
         execute("INSERT INTO playback (episodeId) VALUES ('e1')")
@@ -114,6 +116,8 @@ class SyncTriggersTest {
         assertTrue(clockOf("live_favorites", "code", "c1") > 0)
         assertTrue(clockOf("live_recents", "code", "c1") > 0)
         assertTrue(clockOf("own_live_sources", "id", "s1") > 0)
+        execute("INSERT INTO plugin_installs (id, address, name, version, sha256, enabled, approvedJson, settingsJson, updatedAt, deleted) VALUES ('p1', 'a/b', 'P', '1.0.0', '', 1, '{}', '{}', 0, 0)")
+        assertTrue(clockOf("plugin_installs", "id", "p1") > 0)
     }
 
     @Test fun `sealing one marker doesn't move the clock of the series' other chapters`() {

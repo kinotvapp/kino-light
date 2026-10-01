@@ -138,6 +138,13 @@ class PluginRegistry(
     /** Reads `config.json` only (a small file, like `installed.json`): never the Keystore. */
     private val setup: (StoredPlugin) -> PluginSetupState = { PluginSetupState() },
 ) : PluginPlayback {
+    /**
+     * Told the plugin id whenever the PERSON changed what a plugin may reach on the spot (a host
+     * approved or refused in a dialog, the broad video permission granted or revoked, the "no"s
+     * forgotten): plugin sync records it for their other devices. Never called by [applyPeerGrants].
+     */
+    @Volatile var onPersonApproval: ((String) -> Unit)? = null
+
     private val _plugins = MutableStateFlow<List<InstalledPlugin>>(emptyList())
     val plugins: StateFlow<List<InstalledPlugin>> = _plugins.asStateFlow()
 
@@ -208,6 +215,7 @@ class PluginRegistry(
             }
         }
         if (full) log("[$id] approved host $host not stored: already $MAX_APPROVED_HOSTS approved hosts (safety cap)")
+        if (added) onPersonApproval?.invoke(id)
         return added
     }
 
@@ -215,8 +223,11 @@ class PluginRegistry(
      * Remembers that the person said no to [host] for plugin [id]: never prompted again for it. At
      * most [MAX_REJECTED_HOSTS] are kept, the oldest dropped first (asked about again, at worst).
      */
-    fun rejectHost(id: String, host: String) = update(id) {
-        if (host in it.rejectedHosts) it else it.copy(rejectedHosts = (it.rejectedHosts + host).takeLast(MAX_REJECTED_HOSTS))
+    fun rejectHost(id: String, host: String) {
+        update(id) {
+            if (host in it.rejectedHosts) it else it.copy(rejectedHosts = (it.rejectedHosts + host).takeLast(MAX_REJECTED_HOSTS))
+        }
+        onPersonApproval?.invoke(id)
     }
 
     /** Clears every remembered "no" for [id], from Ajustes ▸ Plugins. */
@@ -229,9 +240,32 @@ class PluginRegistry(
         var changed = false
         update(id) { if (it.anyVideoHost == granted) it else { changed = true; it.copy(anyVideoHost = granted) } }
         if (changed) log("[$id] broad video permission " + if (granted) "granted by the person" else "revoked by the person")
+        if (changed) onPersonApproval?.invoke(id)
     }
 
-    fun forgetRejections(id: String) = update(id) { it.copy(rejectedHosts = emptyList()) }
+    fun forgetRejections(id: String) {
+        update(id) { it.copy(rejectedHosts = emptyList()) }
+        onPersonApproval?.invoke(id)
+    }
+
+    /**
+     * What the person approved for [id] on another of their devices, applied here by plugin sync: the
+     * [hosts] they approved there are added (never removed, capped at [MAX_APPROVED_HOSTS]), their
+     * "no"s replace this device's ([rejected]), and the broad video permission follows theirs. Does NOT
+     * call [onPersonApproval]: this is the other device's decision arriving, not a new one to send back.
+     */
+    fun applyPeerGrants(id: String, hosts: List<String>, rejected: List<String>, anyVideoHost: Boolean) {
+        val nextRejected = rejected.distinct().takeLast(MAX_REJECTED_HOSTS)
+        var changed = false
+        store.updateRecord(id) { r ->
+            val nextHosts = (r.hosts + hosts.filterNot { it in r.hosts }).take(maxOf(MAX_APPROVED_HOSTS, r.hosts.size))
+            if (nextHosts == r.hosts && nextRejected == r.rejectedHosts && anyVideoHost == r.anyVideoHost) r
+            else { changed = true; r.copy(hosts = nextHosts, rejectedHosts = nextRejected, anyVideoHost = anyVideoHost) }
+        }
+        if (!changed) return
+        reload()
+        log("[$id] approvals from another of the person's devices applied")
+    }
 
     fun uninstall(id: String) {
         val p = store.get(id) ?: return
