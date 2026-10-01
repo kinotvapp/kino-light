@@ -1491,6 +1491,8 @@ class AppGraph(context: Context) {
         com.arkiv.player.playback.RemuxHlsServer(
             lanIp = { lanIp() },
             log = { android.util.Log.i("ArkivRemuxHls", it) },
+            // A remux an earlier cast stopped is served at once instead of waiting for a new run.
+            leftoverOf = { key -> tsRemuxer.leftover(key) },
         )
     }
 
