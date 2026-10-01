@@ -68,6 +68,8 @@ class CompanionSyncEngine(
     private val cursors: SyncCursorStore,
     private val changes: Flow<Unit>,
     private val peerScoped: PeerScopedTable? = null,
+    /** Counts only (tables, row numbers): never a row's content. */
+    private val log: (String) -> Unit = { runCatching { android.util.Log.i("CompanionSync", it) } },
 ) {
     private var incomingJob: Job? = null
     private var changesJob: Job? = null
@@ -183,6 +185,7 @@ class CompanionSyncEngine(
     private suspend fun handleHello(env: Envelope) {
         val hello = SyncHello.fromPayload(env.payload)
         peerTables = peer.value to hello.since.keys.toSet()
+        log("hello from the peer: ${hello.since.size} tables")
         var overallHwm = 0L
         for (table in TABLES) {
             if (!peerKnows(table)) continue
@@ -194,6 +197,7 @@ class CompanionSyncEngine(
 
     private suspend fun handleRows(env: Envelope) {
         val syncRows = SyncRows.fromPayload(env.payload)
+        log("received ${syncRows.rows.size} ${syncRows.table}")
         if (syncRows.table == PEER_SCOPED_TABLE) {
             val pid = peer.value ?: return
             if (!tableHere(syncRows.table, pid)) return
@@ -213,6 +217,7 @@ class CompanionSyncEngine(
     }
 
     private suspend fun pushIncremental() {
+        log("local change: pushing to ${if (peer.value == null) "no peer" else "the peer"}")
         for (table in TABLES) {
             if (peerKnows(table)) pushIncrementalTable(table)
         }
@@ -251,6 +256,7 @@ class CompanionSyncEngine(
             source.changedSince(table, cursor)
         }
         if (rows.isEmpty()) return 0L
+        log("sending ${rows.size} $table")
 
         val pages = chunkRows(rows)
         for ((index, page) in pages.withIndex()) {
