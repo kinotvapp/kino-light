@@ -33,7 +33,28 @@ object CastStrategy {
 
     enum class Format { MP4, WEBM, HLS, DASH, MPEG_TS, MATROSKA, OTHER_FILE, UNKNOWN }
 
-    enum class Route { DIRECT, PROXY, REMUX, TS_PLAYLIST, NONE }
+    /**
+     * [REMUX] is the growing remux served as an fMP4 HLS EVENT playlist (`RemuxHlsServer`).
+     * [REMUX_FILE] is the same remux handed over only once it is whole, as one plain MP4 file with
+     * ranges: for a receiver that cannot take HLS (most DLNA renderers list no playlist type), at
+     * the cost of waiting for the whole title.
+     */
+    enum class Route { DIRECT, PROXY, REMUX, REMUX_FILE, TS_PLAYLIST, NONE }
+
+    /**
+     * What the receiver can take beyond a progressive MP4 (which every one plays), as an INPUT to
+     * the route: Google's receiver is [CAST]; a DLNA renderer's comes from the sink protocols it
+     * lists (`DlnaRenderer.receiverOf`).
+     *
+     * @param playsTs plays a progressive MPEG-TS as it is.
+     * @param playsHls plays HLS, so the growing remux can go out at once instead of whole.
+     */
+    data class Receiver(val playsTs: Boolean, val playsHls: Boolean) {
+        companion object {
+            /** Google's Default Media Receiver: refuses a progressive TS (LOAD_FAILED), plays HLS (Shaka). */
+            val CAST = Receiver(playsTs = false, playsHls = true)
+        }
+    }
 
     const val MIME_HLS = "application/vnd.apple.mpegurl"
     const val MIME_DASH = "application/dash+xml"
@@ -73,6 +94,7 @@ object CastStrategy {
      *   rules: declared, https, never a LAN address).
      * @param remuxAvailable this source has the TS remux wired (Magis/Xuper and downloads).
      * @param tsPlaylistAvailable this source can serve a TS as an HLS playlist (fallback).
+     * @param receiver what the receiver takes; Google's by default.
      */
     fun choose(
         format: Format,
@@ -80,12 +102,15 @@ object CastStrategy {
         directAllowed: Boolean,
         remuxAvailable: Boolean,
         tsPlaylistAvailable: Boolean = false,
+        receiver: Receiver = Receiver.CAST,
     ): Route = when (format) {
         Format.MP4, Format.WEBM, Format.HLS ->
             if (needsHeaders || !directAllowed) Route.PROXY else Route.DIRECT
-        // Never a progressive TS: the receiver refuses it outright (LOAD_FAILED).
+        // A receiver that plays a TS gets it as it is: no remux, the lightest route there is.
+        // Google's never does: it refuses a progressive TS outright (LOAD_FAILED).
         Format.MPEG_TS -> when {
-            remuxAvailable -> Route.REMUX
+            receiver.playsTs -> if (needsHeaders || !directAllowed) Route.PROXY else Route.DIRECT
+            remuxAvailable -> remuxRoute(receiver)
             tsPlaylistAvailable -> Route.TS_PLAYLIST
             else -> Route.NONE
         }
@@ -95,6 +120,22 @@ object CastStrategy {
         Format.MATROSKA, Format.OTHER_FILE ->
             if (needsHeaders || !directAllowed) Route.PROXY else Route.DIRECT
         Format.DASH, Format.UNKNOWN -> Route.NONE
+    }
+
+    /** How a remux reaches [receiver]: growing as HLS when it plays HLS, else whole as one MP4. */
+    fun remuxRoute(receiver: Receiver): Route = if (receiver.playsHls) Route.REMUX else Route.REMUX_FILE
+
+    /**
+     * The next route after the receiver REJECTED [route] for a stream of [format] (a rejection the
+     * container explains, as the caller judged it), or [Route.NONE] when there is nothing lighter
+     * left to try. A TS it claimed to play goes to the remux; the growing remux as HLS goes to the
+     * whole MP4, the container every receiver takes.
+     */
+    fun afterRejection(format: Format, route: Route, receiver: Receiver, remuxAvailable: Boolean): Route = when {
+        !remuxAvailable || format != Format.MPEG_TS -> Route.NONE
+        route == Route.DIRECT || route == Route.PROXY -> remuxRoute(receiver)
+        route == Route.REMUX -> Route.REMUX_FILE
+        else -> Route.NONE
     }
 
     /**

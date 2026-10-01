@@ -33,6 +33,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.mediarouter.app.MediaRouteButton
+import com.arkiv.player.cast.CastStart
 import com.arkiv.player.dlna.DlnaController
 import com.arkiv.player.dlna.DlnaDevice
 import com.arkiv.player.dlna.DlnaLog
@@ -174,7 +175,9 @@ internal suspend fun sendToRenderer(
      * one audio track); a renderer handed the file as-is plays its own default.
      */
     audio: com.arkiv.player.cast.CastAudioChoice? = null,
-): Boolean = sendToRendererNow(dlna, device, ep, lanIp, liveHlsProxy, audio).also { accepted ->
+    /** The phone player's position when the cast was asked for; see [dlnaStartMs]. */
+    livePositionMs: Long? = null,
+): Boolean = sendToRendererNow(dlna, device, ep, lanIp, liveHlsProxy, audio, dlnaStartMs(ep, livePositionMs)).also { accepted ->
     // The TV plays it now: the chapter's attempt started, even if the paused local player never does.
     if (accepted && ep != null) CastStarts.accepted(ep.episodeId)
 }
@@ -186,6 +189,7 @@ private suspend fun sendToRendererNow(
     lanIp: () -> String?,
     liveHlsProxy: LiveHlsProxy,
     audio: com.arkiv.player.cast.CastAudioChoice?,
+    startMs: Long,
 ): Boolean = when (ep?.kind) {
     null -> {
         DlnaLog.w("sendToRenderer: nothing is playing (no item)")
@@ -219,18 +223,28 @@ private suspend fun sendToRendererNow(
     // DlnaProxyServer from PluginCastProxy's loopback url, like Magis does from its proxy -- never
     // a plugin URL fetched by DlnaProxyServer's own, ungated client.
     SourceKind.PLUGIN ->
-        if (ep.mime == MIME_HLS || !ep.mediaUrl.startsWith("http://127.0.0.1:")) sendPluginHls(dlna, device, ep, lanIp)
-        else sendThroughProxy(dlna, device, ep, audio)
+        if (ep.mime == MIME_HLS || !ep.mediaUrl.startsWith("http://127.0.0.1:")) sendPluginHls(dlna, device, ep, lanIp, startMs)
+        else sendThroughProxy(dlna, device, ep, audio, startMs)
 
-    else -> sendThroughProxy(dlna, device, ep, audio)
+    else -> sendThroughProxy(dlna, device, ep, audio, startMs)
+}
+
+/**
+ * Where the TV should start a DLNA cast of [ep]: the Chromecast's own rule
+ * ([CastStart.resumePointMs]), from the phone player's [livePositionMs] or else where the item was
+ * told to open. A live channel has no position to start at: 0, and the TV is never sought.
+ */
+internal fun dlnaStartMs(ep: PlayerData?, livePositionMs: Long?): Long = when {
+    ep == null || ep.kind == SourceKind.LIVE || com.arkiv.player.data.plugin.PluginIds.isLiveEpisode(ep.episodeId) -> 0L
+    else -> CastStart.resumePointMs(receiverMs = null, livePositionMs = livePositionMs, itemStartMs = ep.startPositionMs)
 }
 
 /** [ep]'s HLS, or its direct file, to [device] as a raw url the renderer pulls itself (see [pluginCastUri]). */
-private suspend fun sendPluginHls(dlna: DlnaController, device: DlnaDevice, ep: PlayerData, lanIp: () -> String?): Boolean {
+private suspend fun sendPluginHls(dlna: DlnaController, device: DlnaDevice, ep: PlayerData, lanIp: () -> String?, startMs: Long): Boolean {
     val ip = lanIp()
     val url = pluginCastUri(ep, ip)
     DlnaLog.i("sendToRenderer: kind=PLUGIN hls title='${ep.title.take(40)}' lanIp=${ip ?: "NONE"} url=${DlnaXml.safeUrl(url)}")
-    if (url != null) return withContext(Dispatchers.IO) { dlna.playRawUrl(device, url, ep.title, ep.mime.ifBlank { MIME_HLS }) }
+    if (url != null) return withContext(Dispatchers.IO) { dlna.playRawUrl(device, url, ep.title, ep.mime.ifBlank { MIME_HLS }, startMs) }
     withContext(Dispatchers.IO) {
         dlna.failedBeforeSending(
             device, kind = "plugin-hls", stage = "no_lan_url",
@@ -247,6 +261,7 @@ private suspend fun sendThroughProxy(
     device: DlnaDevice,
     ep: PlayerData,
     audio: com.arkiv.player.cast.CastAudioChoice?,
+    startMs: Long,
 ): Boolean {
     // Which URL the TV's proxy will pull from, and why it matters: `castUrl` (a CDN URL that may need
     // headers the proxy doesn't send) wins over `mediaUrl` (our own loopback proxy, which adds them).
@@ -257,9 +272,12 @@ private suspend fun sendThroughProxy(
     val source = if (ep.kind == SourceKind.MAGIS) ep.mediaUrl else (ep.castUrl ?: ep.mediaUrl)
     DlnaLog.i(
         "sendToRenderer: kind=${ep.kind} title='${ep.title.take(40)}' chose=${if (source == ep.mediaUrl) "mediaUrl" else "castUrl"} " +
-            "source=${DlnaXml.safeUrl(source)} (castUrl=${DlnaXml.safeUrl(ep.castUrl)})",
+            "source=${DlnaXml.safeUrl(source)} (castUrl=${DlnaXml.safeUrl(ep.castUrl)}) start=${startMs / 1000}s",
     )
-    return withContext(Dispatchers.IO) { dlna.setUrlAndPlay(device, source, ep.title, audio) }
+    // Magis is READ through the loopback proxy (it adds the CDN's headers) but its remux is FILED
+    // under the CDN url, as the Chromecast's is: stable across token refreshes, and shared with it.
+    val keyUrl = ep.castUrl?.takeIf { ep.kind == SourceKind.MAGIS && it.isNotBlank() } ?: source
+    return withContext(Dispatchers.IO) { dlna.setUrlAndPlay(device, source, ep.title, audio, startMs, keyUrl) }
 }
 
 /** "Playing on <TV>" bar with pause/stop, visible while a renderer is active. */

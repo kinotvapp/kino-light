@@ -61,6 +61,12 @@ class RemuxHlsServer(
         val head: Head?,
         val headLeadSec: Double,
     ) {
+        /** Told of every request for this remux (see [serve]); null for the Chromecast's casts. */
+        @Volatile var lan: LanRequestListener? = null
+
+        /** Put before every [com.arkiv.player.cast.CastDiag] line about this remux ("dlna " for a DLNA cast). */
+        @Volatile var diagPrefix: String = ""
+
         val index = Fmp4Index()
         @Volatile var complete = false
         @Volatile var splice: RemuxHls.Splice = if (head == null) RemuxHls.Splice.Joined(0, 0) else RemuxHls.Splice.Waiting
@@ -121,14 +127,28 @@ class RemuxHlsServer(
     /**
      * Starts serving the remux filed under [key] (or keeps serving it) and returns the URL of its
      * master playlist on the LAN, or null without a LAN address.
+     *
+     * The same server, remux, pacing and earlier-remux reuse for every protocol: the Chromecast
+     * calls this with the defaults, a DLNA cast passes [lan] (it counts the TV's requests to judge
+     * the cast, see `DlnaDiagnosis`) and a [diagPrefix] for its diagnostic lines.
      */
+    fun serve(key: String, locate: () -> Pair<File, Boolean>?): String? = serve(key, null, "", locate)
+
+    /** [serve] for a caster that counts its TV's requests ([lan]) and tags its diagnostic lines. */
     @Synchronized
-    fun serve(key: String, locate: () -> Pair<File, Boolean>?): String? {
+    fun serve(
+        key: String,
+        lan: LanRequestListener? = null,
+        diagPrefix: String = "",
+        locate: () -> Pair<File, Boolean>?,
+    ): String? {
         val current = source?.takeIf { it.key == key }
             ?: Source(key, newToken(), locate, headOf(key), headLeadSec).also {
                 source = it
                 log("serving a new remux as HLS (key #${Integer.toHexString(key.hashCode())})")
             }
+        current.lan = lan
+        current.diagPrefix = diagPrefix
         val socket = server ?: start()
         val ip = lanIp() ?: return null
         return "http://$ip:${socket.localPort}/r/${current.token}/master.m3u8"
@@ -187,7 +207,8 @@ class RemuxHlsServer(
         val pause = RemuxPacing.shouldPause(anchor, s.mainSec, playable, headEnd, s.pacingPaused)
         if (pause != s.pacingPaused) {
             s.pacingPaused = pause
-            com.arkiv.player.cast.CastDiag.i(
+            diag(
+                s,
                 "remux ${if (pause) "PAUSED" else "resumed"} · TV at ${fmt(anchor)}s, remux at ${fmt(s.mainSec)}s, " +
                     "playable to ${fmt(playable)}s" + (if (headEnd > 0) ", earlier remux to ${fmt(headEnd)}s" else ""),
             )
@@ -211,6 +232,10 @@ class RemuxHlsServer(
         val ready = runCatching { s.segments().sumOf { it.durationSec } }.getOrNull() ?: return -1
         return (ready / target * 100.0).toInt().coerceIn(0, 100)
     }
+
+    private fun diag(s: Source, message: String) = com.arkiv.player.cast.CastDiag.i(s.diagPrefix + message)
+
+    private fun diagW(s: Source, message: String) = com.arkiv.player.cast.CastDiag.w(s.diagPrefix + message)
 
     private fun fmt(sec: Double?): String = sec?.let { String.format(java.util.Locale.US, "%.0f", it) } ?: "?"
 
@@ -333,32 +358,55 @@ class RemuxHlsServer(
         val method = requestLine.substringBefore(' ')
         val path = requestLine.substringAfter(' ').substringBefore(' ').substringBefore('?')
         val out = sock.getOutputStream()
+        // Whoever casts this remux hears of every request to it, with its outcome and timing.
+        val lan = source?.lan
+        val remote = runCatching { sock.inetAddress?.hostAddress }.getOrNull()
+        lan?.started(remote, requestLine, headerValue(header, "Range"), headerValue(header, "User-Agent"))
+        val t0 = clock()
+        var bytes = 0L
+        var failure: String? = null
+        try {
+            bytes = respond(out, method, path)
+            out.flush()
+        } catch (e: Exception) {
+            failure = e.javaClass.simpleName
+            throw e
+        } finally {
+            lan?.finished(remote, requestLine, bytes, clock() - t0, failure)
+        }
+    }
+
+    private fun headerValue(header: CharSequence, name: String): String? =
+        header.lineSequence().firstOrNull { it.startsWith("$name:", ignoreCase = true) }?.substringAfter(':')?.trim()
+
+    /** Answers one request; returns the bytes of body sent. */
+    private fun respond(out: OutputStream, method: String, path: String): Long {
         if (method == "OPTIONS") {
             out.write(response("204 No Content", "text/plain", 0, extra = "Access-Control-Allow-Methods: GET, HEAD\r\nAccess-Control-Allow-Headers: *\r\n"))
-            out.flush()
-            return
+            return 0L
         }
         val route = RemuxHls.route(path)
         val s = source
         if (route == null || s == null || route.token != s.token) {
             log("-> 404 $path")
             out.write(response("404 Not Found", "text/plain", 0))
-            out.flush()
-            return
+            return 0L
         }
         refresh(s)
         val head = method == "HEAD"
         val t0 = clock()
-        when (val name = route.name) {
+        return when (val name = route.name) {
             "master.m3u8" -> sendText(out, RemuxHls.masterPlaylist(s.initIndex().tracks, s.pieces().map { it.fragment }), head)
             "media.m3u8" -> {
                 val segments = s.segments()
                 if (s.initIndex().initEnd < 0 || segments.isEmpty()) {
                     out.write(response("404 Not Found", "text/plain", 0))
+                    0L
                 } else {
                     if (!s.playlistLogged) {
                         s.playlistLogged = true
-                        com.arkiv.player.cast.CastDiag.i(
+                        diag(
+                            s,
                             "TV read the playlist · ${segments.size} segments, ${fmt(segments.sumOf { it.durationSec })}s, " +
                                 "start ${fmt(s.plannedStartSec)}s, ended=${s.timelineComplete()}",
                         )
@@ -373,20 +421,22 @@ class RemuxHlsServer(
                 val segment = n?.let { segments.getOrNull(it) }
                 if (n == null || segment == null) {
                     log("-> 404 segment $name")
-                    com.arkiv.player.cast.CastDiag.w("TV asked for $name: not there (${segments.size} segments) → 404")
+                    diagW(s, "TV asked for $name: not there (${segments.size} segments) → 404")
                     out.write(response("404 Not Found", "text/plain", 0))
+                    0L
                 } else {
                     val at = RemuxHls.startOf(segments, n)
                     if (!head) {
                         val tv = RemuxPacing.onSegmentRequest(s.lastRequestedSec, s.plannedStartSec, s.heldBackSec, at)
                         if (tv.heldBackSec != null) {
-                            com.arkiv.player.cast.CastDiag.i("TV probe of $name at ${fmt(at)}s, far behind ${fmt(s.lastRequestedSec ?: s.plannedStartSec)}s: not taken as its position yet")
+                            diag(s, "TV probe of $name at ${fmt(at)}s, far behind ${fmt(s.lastRequestedSec ?: s.plannedStartSec)}s: not taken as its position yet")
                         }
                         s.lastRequestedSec = tv.lastRequestedSec
                         s.heldBackSec = tv.heldBackSec
                     }
                     val sent = runCatching { sendSegment(out, s, segment, head) }
-                    com.arkiv.player.cast.CastDiag.i(
+                    diag(
+                        s,
                         "TV $method $name at ${fmt(at)}s (${String.format(java.util.Locale.US, "%.1f", segment.durationSec)}s) " +
                             "in ${clock() - t0}ms" + (sent.exceptionOrNull()?.let { " FAILED: ${it.javaClass.simpleName}" } ?: "") +
                             " · remux at ${fmt(s.mainSec)}s",
@@ -395,30 +445,41 @@ class RemuxHlsServer(
                 }
             }
         }
-        out.flush()
     }
 
-    private fun sendText(out: OutputStream, body: String, head: Boolean) {
+    private fun sendText(out: OutputStream, body: String, head: Boolean): Long {
         val bytes = body.toByteArray()
         out.write(response("200 OK", "application/vnd.apple.mpegurl", bytes.size.toLong(), extra = "Cache-Control: no-cache\r\n"))
-        if (!head) out.write(bytes)
+        if (head) return 0L
+        out.write(bytes)
+        return bytes.size.toLong()
     }
 
-    private fun sendInit(out: OutputStream, s: Source, head: Boolean) {
+    private fun sendInit(out: OutputStream, s: Source, head: Boolean): Long {
         val init = s.initIndex()
         val file = if (init === s.index) s.locate()?.first else s.head?.file
-        file ?: return out.write(response("404 Not Found", "text/plain", 0))
+        if (file == null) {
+            out.write(response("404 Not Found", "text/plain", 0))
+            return 0L
+        }
         val end = init.initEnd
-        if (end <= 0) return out.write(response("404 Not Found", "text/plain", 0))
+        if (end <= 0) {
+            out.write(response("404 Not Found", "text/plain", 0))
+            return 0L
+        }
         out.write(response("200 OK", "video/mp4", end))
-        if (head) return
+        if (head) return 0L
         RandomAccessFile(file, "r").use { raf -> copy(raf, 0, end, out) }
+        return end
     }
 
-    private fun sendSegment(out: OutputStream, s: Source, segment: RemuxHls.Segment, head: Boolean) {
+    private fun sendSegment(out: OutputStream, s: Source, segment: RemuxHls.Segment, head: Boolean): Long {
         val pieces = s.pieces().subList(segment.first, segment.last + 1)
         val mainFile = if (pieces.any { !it.fromHead }) {
-            s.locate()?.first ?: return out.write(response("404 Not Found", "text/plain", 0))
+            s.locate()?.first ?: run {
+                out.write(response("404 Not Found", "text/plain", 0))
+                return 0L
+            }
         } else {
             null
         }
@@ -436,11 +497,12 @@ class RemuxHlsServer(
                 moofs[i].size + (f.end - f.start - f.moofSize)
             }
             out.write(response("200 OK", "video/mp4", length))
-            if (head) return
+            if (head) return 0L
             pieces.forEachIndexed { i, p ->
                 out.write(moofs[i])
                 copy(rafOf(p), p.fragment.start + p.fragment.moofSize, p.fragment.end, out)
             }
+            return length
         } finally {
             runCatching { headRaf?.close() }
             runCatching { mainRaf?.close() }

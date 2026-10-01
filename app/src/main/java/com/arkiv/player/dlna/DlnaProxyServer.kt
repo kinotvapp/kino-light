@@ -197,7 +197,9 @@ class DlnaProxyServer {
                     out.flush()
                 }
             }
-            DlnaLog.i("proxy: request finished · $sent bytes to the TV in ${SystemClock.elapsedRealtime() - startedAt}ms")
+            val line = "proxy: request finished · $sent bytes to the TV in ${SystemClock.elapsedRealtime() - startedAt}ms"
+            // The TV's own requests, with their timing, go to the cast's diagnostic trail too.
+            if (isLan) DlnaLog.diag(line) else DlnaLog.i(line)
         } catch (e: Exception) {
             val closedByTv = e is SocketException ||
                 e.message?.contains("Broken pipe", ignoreCase = true) == true ||
@@ -205,7 +207,8 @@ class DlnaProxyServer {
             if (closedByTv) {
                 // Normal on a seek or Stop. But a hang-up within seconds of Play, after only a few KB, is a
                 // renderer refusing the stream, which is exactly what the diagnosis is looking for.
-                DlnaLog.i("proxy: TV closed the connection after $sent bytes (${e.javaClass.simpleName}: ${e.message}) in ${SystemClock.elapsedRealtime() - startedAt}ms")
+                val line = "proxy: TV closed the connection after $sent bytes (${e.javaClass.simpleName}: ${e.message}) in ${SystemClock.elapsedRealtime() - startedAt}ms"
+                if (isLan) DlnaLog.diag(line) else DlnaLog.i(line)
             } else {
                 DlnaLog.w("proxy: request FAILED after $sent bytes: ${e.javaClass.simpleName}: ${e.message}", e)
             }

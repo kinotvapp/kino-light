@@ -25,4 +25,12 @@ class DirectPlayFallbackTest {
         assertFalse(DirectPlayFallback.shouldRemux(stage = "transport_error", upnpCode = null, http = 0))
         assertFalse(DirectPlayFallback.shouldRemux(stage = "play", upnpCode = 501, http = 200))
     }
+
+    @Test fun `a fault refusing the remux as HLS sends the whole MP4, a busy or silent TV does not`() {
+        assertTrue(DirectPlayFallback.wholeFileAfterHls(upnpCode = 714, http = 500))
+        assertTrue(DirectPlayFallback.wholeFileAfterHls(upnpCode = 501, http = 500))
+        assertFalse(DirectPlayFallback.wholeFileAfterHls(upnpCode = 701, http = 500))
+        assertFalse(DirectPlayFallback.wholeFileAfterHls(upnpCode = null, http = 0))
+        assertFalse(DirectPlayFallback.wholeFileAfterHls(upnpCode = 501, http = 200))
+    }
 }
