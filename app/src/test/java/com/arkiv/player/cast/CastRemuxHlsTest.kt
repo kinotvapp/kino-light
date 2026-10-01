@@ -81,4 +81,19 @@ class CastRemuxHlsTest {
         val b = CastRouteDedup.Route("p:2", "TV", "KALLEY R3")
         assertEquals(setOf("p:1", "p:2"), CastRouteDedup.keep(listOf(a, b)))
     }
+
+    @Test
+    fun `the same TV listed again under its model name shows once`() {
+        val named = CastRouteDedup.Route("com.google.android.gms/.cast.media.CastMediaRouteProviderService_Persistent:46d2352c", "liliycami", "R3")
+        val model = CastRouteDedup.Route("com.google.android.gms/.cast.media.CastMediaRoute2ProviderService_Persistent:46d2352c", "R3", null)
+        assertEquals(setOf(named.id), CastRouteDedup.keep(listOf(model, named)))
+    }
+
+    @Test
+    fun `routes that name the same Cast device or address are one TV, whatever they are called`() {
+        val a = CastRouteDedup.Route("x:1", "liliycami", "R3", deviceKeys = setOf("46d2352c-6846-5b9d-c454-39ef4ee675ad", "192.168.2.12"))
+        val b = CastRouteDedup.Route("y:2", "R3", null, deviceKeys = setOf("192.168.2.12"))
+        val other = CastRouteDedup.Route("z:3", "Sala", "Chromecast", deviceKeys = setOf("192.168.2.40"))
+        assertEquals(setOf("x:1", "z:3"), CastRouteDedup.keep(listOf(a, b, other)))
+    }
 }
