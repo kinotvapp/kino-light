@@ -65,7 +65,8 @@ fun SourcePickerScreen(onFinish: () -> Unit, onBack: () -> Unit, isMandatoryOnbo
     val installedLines = remember(installedRows) { gridLinesWithStatus(installedRows, PHONE_CATALOG_COLUMNS) }
     var showIntro by rememberSaveable { mutableStateOf(isMandatoryOnboarding) }
 
-    IntroShowcase(showIntroShowCase = showIntro, onShowCaseCompleted = { showIntro = false }) {
+    // dismissOnClickOutside: a tap anywhere moves to the next step, not only one inside the spotlight.
+    IntroShowcase(showIntroShowCase = showIntro, onShowCaseCompleted = { showIntro = false }, dismissOnClickOutside = true) {
     Column(Modifier.fillMaxSize().background(ArkivBlack).systemBarsPadding()) {
         Column(
             Modifier
@@ -73,7 +74,7 @@ fun SourcePickerScreen(onFinish: () -> Unit, onBack: () -> Unit, isMandatoryOnbo
                 .padding(16.dp)
                 .introShowCaseTarget(
                     index = 0,
-                    content = { MiniGuideTooltip(SOURCE_PICKER_INTRO_WHAT_TITLE, SOURCE_PICKER_INTRO_WHAT_BODY) },
+                    content = { MiniGuideTooltip(SOURCE_PICKER_INTRO_WHAT_TITLE, SOURCE_PICKER_INTRO_WHAT_BODY, isLastStep = false, onClose = { showIntro = false }) },
                 ),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
@@ -91,7 +92,7 @@ fun SourcePickerScreen(onFinish: () -> Unit, onBack: () -> Unit, isMandatoryOnbo
                 .fillMaxWidth()
                 .introShowCaseTarget(
                     index = 1,
-                    content = { MiniGuideTooltip(SOURCE_PICKER_INTRO_HOW_TITLE, SOURCE_PICKER_INTRO_HOW_BODY) },
+                    content = { MiniGuideTooltip(SOURCE_PICKER_INTRO_HOW_TITLE, SOURCE_PICKER_INTRO_HOW_BODY, isLastStep = true, onClose = { showIntro = false }) },
                 ),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -140,18 +141,4 @@ fun SourcePickerScreen(onFinish: () -> Unit, onBack: () -> Unit, isMandatoryOnbo
     }
     state.consent?.let { PluginConsentDialog(it, onInstall = vm::confirmInstall, onCancel = vm::cancelConsent) }
     state.configuring?.let { PluginConfigDialog(it, isTv = false, vm = vm) }
-}
-
-/** The tooltip box the mini guide's steps share (source picker and Home), styled like the app's dialogs. */
-@Composable
-internal fun MiniGuideTooltip(title: String, body: String) {
-    Column(
-        Modifier
-            .background(ArkivBlack, shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        Text(title, style = MaterialTheme.typography.titleMedium, color = Color.White)
-        Text(body, style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary)
-    }
 }

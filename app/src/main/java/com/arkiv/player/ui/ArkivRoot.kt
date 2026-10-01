@@ -313,6 +313,8 @@ fun ArkivRoot(
     com.canopas.lib.showcase.IntroShowcase(
         showIntroShowCase = showHomeIntro && currentRoute == "home" && homeEntryResumed,
         onShowCaseCompleted = { showHomeIntro = false },
+        // A tap anywhere moves to the next step, not only one inside the spotlight.
+        dismissOnClickOutside = true,
     ) {
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -380,7 +382,7 @@ fun ArkivRoot(
                                 onClick = { scope.launch { drawerState.open() } },
                                 modifier = Modifier.introShowCaseTarget(
                                     index = 1,
-                                    content = { com.arkiv.player.ui.plugin.MiniGuideTooltip(HOME_INTRO_MENU_TITLE, HOME_INTRO_MENU_BODY) },
+                                    content = { com.arkiv.player.ui.plugin.MiniGuideTooltip(HOME_INTRO_MENU_TITLE, HOME_INTRO_MENU_BODY, isLastStep = false, onClose = { showHomeIntro = false }) },
                                 ),
                             ) {
                                 Icon(Icons.Default.Menu, contentDescription = "Menú", tint = Color.White)
@@ -456,7 +458,7 @@ fun ArkivRoot(
                                 onClick = { navController.navigate("search") },
                                 modifier = Modifier.introShowCaseTarget(
                                     index = 2,
-                                    content = { com.arkiv.player.ui.plugin.MiniGuideTooltip(HOME_INTRO_SEARCH_TITLE, HOME_INTRO_SEARCH_BODY) },
+                                    content = { com.arkiv.player.ui.plugin.MiniGuideTooltip(HOME_INTRO_SEARCH_TITLE, HOME_INTRO_SEARCH_BODY, isLastStep = true, onClose = { showHomeIntro = false }) },
                                 ),
                             ) {
                                 Icon(Icons.Default.Search, contentDescription = "Buscar", tint = Color.White)
@@ -517,7 +519,7 @@ fun ArkivRoot(
                     // nothing to cut a hole around.
                     heroModifier = Modifier.introShowCaseTarget(
                         index = 0,
-                        content = { com.arkiv.player.ui.plugin.MiniGuideTooltip(HOME_INTRO_CONTENT_TITLE, HOME_INTRO_CONTENT_BODY) },
+                        content = { com.arkiv.player.ui.plugin.MiniGuideTooltip(HOME_INTRO_CONTENT_TITLE, HOME_INTRO_CONTENT_BODY, isLastStep = false, onClose = { showHomeIntro = false }) },
                     ),
                 )
             }
