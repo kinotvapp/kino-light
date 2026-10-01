@@ -223,7 +223,7 @@ internal fun PluginsContent(bottomInset: Dp, modifier: Modifier = Modifier) {
             },
         )
     }
-    state.confirmUninstall?.let { PluginUninstallDialog(it, onConfirm = vm::confirmUninstall, onCancel = vm::cancelUninstall) }
+    state.confirmUninstall?.let { PluginUninstallDialog(it, isTv = false, onConfirm = vm::confirmUninstall, onCancel = vm::cancelUninstall) }
     state.configuring?.let { PluginConfigDialog(it, isTv = false, vm = vm) }
 }
 

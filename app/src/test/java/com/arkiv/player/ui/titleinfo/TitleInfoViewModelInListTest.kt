@@ -122,6 +122,16 @@ class TitleInfoViewModelInListTest {
         assertTrue(vm.state.value.showSeasonSelector)
     }
 
+    /** ERRORES-5EM/7ME: a specials chapter or a repeated number must not give the lists a duplicate key. */
+    @Test
+    fun `the listed chapters never repeat a list key`() = runTest {
+        val vm = vm(content = ListContent(listOf(ch(0, 1), ch(1, 1), ch(1, 2), ch(1, 2), ch(null, 1))))
+        advanceUntilIdle()
+        val keys = vm.state.value.visibleChapters.map { it.listKey }
+        assertEquals(keys.distinct(), keys)
+        assertEquals(listOf("0-1", "1-1", "1-2"), keys)
+    }
+
     @Test
     fun `tapping seasons in quick succession ends on the last one and asks nothing`() = runTest {
         val content = ListContent(threeSeasons)

@@ -26,6 +26,7 @@ import com.google.android.gms.cast.framework.CastContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
@@ -39,6 +40,26 @@ import kotlinx.coroutines.launch
 /** Manual dependency graph (no Hilt): app singletons. */
 class AppGraph(context: Context) {
     private val appContext = context.applicationContext
+
+    /**
+     * Tripwire for the heavy lazies (Keystore, native 3DES, plugin files) that [warmUpCredentials]
+     * builds off the main thread before the root may compose: one built on the main thread anyway is
+     * an ANR risk, logged loudly (with the stack) and, in a release, sent to the error board once.
+     * Declared first so it exists before any lazy can run.
+     */
+    private val mainThreadInit = MainThreadInitGuard(
+        isMainThread = { android.os.Looper.myLooper() == android.os.Looper.getMainLooper() },
+        onViolation = { name ->
+            val where = com.arkiv.player.crash.SlowStartup("heavy lazy built on the main thread")
+            android.util.Log.e("KinoStartup", "$name built on the MAIN thread (ANR risk)", where)
+            if (!BuildConfig.DEBUG) {
+                // Off the main thread: the report itself touches disk.
+                Thread {
+                    com.arkiv.player.crash.Crash.report(where, "slow-startup", extras = mapOf("lazy" to name), local = false)
+                }.start()
+            }
+        },
+    )
 
     val database: ArkivDatabase by lazy { ArkivDatabase.get(appContext) }
     val settings: SettingsStore by lazy { SettingsStore(appContext) }
@@ -106,6 +127,7 @@ class AppGraph(context: Context) {
     val apkDownloader: ApkDownloader by lazy { ApkDownloader(appContext.cacheDir) }
 
     val credentialsStore: com.arkiv.player.data.credentials.RemoteCredentialsStore by lazy {
+        mainThreadInit.check("credentialsStore") // Keystore-backed EncryptedSharedPreferences
         com.arkiv.player.data.credentials.EncryptedRemoteCredentialsStore(appContext)
     }
 
@@ -153,10 +175,12 @@ class AppGraph(context: Context) {
     // activation's body already has to carry it.
 
     internal val magisStore: com.arkiv.player.data.magis.MagisCredentialStore by lazy {
+        mainThreadInit.check("magisStore") // Keystore-backed EncryptedSharedPreferences
         com.arkiv.player.data.magis.EncryptedMagisCredentialStore(appContext)
     }
 
     private val magisPortal: com.arkiv.player.data.magis.MagisPortalClientLike by lazy {
+        mainThreadInit.check("magisPortal") // native 3DES key resolution (O-MVLL VM: seconds)
         val creds = credentialsStore.read()!! // never null here: nothing reaching magisPortal is reachable before activation
         com.arkiv.player.data.magis.MagisPortalClient(
             // The 3DES key stays native: MagisCrypto hands the (encrypted) activation blob to the
@@ -197,6 +221,7 @@ class AppGraph(context: Context) {
     val regionGeoBlocked: kotlinx.coroutines.flow.StateFlow<Boolean> by lazy { magisRegionBlockStore.geoBlocked }
 
     internal val magisSession: com.arkiv.player.data.magis.MagisSession by lazy {
+        mainThreadInit.check("magisSession")
         com.arkiv.player.data.magis.MagisSession(
             portal = magisPortal,
             store = magisStore,
@@ -247,15 +272,17 @@ class AppGraph(context: Context) {
      * initializer AES-decrypts the credentials store AND constructs [MagisCrypto], which eagerly
      * runs the native 3DES key resolution ([NativeCredentialResolver.magisActivate]) -- and the
      * O-MVLL VM makes that DES kernel slow (seconds). A Composable that reads `graph.liveCatalog` /
-     * `contentSource` / `magisAccount` in its body triggers that whole chain on the UI thread, which
-     * ANRs. Called once at startup on Dispatchers.IO (see [ArkivApp.onCreate]); a no-op before
-     * activation (nothing reaching [magisPortal] is reachable then, and its `!!` would NPE).
+     * `contentSource` / `magisAccount` / `seedsExhausted` in its body triggers that whole chain on
+     * the UI thread, which ANRs. Called at startup on Dispatchers.IO (see [ArkivApp.onCreate]) and
+     * again right after a first activation (see MainActivity); a no-op before activation (nothing
+     * reaching [magisPortal] is reachable then, and its `!!` would NPE).
      */
     private val _warmedUp = kotlinx.coroutines.flow.MutableStateFlow(false)
-    /** Flips true once [warmUpCredentials] has finished building (or given up on) the heavy chain.
-     *  The startup splash waits for this before composing the home, so a slow device never blocks
-     *  the main thread on a half-built `by lazy` (the ANRs seen on weak phones / TV boxes). Fresh
-     *  installs flip it immediately (nothing to warm -> the activation screen shows at once). */
+    /** Flips true once [warmUpCredentials] has finished building (or given up on) every heavy lazy
+     *  the root reads. MainActivity composes the root ONLY after this (no timeout: see
+     *  `startupContent`), so the main thread never waits on a half-built `by lazy` -- the startup
+     *  ANRs ERRORES-7I7/78K/9OA/1T/13/7I4. Fresh installs flip it immediately (nothing to warm ->
+     *  the activation screen shows at once). Never waits for a network step. */
     val warmedUp: kotlinx.coroutines.flow.StateFlow<Boolean> = _warmedUp
 
     private val _pickerDecisionReady = kotlinx.coroutines.flow.MutableStateFlow(false)
@@ -268,11 +295,24 @@ class AppGraph(context: Context) {
      */
     val pickerDecisionReady: kotlinx.coroutines.flow.StateFlow<Boolean> = _pickerDecisionReady
 
+    /** One warm-up at a time: the startup one and the post-activation one never interleave. */
+    private val warmUpMutex = kotlinx.coroutines.sync.Mutex()
+
     suspend fun warmUpCredentials() {
-        val t0 = android.os.SystemClock.elapsedRealtime()
-        var built = false
+        warmUpMutex.lock()
         try {
-            val activated = credentialsStore.read() != null
+            warmUpLocked()
+        } finally {
+            warmUpMutex.unlock()
+        }
+    }
+
+    private suspend fun warmUpLocked() {
+        val timeline = WarmUpTimeline { android.os.SystemClock.elapsedRealtime() }
+        var built = false
+        var activated = false
+        try {
+            activated = timeline.phase("credentials") { credentialsStore.read() != null }
             // Recorded once, on this build's first start, BEFORE the early return below: a device that was
             // already activated is an updating one (keeps the Xuper migration, never sees the source
             // picker); anything else is new. See data/onboarding/Onboarding.
@@ -283,71 +323,95 @@ class AppGraph(context: Context) {
                 _pickerDecisionReady.value = true
             }
             if (!activated) return // fresh install: nothing to warm
-            magisPortal   // -> MagisCrypto(...) -> NativeCredentialResolver.magisActivate (the slow part)
-            magisSession  // depends on magisPortal + magisStore; warm it too
-            // Also pre-build every heavy lazy a screen's ViewModel factory reads on the MAIN thread
-            // during composition (HomeScreen/LibraryScreen/TvHome build with magisHomeCatalog +
-            // repository; Live/Search read liveCatalog/contentSource; the account prompt reads
-            // magisAccount). Front-loading them here on IO means composition hits fully-built lazies
-            // instead of triggering this chain -- and blocking on it -- on the UI thread.
-            tmdbApi
-            repository
-            liveCatalog
-            magisHomeCatalog
-            // Before `contentSource` (which forces pluginRegistry's first reload()): see
-            // reconcilePluginSecrets's KDoc for why this order matters. The explicit reload() right
-            // after (fix round 3, "also fold in") picks up the just-reconciled config.json even if
-            // `pluginRegistry` had ALREADY been touched earlier (its lazy only reloads once, on
-            // first access) -- without it, an early access from elsewhere could win the race and
-            // this reconciliation would sit unread until some LATER reload().
-            // Guarded: a plugin Keystore failure must never skip Xuper's lazies below.
-            runCatching { reconcilePluginSecrets() }
-                .onFailure { android.util.Log.w("KinoPlugin", "warm-up: plugin secrets not reconciled: ${it.javaClass.simpleName}") }
-            pluginRegistry.reload()
-            // One-time migration (Task 12), for UPDATING devices only (the onboarding kind recorded
-            // above is LEGACY): a person activated before this app version shipped never "installed"
-            // anything -- Xuper was simply always there. A new device picks its own sources instead.
-            // Guarded exactly like reconcilePluginSecrets() above: no network right now (or GitHub
-            // unreachable) must never abort the rest of warm-up, and this isn't gated behind a "did we
-            // already try" flag, so the next cold start just tries again. An unrecorded kind (its
-            // write failed) skips it this start only: the next start records it and runs it.
-            // See autoInstallXuperPluginIfNeeded.
-            runCatching {
-                autoInstallXuperPluginIfNeeded(
-                    com.arkiv.player.data.onboarding.Onboarding.runsXuperMigration(settings.onboardingKind),
-                    credentialsStore, pluginRegistry, pluginAdmin,
-                )
+            // Pre-build every heavy lazy the root reads on the MAIN thread during composition
+            // (Home/TvHome: magisHomeCatalog + repository + seedsExhausted -> magisSession; Live/Search:
+            // liveCatalog/contentSource; the account screens: magisAccount; the rail: pluginRegistry,
+            // liveModule, genreTiles). Three independent branches, in parallel: the Magis chain (native
+            // 3DES + its own Keystore prefs), the local stores (Room + TMDB), and the plugins (their
+            // Keystore secrets + files). Each branch is guarded on its own: one failing never leaves
+            // the other two unbuilt. NO network step in here: it runs after the gate opens (below).
+            val ok = kotlinx.coroutines.coroutineScope {
+                val magis = async(kotlinx.coroutines.Dispatchers.IO) {
+                    runCatching {
+                        // -> MagisCrypto(...) -> NativeCredentialResolver.magisActivate (the slow part)
+                        timeline.phase("magis_portal") { magisPortal }
+                        timeline.phase("magis_session") { magisSession; seedsExhausted } // + magisStore (Keystore)
+                        timeline.phase("magis_rest") { liveCatalog; magisHomeCatalog; magisAccount; magisLive }
+                    }.onFailure { android.util.Log.w("KinoStartup", "warm-up: Magis chain not built: ${it.javaClass.simpleName}") }.isSuccess
+                }
+                val local = async(kotlinx.coroutines.Dispatchers.IO) {
+                    runCatching { timeline.phase("local") { tmdbApi; repository } }
+                        .onFailure { android.util.Log.w("KinoStartup", "warm-up: local stores not built: ${it.javaClass.simpleName}") }.isSuccess
+                }
+                val plugins = async(kotlinx.coroutines.Dispatchers.IO) {
+                    // Before the registry's first reload(): see reconcilePluginSecrets's KDoc for why
+                    // this order matters. The explicit reload() right after (fix round 3, "also fold
+                    // in") picks up the just-reconciled config.json even if `pluginRegistry` had
+                    // ALREADY been touched earlier (its lazy only reloads once, on first access).
+                    // Guarded: a plugin Keystore failure must never skip the registry.
+                    timeline.phase("plugin_secrets") {
+                        runCatching { reconcilePluginSecrets() }
+                            .onFailure { android.util.Log.w("KinoPlugin", "warm-up: plugin secrets not reconciled: ${it.javaClass.simpleName}") }
+                    }
+                    runCatching { timeline.phase("plugin_registry") { pluginRegistry.reload() } }
+                        .onFailure { android.util.Log.w("KinoStartup", "warm-up: plugin registry not loaded: ${it.javaClass.simpleName}") }.isSuccess
+                }
+                listOf(magis, local, plugins).map { it.await() }.all { it }
             }
-                .onFailure { android.util.Log.w("KinoPlugin", "warm-up: Xuper plugin not auto-installed: ${it.javaClass.simpleName}") }
+            // What follows the registry and the Magis chain: the live gate's watcher (eager but
+            // lazily built: from here on, switching the Xuper plugin off drops the live sessions even
+            // before a screen reads it), the En vivo module, the rail's tiles and the composite source.
+            val wired = runCatching {
+                timeline.phase("sources") {
+                    xuperLive; xuperLiveBlocked; liveModule; hasLiveSources; pluginHomeRows; genreTiles; contentSource
+                }
+            }.onFailure { android.util.Log.w("KinoStartup", "warm-up: sources not wired: ${it.javaClass.simpleName}") }.isSuccess
+            built = ok && wired
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Throwable) {
+            // The UI must never hang on a warm-up failure; it will retry the chain on demand.
+        } finally {
+            // The gate opens: everything the root reads is built (or failed for good).
+            _warmedUp.value = true
+            if (!activated) _pickerDecisionReady.value = true
+        }
+        val gateMs = timeline.elapsed()
+        android.util.Log.i("KinoStartup", "warm-up gate ${gateMs}ms (built=$built) ${timeline.summary()}")
+        if (!activated) return
+        // One-time migration (Task 12), for UPDATING devices only (the onboarding kind recorded
+        // above is LEGACY): a person activated before this app version shipped never "installed"
+        // anything -- Xuper was simply always there. A new device picks its own sources instead.
+        // A NETWORK step, so it runs AFTER the gate opened: the root never waits on it.
+        // Guarded: no network right now (or the repo host unreachable) must never break anything,
+        // and this isn't gated behind a "did we already try" flag, so the next cold start just tries
+        // again. An unrecorded kind (its write failed) skips it this start only: the next start
+        // records it and runs it. See autoInstallXuperPluginIfNeeded.
+        try {
+            timeline.phase("xuper_migration") {
+                runCatching {
+                    autoInstallXuperPluginIfNeeded(
+                        com.arkiv.player.data.onboarding.Onboarding.runsXuperMigration(settings.onboardingKind),
+                        credentialsStore, pluginRegistry, pluginAdmin,
+                    )
+                }
+                    .onFailure { android.util.Log.w("KinoPlugin", "warm-up: Xuper plugin not auto-installed: ${it.javaClass.simpleName}") }
+            }
+        } finally {
             // Plugin sync: a row for every plugin installed before sync existed, and versions a background update brought.
             runCatching { pluginSyncMirror.backfill() }
             // The migration step ran (or failed): an updating device's picker decision may be made now.
             _pickerDecisionReady.value = true
-            // Start the live gate's watcher now (it's eager but lazily built): from here on,
-            // switching the Xuper plugin off drops the live sessions even before a screen reads it.
-            xuperLive
-            // The En vivo module's provider list follows the registry from here on too.
-            liveModule
-            contentSource
-            magisAccount
-            built = true
-        } catch (_: Throwable) {
-            // The UI must never hang on a warm-up failure; it will retry the chain on demand.
-        } finally {
-            _pickerDecisionReady.value = true
-            _warmedUp.value = true
-            // Telemetry: a warm-up this slow is what makes a weak device risk an ANR at startup
-            // (the splash waits for it -- see MainActivity). Report the duration so we can see it.
-            val ms = android.os.SystemClock.elapsedRealtime() - t0
-            if (built && ms >= SLOW_WARMUP_MS) {
-                // Constant message, the duration as an extra: with the number in the message every
-                // distinct value was its own GlitchTip issue (80 of the board's latest 100 were these).
-                com.arkiv.player.crash.Crash.report(
-                    com.arkiv.player.crash.SlowStartup("credential/Magis warm-up slow"),
-                    "slow-startup",
-                    extras = mapOf("duration_ms" to ms.toString(), "model" to android.os.Build.MODEL),
-                )
-            }
+        }
+        // Telemetry: how long the root waited on the splash (the gate), and on what. Constant message,
+        // the numbers as extras: with the number in the message every distinct value was its own
+        // issue on the error board (80 of the board's latest 100 were these).
+        if (built && gateMs >= SLOW_WARMUP_MS) {
+            com.arkiv.player.crash.Crash.report(
+                com.arkiv.player.crash.SlowStartup("credential/Magis warm-up slow"),
+                "slow-startup",
+                extras = mapOf("duration_ms" to gateMs.toString(), "model" to android.os.Build.MODEL) + timeline.extras(),
+            )
         }
     }
 
@@ -359,6 +423,7 @@ class AppGraph(context: Context) {
      * Task 9 (sub-project 2B), along with the rest of the accounts subsystem.
      */
     internal val magisAccount: com.arkiv.player.data.magis.MagisAccount by lazy {
+        mainThreadInit.check("magisAccount")
         val creds = credentialsStore.read()!! // never null here: nothing reaching magisAccount is reachable before activation
         com.arkiv.player.data.magis.MagisAccount(magisSession, creds.fallbackMagisEmail, creds.fallbackMagisPassword)
     }
@@ -499,6 +564,7 @@ class AppGraph(context: Context) {
 
     /** Reads each plugin's `config.json` (never the Keystore) for its typed servers and "Falta configurar". */
     val pluginRegistry: PluginRegistry by lazy {
+        mainThreadInit.check("pluginRegistry") // reads every plugin's files on its first reload()
         PluginRegistry(pluginStore) { p -> pluginConfigStore.setupState(p.manifest.id, p.manifest.settings) }.also {
             it.reload()
             // A host approved or refused on the spot, the broad video permission: recorded for the person's other devices.
@@ -971,6 +1037,7 @@ class AppGraph(context: Context) {
     }
 
     internal val magisLive: com.arkiv.player.data.magis.MagisLive by lazy {
+        mainThreadInit.check("magisLive")
         com.arkiv.player.data.magis.MagisLive(
             magisPortal, magisSession,
             apkVersion = credentialsStore.read()!!.iptvApkVersion,
@@ -1572,6 +1639,7 @@ class AppGraph(context: Context) {
     }
 
     val repository: ArkivRepository by lazy {
+        mainThreadInit.check("repository")
         ArkivRepository(
             database, tmdbApi,
             frameStore = frameStore,
@@ -1798,8 +1866,13 @@ class AppGraph(context: Context) {
             CastContext.getSharedInstance(appContext, java.util.concurrent.Executors.newSingleThreadExecutor())
                 .addOnSuccessListener { ctx ->
                     _castContext = ctx
-                    android.os.Handler(android.os.Looper.getMainLooper()).post {
-                        if (credentialsStore.read() != null) castSession // builds + adopts a live session
+                    // Only once the warm-up built `credentialsStore` and `repository` off the main
+                    // thread: posted straight away, this read the Keystore-backed store (and built
+                    // Room + TMDB) on the main thread at process start, racing the warm-up's locks.
+                    applicationScope.launch {
+                        warmedUp.first { it }
+                        if (credentialsStore.read() == null) return@launch
+                        kotlinx.coroutines.withContext(Dispatchers.Main) { castSession } // builds + adopts a live session
                     }
                 }
                 .addOnFailureListener {

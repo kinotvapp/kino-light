@@ -511,6 +511,34 @@ class LiveHlsProxyTest {
     }
 
     /**
+     * The token says who may ask; it must not also let them name WHAT to fetch. A token holder (the
+     * TV, or anyone who sniffed its URL) asking `/seg?u=` for a URL that no served playlist listed
+     * gets a 403, and the proxy never contacts it with the channel's signed headers.
+     */
+    @Test
+    fun `a valid token cannot fetch a segment url the proxy never put in a playlist`() = runBlocking {
+        val upstream = MockWebServer()
+        upstream.start()
+        upstream.enqueue(MockResponse().setBody(
+            "#EXTM3U\n#EXTINF:6,\nhttp://${upstream.hostName}:${upstream.port}/live/c/c_1.ts\n"
+        ))
+        val proxy = LiveHlsProxy(FakeSignatures(), dns = okhttp3.Dns.SYSTEM)
+        val session = LiveSession("${upstream.hostName}:${upstream.port}",
+            "http://x/?a=1&token=${"A".repeat(32)}", "LIC", "c", 0)
+        val (playlistCode, body) = read(proxy.urlFor(session))
+        assertEquals(200, playlistCode)
+        val listed = body.lineSequence().first { it.startsWith("http://127.0.0.1") }
+        val token = listed.substringAfter("&t=")
+        val other = URLEncoder.encode("http://${upstream.hostName}:${upstream.port}/admin", "UTF-8")
+
+        val (code, _) = read("http://127.0.0.1:${proxy.port}/seg?u=$other&t=$token")
+
+        assertEquals(403, code)
+        assertEquals("only the playlist reached the upstream", 1, upstream.requestCount)
+        proxy.stop(); upstream.shutdown()
+    }
+
+    /**
      * Finding from the review (Task 19): the "LAN" tests that already existed (`lanUrl matches the
      * port...`, `urlFor stays reachable over loopback...`) only test the FORMAT of `lanUrl()`'s
      * string or that loopback still works -- neither one proves the `ServerSocket` is REALLY

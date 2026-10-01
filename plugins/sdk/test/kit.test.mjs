@@ -81,10 +81,47 @@ test("apiVersion 2: empty hosts validate only with a url setting, as the app rul
   assert.deepEqual(ok.manifest.hosts, []);
   assert.equal(contract.manifest.noHostsApiVersion, 2);
   assert.deepEqual(validateManifest(manifest({ hosts: [], settings: [server] })),
-    { ok: false, field: "hosts", message: 'El campo "hosts" debe tener de 1 a 20 dominios' });
+    { ok: false, field: "hosts", message: 'El campo "hosts" debe tener al menos 1 dominio' });
   const noUrl = { ok: false, field: "hosts", message: 'El campo "hosts" solo puede estar vacío si el plugin tiene un ajuste de tipo "url"' };
   assert.deepEqual(validateManifest(manifest({ apiVersion: 2, hosts: [] })), noUrl);
   assert.deepEqual(validateManifest(manifest({ apiVersion: 2, hosts: [], settings: [{ key: "user", label: "Usuario", type: "text" }] })), noUrl);
+});
+
+test("hosts: no upper limit (21, 100, 500 accepted); only the 16 KB manifest cap bounds it", () => {
+  assert.equal(contract.manifest.maxHosts, undefined);
+  for (const n of [21, 100, 500]) {
+    const hosts = Array.from({ length: n }, (_, i) => `h${i + 1}.example.com`);
+    const r = validateManifest(manifest({ hosts }));
+    assert.equal(r.ok, true, `${n} hosts`);
+    assert.deepEqual(r.manifest.hosts, hosts);
+  }
+  const tooBig = Array.from({ length: 1000 }, (_, i) => `host-number-${i + 1}.example.com`);
+  assert.deepEqual(validateManifest(manifest({ hosts: tooBig })), { ok: false, field: "kino-plugin.json", message: "El manifiesto pesa más de 16 KB" });
+});
+
+test("validate() warns, without refusing, that more than 20 hosts needs Kino 0.9.45", async () => {
+  const warning = "Más de 20 hosts: Kino 0.9.44 o anterior rechaza este plugin; necesita Kino 0.9.45 o superior";
+  assert.deepEqual(contract.manifest.legacyMaxHosts, { value: 20, refusedUpToApp: "0.9.44", noLimitFromApp: "0.9.45" });
+  const dir = mkdtempSync(join(tmpdir(), "kino-many-hosts-"));
+  try {
+    writeFileSync(join(dir, "plugin.js"), "export async function search(){ return { items: [] } }\nexport async function resolve(){ return { url: 'https://example.com/a.m3u8' } }");
+    const hosts = (n) => Array.from({ length: n }, (_, i) => `h${i + 1}.example.com`);
+    writeFileSync(join(dir, "kino-plugin.json"), manifest({ hosts: hosts(20) }));
+    assert.deepEqual((await validate(dir)).notes, []);
+    writeFileSync(join(dir, "kino-plugin.json"), manifest({ hosts: hosts(21) }));
+    const r = await validate(dir);
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.problems, []);
+    assert.deepEqual(r.notes, [warning]);
+    const cli = spawnSync(process.execPath, [join(here, "..", "validate.mjs"), dir], { encoding: "utf8" });
+    assert.equal(cli.status, 0);
+    assert.ok(cli.stderr.includes(warning), cli.stderr);
+    // Older apps counted the raw entries, duplicates included: so does the warning.
+    writeFileSync(join(dir, "kino-plugin.json"), manifest({ hosts: [...hosts(20), "h1.example.com"] }));
+    assert.deepEqual((await validate(dir)).notes, [warning]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("validate() does not require download/drm to be exported functions", async () => {

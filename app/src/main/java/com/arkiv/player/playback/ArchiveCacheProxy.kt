@@ -8,9 +8,6 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.ServerSocket
 import java.net.Socket
-import java.net.URL
-import java.net.URLDecoder
-import java.net.URLEncoder
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
@@ -29,8 +26,18 @@ import java.util.concurrent.atomic.AtomicBoolean
  * disk cache that downloaded once into a growing file, exclusive to archive.org -- that was
  * deleted along with the rest of that source: magis never used it (its path is `direct=true`,
  * see [serve]'s dispatcher). What's left here is exactly what magis needed.
+ *
+ * SECURITY. The socket listens on every interface (the Cast receiver and DLNA TVs pull through it),
+ * so every request must carry a token [tokens] issued for one registered stream (`/t/<token>/…`,
+ * see [ProxyTokens]); anything else is a 403. A request can't name an upstream URL or headers: those
+ * live only in memory, registered by [proxyUrl]. Every upstream hop, redirects included, must be a
+ * public address ([originGuard]), so the proxy can't be turned on the home network.
  */
-class ArchiveCacheProxy(private val cacheDir: File) {
+class ArchiveCacheProxy(
+    private val cacheDir: File,
+    private val originGuard: ProxyOriginGuard = ProxyOriginGuard(),
+    private val tokens: ProxyTokens = ProxyTokens(),
+) {
     /**
      * Stable cache key per origin URL (SHA-1), for the in-memory/disk tables below ([hotBuffers],
      * [tails], [seekWindows], [tailOnDisk], [liveByKey]). Used to come from `DiskLruCache.keyFor`,
@@ -378,48 +385,62 @@ class ArchiveCacheProxy(private val cacheDir: File) {
         return sock.localPort
     }
 
+    /** Closes the socket and revokes every token: the session is over, its URLs die with it. */
     @Synchronized
     fun stop() {
         running = false
         runCatching { server?.close() }
         server = null
+        tokens.revokeAll()
     }
 
     /**
-     * Local URL the player can play. [headers] travels encoded in the URL itself because that was
-     * the only thing VLC used to let through: it only understood `:http-referrer` and
-     * `:http-user-agent`, and magis serves the VOD behind `Content-Auth` and `Content-License`.
-     * The proxy puts them on the request to the origin.
+     * Local URL the player can play: `http://127.0.0.1:<port>/t/<token>/s`.
      *
-     * `h` goes BEFORE `u` on purpose: there's code that pulls out the origin with
-     * `substringAfter("u=")`.
+     * [originUrl] and [headers] are REGISTERED here, server side, under a fresh unguessable token
+     * (see [ProxyTokens]); the URL carries only that token. They used to travel in the query
+     * (`u=`/`h=`), which handed Magis's `Content-Auth`/`Content-License` to whoever saw a cast URL
+     * and let any LAN client make the phone fetch any URL. The proxy puts the headers on the request
+     * to the origin, as before. The same stream registered twice gets the same URL while it lives.
      */
     fun proxyUrl(
         originUrl: String,
         headers: Map<String, String> = emptyMap(),
         direct: Boolean = false,
     ): String {
-        val u = URLEncoder.encode(originUrl, "UTF-8")
-        val d = if (direct) "d=1&" else ""
-        if (headers.isEmpty()) return "http://127.0.0.1:$port/s?${d}u=$u"
-        val h = URLEncoder.encode(HeaderCodec.encode(headers), "UTF-8")
-        return "http://127.0.0.1:$port/s?h=$h&${d}u=$u"
+        val token = tokens.register(originUrl, headers, direct)
+        return "http://127.0.0.1:$port$TOKEN_PREFIX$token/s"
+    }
+
+    /** Ends [proxyUrl]'s token early; a later request with it gets a 403. Unknown urls are ignored. */
+    fun revoke(proxyUrl: String) {
+        tokenIn(proxyUrl.substringAfter("://").let { "/" + it.substringAfter('/', "") })?.let(tokens::revoke)
     }
 
     companion object {
+        /** Path prefix every proxy URL starts with, followed by the token and the route. */
+        private const val TOKEN_PREFIX = "/t/"
+
+        /** The token in a request [path] (`/t/<token>/<route>`), or null if it has none. */
+        internal fun tokenIn(path: String): String? {
+            if (!path.startsWith(TOKEN_PREFIX)) return null
+            return path.substring(TOKEN_PREFIX.length).substringBefore('/').substringBefore('?').ifEmpty { null }
+        }
+
+        /** The route after the token (`/s?f=…`, `/hls.m3u8`, `/seg?n=3`), or "" if [path] has no token. */
+        internal fun routeIn(path: String): String {
+            val token = tokenIn(path) ?: return ""
+            return path.substring(TOKEN_PREFIX.length + token.length)
+        }
+
         /**
          * The same proxy URL, but asking to serve from [fraction] of the file onward as if that
          * stretch were the whole file. See [FileWindow] for the why.
-         *
-         * `f` goes before `u` like the rest of the parameters: there's code that pulls out the
-         * origin with `substringAfter("u=")` and anything after it would leak in.
          */
         fun withFraction(proxyUrl: String, fraction: Float): String {
             if (fraction <= 0f) return proxyUrl
-            val clean = proxyUrl.replace(Regex("""[?&]f=[^&]*"""), "")
-            val i = clean.indexOf("u=")
-            if (i < 0) return clean
-            return clean.substring(0, i) + "f=$fraction&" + clean.substring(i)
+            val clean = proxyUrl.replace(Regex("""(?<=[?&])f=[^&]*&?"""), "").trimEnd('?', '&')
+            return clean + (if (clean.contains('?')) "&" else "?") + "f=$fraction"
         }
 
         // `conVentanaDesde(proxyUrl, desde)` used to live here: it built a URL with `w=$desde&` so
@@ -445,16 +466,12 @@ class ArchiveCacheProxy(private val cacheDir: File) {
          * `LiveHlsProxy` documents in `urlFor` and `LocalFileServer` relies on. Loopback keeps
          * working for the local player exactly as before.
          *
-         * It rewrites an EXISTING url instead of rebuilding one from `originUrl`+`headers` so the
-         * two spellings cannot drift: same port, same path, same query, byte for byte. That matters
-         * more than it looks — `h=` is a [HeaderCodec] blob and `u=` is percent-encoded, so
-         * re-encoding either would corrupt the headers the proxy exists to inject. It also rules
-         * out a blind string replace: an origin that itself mentions 127.0.0.1 lives inside `u=`
-         * and must survive untouched.
+         * It rewrites an EXISTING url instead of rebuilding one so the two spellings cannot drift:
+         * same port, same token, same path, same query, byte for byte. Only the authority is
+         * touched, never anything after it.
          *
-         * ⚠️ The auth headers ride in the query, so this url hands them to anyone on the LAN. That
-         * is the same exposure `LiveHlsProxy` covers with a random token, and the reason this is
-         * built only at cast time rather than alongside the local url.
+         * The url carries the stream's token, never its headers or origin (see [ProxyTokens]):
+         * whoever holds it can play this one stream, and nothing else.
          */
         fun lanUrl(proxyUrl: String, ip: String): String? {
             if (ip.isBlank() || !proxyUrl.startsWith(LOOPBACK)) return null
@@ -471,15 +488,16 @@ class ArchiveCacheProxy(private val cacheDir: File) {
         /**
          * The LAN url of the HLS PLAYLIST for the same stream -- what the Cast receiver is given.
          *
-         * Same host, port and query as [lanUrl]; only the path changes from `/s` to `/hls.m3u8`.
-         * The receiver refuses a bare transport stream served progressively (its own log:
-         * `FFmpegDemuxer: open context failed`) but plays those identical bytes as a playlist of
-         * byte ranges, which `/hls.m3u8` describes and `/s` still serves.
+         * Same host, port, token and query as [lanUrl]; only the last path segment changes from
+         * `s` to `hls.m3u8`. The receiver refuses a bare transport stream served progressively (its
+         * own log: `FFmpegDemuxer: open context failed`) but plays those identical bytes as a
+         * playlist of byte ranges, which `/hls.m3u8` describes and `/s` still serves.
          */
         fun lanPlaylistUrl(proxyUrl: String, ip: String): String? =
             lanUrl(proxyUrl, ip)?.let { lan ->
-                val i = lan.indexOf("/s?")
-                if (i < 0) null else lan.substring(0, i) + "/hls.m3u8?" + lan.substring(i + 3)
+                val path = lan.substringBefore('?')
+                val query = lan.substring(path.length)
+                if (!path.endsWith("/s")) null else path.dropLast(1) + "hls.m3u8" + query
             }
     }
 
@@ -507,17 +525,31 @@ class ArchiveCacheProxy(private val cacheDir: File) {
                 }
                 val lines = header.toString().split("\r\n")
                 val reqLine = lines.firstOrNull().orEmpty()
-                val path = reqLine.split(' ').getOrNull(1).orEmpty()
-                val origin = path.substringAfter("u=", "").substringBefore('&').let {
-                    runCatching { URLDecoder.decode(it, "UTF-8") }.getOrNull()
-                } ?: return@runCatching
-                val extraHeaders = HeaderCodec.decode(
-                    path.substringAfter("h=", "").substringBefore('&'),
-                )
-                // Service mode. Chosen by whoever builds the URL (magis → direct). It's the ONLY
-                // path left: archive.org's disk cache (`w=`/no-`d=1` routes) was deleted in this
-                // branch's pruning along with the rest of that source.
-                val direct = path.contains("d=1")
+                val fullPath = reqLine.split(' ').getOrNull(1).orEmpty()
+                // THE GATE. No token, or one that isn't live, gets nothing -- not even a hint of
+                // what is registered. The stream (origin + headers + mode) comes from the token,
+                // never from the request: see [ProxyTokens].
+                val stream = tokenIn(fullPath)?.let(tokens::resolve)
+                if (stream == null) {
+                    android.util.Log.w(
+                        "ArchiveCacheProxy",
+                        "403: request without a valid token from ${s.inetAddress?.hostAddress ?: "?"}",
+                    )
+                    s.getOutputStream().apply {
+                        write("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray())
+                        flush()
+                    }
+                    return@runCatching
+                }
+                // From here on, `path` is the route after the token: `/s?…`, `/hls.m3u8`, `/seg?n=…`.
+                val token = tokenIn(fullPath)!!
+                val path = routeIn(fullPath)
+                val origin = stream.origin
+                val extraHeaders = stream.headers
+                // Service mode. Chosen by whoever registers the stream (magis → direct). It's the
+                // ONLY path left: archive.org's disk cache (`w=`/no-`d=1` routes) was deleted in
+                // this branch's pruning along with the rest of that source.
+                val direct = stream.direct
                 // Window: serve from this fraction of the file onward as if it were the whole file,
                 // to be able to RESUME without the player having to seek. See FileWindow.
                 val fraction = path.substringAfter("f=", "").substringBefore('&')
@@ -543,7 +575,7 @@ class ArchiveCacheProxy(private val cacheDir: File) {
                 // byte ranges. Nothing is converted; `/s` still serves the media, one range at a
                 // time, exactly as it does for the phone.
                 if (path.startsWith("/hls.m3u8")) {
-                    servePlaylist(path, origin, extraHeaders, out)
+                    servePlaylist(token, origin, extraHeaders, out)
                     return@runCatching
                 }
 
@@ -611,19 +643,16 @@ class ArchiveCacheProxy(private val cacheDir: File) {
      * [TsSegmenter.segmentByBitrate]; a LOCAL file, where reads are free, uses the exact path.
      */
     private fun servePlaylist(
-        path: String,
+        token: String,
         origin: String,
         headers: Map<String, String>,
         out: java.io.OutputStream,
     ) {
         val segs = segmentsFor(origin, headers)
-        // Relative URIs: same host, same port, same query -- only the path and the added `n=`
-        // differ. Relative keeps the LAN ip out of the playlist, so whatever URL the receiver used
-        // to fetch it is the one it keeps using.
-        val query = path.substringAfter('?', "")
-        val body = TsSegmenter.playlist(segs) { i ->
-            "/seg?n=$i" + if (query.isEmpty()) "" else "&$query"
-        }
+        // Host-relative URIs under the SAME token: the receiver resolves them against the URL it
+        // fetched the playlist from, so the LAN ip stays out of the playlist, and every segment
+        // request carries the token the gate in [serve] demands.
+        val body = TsSegmenter.playlist(segs) { i -> "$TOKEN_PREFIX$token/seg?n=$i" }
         if (body.isEmpty()) {
             android.util.Log.w(
                 "ArchiveCacheProxy",
@@ -848,19 +877,33 @@ class ArchiveCacheProxy(private val cacheDir: File) {
         return ms
     }
 
+    /**
+     * [ProxyOriginGuard.open] for the proxy's plain reads: the final response and its code, or null
+     * (logged, host-free) when a hop was refused. Never follows a redirect without checking it.
+     */
+    private fun guardedOpen(
+        origin: String,
+        configure: HttpURLConnection.() -> Unit,
+    ): Pair<HttpURLConnection, Int>? = when (val hop = originGuard.open(origin, configure)) {
+        is ProxyOriginGuard.Hop.Response -> hop.connection to hop.code
+        is ProxyOriginGuard.Hop.Refused -> {
+            android.util.Log.w("ArchiveCacheProxy", "origin refused: ${hop.reason}")
+            null
+        }
+    }
+
     /** One ranged read straight from the origin, for the playlist's own bookkeeping. */
     private fun rawRange(origin: String, headers: Map<String, String>, range: String): ByteArray? =
         runCatching {
-            val conn = (URL(origin).openConnection() as HttpURLConnection).apply {
-                instanceFollowRedirects = true
+            val (conn, code) = guardedOpen(origin) {
                 setRequestProperty("User-Agent", "Arkiv/0.1 (personal)")
                 headers.forEach { (k, v) -> setRequestProperty(k, v) }
                 setRequestProperty("Range", range)
                 setRequestProperty("Connection", "close")
                 connectTimeout = OriginPolicy.Profile.MAGIS_PROBE.connectMs
                 readTimeout = OriginPolicy.responseMs(0, OriginPolicy.Profile.MAGIS_PROBE)
-            }
-            if (conn.responseCode != HttpURLConnection.HTTP_PARTIAL) {
+            } ?: return@runCatching null
+            if (code != HttpURLConnection.HTTP_PARTIAL) {
                 conn.disconnect(); null
             } else {
                 conn.inputStream.use { it.readBytes() }.also { runCatching { conn.disconnect() } }
@@ -883,8 +926,8 @@ class ArchiveCacheProxy(private val cacheDir: File) {
         totals[origin]?.let { return it }
         repeat(OriginPolicy.attempts(profile)) { attempt ->
             val total = runCatching {
-                val conn = (URL(origin).openConnection() as HttpURLConnection).apply {
-                    instanceFollowRedirects = true
+                // A refused origin stays refused: no point spending the retry budget on it.
+                val (conn, _) = guardedOpen(origin) {
                     setRequestProperty("User-Agent", "Arkiv/0.1 (personal)")
                     extraHeaders.forEach { (k, v) -> setRequestProperty(k, v) }
                     setRequestProperty("Range", "bytes=0-0")
@@ -893,7 +936,7 @@ class ArchiveCacheProxy(private val cacheDir: File) {
                     // the node's latency, not the size: against the measured 72 s, 8 s was never enough.
                     connectTimeout = profile.connectMs
                     readTimeout = OriginPolicy.responseMs(attempt, profile)
-                }
+                } ?: return 0L
                 val cr = conn.getHeaderField("Content-Range")
                 runCatching { conn.inputStream.use { it.readBytes() } }
                 runCatching { conn.disconnect() }
@@ -954,23 +997,23 @@ class ArchiveCacheProxy(private val cacheDir: File) {
         var lastCode = OriginPolicy.NO_RESPONSE
         val attempts = OriginPolicy.attempts(profile)
         repeat(attempts) { attempt ->
-            val conn = runCatching {
-                (URL(origin).openConnection() as HttpURLConnection).apply {
-                    instanceFollowRedirects = true
-                    setRequestProperty("User-Agent", "Arkiv/0.1 (personal)")
-                    extraHeaders.forEach { (k, v) -> setRequestProperty(k, v) }
-                    if (range != null) setRequestProperty("Range", range)
-                    // A new socket for origins that don't tolerate the pool. See Profile.reuseSockets.
-                    if (!profile.reuseSockets) setRequestProperty("Connection", "close")
-                    connectTimeout = profile.connectMs
-                    // The BODY's deadline, the long one. The RESPONSE's -the short one, the one that
-                    // cuts a dead connection- is applied by codeWithDeadline() below, because
-                    // HttpURLConnection doesn't tell the two apart and here they need to differ.
-                    readTimeout = OriginPolicy.bodyMs(profile)
-                }
-            }.getOrNull()
-            if (conn != null) {
-                val closer = SingleConnection.Closer { runCatching { conn.disconnect() } }
+            val configure: HttpURLConnection.() -> Unit = {
+                setRequestProperty("User-Agent", "Arkiv/0.1 (personal)")
+                extraHeaders.forEach { (k, v) -> setRequestProperty(k, v) }
+                if (range != null) setRequestProperty("Range", range)
+                // A new socket for origins that don't tolerate the pool. See Profile.reuseSockets.
+                if (!profile.reuseSockets) setRequestProperty("Connection", "close")
+                connectTimeout = profile.connectMs
+                // The BODY's deadline, the long one. The RESPONSE's -the short one, the one that
+                // cuts a dead connection- is applied by codeWithDeadline() below, because
+                // HttpURLConnection doesn't tell the two apart and here they need to differ.
+                readTimeout = OriginPolicy.bodyMs(profile)
+            }
+            // The connection of the CURRENT hop: redirects are followed by hand (see
+            // ProxyOriginGuard.open), so what the closer has to cut changes from hop to hop.
+            val current = java.util.concurrent.atomic.AtomicReference<HttpURLConnection?>()
+            run {
+                val closer = SingleConnection.Closer { runCatching { current.get()?.disconnect() } }
                 // From HERE and not from the `return` further down: in between is the wait for the
                 // headers (`codeWithDeadline`), which against a dead network hangs for up to 90 s.
                 liveConnections.register(closer)
@@ -998,7 +1041,24 @@ class ArchiveCacheProxy(private val cacheDir: File) {
                 rangesInFlight[rangeLabel] = System.currentTimeMillis()
                 val deadlineMs = OriginPolicy.responseMs(attempt, profile)
                 val responseT0 = System.currentTimeMillis()
-                val code = codeWithDeadline(conn, deadlineMs)
+                // Every hop is checked before it is contacted; each gets the response deadline.
+                val hop = runCatching {
+                    originGuard.open(origin, configure, onConnection = { current.set(it) }) {
+                        codeWithDeadline(it, deadlineMs)
+                    }
+                }.getOrNull()
+                if (hop is ProxyOriginGuard.Hop.Refused) {
+                    // A private address doesn't stop being one on the next attempt: no retry.
+                    rangesInFlight.remove(rangeLabel)
+                    uniqueKey?.let { releaseLive(it) }
+                    liveConnections.release(closer)
+                    runCatching { current.get()?.disconnect() }
+                    android.util.Log.w("ArchiveCacheProxy", "origin refused ${range ?: "(all)"}: ${hop.reason}")
+                    return null
+                }
+                val response = hop as? ProxyOriginGuard.Hop.Response
+                val code = response?.code ?: OriginPolicy.NO_RESPONSE
+                val conn = response?.connection ?: current.get()
                 val tookMs = System.currentTimeMillis() - responseT0
                 recordCode(origin, code)
                 lastCode = code
@@ -1013,7 +1073,7 @@ class ArchiveCacheProxy(private val cacheDir: File) {
                         "origin answered ${range ?: "(all)"} with $code in ${tookMs}ms " +
                             "(deadline ${deadlineMs}ms, attempt ${attempt + 1}, $live connection(s) at once)",
                     )
-                    return conn to closer
+                    return response!!.connection to closer
                 }
                 // `code=-1` + a time right up against the deadline = OUR timer expired, not the
                 // CDN's. The distinction matters and wasn't visible: it read "origin rejected" and
@@ -1031,7 +1091,7 @@ class ArchiveCacheProxy(private val cacheDir: File) {
                 )
                 uniqueKey?.let { releaseLive(it) }
                 liveConnections.release(closer)
-                runCatching { conn.disconnect() }
+                runCatching { conn?.disconnect() }
                 // A 404 doesn't improve by insisting: the file isn't where we have it recorded.
                 // Cutting here saves two timeouts and, above all, lets the 404 arrive clean all the
                 // way up, which is what triggers the metadata revalidation (see

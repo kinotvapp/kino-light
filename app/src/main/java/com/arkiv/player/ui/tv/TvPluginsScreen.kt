@@ -50,7 +50,6 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.clearAndSetSemantics
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -87,8 +86,11 @@ import com.arkiv.player.ui.theme.ArkivRed
 import com.arkiv.player.ui.theme.ArkivTextSecondary
 import kotlinx.coroutines.delay
 
-/** Installed plugins per line of the Instalados grid (Recomendados lays compact cards: [tvPickerColumns]). */
-internal const val TV_CATALOG_COLUMNS = 3
+/**
+ * Installed plugins per line of the Instalados grid (Recomendados lays compact cards: [tvPickerColumns]). Four
+ * fill the pane of a 960 dp wide TV (Fire TV at density 2) without leaving a column empty with a few plugins.
+ */
+internal const val TV_INSTALLED_COLUMNS = 4
 
 /**
  * Room kept between a focused item and the edge of the list when the scroll brings it into view. The
@@ -112,12 +114,12 @@ private val FULL_WIDTH: LazyGridItemSpanScope.() -> GridItemSpan = { GridItemSpa
  *   the recommended plugins as compact cards ([TvPluginCard], as many per line as [tvPickerColumns] fits, the
  *   same as "Elige tus fuentes") of one lazy grid, then "De la comunidad".
  * - **Instalados**: the installed plugins as cards ([TvInstalledPluginCard]) in one lazy grid of
- *   [TV_CATALOG_COLUMNS] columns; OK on a card opens its actions dialog
+ *   [TV_INSTALLED_COLUMNS] columns; OK on a card opens its actions dialog
  *   ([TvInstalledActionsDialog]). With nothing installed, a line saying so and "Ver recomendados".
  * - **Agregar** opens [TvAddCustomPluginDialog] for the custom `usuario/repositorio`. Installing always goes
- *   through the consent sheet, and that sheet replaces the dialog while it is up (see [addModalVisible]). A
- *   static line under the header, end-aligned so it sits under the button itself, says Agregar takes a Kino
- *   or a Nuvio plugin's repo -- fixed text, no focus of its own, on either tab.
+ *   through the consent sheet, and that sheet replaces the dialog while it is up (see [addModalVisible]). That
+ *   it takes a Kino or a Nuvio plugin's repo is said inside the dialog, not on a line of its own here: the
+ *   screen's height goes to the cards.
  *
  * The header row is never inside a scrolling list (a scroll would drag it away as focus went down and
  * getting back would be a fumble). D-pad: Left and Right move among the tabs and the button, OK on a tab
@@ -230,13 +232,6 @@ internal fun TvPluginsContent(
                 onAddRequestedChange(true)
             },
         )
-        Text(
-            "Agregar también acepta el usuario/repositorio de un plugin Kino o Nuvio.",
-            style = MaterialTheme.typography.bodySmall,
-            color = ArkivTextSecondary,
-            textAlign = TextAlign.End,
-            modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp),
-        )
         // The scaled card or action has to be fully visible when it takes focus, so the scroll keeps a margin around it.
         val density = LocalDensity.current
         val bringIntoView = remember(density) { KeepMarginBringIntoView(with(density) { FOCUS_MARGIN.toPx() }) }
@@ -346,7 +341,7 @@ internal fun TvPluginsHost(chrome: @Composable (vm: PluginsViewModel, addRequest
             },
         )
     }
-    state.confirmUninstall?.let { PluginUninstallDialog(it, onConfirm = vm::confirmUninstall, onCancel = vm::cancelUninstall) }
+    state.confirmUninstall?.let { PluginUninstallDialog(it, isTv = true, onConfirm = vm::confirmUninstall, onCancel = vm::cancelUninstall) }
     state.configuring?.let { PluginConfigDialog(it, isTv = true, vm = vm) }
 }
 
@@ -477,7 +472,8 @@ private fun RecommendedTab(
             columns = GridCells.Fixed(columns),
             state = gridState,
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(top = 12.dp, bottom = 16.dp),
+            // 8 dp on top: the room the focused first line's zoom ([TV_CARD_FOCUS_SCALE]) needs, and no more.
+            contentPadding = PaddingValues(top = 8.dp, bottom = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(PICKER_CARD_GAP_DP.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -546,7 +542,7 @@ private fun RecommendedTab(
 
 /**
  * Instalados: the installed plugins as cards, one [TvInstalledPluginCard] per plugin in a lazy grid of
- * [TV_CATALOG_COLUMNS] columns. With none installed it says so and offers
+ * [TV_INSTALLED_COLUMNS] columns. With none installed it says so and offers
  * "Ver recomendados" ([onBrowseRecommended]). [message] goes to the card it is about, if any (see
  * [rowMessagePluginId]); every card of the message's own grid line reserves the room for it
  * ([installedGridLinesWithMessage]), as [RecommendedTab] does for a card's status.
@@ -607,7 +603,7 @@ private fun InstalledTab(
     }
 
     val messageIndex = rowMessageId?.let { id -> plugins.indexOfFirst { it.id == id } }?.takeIf { it >= 0 }
-    val messageLines = remember(plugins, messageIndex) { installedGridLinesWithMessage(plugins.size, messageIndex, TV_CATALOG_COLUMNS) }
+    val messageLines = remember(plugins, messageIndex) { installedGridLinesWithMessage(plugins.size, messageIndex, TV_INSTALLED_COLUMNS) }
     // A live plugin's "Lista recortada: …" line, per card (null = none), following its current
     // provider -- the same line as the phone's card. Plain text, never focusable: D-pad order is unchanged.
     val liveModule = rememberGraph().liveModule
@@ -617,12 +613,13 @@ private fun InstalledTab(
             flow.collectAsStateWithLifecycle(initialValue = null).value
         }
     }
-    val noticeLines = installedGridLinesReserving(notices.map { it != null }, TV_CATALOG_COLUMNS)
+    val noticeLines = installedGridLinesReserving(notices.map { it != null }, TV_INSTALLED_COLUMNS)
 
     LazyVerticalGrid(
-        columns = GridCells.Fixed(TV_CATALOG_COLUMNS),
+        columns = GridCells.Fixed(TV_INSTALLED_COLUMNS),
         modifier = modifier,
-        contentPadding = PaddingValues(top = 16.dp, bottom = 24.dp),
+        // 8 dp on top: a focused card grows by 4% of its height on each side ([TV_CARD_FOCUS_SCALE]), about 7 dp.
+        contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
@@ -644,7 +641,7 @@ private fun InstalledTab(
                 modifier = Modifier
                     .focusRequester(cardFocus.getValue(p.id))
                     .then(if (index == 0 && offers.isEmpty()) Modifier.focusRequester(entryFocus).focusProperties { up = selectedTabFocus } else Modifier)
-                    .then(if (cardHasNothingToTheRight(index, plugins.lastIndex, TV_CATALOG_COLUMNS)) Modifier.noFocusToTheRight() else Modifier),
+                    .then(if (cardHasNothingToTheRight(index, plugins.lastIndex, TV_INSTALLED_COLUMNS)) Modifier.noFocusToTheRight() else Modifier),
                 onClick = { actionsPluginId = p.id },
             )
         }

@@ -27,9 +27,19 @@ object PrivateText {
         out = IPV4.replace(out, "[ip]")
         out = IPV6.replace(out) { m -> if (looksLikeIpv6(m.value)) "[ip]" else m.value }
         out = HOSTNAME.replace(out) { m -> if (keepCodeNames && isCodeName(m.value)) m.value else "[host]" }
-        out = LONG_TOKEN.replace(out, "[id]")
+        out = LONG_TOKEN.replace(out) { m -> if (isPublicPluginId(m.value)) m.value else "[id]" }
         return out
     }
+
+    /**
+     * A converted Nuvio scraper's plugin id (`nuvio-xupalace-c1a132`): long and with digits, so it
+     * looked like a private token, and every `plugin [id] resolve no_streams` title read the same.
+     * It is built from a public scraper id and a hash of the public repo's name, nothing personal.
+     */
+    private fun isPublicPluginId(token: String): Boolean = NUVIO_PLUGIN_ID.matches(token)
+
+    /** `NuvioPluginConverter`'s id shape: `nuvio-<slug>-<6 hex>`, at most 40 characters. */
+    private val NUVIO_PLUGIN_ID = Regex("nuvio-[a-z0-9-]{1,27}-[0-9a-f]{6}")
 
     /** `2800:484:1a2b::5`, `fe80::1%wlan0`, a full eight-group address; never a clock time (`12:30:45`). */
     private fun looksLikeIpv6(candidate: String): Boolean {

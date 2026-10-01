@@ -1,13 +1,17 @@
 package com.arkiv.player.ui.tv
 
 import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
@@ -17,8 +21,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
@@ -138,7 +146,14 @@ fun TvSettingsScreen(initialTab: String? = null) {
     } else {
         TvSettingsChrome(tab = tab, onSelect = { tab = it }, selectedTabFocus = selectedTabFocus, pluginsEntryFocus = pluginsEntryFocus) {
             Column(
-                modifier = Modifier.fillMaxSize().verticalScroll(scroll).padding(top = 16.dp),
+                // Up out of the content lands on the SELECTED tab, as on Plugins: the geometry picked whichever chip
+                // lay above the middle of the focused row (Cuenta from Subtítulos' first row, once the title moved
+                // the chips right).
+                modifier = Modifier
+                    .fillMaxSize()
+                    .upExitsTo(selectedTabFocus)
+                    .verticalScroll(scroll)
+                    .padding(top = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 when (tab) {
@@ -173,26 +188,42 @@ private fun TvSettingsChrome(
     // Runs on every entry into composition, not just the screen's first: see the note where [selectedTabFocus]
     // is created. Retried because the LazyRow's chips are laid out a frame or two after this starts.
     LaunchedEffect(Unit) { requestFocusWhenReady(selectedTabFocus) }
-    Column(modifier = Modifier.fillMaxSize().padding(horizontal = 64.dp, vertical = 32.dp)) {
-        Text("Ajustes", style = MaterialTheme.typography.headlineMedium, color = Color.White)
-        LazyRow(
-            modifier = Modifier.fillMaxWidth(),
-            // Room for the zoom and the focus border on every side, the first chip's left edge included
-            // (see PluginsHeader's own copy of this fix, measured on the KALLEY TV).
-            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            items(TvSettingsTab.entries.size) { i ->
-                val t = TvSettingsTab.entries[i]
-                TvTab(
-                    label = t.label,
-                    selected = t == tab,
-                    onClick = { onSelect(t) },
-                    modifier = (if (t == tab) Modifier.focusRequester(selectedTabFocus) else Modifier)
-                        .dpadDownTo(pluginsEntryFocus.takeIf { tab == TvSettingsTab.PLUGINS }),
-                )
+    // 48/28 dp: the TV's overscan safe area (about 5% of 960x540 dp), no more, so the pane keeps the height.
+    Column(modifier = Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 28.dp)) {
+        // The title shares the line of the tab row: a line of its own took 33 dp of every tab's height. It takes
+        // no focus, so Up from the content and Down from the chips still only meet the chips; with more tabs than
+        // fit (plugins add their own), the row scrolls on its own beside it.
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("Ajustes", style = MaterialTheme.typography.titleLarge, color = Color.White)
+            Spacer(Modifier.width(20.dp))
+            LazyRow(
+                modifier = Modifier.weight(1f),
+                // Room for the zoom and the focus border on every side, the first chip's left edge included
+                // (see PluginsHeader's own copy of this fix, measured on the KALLEY TV).
+                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                items(TvSettingsTab.entries.size) { i ->
+                    val t = TvSettingsTab.entries[i]
+                    TvTab(
+                        label = t.label,
+                        selected = t == tab,
+                        onClick = { onSelect(t) },
+                        modifier = (if (t == tab) Modifier.focusRequester(selectedTabFocus) else Modifier)
+                            .dpadDownTo(pluginsEntryFocus.takeIf { tab == TvSettingsTab.PLUGINS }),
+                    )
+                }
             }
         }
         content()
     }
 }
+
+/** Where a D-pad key leaving a tab's content goes: [selectedTab] for Up, the usual search for the rest. */
+internal fun <T> contentExitTarget(direction: FocusDirection, selectedTab: T, default: T): T =
+    if (direction == FocusDirection.Up) selectedTab else default
+
+/** A focus group whose Up out of it goes to [target] (see [contentExitTarget]); keys inside it move as usual. */
+@OptIn(ExperimentalComposeUiApi::class)
+private fun Modifier.upExitsTo(target: FocusRequester): Modifier =
+    focusProperties { exit = { contentExitTarget(it, target, FocusRequester.Default) } }.focusGroup()

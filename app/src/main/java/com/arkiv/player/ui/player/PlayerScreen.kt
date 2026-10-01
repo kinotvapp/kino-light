@@ -948,7 +948,7 @@ private fun PlayerContent(
         android.util.Log.w(
             "ArkivCast",
             "castRequestFor · ep=${item.episodeId} kind=${item.kind} from=${startPositionMs}ms " +
-                "castUrl=${item.castUrl?.take(120)} mediaUrl=${item.mediaUrl.take(120)}",
+                "castUrl=${com.arkiv.player.dlna.DlnaXml.safeUrl(item.castUrl)} mediaUrl=${com.arkiv.player.dlna.DlnaXml.safeUrl(item.mediaUrl)}",
         )
         val isLiveItem = item.kind == SourceKind.LIVE
         // What audio this carries and whether the receiver can handle it. Read from the LOCAL
@@ -1052,7 +1052,7 @@ private fun PlayerContent(
             android.util.Log.w(
                 "ArkivCast",
                 "magis cast url · lanIp=${lanIp ?: "NONE"} " +
-                    "proxyLocal=${item.mediaUrl.take(60)} → lan=${lanUrl?.take(60) ?: "NULL (cannot cast)"}",
+                    "proxyLocal=${com.arkiv.player.dlna.DlnaXml.safeUrl(item.mediaUrl)} → lan=${lanUrl?.let { com.arkiv.player.dlna.DlnaXml.safeUrl(it) } ?: "NULL (cannot cast)"}",
             )
         }
 
@@ -1192,7 +1192,7 @@ private fun PlayerContent(
         // TEMPORARY DIAGNOSTIC (Magis cast): what it comes out as — null means "no reachable URL".
         android.util.Log.w(
             "ArkivCast",
-            "castRequestFor → ${if (request == null) "NULL" else "uri=${request.uri.take(120)} mime=${request.mimeType}"}",
+            "castRequestFor → ${if (request == null) "NULL" else "uri=${com.arkiv.player.dlna.DlnaXml.safeUrl(request.uri)} mime=${request.mimeType}"}",
         )
         // Every caller hands a non-null request straight to the receiver, so this is what it has.
         if (request != null) {
@@ -1885,13 +1885,12 @@ private fun PlayerContent(
         if (!exoRenderedSomething && p.playWhenReady && p.playerError == null && hasVideo) {
             val f = selectedVideoFormat(p.currentTracks)
             val audio = p.currentTracks.groups.count { it.type == C.TRACK_TYPE_AUDIO }
-            com.arkiv.player.crash.Crash.report(
-                com.arkiv.player.playback.NoVideoFrame(
-                    "in-screen audio-only after ${com.arkiv.player.playback.DecoderWatchdog.NO_VIDEO_REPORT_MS}ms · " +
-                        "codec=${f?.sampleMimeType} ${f?.width}x${f?.height} audioTracks=$audio " +
-                        "src=${if (isMagis) "magis" else if (isDitu) "ditu" else "live"} state=${p.playbackState}",
+            com.arkiv.player.crash.StableReports.reportNoVideoFrame(
+                com.arkiv.player.crash.StableReports.noVideoFrame(
+                    "in-screen ${if (isMagis) "magis" else if (isDitu) "ditu" else "live"}",
+                    com.arkiv.player.playback.DecoderWatchdog.NO_VIDEO_REPORT_MS,
+                    f?.sampleMimeType, f?.width, f?.height, audio, p.playbackState,
                 ),
-                "video-no-frame",
             )
         }
     }
@@ -1938,13 +1937,11 @@ private fun PlayerContent(
             localVideo.markNoVideoReported()
             val f = selectedVideoFormat(controller.currentTracks)
             val audioTracks = controller.currentTracks.groups.count { it.type == C.TRACK_TYPE_AUDIO }
-            com.arkiv.player.crash.Crash.report(
-                com.arkiv.player.playback.NoVideoFrame(
-                    "audio-only after ${waitMs}ms · codec=${f?.sampleMimeType} ${f?.width}x${f?.height} " +
-                        "videoTracks=$videoTracks audioTracks=$audioTracks software=${localVideo.loadPrefersSoftware} " +
-                        "state=${controller.playbackState}",
+            com.arkiv.player.crash.StableReports.reportNoVideoFrame(
+                com.arkiv.player.crash.StableReports.noVideoFrame(
+                    "local", waitMs, f?.sampleMimeType, f?.width, f?.height, audioTracks, controller.playbackState,
+                    mapOf("video_tracks" to "$videoTracks", "software" to "${localVideo.loadPrefersSoftware}"),
                 ),
-                "video-no-frame",
             )
         }
 
@@ -2346,7 +2343,7 @@ private fun PlayerContent(
                         android.widget.Toast.LENGTH_SHORT,
                     ).show()
                 } else {
-                    android.util.Log.w("ArkivCast", "magis → receiver · uri=${req.uri.take(90)} mime=${req.mimeType} start=${req.startPositionMs}ms")
+                    android.util.Log.w("ArkivCast", "magis → receiver · uri=${com.arkiv.player.dlna.DlnaXml.safeUrl(req.uri)} mime=${req.mimeType} start=${req.startPositionMs}ms")
                     castSession.setMedia(req)
                     castToReceiver = mg.episodeId
                     // Same reason as the live effect: the notification and the remote read this,

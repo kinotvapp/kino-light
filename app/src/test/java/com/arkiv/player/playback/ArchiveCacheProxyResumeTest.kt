@@ -40,7 +40,7 @@ class ArchiveCacheProxyResumeTest {
     fun setUp() {
         origin = MockWebServer().also { it.start() }
         cacheDir = temp.newFolder("cache")
-        proxy = ArchiveCacheProxy(cacheDir)
+        proxy = ArchiveCacheProxy(cacheDir, ProxyOriginGuard(allowLoopback = true))
         proxy.start()
     }
 
@@ -143,12 +143,10 @@ class ArchiveCacheProxyResumeTest {
     }
 
     @Test
-    fun `the direct url leaves the origin at the end so it keeps parsing fine`() {
+    fun `the same stream registered twice keeps one url`() {
         val u = proxy.proxyUrl("https://ejemplo/v.ts", mapOf("A" to "b"), direct = true)
-        assertEquals(
-            "https://ejemplo/v.ts",
-            java.net.URLDecoder.decode(u.substringAfter("u=").substringBefore('&'), "UTF-8"),
-        )
+        assertEquals(u, proxy.proxyUrl("https://ejemplo/v.ts", mapOf("A" to "b"), direct = true))
+        assertTrue("other headers are another stream", u != proxy.proxyUrl("https://ejemplo/v.ts", mapOf("A" to "c"), direct = true))
         assertEquals(0f, proxy.bufferedFraction(u), 0.0001f)
     }
 }

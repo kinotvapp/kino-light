@@ -7,7 +7,8 @@ import java.security.MessageDigest
 /**
  * [NuvioPluginConverter.convert]'s result: a ready-to-ship `plugin.js` + `kino-plugin.json` pair.
  * [hosts] is what the manifest declares (TMDB always first); [scraperHosts] only what was detected in
- * the scraper and its remote domain list, before the cap -- empty means the scraper names no site.
+ * the scraper and its remote domain list (all of them, even any the manifest's 16 KB cap left out of
+ * [hosts]) -- empty means the scraper names no site.
  */
 data class NuvioConversionResult(
     val script: String,
@@ -95,36 +96,25 @@ object NuvioPluginConverter {
     ): NuvioConversionResult {
         val id = idFor(scraper.id, repoSlug)
 
-        // Priority order BEFORE the cap: the remote list's entries this scraper names (its current,
-        // rotated domain), then its own literals, then the rest of a shared remote list. Every
-        // candidate is validated first, so no garbage ever occupies one of the MAX_HOSTS slots.
+        // Every validated host the scraper names is declared (a manifest has no host-count limit
+        // since 0.9.45; the 16 KB manifest cap is the only bound, see the size check below), in
+        // priority order: the remote list's entries this scraper names (its current, rotated domain),
+        // then the literals that look like its OWN site ([NuvioHostExtractor.primaryHosts]: an
+        // address-named constant, or a URL with a query built at runtime), then its other literals,
+        // then the rest of a shared remote list. A bundle lists its shared hoster resolvers first and
+        // its entry module last (cuevanaubd names 98 hosts, its API host `cuevana.unbuendato.com`
+        // near the end), so without this the consent sheet's folded view would show resolvers, not
+        // the site the person is actually installing -- and the priority order is also what decides
+        // which hosts go first should the list ever not fit the manifest's byte cap.
         val literals = NuvioHostExtractor.extractHosts(scraperSource)
-        val unranked = (remoteHosts.preferred + literals + remoteHosts.others)
+        val primary = NuvioHostExtractor.primaryHosts(scraperSource).toSet()
+        val (ownSite, rest) = literals.partition { it in primary }
+        val candidates = (remoteHosts.preferred + ownSite + rest + remoteHosts.others)
             .filter(NuvioHostExtractor::isPlausibleHost)
             .distinct()
-        // Over the cap, source order alone could cut the scraper's OWN site: a bundle lists its shared
-        // hoster resolvers first and its entry module last (cuevanaubd names 98 hosts, its API host
-        // `cuevana.unbuendato.com` near the end). So the literals that look like its own site
-        // ([NuvioHostExtractor.primaryHosts]: an address-named constant, or a URL with a query built
-        // at runtime) move ahead of the other literals; the remote list's preferred hosts stay first.
-        // Whatever still falls past the cap is asked for at runtime (reactive approval).
-        val candidates = if ((unranked - TMDB_HOST).size + 1 > ManifestParser.MAX_HOSTS) {
-            val primary = NuvioHostExtractor.primaryHosts(scraperSource).toSet()
-            val (ownSite, rest) = literals.partition { it in primary }
-            (remoteHosts.preferred + ownSite + rest + remoteHosts.others)
-                .filter(NuvioHostExtractor::isPlausibleHost)
-                .distinct()
-        } else unranked
         // TMDB is the ADAPTER's own dependency (every search's artwork, every series' episode list),
-        // so it holds the first slot whatever the scraper names: the cap can never push it out.
-        val all = listOf(TMDB_HOST) + (candidates - TMDB_HOST)
-        val hosts = all.take(ManifestParser.MAX_HOSTS)
-
-        val warnings = buildList {
-            if (all.size > ManifestParser.MAX_HOSTS) {
-                add("Aviso: se detectaron más de ${ManifestParser.MAX_HOSTS} dominios; algunos quedaron fuera.")
-            }
-        }
+        // so it always holds the first slot whatever the scraper names.
+        val allHosts = listOf(TMDB_HOST) + (candidates - TMDB_HOST)
 
         // Never Kino's own TMDB key in plain: the script carries a marker the runtime swaps for it only
         // on requests to TMDB (see TMDB_KEY_MARKER), so a third-party scraper can't read or send it anywhere.
@@ -148,7 +138,7 @@ object NuvioPluginConverter {
             "var __NUVIO_SCRAPER_NAME = " + JSONObject.quote(displayName) + ";\n"
         val script = shim + "\n\n" + libraries + CONSOLE + wrapped + supportBinding + ADAPTER
 
-        val manifestJson = JSONObject()
+        fun manifestFor(hosts: List<String>, warnings: List<String>): String = JSONObject()
             // Clipped to ManifestParser's own name limit: a longer Nuvio scraper name would otherwise make the whole manifest invalid.
             .put("id", id).put("name", scraper.name.trim().take(ManifestParser.MAX_NAME_CHARS).trim().ifEmpty { scraper.id.take(ManifestParser.MAX_NAME_CHARS) })
             .put("version", VERSION).put("apiVersion", ManifestParser.STREAM_HOSTS_API_VERSION)
@@ -164,6 +154,19 @@ object NuvioPluginConverter {
             // any PUBLIC host, approved once, instead of one dialog per new host.
             .put("fetchHosts", ManifestParser.LIVE_STREAM_HOSTS_ANY)
             .toString()
+
+        // The only bound on the declared list is the manifest's own byte cap (ManifestParser.MAX_BYTES,
+        // ~700 typical domains): a scraper naming even more keeps its highest-priority ones (the order
+        // above), with a warning on the consent sheet. What's left out is still reachable through
+        // fetchHosts "any" and the reactive approval.
+        var hosts = allHosts
+        var warnings = emptyList<String>()
+        var manifestJson = manifestFor(hosts, warnings)
+        while (hosts.size > 1 && manifestJson.toByteArray(Charsets.UTF_8).size > ManifestParser.MAX_BYTES) {
+            hosts = hosts.dropLast(1)
+            warnings = listOf("Aviso: se detectaron demasiados dominios; ${allHosts.size - hosts.size} quedaron fuera.")
+            manifestJson = manifestFor(hosts, warnings)
+        }
 
         return NuvioConversionResult(script, manifestJson, hosts, warnings, scraperHosts = candidates)
     }
@@ -210,7 +213,7 @@ object NuvioPluginConverter {
      * [ManifestParser.MAX_DESCRIPTION_CHARS] (the parser silently truncates past it): origin +
      * license first, then every warning, and only then the generic "hosts were auto-detected" caveat
      * -- the one part dropped when it doesn't fit. [name]/[repoSlug] are clipped so the head plus the
-     * one warning there can be (too many hosts) always fit (≤ 137 + 1 + 65 chars).
+     * one warning there can be (too many hosts for the manifest's byte cap) always fit (≤ 137 + 1 + 65 chars).
      */
     private fun description(name: String, repoSlug: String, warnings: List<String>): String {
         val max = ManifestParser.MAX_DESCRIPTION_CHARS

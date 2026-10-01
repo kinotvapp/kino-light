@@ -82,11 +82,22 @@ class CastSessionManager(
      *  otherwise report on every poll. Reset on every new session, see `onCastSessionAvailable`. */
     @Volatile private var sessionReported = false
 
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
     /**
      * Sends ONE [CastFailure] for the current session, with whatever the receiver's own diagnostics
      * already know: model, what was asked of it, and the video track it ended up with (or didn't).
      */
     private fun reportFailure(reason: String, error: androidx.media3.common.PlaybackException? = null) {
+        // Everything below reads the CastPlayer, and the Cast SDK asserts the main thread on those
+        // reads (`currentPosition` -> RemoteMediaClient.getApproximateStreamPosition). A call from
+        // the progress loop's background dispatcher used to crash the app (ERRORES-8E9), so any
+        // off-main caller is bounced to the main looper instead.
+        val hopped = MainThreadHop.run(
+            onMain = android.os.Looper.myLooper() == android.os.Looper.getMainLooper(),
+            post = { mainHandler.post(it) },
+        ) { reportFailure(reason, error) }
+        if (hopped) return
         if (sessionReported) return
         sessionReported = true
         val device = runCatching { castContext.sessionManager.currentCastSession?.castDevice }.getOrNull()
@@ -222,7 +233,7 @@ class CastSessionManager(
         android.util.Log.i(
             TAG,
             "cast requested · ep=${request.episodeId} · mime=${request.mimeType} · from=${request.startPositionMs}ms " +
-                "· session=${_casting.value} · ${request.uri}",
+                "· session=${_casting.value} · ${com.arkiv.player.dlna.DlnaXml.safeUrl(request.uri)}",
         )
         if (_casting.value) scope.launch { load(request) } else {
             android.util.Log.i(TAG, "no session yet: it stays pending until one shows up")
@@ -305,7 +316,7 @@ class CastSessionManager(
     private suspend fun load(r: CastRequest) = withContext(Dispatchers.Main) {
         android.util.Log.i(
             TAG,
-            "loading on the receiver · mime=${r.mimeType} · from=${r.startPositionMs}ms · ${r.uri}",
+            "loading on the receiver · mime=${r.mimeType} · from=${r.startPositionMs}ms · ${com.arkiv.player.dlna.DlnaXml.safeUrl(r.uri)}",
         )
         val loadOutcome = runCatching { player.setMediaItem(
             MediaItem.Builder()
@@ -380,7 +391,9 @@ class CastSessionManager(
                 stuckTicks = if (notReady) stuckTicks + 1 else 0
                 if (stuckTicks == STUCK_TICKS) {
                     android.util.Log.w(TAG, "receiver stuck loading · ${stuckTicks * PROGRESS_MS}ms with no READY")
-                    reportFailure("stuck_loading")
+                    // reportFailure reads the CastPlayer: main thread only (this loop runs on a
+                    // background dispatcher).
+                    withContext(Dispatchers.Main) { reportFailure("stuck_loading") }
                 }
                 // Without a transcoder the receiver reports the real position and duration; the
                 // only reason not to save is a live stream, which sends TIME_UNSET.

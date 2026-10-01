@@ -42,9 +42,33 @@ class DlnaProxyServer {
     /** [mime] is what the TV gets told in `Content-Type`: it has to be the container the BYTES
      *  actually are (see [com.arkiv.player.playback.VideoContainer]), not a guess -- a renderer
      *  that trusts a wrong label seeks around forever looking for structure that isn't there. */
-    fun setTarget(url: String, mime: String) {
+    fun setTarget(url: String, mime: String): String {
         target = url
         this.mime = mime
+        return newToken().also { token = it }
+    }
+
+    /**
+     * The current target's access token: the TV's URL is `/t/<token>/stream.<ext>` and any other
+     * path is a 403. This server listens on the LAN and relays whatever [target] is -- for Magis,
+     * the internal proxy's tokenized URL -- so without its own token it would hand that stream to
+     * any device on the Wi-Fi. A new target gets a new token; the previous one stops working.
+     */
+    @Volatile
+    private var token: String? = null
+
+    private fun newToken(): String {
+        val bytes = ByteArray(16)
+        java.security.SecureRandom().nextBytes(bytes)
+        return bytes.joinToString("") { "%02x".format(it) }
+    }
+
+    /** Whether [path] is `/t/<the current token>/…`, compared in constant time. */
+    private fun tokenMatches(path: String): Boolean {
+        val expected = token ?: return false
+        if (!path.startsWith("/t/")) return false
+        val received = path.substring(3).substringBefore('/').substringBefore('?')
+        return java.security.MessageDigest.isEqual(received.toByteArray(), expected.toByteArray())
     }
 
     /** Starts the server if it isn't running yet and returns the port. */
@@ -90,6 +114,14 @@ class DlnaProxyServer {
                 // never tried the URL) or it shows up and then gives up (what we serve is what it dislikes).
                 isLan = DlnaLog.lanHit("proxy", s.inetAddress?.hostAddress, requestLine, range, userAgent)
 
+                if (!tokenMatches(requestLine.split(' ').getOrNull(1).orEmpty())) {
+                    DlnaLog.w("proxy: 403 for a request without the current token from ${s.inetAddress?.hostAddress ?: "?"}")
+                    s.getOutputStream().apply {
+                        write("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray(Charsets.US_ASCII))
+                        flush()
+                    }
+                    return@use
+                }
                 val source = target
                 val isHead = method.equals("HEAD", true)
                 // The TV's HEAD is answered from a 1-byte ranged GET, never forwarded as an upstream HEAD: the

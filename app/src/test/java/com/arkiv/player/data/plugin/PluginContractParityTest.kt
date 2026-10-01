@@ -4,6 +4,7 @@ import com.arkiv.player.data.plugin.discovery.DiscoveryRules
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -50,7 +51,10 @@ class PluginContractParityTest {
         assertEquals(ManifestParser.MAX_AUTHOR_CHARS, m.getInt("authorMaxChars"))
         assertEquals(ManifestParser.MAX_HOMEPAGE_CHARS, m.getInt("homepageMaxChars"))
         assertEquals(ManifestParser.MIN_HOSTS, m.getInt("minHosts"))
-        assertEquals(ManifestParser.MAX_HOSTS, m.getInt("maxHosts"))
+        // No upper bound since 0.9.45: the contract carries only what older apps refuse, for the kit's warning.
+        assertFalse(m.has("maxHosts"))
+        val legacy = m.getJSONObject("legacyMaxHosts")
+        assertEquals(ManifestParser.LEGACY_MAX_HOSTS, legacy.getInt("value"))
         assertEquals(ManifestParser.NO_HOSTS_API_VERSION, m.getInt("noHostsApiVersion"))
         assertEquals(ManifestParser.INSECURE_HOST_API_VERSION, m.getInt("insecureHostApiVersion"))
         assertEquals(ManifestParser.COLOR.pattern, m.getString("colorPattern"))

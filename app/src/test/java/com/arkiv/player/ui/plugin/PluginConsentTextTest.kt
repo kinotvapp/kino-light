@@ -104,6 +104,21 @@ class PluginConsentTextTest {
         assertEquals(20, pluginConsentHostSummary(hosts(20), emptyList(), expanded = true).visible.size)
     }
 
+    // No host-count limit since 0.9.45: a long list still folds to three, counted up front.
+    @Test fun `a hundred and five hundred hosts fold to three, and an update counts its new ones`() {
+        for (n in listOf(100, 500)) {
+            val s = pluginConsentHostSummary(hosts(n), emptyList(), expanded = false)
+            assertEquals(hosts(3), s.visible)
+            assertEquals("y ${n - 3} más", pluginConsentHiddenHostsLine(s))
+            assertEquals("Se va a conectar con $n servidores:", pluginConsentHostsHeader(n, s.collapsible))
+            assertEquals(n, pluginConsentHostSummary(hosts(n), emptyList(), expanded = true).visible.size)
+        }
+        val all = hosts(500)
+        val update = pluginConsentHostSummary(all, all.takeLast(250), expanded = false)
+        assertEquals(all.takeLast(250).take(3), update.visible)
+        assertEquals("y 497 más (247 nuevos)", pluginConsentHiddenHostsLine(update))
+    }
+
     @Test fun `an update shows its new hosts first when folded and counts the new ones it hides`() {
         val all = hosts(10)
         val one = pluginConsentHostSummary(all, listOf("h9.example"), expanded = false)

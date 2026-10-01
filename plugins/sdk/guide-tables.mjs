@@ -31,7 +31,7 @@ export const TABLES = {
     ["Live channels (apiVersion 3)", `\`liveCategories\` ${c.live.maxCategories}; \`liveChannels\` ${c.live.maxChannelsPerPage} per page and ${c.live.maxPagesPerCategory} pages per category; \`guide\` ${c.live.maxGuideChannels} channels and ${c.live.maxGuideWindowMs / 3600000} h per call, ${c.live.maxGuideEntriesPerChannel} entries per channel; \`number\` 1..${c.live.maxChannelNumber}`],
     ["Settings", `at most ${c.settings.max}; \`text\` ${c.settings.types.text.maxChars}, \`url\` ${n(c.settings.types.url.maxChars)}, \`password\` ${c.settings.types.password.maxChars} characters`],
     ["Error messages", `your \`kino.error\` message is shown as a detail, cut at ${c.errors.maxMessageChars} characters`],
-    ["`hosts`", `${c.manifest.minHosts} to ${c.manifest.maxHosts} entries; from apiVersion ${c.manifest.noHostsApiVersion}, none (\`[]\`) when a \`url\` setting exists`],
+    ["`hosts`", `at least ${c.manifest.minHosts} entry, no upper limit from Kino ${c.manifest.legacyMaxHosts.noLimitFromApp} (only the manifest's ${kb(c.manifest.maxBytes)}; Kino ${c.manifest.legacyMaxHosts.refusedUpToApp} and older refuse more than ${c.manifest.legacyMaxHosts.value}); from apiVersion ${c.manifest.noHostsApiVersion}, none (\`[]\`) when a \`url\` setting exists`],
     [`\`secrets\` (apiVersion ${c.manifest.secrets.apiVersion})`, `at most ${c.manifest.secrets.maxSecrets}; names match \`${c.manifest.secrets.namePattern}\`; a value is 1..${n(c.manifest.secrets.maxValueBytes)} bytes`],
   ]),
   settings: () => table(["type", "value", "can be `required`", "can have a `default`", "longest value"], Object.entries(c.settings.types).map(([t, v]) => [

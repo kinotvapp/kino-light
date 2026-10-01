@@ -183,14 +183,14 @@ class NuvioSeriesAdapterTest {
         assertTrue("timeoutMs=${artwork.timeoutMs}", artwork.timeoutMs in 1..5_000)
     }
 
-    @Test fun `api themoviedb org is always declared, even when the scraper's own hosts fill the cap`() {
+    @Test fun `api themoviedb org is always declared first, ahead of the scraper's many hosts`() {
         val many = (1..30).joinToString("\n") { "var u$it = \"https://mirror$it.example/x\";" }
         val source = many + "\n" + echoSource
         val result = NuvioPluginConverter.convert(scraper, source, repoSlug = "owner/repo",
             remoteHosts = NuvioRemoteHosts(preferred = listOf("preferred.example"), others = (1..30).map { "remote$it.example" }))
         val manifest = (ManifestParser.parse(result.manifestJson) as ManifestResult.Valid).manifest
-        assertEquals(ManifestParser.MAX_HOSTS, manifest.hosts.size)
-        assertTrue(manifest.hosts.toString(), "api.themoviedb.org" in manifest.hosts)
+        assertEquals(1 + 1 + 30 + 1 + 30, manifest.hosts.size) // TMDB, preferred, 30 mirrors, cdn.echo, 30 remote
+        assertEquals("api.themoviedb.org", manifest.hosts.first())
         assertEquals("preferred.example", manifest.hosts[1])
     }
 }

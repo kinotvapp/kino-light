@@ -48,12 +48,19 @@ export async function validate(dirArg, { run = null, args = [], config = {}, rep
   const dir = resolve(dirArg);
   const manifestFile = join(dir, "kino-plugin.json");
   if (!existsSync(manifestFile)) return refused([`no kino-plugin.json in ${dir}`]);
-  const checked = validateManifest(readFileSync(manifestFile, "utf8"));
+  const manifestText = readFileSync(manifestFile, "utf8");
+  const checked = validateManifest(manifestText);
   if (!checked.ok) return refused([`kino-plugin.json: ${checked.field}: ${checked.message}`]);
   const m = checked.manifest;
   const consent = consentLines(m);
   const notes = [];
   if (!m.discoverable) notes.push("No aparecerá en la búsqueda de Kino");
+  // Accepted from Kino 0.9.45 on; older apps still refuse the install, so the author is told. They
+  // counted the raw entries (duplicates too), so this does as well.
+  const legacy = contract.manifest.legacyMaxHosts;
+  if (JSON.parse(manifestText).hosts.length > legacy.value) {
+    notes.push(`Más de ${legacy.value} hosts: Kino ${legacy.refusedUpToApp} o anterior rechaza este plugin; necesita Kino ${legacy.noLimitFromApp} o superior`);
+  }
   // The app honors fetchHosts only on a plugin it converted from a Nuvio scraper (never on one written by hand).
   if (m.fetchHostsAny) notes.push("fetchHosts solo tiene efecto en plugins convertidos desde Nuvio; en tu plugin se ignora");
   if (m.secrets && Object.keys(m.secrets).length) {

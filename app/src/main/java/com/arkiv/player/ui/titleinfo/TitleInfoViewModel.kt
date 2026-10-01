@@ -216,7 +216,8 @@ class TitleInfoViewModel(
             }
             // The person may have switched season while this request was in flight.
             if (_state.value.item.id != item.id) return@launch
-            val chapters = listing.episodes
+            // Deduplicated by list key: the page's lists key chapters by it and Compose crashes on a repeat.
+            val chapters = uniqueChapters(listing.episodes)
             val series = listing.series
             // The portal answers a transient failure with a detail that has no chapters instead of
             // an error. An empty Loaded left the button on "Cargando…" for ever with no way out.
@@ -232,7 +233,8 @@ class TitleInfoViewModel(
                     // listing may name none, and the selector must not vanish on a switch); else the
                     // seasons found in the chapter list.
                     seasons = when {
-                        siblings -> listing.seasons
+                        // The TV keys its season chips by contentId: a repeated sibling would crash it.
+                        siblings -> listing.seasons.distinctBy { it.contentId }
                         s.siblings -> s.seasons
                         else -> chapters.map { it.seasonOrOne }.distinct().sorted().map { SeasonRef(it.toString(), it) }
                     },

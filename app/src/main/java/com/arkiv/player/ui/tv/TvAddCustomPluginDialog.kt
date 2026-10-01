@@ -94,7 +94,9 @@ internal fun TvAddCustomPluginDialog(
         ) {
             Text("Agregar un plugin", style = MaterialTheme.typography.headlineSmall, color = Color.White)
             Text(
-                "Escribe usuario/repositorio de GitHub, por ejemplo kinotvapp/kino-plugin-archive. Antes de " +
+                // Kino or Nuvio: the Plugins screen no longer says so on a line under its header, this is where it is told.
+                "Escribe el usuario/repositorio de GitHub de un plugin Kino o Nuvio, por ejemplo " +
+                    "kinotvapp/kino-plugin-archive. Antes de " +
                     "instalar vas a ver con qué sitios se conecta.",
                 style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary,
             )

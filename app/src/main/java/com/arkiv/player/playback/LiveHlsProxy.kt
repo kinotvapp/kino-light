@@ -67,6 +67,18 @@ class LiveHlsProxy(
      */
     @Volatile private var token: String? = null
 
+    /**
+     * The upstream URLs this proxy itself wrote into a served playlist ([rewriteLine]), most recent
+     * last. `/seg?u=` only fetches one of these: the token says WHO may ask, this says WHAT -- a
+     * token holder can't point the proxy (and the channel's signed headers) at any other URL.
+     * Bounded to [ISSUED_SEGMENTS_MAX], far more than the few playlists a player is behind.
+     */
+    private val issuedSegments: MutableMap<String, Unit> = java.util.Collections.synchronizedMap(
+        object : LinkedHashMap<String, Unit>(256, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Unit>?) = size > ISSUED_SEGMENTS_MAX
+        },
+    )
+
     val port: Int get() = server?.localPort ?: -1
 
     /**
@@ -134,6 +146,7 @@ class LiveHlsProxy(
         server = null
         session = null
         token = null
+        issuedSegments.clear()
     }
 
     /**
@@ -589,6 +602,12 @@ class LiveHlsProxy(
         val t0 = System.currentTimeMillis()
         val s = session ?: return error502(output, "segment with no channel session")
         val u = URLDecoder.decode(path.substringAfter("u=").substringBefore("&"), "UTF-8")
+        if (issuedSegments[u] == null) {
+            LiveLog.w("segment refused: not a URL this proxy put in a playlist (${com.arkiv.player.dlna.DlnaXml.safeUrl(u)})")
+            output.write("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray())
+            output.flush()
+            return
+        }
         val name = u.substringAfterLast('/')
         val c = getSegment(u, s)
             ?: return error502(output, "no CDN served the segment $name (position ${positionInPlaylist(name)})")
@@ -760,6 +779,7 @@ class LiveHlsProxy(
         val absolute = runCatching { URL(base, t) }.getOrNull() ?: return ln
         // The token goes AFTER u= (never before): serveSegment() extracts u with
         // `substringBefore("&")`, so any new parameter has to go after it.
+        issuedSegments[absolute.toString()] = Unit
         return "http://$myHost:$myPort/seg?u=${URLEncoder.encode(absolute.toString(), "UTF-8")}&t=$myToken"
     }
 
@@ -768,6 +788,7 @@ class LiveHlsProxy(
         val m = Regex("URI=\"([^\"]*)\"").find(ln) ?: return ln
         val group = m.groups[1] ?: return ln
         val absolute = runCatching { URL(base, group.value) }.getOrNull() ?: return ln
+        issuedSegments[absolute.toString()] = Unit
         val rewritten = "http://$myHost:$myPort/seg?u=${URLEncoder.encode(absolute.toString(), "UTF-8")}&t=$myToken"
         return ln.replaceRange(group.range, rewritten)
     }
@@ -776,6 +797,9 @@ class LiveHlsProxy(
         const val UA = "Ranger/4.9.4-17294ac0"
         private const val APP = "com.android.msandroid"
         private const val APP_VERSION = "49902"
+
+        /** How many playlist URLs [issuedSegments] remembers: hundreds of playlists' worth of segments. */
+        private const val ISSUED_SEGMENTS_MAX = 4096
 
         /**
          * How many times the SAME segment is requested from the active CDN before trying another

@@ -275,16 +275,24 @@ object PluginOutput {
     /**
      * Telemetry only: why a list answer ([page], [rows]) that kept [kept] entries is a plugin bug, or
      * null when it isn't one. `not_a_list`: not JSON, or neither a list nor a page. `all_dropped`: it
-     * carried entries and every one was invalid. An empty list, or a page without items, is simply
-     * "nothing found".
+     * carried entries and every one was invalid. An empty list, a page without items, or home rows
+     * whose `items` are all empty (a channels-only plugin sends one on purpose; ERRORES-9P0, 90
+     * users in hours) are simply "nothing to show".
      */
     fun droppedEntirely(json: String, kept: Int): String? {
         if (kept > 0) return null
         return when (val value = runCatching { org.json.JSONTokener(json).nextValue() }.getOrNull()) {
-            is JSONArray -> if (value.length() > 0) "all_dropped" else null
+            is JSONArray -> if ((0 until value.length()).any { !isEmptyRow(value.opt(it)) }) "all_dropped" else null
             is JSONObject -> if ((value.optJSONArray("items")?.length() ?: 0) > 0) "all_dropped" else null
             else -> "not_a_list"
         }
+    }
+
+    /** A home row that carries an `items` field with nothing in it: no entry to drop. */
+    private fun isEmptyRow(entry: Any?): Boolean {
+        if (entry !is JSONObject || !entry.has("items")) return false
+        val items = entry.opt("items")
+        return items == JSONObject.NULL || (items is JSONArray && items.length() == 0)
     }
 
     fun rows(

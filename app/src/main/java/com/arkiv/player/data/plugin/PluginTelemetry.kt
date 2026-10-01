@@ -381,7 +381,12 @@ class PluginTelemetry(
         /** Packages R8 never renames: the platform's own classes are not in the APK. */
         private val PLATFORM_PACKAGES = listOf("java.", "javax.", "android.", "dalvik.")
 
-        internal fun safeId(id: String): String = id.take(80).replace(UNSAFE_ID, "_").ifEmpty { "unknown" }
+        /**
+         * Lower-cased: plugin ids already are (the manifest grammar), but an install that fails before
+         * there is one reports the `owner/repo` the person typed, and GitHub names are case-blind --
+         * `YxhelZvl/lacartoons-plugin` and `yxhelzvl/lacartoons-plugin` opened two issues.
+         */
+        internal fun safeId(id: String): String = id.take(80).replace(UNSAFE_ID, "_").lowercase().ifEmpty { "unknown" }
 
         private fun safeWord(s: String): String = s.take(80).replace(UNSAFE_ID, "_")
 

@@ -19,6 +19,8 @@ internal data class PositionInfo(val relTimeMs: Long?, val durationMs: Long?, va
  * Anything it can't read comes back null, never as an exception.
  */
 internal object DlnaXml {
+    /** A `/t/<token>` path segment of ArchiveCacheProxy / DlnaProxyServer, for [safeUrl] to hide. */
+    private val PATH_TOKEN = Regex("/t/[^/?#]+")
 
     /** The text of the first `<name>…</name>` (any namespace prefix), unescaped, or null if absent/empty. */
     fun tag(xml: String?, name: String): String? {
@@ -97,6 +99,8 @@ internal object DlnaXml {
         val rest = noQuery.substringAfter("://", noQuery)
         val hostPort = rest.substringBefore('/').substringAfter('@')
         val path = rest.substringAfter('/', "").let { if (it.isEmpty()) "" else "/$it" }
+            // The cast proxies' session tokens ride in the PATH (`/t/<token>/…`, see ProxyTokens): never logged.
+            .replace(PATH_TOKEN, "/t/…")
         val shortPath = if (path.length > 60) "…" + path.takeLast(57) else path
         return if (scheme.isEmpty()) "$hostPort$shortPath" else "$scheme://$hostPort$shortPath"
     }

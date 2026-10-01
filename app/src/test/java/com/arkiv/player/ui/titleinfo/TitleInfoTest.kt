@@ -97,6 +97,24 @@ class TitleInfoTest {
         assertEquals("1-5", chapterIn(null, 5).listKey)
     }
 
+    /** ERRORES-5EM/7ME: S0E1 beside S1E1 (or beside a season-less E1) used to give two "1-1" keys. */
+    @Test
+    fun `specials keep their own list key`() {
+        assertEquals("0-1", chapterIn(0, 1).listKey)
+        assertEquals(setOf("0-1", "1-1"), setOf(chapterIn(0, 1).listKey, chapterIn(1, 1).listKey))
+        assertEquals(setOf("0-1", "1-1"), setOf(chapterIn(0, 1).listKey, chapterIn(null, 1).listKey))
+    }
+
+    @Test
+    fun `the listed chapters never repeat a list key`() {
+        val listing = listOf(chapterIn(0, 1), chapterIn(1, 1), chapterIn(1, 2), chapterIn(null, 1), chapterIn(1, 2))
+        val listed = uniqueChapters(listing)
+        assertEquals(listed.map { it.listKey }.distinct(), listed.map { it.listKey })
+        assertEquals(listOf("0-1", "1-1", "1-2"), listed.map { it.listKey })
+        // The first of each key wins, in the source's order.
+        assertEquals(listOf(0, 1, 1), listed.map { it.season })
+    }
+
     @Test
     fun `a chapter is labelled with its own season, else the page's`() {
         assertEquals(2, chapterIn(2).labelSeason(fallback = 9))

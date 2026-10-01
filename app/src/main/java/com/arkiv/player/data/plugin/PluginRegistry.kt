@@ -198,19 +198,20 @@ class PluginRegistry(
 
     /**
      * Adds [host] to [id]'s approved hosts if it isn't there already. Every one of them is the
-     * person's own approval, so there is no product limit ([ManifestParser.MAX_HOSTS] limits only the
-     * manifest's own list) -- only the safety cap [MAX_APPROVED_HOSTS], far past any real use, so a
-     * runaway plugin can't grow installed.json without bound: past it the host is not stored (it
-     * still works for the runtime that asked) and the refusal is logged. Returns whether it
-     * actually changed anything.
+     * person's own approval, so there is no product limit -- only the safety cap [MAX_APPROVED_HOSTS]
+     * on these approvals BEYOND the manifest's declared list (which has no count limit of its own
+     * since 0.9.45, so a long one must not eat the room), far past any real use, so a runaway plugin
+     * can't grow installed.json without bound: past it the host is not stored (it still works for
+     * the runtime that asked) and the refusal is logged. Returns whether it actually changed anything.
      */
     fun addApprovedHost(id: String, host: String): Boolean {
         var added = false
         var full = false
+        val declared = find(id)?.manifest?.hosts?.toSet().orEmpty()
         update(id) {
             when {
                 host in it.hosts -> it
-                it.hosts.size >= MAX_APPROVED_HOSTS -> { full = true; it }
+                it.hosts.count { h -> h !in declared } >= MAX_APPROVED_HOSTS -> { full = true; it }
                 else -> { added = true; it.copy(hosts = it.hosts + host) }
             }
         }
@@ -298,7 +299,7 @@ class PluginRegistry(
         /** The declarative capability of `contract.json` that turns downloads on (apiVersion 2). */
         private const val DOWNLOAD_CAPABILITY = "download"
 
-        /** Safety cap on a record's `hosts` (declared + approved): see [addApprovedHost]. */
+        /** Safety cap on a record's reactively approved `hosts` (beyond the declared ones): see [addApprovedHost]. */
         const val MAX_APPROVED_HOSTS = 500
 
         /** A record's remembered "no"s: see [rejectHost]. */

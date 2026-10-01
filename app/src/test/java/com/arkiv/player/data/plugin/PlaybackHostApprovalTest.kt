@@ -177,7 +177,7 @@ class PlaybackHostApprovalTest {
     }
 
     @Test fun `with 20 hosts or more it still asks, and approving persists the 21st`() = runTest {
-        val twenty = (1..ManifestParser.MAX_HOSTS).map { "h$it.example.com" }
+        val twenty = (1..ManifestParser.LEGACY_MAX_HOSTS).map { "h$it.example.com" }
         reinstall(twenty)
         val outcome = refused(prompts(), "seg.other.example")
         nextPrompt().respond(true)

@@ -393,11 +393,12 @@ class DlnaController(
         val c = beginCast(device, kind = "vod-proxy", mime = container.mime, title = title, source = archiveUrl)
         c.deferReport = deferReport
         val ip = wifiIp() ?: return failPreflight(c, "no_wifi_ip", "No se detectó la red WiFi del teléfono", "wifiEnabled=${wifi.isWifiEnabled}")
-        proxy.setTarget(archiveUrl, container.mime)
+        val token = proxy.setTarget(archiveUrl, container.mime)
         val port = proxy.ensureStarted()
         val ext = com.arkiv.player.playback.VideoContainer.extensionFor(container)
-        val localUrl = "http://$ip:$port/stream.$ext"
-        DlnaLog.i("cast: proxy on $ip:$port serving ${DlnaXml.safeUrl(archiveUrl)} as $localUrl (declared ${c.mime})")
+        // The token goes in the path: renderers can't send headers, and it keeps the `.ext` last for name-sniffers.
+        val localUrl = "http://$ip:$port/t/$token/stream.$ext"
+        DlnaLog.i("cast: proxy on $ip:$port serving ${DlnaXml.safeUrl(archiveUrl)} as ${DlnaXml.safeUrl(localUrl)} (declared ${c.mime})")
         return startPlayback(c, localUrl, title)
     }
 

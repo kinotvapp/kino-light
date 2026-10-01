@@ -395,8 +395,8 @@ class PluginInstaller(
          * The new version's declared [declared] hosts, plus every host the person approved
          * REACTIVELY for [previous] (a host in its record that its own manifest never declared --
          * `PluginRegistry.addApprovedHost` is the only other writer of `hosts`), all of them,
-         * declared ones first: [ManifestParser.MAX_HOSTS] limits only what a manifest declares, never
-         * how many hosts the person approves. A reactive approval lasts until
+         * declared ones first: neither list has a count limit (a manifest's `hosts` none since 0.9.45;
+         * the person's approvals only the safety cap of `PluginRegistry.addApprovedHost`). A reactive approval lasts until
          * uninstall (spec §9), not until the next update. A host the OLD manifest declared and the
          * new one drops is dropped: that narrowing is the plugin's own, and the person never approved
          * it separately. A reactive host the new manifest now covers (itself or a `*.` pattern)

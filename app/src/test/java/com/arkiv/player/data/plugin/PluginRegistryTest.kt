@@ -28,14 +28,19 @@ class PluginRegistryTest {
         registry = PluginRegistry(store)
     }
 
-    private fun install(id: String, name: String, record: InstalledRecord.() -> InstalledRecord = { this }) {
+    private fun install(
+        id: String,
+        name: String,
+        hosts: List<String> = listOf("example.com"),
+        record: InstalledRecord.() -> InstalledRecord = { this },
+    ) {
         val manifest = JSONObject().put("id", id).put("name", name).put("version", "1.0.0").put("apiVersion", 1)
-            .put("entry", "plugin.js").put("hosts", JSONArray(listOf("example.com")))
+            .put("entry", "plugin.js").put("hosts", JSONArray(hosts))
             .put("capabilities", JSONArray(listOf("search", "resolve"))).toString()
         val script = "export async function search(){}".toByteArray()
         val staging = store.newStaging(id)
         store.writeFiles(staging, manifest, "plugin.js", script, null,
-            InstalledRecord("o/$id", "1.0.0", sha256Hex(script), listOf("example.com"), 1L).record())
+            InstalledRecord("o/$id", "1.0.0", sha256Hex(script), hosts, 1L).record())
         store.commit(staging, id)
         registry.reload()
     }
@@ -276,6 +281,15 @@ class PluginRegistryTest {
         install("pa", "A") { copy(hosts = full) }
         assertFalse(registry.addApprovedHost("pa", "one-more.example.com"))
         assertEquals(full, registry.find("pa")!!.record.hosts)
+    }
+
+    // A manifest's own list has no count limit (0.9.45): declaring more hosts than the safety cap
+    // must not use up the room for the person's own approvals.
+    @Test fun `a manifest declaring more hosts than the cap still stores an approval`() {
+        val declared = (1..PluginRegistry.MAX_APPROVED_HOSTS + 100).map { "d$it.example.com" }
+        install("pa", "A", hosts = declared)
+        assertTrue(registry.addApprovedHost("pa", "one-more.example.com"))
+        assertEquals(declared + "one-more.example.com", registry.find("pa")!!.record.hosts)
     }
 
     @Test fun `remembered rejections keep the newest 200`() {

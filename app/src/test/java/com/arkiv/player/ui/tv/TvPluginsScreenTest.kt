@@ -60,6 +60,26 @@ class TvPluginsScreenTest {
         assertTrue(cardHasNothingToTheRight(index = 0, lastIndex = 0, columns = 3))
     }
 
+    // Instalados lays four cards per line on the TV: Right stops at the fourth card of each line (under
+    // "Agregar") and at the last card, wherever a partly filled line leaves it.
+    @Test fun `Instalados is four columns and Right stops at the fourth card of each line`() {
+        assertEquals(4, TV_INSTALLED_COLUMNS)
+        val stops = (0..9).filter { cardHasNothingToTheRight(it, lastIndex = 9, columns = TV_INSTALLED_COLUMNS) }
+        assertEquals(listOf(3, 7, 9), stops)
+        assertEquals(listOf(3, 4), (0..4).filter { cardHasNothingToTheRight(it, lastIndex = 4, columns = TV_INSTALLED_COLUMNS) })
+    }
+
+    @Test fun `a message or a live notice reserves room on the four cards of its own line only`() {
+        assertEquals(
+            listOf(false, false, false, false, true, true, true, true, false),
+            com.arkiv.player.ui.plugin.installedGridLinesWithMessage(9, messageIndex = 6, columns = TV_INSTALLED_COLUMNS),
+        )
+        assertEquals(
+            listOf(true, true, true, true, false, false),
+            com.arkiv.player.ui.plugin.installedGridLinesReserving(listOf(false, false, true, false, false, false), TV_INSTALLED_COLUMNS),
+        )
+    }
+
     // The dialog is a window of its own: when it goes away the person must find the button that opened it
     // focused again, and only then (a consent that never came from the dialog leaves focus where it is).
     @Test fun `focus goes back to the Agregar button only when the dialog has just gone away`() {

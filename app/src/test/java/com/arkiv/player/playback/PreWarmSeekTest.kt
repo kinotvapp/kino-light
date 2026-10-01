@@ -66,7 +66,7 @@ class PreWarmSeekTest {
                     .setBody(okio.Buffer().write(chunk))
             }
         }
-        proxy = ArchiveCacheProxy(temp.newFolder("cache"))
+        proxy = ArchiveCacheProxy(temp.newFolder("cache"), ProxyOriginGuard(allowLoopback = true))
     }
 
     @After

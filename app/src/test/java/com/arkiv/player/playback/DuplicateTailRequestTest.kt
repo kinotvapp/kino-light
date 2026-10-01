@@ -78,7 +78,7 @@ class DuplicateTailRequestTest {
                 return r
             }
         }
-        proxy = ArchiveCacheProxy(temp.newFolder("cache"))
+        proxy = ArchiveCacheProxy(temp.newFolder("cache"), ProxyOriginGuard(allowLoopback = true))
     }
 
     @After
