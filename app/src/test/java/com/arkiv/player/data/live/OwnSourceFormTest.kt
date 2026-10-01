@@ -56,4 +56,28 @@ class OwnSourceFormTest {
         assertEquals(OwnKind.PLAYLIST, back.kind); assertEquals("VLC/3", back.userAgent); assertEquals(12, back.refreshHours)
         assertEquals("", back.referer)
     }
+
+    private val pastedM3u = "#EXTM3U\n#EXTINF:-1,Uno\nhttps://tv.example.com/uno.m3u8\n"
+
+    @Test fun `pasted text makes a list with no address, tied to its id, and carries its checked content`() {
+        val v = valid(OwnSourceForm(OwnKind.PLAYLIST, "Pegada", "", pastedText = "\uFEFF$pastedM3u", userAgent = "VLC/3"))
+        assertEquals("kino-list:id1", v.source.url)
+        assertEquals(OwnPastedList.digest(pastedM3u.trim()), v.source.contentDigest)
+        assertEquals(pastedM3u.trim(), v.content?.text)
+        assertFalse(v.cleartext)
+        assertEquals("VLC/3", v.source.userAgent)
+    }
+
+    @Test fun `bad pasted text is reported on the address field`() {
+        assertEquals(OwnPastedList.EMPTY, invalid(OwnSourceForm(OwnKind.PLAYLIST, "P", "", pastedText = " "))[OwnField.URL])
+    }
+
+    @Test fun `an edit of a pasted list keeps its address, but another source's pasted address is refused`() {
+        val keep = valid(OwnSourceForm(OwnKind.PLAYLIST, "P", "kino-list:id1"))
+        assertEquals("kino-list:id1", keep.source.url)
+        assertNull(keep.content)
+        assertTrue(OwnField.URL in invalid(OwnSourceForm(OwnKind.PLAYLIST, "P", "kino-list:otro")))
+        // A channel never has pasted content.
+        assertTrue(OwnField.URL in invalid(OwnSourceForm(OwnKind.CHANNEL, "C", "kino-list:id1")))
+    }
 }

@@ -16,11 +16,20 @@ data class OwnSourceForm(
     val userAgent: String = "",
     val referer: String = "",
     val refreshHours: Int = 0,
+    /**
+     * A list's text the person pasted or opened from a file, replacing any address ([OwnPastedList]).
+     * Null = no new text: an address list, or an edit of a pasted list (its [url] is `kino-list:<id>`)
+     * that keeps the text it has.
+     */
+    val pastedText: String? = null,
 )
 
 sealed interface OwnFormResult {
-    /** [source] is ready to store (canonical URLs, blanks as null); [cleartext] = its address is `http://`. */
-    data class Valid(val source: OwnLiveSourceEntity, val cleartext: Boolean) : OwnFormResult
+    /**
+     * [source] is ready to store (canonical URLs, blanks as null); [cleartext] = its address is `http://`;
+     * [content] = the checked new text of a pasted list (its digest is already in [source]).
+     */
+    data class Valid(val source: OwnLiveSourceEntity, val cleartext: Boolean, val content: OwnPastedCheck.Ok? = null) : OwnFormResult
     data class Invalid(val errors: Map<OwnField, String>) : OwnFormResult
 }
 
@@ -32,7 +41,20 @@ fun OwnSourceForm.validate(id: String, otherUrls: Collection<String>): OwnFormRe
     OwnSourceValidator.checkName(name)?.let { errors[OwnField.NAME] = it }
     var cleartext = false
     var canonical = url.trim()
-    when (val r = OwnSourceValidator.checkUrl(url)) {
+    var content: OwnPastedCheck.Ok? = null
+    val pasted = kind == OwnKind.PLAYLIST && (pastedText != null || OwnPastedList.isPasted(canonical))
+    if (pasted) {
+        // A list with no address: its url is its own id's, never another source's (a peer's row could say anything).
+        canonical = OwnPastedList.urlFor(id)
+        if (pastedText != null) {
+            when (val c = OwnPastedList.check(pastedText)) {
+                is OwnPastedCheck.Refused -> errors[OwnField.URL] = c.message
+                is OwnPastedCheck.Ok -> content = c
+            }
+        } else if (url.trim() != canonical) {
+            errors[OwnField.URL] = "Esta lista pegada no corresponde a esta fuente"
+        }
+    } else when (val r = OwnSourceValidator.checkUrl(url)) {
         is OwnUrlCheck.Refused -> errors[OwnField.URL] = r.message
         is OwnUrlCheck.Ok -> {
             canonical = r.url
@@ -64,8 +86,10 @@ fun OwnSourceForm.validate(id: String, otherUrls: Collection<String>): OwnFormRe
             logo = logoText, epgUrl = epg,
             userAgent = userAgent.ifEmpty { null }, referer = referer.ifEmpty { null },
             refreshHours = if (kind == OwnKind.PLAYLIST) refreshHours.coerceIn(0, MAX_REFRESH_HOURS) else 0,
+            contentDigest = content?.digest,
         ),
         cleartext,
+        content,
     )
 }
 

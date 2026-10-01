@@ -122,4 +122,52 @@ class OwnLiveStoreTest {
         s.save(null, ch("Uno", "https://a.example.com/1.m3u8"))
         assertEquals(0L, dao.rows.values.single().updatedAt)
     }
+
+    private val pasted = "#EXTM3U\n#EXTINF:-1,Uno\nhttps://tv.example.com/uno.m3u8\n"
+    private fun pastedForm(text: String = pasted) = OwnSourceForm(OwnKind.PLAYLIST, "Pegada", "", pastedText = text)
+
+    @Test fun `a pasted list is saved with its text in parts stamped with the row's clock, and reads back`() = runTest {
+        val (s, dao) = store(now = 5_000L)
+        assertEquals(OwnSaveResult.Saved, s.save(null, pastedForm()))
+        val row = dao.rows.values.single()
+        assertEquals("kino-list:${row.id}", row.url)
+        assertEquals(5_000L, row.updatedAt)
+        assertTrue(dao.partRows.values.all { it.sourceId == row.id && it.updatedAt == 5_000L && it.digest == row.contentDigest })
+        assertEquals(pasted.trim(), s.contentOf(row.id))
+    }
+
+    @Test fun `editing only the name keeps the text, new text replaces it whole`() = runTest {
+        val (s, dao) = store(now = 5_000L)
+        s.save(null, pastedForm())
+        val id = dao.rows.keys.single()
+        val digest = dao.rows.getValue(id).contentDigest
+        assertEquals(OwnSaveResult.Saved, s.save(id, OwnSourceForm(OwnKind.PLAYLIST, "Renombrada", "kino-list:$id")))
+        assertEquals(digest, dao.rows.getValue(id).contentDigest)
+        assertEquals(pasted.trim(), s.contentOf(id))
+        val other = "#EXTM3U\n#EXTINF:-1,Dos\nhttps://tv.example.com/dos.m3u8"
+        assertEquals(OwnSaveResult.Saved, s.save(id, pastedForm(other)))
+        assertEquals(other, s.contentOf(id))
+        assertTrue(dao.partRows.values.all { it.digest == OwnPastedList.digest(other) })
+    }
+
+    @Test fun `a pasted list turned into an address list drops its text, deleting drops it too`() = runTest {
+        val (s, dao) = store()
+        s.save(null, pastedForm()); s.save(null, pastedForm("#EXTM3U\n#EXTINF:-1,X\nhttps://tv.example.com/x.m3u8"))
+        val (a, b) = dao.rows.keys.toList()
+        assertEquals(OwnSaveResult.Saved, s.save(a, OwnSourceForm(OwnKind.PLAYLIST, "Ahora URL", "https://tv.example.com/l.m3u")))
+        assertNull(dao.rows.getValue(a).contentDigest)
+        assertTrue(dao.partRows.values.none { it.sourceId == a })
+        s.delete(b)
+        assertTrue(dao.rows.getValue(b).deleted)
+        assertTrue(dao.partRows.isEmpty())
+        assertNull(s.contentOf(b))
+    }
+
+    @Test fun `a pasted list over the cap is refused with the URL hint and saves nothing`() = runTest {
+        val (s, dao) = store()
+        val line = "#EXTINF:-1,Canal\nhttps://tv.example.com/a.m3u8\n"
+        val r = s.save(null, pastedForm("#EXTM3U\n" + line.repeat(OwnPastedList.MAX_BYTES / line.length + 1))) as OwnSaveResult.Invalid
+        assertEquals(OwnPastedList.TOO_LARGE, r.errors[OwnField.URL])
+        assertTrue(dao.rows.isEmpty() && dao.partRows.isEmpty())
+    }
 }
