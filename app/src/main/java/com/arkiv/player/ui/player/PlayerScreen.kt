@@ -206,6 +206,15 @@ private const val SHOW_SPEED_AND_ZOOM_ON_PHONE = true
 // this line.
 
 /**
+ * The veil level actually painted over the video. Night mode is for movies and series only: a live
+ * channel always plays at full brightness (0, no veil), whatever the person saved. The saved level
+ * is NOT touched, so going back to VOD keeps their choice. Kept outside `PlayerContent` on purpose
+ * (that function sits at ART's verifier size limit).
+ */
+internal fun effectiveDimLevel(saved: Int, isLive: Boolean): Int =
+    if (isLive) 0 else saved.coerceIn(0, DIM_MAX_LEVEL)
+
+/**
  * How long to wait, untouched, before confirming a burst of incremental jumps (see `seekBy`).
  * Short on purpose: a lone press still feels immediate and only bursts get merged, which is where
  * the cost was -- a Range request and its rebuffer for every press.
@@ -773,9 +782,10 @@ private fun PlayerContent(
 
     // Night mode: level of the black veil over the video, 0..DIM_MAX_LEVEL. Persisted in
     // SettingsStore (survives closing the app). Clamped on reading it in case an old out-of-range
-    // value was left saved.
+    // value was left saved. Live channels always get 0 (see effectiveDimLevel); the sun/moon
+    // buttons live in the VOD-only block, so they never see that 0.
     val dimLevel by graph.settings.dimLevel.collectAsStateWithLifecycle()
-    val clampedDimLevel = dimLevel.coerceIn(0, DIM_MAX_LEVEL)
+    val clampedDimLevel = effectiveDimLevel(dimLevel, isLive)
     // Moving through the bar -- the slider drag and incremental jumps -- lives in `SeekState.kt`.
     // Who actually fires the seek stays here: it depends on the active player and whether the cast
     // is transcoding.
