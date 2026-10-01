@@ -40,11 +40,19 @@ class RemuxHlsServer(
     private val leftoverOf: (key: String) -> File? = { null },
     private val clock: () -> Long = System::currentTimeMillis,
     /**
-     * How far past the planned start an earlier remux has to reach to be served before the new
-     * run has written its header (see [Source.headServable]). [RemuxHls.START_LEAD_SEC]: the same
-     * lead a fresh remux must have before the receiver is loaded.
+     * The lead past the planned start the "Preparándolo para la TV… NN%" figure counts toward
+     * ([startProgressPercent]): [RemuxHls.START_LEAD_SEC], the lead the cast waits for.
      */
     private val headLeadSec: Double = RemuxHls.START_LEAD_SEC,
+    /**
+     * A remux nobody is going to cast any more: the one the TV had when another was handed over
+     * ([serve] with another key), a prepared one replaced or given up ([stage], [unstage]), or
+     * whatever a cast that ended had ([endCast]). Wired to stop its export: a remux covers the
+     * whole title, and an orphan one sat paused forever (its pacing still anchored to a TV that
+     * had left) or, once another title took the server, pulled the rest of the film down the same
+     * Wi-Fi at 12x (review 2026-10-01). Not called by [stop] / [release]: their callers decide.
+     */
+    private val onRetired: (key: String) -> Unit = {},
 ) {
 
     /** A finished-for-good prefix of the remux, from an earlier cast. Indexed once: it never grows. */
@@ -77,6 +85,16 @@ class RemuxHlsServer(
          */
         @Volatile var headTrusted: Boolean? = if (head == null) true else null
 
+        /** The TV has read a playlist with the head in it: its numbering is the TV's now. */
+        @Volatile var headServed = false
+
+        /**
+         * The head was served and the new run turned out unable to continue it ([joinHead] found
+         * no shared cut): it stays served ALONE rather than switching the timeline under a TV that
+         * plays it, until the next fresh load ([onMasterRequest]) can start on the new run.
+         */
+        @Volatile var headPinned = false
+
         /** Where the cast was told to start, in seconds of the title; null until it is. */
         @Volatile var plannedStartSec: Double? = null
 
@@ -96,16 +114,14 @@ class RemuxHlsServer(
         @Volatile var playlistLogged = false
 
         /**
-         * May the head be served now? Once the new run's header vouched for it ([trustHead]), or
-         * -- before that -- when the head alone already holds the planned start plus the usual
-         * lead: then the cast does not wait on the new run at all. Waiting for its header cost
-         * ~13 s on every re-cast (`remux audio pinned` arrives once the export has read the CDN far
-         * enough to know its tracks, 2026-10-01) while the earlier remux had the position covered.
-         * The header check still runs as soon as it can and drops a head that differs.
+         * May the head be served now? Only once the new run's header vouched for it
+         * ([trustHead]): NEVER before. Serving it unchecked saved ~13 s per re-cast (the export
+         * knows its tracks once it has read that far into the CDN, 2026-10-01) but a head that
+         * then turned out different switched the TV's timeline mid-play -- init, segment numbering
+         * and all -- to the new run at 0:00 (review 2026-10-01). A re-cast now waits for that
+         * header: ~13 s more on the "Preparándolo" card, never a TV fed two different streams.
          */
-        fun headServable(): Boolean = headTrusted ?: (
-            head != null && plannedStartSec?.let { head.endSec >= it + headLeadSec } == true
-            )
+        fun headServable(): Boolean = headTrusted == true
 
         /** What is served right now, fragment by fragment. Nothing while an unchecked head waits. */
         fun pieces(): List<RemuxHls.Piece> =
@@ -121,8 +137,21 @@ class RemuxHlsServer(
         fun segments(): List<RemuxHls.Segment> = RemuxHls.segments(pieces().map { it.fragment }, timelineComplete())
     }
 
+    /** What the TV was handed (the last [serve]). */
     @Volatile private var source: Source? = null
+
+    /**
+     * A remux being got ready for the TV ([stage]) while it still plays [source]: another audio
+     * picked while casting is measured here without revoking what the TV plays, and only takes
+     * over at the load ([serve]). Before, the new remux's first bytes replaced the served one and
+     * the TV's URL 404'd once its buffer ran out (review 2026-10-01).
+     */
+    @Volatile private var staged: Source? = null
     @Volatile private var server: ServerSocket? = null
+
+    private fun sourceOf(key: String): Source? = source?.takeIf { it.key == key } ?: staged?.takeIf { it.key == key }
+
+    private fun sourceOfToken(token: String): Source? = source?.takeIf { it.token == token } ?: staged?.takeIf { it.token == token }
 
     /**
      * Starts serving the remux filed under [key] (or keeps serving it) and returns the URL of its
@@ -134,7 +163,11 @@ class RemuxHlsServer(
      */
     fun serve(key: String, locate: () -> Pair<File, Boolean>?): String? = serve(key, null, "", locate)
 
-    /** [serve] for a caster that counts its TV's requests ([lan]) and tags its diagnostic lines. */
+    /**
+     * [serve] for a caster that counts its TV's requests ([lan]) and tags its diagnostic lines.
+     * Called right before the TV is loaded with the URL: the remux it had until now, if another,
+     * is revoked and retired ([onRetired]).
+     */
     @Synchronized
     fun serve(
         key: String,
@@ -143,15 +176,98 @@ class RemuxHlsServer(
         locate: () -> Pair<File, Boolean>?,
     ): String? {
         val current = source?.takeIf { it.key == key }
-            ?: Source(key, newToken(), locate, headOf(key), headLeadSec).also {
-                source = it
+            ?: (staged?.takeIf { it.key == key } ?: newSource(key, locate)).also { promoted ->
+                if (staged === promoted) staged = null
+                source?.let { old -> retire(old) }
+                source = promoted
                 log("serving a new remux as HLS (key #${Integer.toHexString(key.hashCode())})")
             }
-        current.lan = lan
-        current.diagPrefix = diagPrefix
+        return urlOf(current, lan, diagPrefix)
+    }
+
+    /** [stage] with the Chromecast's defaults (no request listener, no diagnostic prefix). */
+    fun stage(key: String, locate: () -> Pair<File, Boolean>?): String? = stage(key, null, "", locate)
+
+    /**
+     * Gets the remux of [key] ready to be served without handing it to the TV yet: indexed,
+     * paced ([planStart]) and measured ([availableSec]) while the TV keeps playing what it has.
+     * Returns the URL it will have once [serve]d (the same token). A remux the TV already has is
+     * simply that one.
+     */
+    @Synchronized
+    fun stage(
+        key: String,
+        lan: LanRequestListener? = null,
+        diagPrefix: String = "",
+        locate: () -> Pair<File, Boolean>?,
+    ): String? {
+        val current = sourceOf(key) ?: newSource(key, locate).also { fresh ->
+            staged?.let { old -> retire(old) }
+            staged = fresh
+            log("getting a remux ready as HLS (key #${Integer.toHexString(key.hashCode())})")
+        }
+        return urlOf(current, lan, diagPrefix)
+    }
+
+    /** The wait for the staged remux of [key] was given up: it is not going to the TV. */
+    @Synchronized
+    fun unstage(key: String) {
+        val s = staged?.takeIf { it.key == key } ?: return
+        staged = null
+        retire(s)
+    }
+
+    /**
+     * Forgets where the TV was going to start [key] when it never got it (the wait ran out): a
+     * remux paced against a TV that is not coming sat paused forever. Nothing once the TV asks.
+     */
+    fun unplan(key: String) {
+        val s = sourceOf(key) ?: return
+        if (s.lastRequestedSec == null) s.plannedStartSec = null
+    }
+
+    /**
+     * The TV of this caster ([dlna] or the Chromecast) no longer plays a remux of this server:
+     * the cast ended, or the receiver was loaded with something else. What it had is retired, and
+     * so is one being got ready for it ([alsoStaged]). Another protocol's remux is left alone.
+     */
+    @Synchronized
+    fun endCast(dlna: Boolean, alsoStaged: Boolean = true) {
+        source?.takeIf { (it.lan != null) == dlna }?.let { source = null; retire(it) }
+        if (alsoStaged) staged?.takeIf { (it.lan != null) == dlna }?.let { staged = null; retire(it) }
+    }
+
+    /**
+     * Stops handing out [key] (a caster giving up on it) without retiring it: the caller decides
+     * about its export. Closes the socket once nothing is left, like [stop].
+     */
+    @Synchronized
+    fun release(key: String) {
+        if (source?.key == key) source = null
+        if (staged?.key == key) staged = null
+        if (source == null && staged == null) {
+            runCatching { server?.close() }
+            server = null
+        }
+    }
+
+    /** Is [key] the remux the TV was handed and still served (an export must not restart under it)? */
+    fun onAir(key: String): Boolean = source?.key == key
+
+    private fun newSource(key: String, locate: () -> Pair<File, Boolean>?): Source =
+        Source(key, newToken(), locate, headOf(key), headLeadSec)
+
+    private fun retire(s: Source) {
+        log("retiring the remux of key #${Integer.toHexString(s.key.hashCode())}")
+        runCatching { onRetired(s.key) }
+    }
+
+    private fun urlOf(s: Source, lan: LanRequestListener?, diagPrefix: String): String? {
+        s.lan = lan
+        s.diagPrefix = diagPrefix
         val socket = server ?: start()
         val ip = lanIp() ?: return null
-        return "http://$ip:${socket.localPort}/r/${current.token}/master.m3u8"
+        return "http://$ip:${socket.localPort}/r/${s.token}/master.m3u8"
     }
 
     /**
@@ -164,15 +280,15 @@ class RemuxHlsServer(
         val route = RemuxHls.route(uri.path ?: return false) ?: return false
         if (!RemuxHls.isToken(route.token)) return false
         val socket = server
-        return socket == null || socket.isClosed || uri.port != socket.localPort || source?.token != route.token
+        return socket == null || socket.isClosed || uri.port != socket.localPort || sourceOfToken(route.token) == null
     }
 
     /** Is [key] the remux this server hands out? */
     fun isServing(key: String): Boolean = source?.key == key
 
-    /** Seconds of [key]'s remux that can be played right now, or 0 if it is not the one served. */
+    /** Seconds of [key]'s remux that can be played right now, or 0 if it is neither served nor staged. */
     fun availableSec(key: String): Double {
-        val s = source?.takeIf { it.key == key } ?: return 0.0
+        val s = sourceOf(key) ?: return 0.0
         refresh(s)
         return s.segments().sumOf { it.durationSec }
     }
@@ -183,11 +299,22 @@ class RemuxHlsServer(
      * segment of its own (see [remuxShouldWait]).
      */
     fun planStart(key: String, startMs: Long) {
-        val s = source?.takeIf { it.key == key } ?: return
+        val s = sourceOf(key) ?: return
         s.plannedStartSec = startMs.coerceAtLeast(0L) / 1000.0
         s.lastRequestedSec = null
         s.heldBackSec = null
         s.playlistLogged = false
+    }
+
+    /**
+     * [planStart] for the remux behind [url] (one of this server's): a session reconnect replays
+     * the receiver's last request from its own position, past the cast's plan, and the playlist's
+     * `#EXT-X-START` must say the same or the receiver starts where the FIRST cast did.
+     */
+    fun planStartAt(url: String, startMs: Long) {
+        val path = runCatching { java.net.URI(url).path }.getOrNull() ?: return
+        val s = RemuxHls.route(path)?.let { sourceOfToken(it.token) } ?: return
+        planStart(s.key, startMs)
     }
 
     /**
@@ -196,7 +323,7 @@ class RemuxHlsServer(
      * server is not casting. Re-indexes at most once a second.
      */
     fun remuxShouldWait(key: String): Boolean {
-        val s = source?.takeIf { it.key == key } ?: return false
+        val s = sourceOf(key) ?: return false
         val now = clock()
         if (now - s.lastPaceCheckAt < PACE_CHECK_MS) return s.pacingPaused
         s.lastPaceCheckAt = now
@@ -224,7 +351,8 @@ class RemuxHlsServer(
      * the cast's wait loop and the pacing refresh it every second.
      */
     fun startProgressPercent(): Int {
-        val s = source ?: return -1
+        // The one being got ready, while there is one: the TV already plays the served one.
+        val s = staged ?: source ?: return -1
         val planned = s.plannedStartSec ?: return -1
         val target = planned + headLeadSec
         if (target <= 0.0) return -1
@@ -240,13 +368,14 @@ class RemuxHlsServer(
     private fun fmt(sec: Double?): String = sec?.let { String.format(java.util.Locale.US, "%.0f", it) } ?: "?"
 
     /** Has [key]'s remux finished, as of the last look? */
-    fun isComplete(key: String): Boolean = source?.takeIf { it.key == key }?.timelineComplete() == true
+    fun isComplete(key: String): Boolean = sourceOf(key)?.timelineComplete() == true
 
     @Synchronized
     fun stop() {
         runCatching { server?.close() }
         server = null
         source = null
+        staged = null
     }
 
     private fun start(): ServerSocket {
@@ -307,7 +436,7 @@ class RemuxHlsServer(
     /** Once the new remux reaches the end of the head, decides once where it takes over. */
     private fun joinHead(s: Source) = synchronized(s) {
         val head = s.head ?: return
-        if (s.splice != RemuxHls.Splice.Waiting) return
+        if (s.splice != RemuxHls.Splice.Waiting || s.headPinned) return
         val tracks = s.index.tracks
         val decided = if (tracks.isNotEmpty() && tracks != head.index.tracks) {
             RemuxHls.Splice.Impossible
@@ -315,6 +444,14 @@ class RemuxHlsServer(
             RemuxHls.splice(head.index.fragments, s.index.fragments, videoTrackOf(head.index))
         }
         if (decided == RemuxHls.Splice.Waiting) return
+        if (RemuxHls.keepHeadAlone(decided, s.headServed)) {
+            // Switching now would hand a TV playing the head another init, other segment numbers
+            // and other bytes under the same names. The head stays as it is; the TV plays to its
+            // end and the next fresh load starts on the new run (see onMasterRequest).
+            s.headPinned = true
+            diagW(s, "the new remux cannot continue the earlier one the TV is on: keeping the earlier one alone until the next load")
+            return
+        }
         s.splice = decided
         log(
             if (decided is RemuxHls.Splice.Joined) {
@@ -323,6 +460,19 @@ class RemuxHlsServer(
                 "the earlier remux cannot be continued by the new one (no shared cut): serving the new one alone"
             },
         )
+    }
+
+    /**
+     * A fresh load (the master playlist is only read when the receiver loads; refreshes read the
+     * media playlist): the one moment a pinned head ([Source.headPinned]) can give way to the new
+     * run, which by then covers everything the head did.
+     */
+    private fun onMasterRequest(s: Source) = synchronized(s) {
+        if (!s.headPinned) return
+        s.headPinned = false
+        s.headServed = false
+        s.splice = RemuxHls.Splice.Impossible
+        diag(s, "a fresh load: the earlier remux gives way to the new one")
     }
 
     private fun videoTrackOf(index: Fmp4Index): Int =
@@ -359,7 +509,7 @@ class RemuxHlsServer(
         val path = requestLine.substringAfter(' ').substringBefore(' ').substringBefore('?')
         val out = sock.getOutputStream()
         // Whoever casts this remux hears of every request to it, with its outcome and timing.
-        val lan = source?.lan
+        val lan = (RemuxHls.route(path)?.let { sourceOfToken(it.token) } ?: source)?.lan
         val remote = runCatching { sock.inetAddress?.hostAddress }.getOrNull()
         lan?.started(remote, requestLine, headerValue(header, "Range"), headerValue(header, "User-Agent"))
         val t0 = clock()
@@ -386,8 +536,8 @@ class RemuxHlsServer(
             return 0L
         }
         val route = RemuxHls.route(path)
-        val s = source
-        if (route == null || s == null || route.token != s.token) {
+        val s = route?.let { sourceOfToken(it.token) }
+        if (route == null || s == null) {
             log("-> 404 $path")
             out.write(response("404 Not Found", "text/plain", 0))
             return 0L
@@ -396,13 +546,17 @@ class RemuxHlsServer(
         val head = method == "HEAD"
         val t0 = clock()
         return when (val name = route.name) {
-            "master.m3u8" -> sendText(out, RemuxHls.masterPlaylist(s.initIndex().tracks, s.pieces().map { it.fragment }), head)
+            "master.m3u8" -> {
+                onMasterRequest(s)
+                sendText(out, RemuxHls.masterPlaylist(s.initIndex().tracks, s.pieces().map { it.fragment }), head)
+            }
             "media.m3u8" -> {
                 val segments = s.segments()
                 if (s.initIndex().initEnd < 0 || segments.isEmpty()) {
                     out.write(response("404 Not Found", "text/plain", 0))
                     0L
                 } else {
+                    if (s.head != null && s.splice != RemuxHls.Splice.Impossible) s.headServed = true
                     if (!s.playlistLogged) {
                         s.playlistLogged = true
                         diag(
@@ -713,6 +867,12 @@ object RemuxHls {
         }
         return Splice.Impossible
     }
+
+    /**
+     * Must a head stay served alone instead of taking [decided]? Only when the hand-over would
+     * drop it ([Splice.Impossible]) after the TV has read it ([headServed]): a mid-play switch.
+     */
+    fun keepHeadAlone(decided: Splice, headServed: Boolean): Boolean = decided == Splice.Impossible && headServed
 
     /** One fragment of what is served, and whether it is read from the head or the new remux. */
     data class Piece(val fragment: Fmp4Index.Fragment, val fromHead: Boolean)

@@ -37,6 +37,12 @@ import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 
+/**
+ * How long a Chromecast session that dropped (not stopped) keeps its remux served: a reconnect
+ * within it replays the same URL; past it, nobody is coming back for it.
+ */
+private const val CAST_REMUX_GRACE_MS = 60_000L
+
 /** Manual dependency graph (no Hilt): app singletons. */
 class AppGraph(context: Context) {
     private val appContext = context.applicationContext
@@ -1585,8 +1591,10 @@ class AppGraph(context: Context) {
         com.arkiv.player.playback.RemuxHlsServer(
             lanIp = { lanIp() },
             log = { android.util.Log.i("ArkivRemuxHls", it) },
-            // A remux an earlier cast stopped is served at once instead of waiting for a new run.
+            // A remux an earlier cast stopped is reused instead of waiting for a new run to reach it.
             leftoverOf = { key -> tsRemuxer.leftover(key) },
+            // A remux no TV is going to play any more stops downloading (what it wrote is kept).
+            onRetired = { key -> tsRemuxer.stop(key) },
         )
     }
 
@@ -1930,6 +1938,19 @@ class AppGraph(context: Context) {
                     // A request into one of our LAN servers is only replayed while its port and token
                     // still answer; the rest (remote URLs, other proxies) is not ours to judge.
                     stillServed = { uri -> !remuxHlsServer.revoked(uri) && !pluginCastProxy.revoked(uri) },
+                    // The remux the Chromecast had stops with the cast, player screen open or not:
+                    // at once on "stop", after a reconnect's grace on a drop (a reconnect replays it).
+                    onEnded = { intentional ->
+                        if (intentional) {
+                            remuxHlsServer.endCast(dlna = false)
+                        } else {
+                            applicationScope.launch {
+                                kotlinx.coroutines.delay(CAST_REMUX_GRACE_MS)
+                                if (_castSession?.casting?.value != true) remuxHlsServer.endCast(dlna = false)
+                            }
+                        }
+                    },
+                    onReplay = { r -> remuxHlsServer.planStartAt(r.uri, r.startPositionMs) },
                 ).also { _castSession = it }
             }
         }

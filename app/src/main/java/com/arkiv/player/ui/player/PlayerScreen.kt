@@ -1227,6 +1227,9 @@ private fun PlayerContent(
                 remuxLocal != null -> localRemuxKey(item)
                 else -> null
             }
+            // The receiver leaves the growing remux it had (if any) for this: retire that one, or
+            // its pacing stays anchored to a TV that left and holds the export paused forever.
+            if (remuxMagis == null) graph.remuxHlsServer.endCast(dlna = false, alsoStaged = false)
         }
         return request
     }
@@ -1307,6 +1310,9 @@ private fun PlayerContent(
         // Where the phone was when the cast began (Magis): the cast starts there once the remux
         // has reached it, see the wait below.
         var resumeMs = 0L
+        // The TV already plays this title (another audio was picked): it keeps playing while the
+        // new remux is got ready, so where it starts follows the TV, see the wait below.
+        var tvOnTitle = false
         val (input, key, mime) = when (item.kind) {
             SourceKind.LOCAL -> {
                 val file = java.io.File(item.mediaUrl.removePrefix("file://"))
@@ -1332,6 +1338,7 @@ private fun PlayerContent(
                 // Already on the TV (another audio was picked while casting): the TV's position,
                 // not the phone player's, which has sat paused where the cast began.
                 val tvPosition = if (castToReceiver == item.episodeId) castSession.lastKnownPositionMs(item.episodeId) else null
+                tvOnTitle = tvPosition != null
                 val requestedPosition = com.arkiv.player.cast.CastStart.resumePointMs(tvPosition, livePosition, item.startPositionMs)
                 android.util.Log.w(
                     "ArkivCast",
@@ -1383,8 +1390,11 @@ private fun PlayerContent(
         }
         // Another audio than the one on the TV: the export for the previous one stops (it covers
         // the whole title, so leaving it running pulls the rest of it down for nothing). What it
-        // wrote is kept, so switching back is immediate.
-        remuxInFlight?.takeIf { it != key }?.let { previous ->
+        // wrote is kept, so switching back is immediate. NOT while the TV plays it: it keeps
+        // playing the previous audio until the new remux covers where it is, and the server
+        // retires (stops) it at that hand-over -- stopping it here capped the TV at what it had
+        // written and blacked it out for minutes (review 2026-10-01).
+        remuxInFlight?.takeIf { it != key && !graph.remuxHlsServer.onAir(it) }?.let { previous ->
             android.util.Log.w("ArkivCast", "audio changed while casting → stopping the remux of the previous audio")
             graph.tsRemuxer.stop(previous)
         }
@@ -1420,23 +1430,29 @@ private fun PlayerContent(
         // has reached before it (RemuxHls.castStart) -- never back at 0:00.
         if (item.kind == SourceKind.MAGIS) {
             val resumeAt = resumeMs
+            val followTv = tvOnTitle
             graph.applicationScope.launch(Dispatchers.Main) {
                 // The wait itself is shared with DLNA (RemuxCastStart); loading it is Cast's own.
                 com.arkiv.player.playback.RemuxCastStart.await(
                     graph.remuxHlsServer, key, resumeAt,
                     inProgress = graph.tsRemuxer::inProgress,
-                    leftover = graph.tsRemuxer::leftover,
                     // Gone, already on the TV, or the person picked another audio meanwhile: this
                     // remux is no longer wanted, and casting it would put the audio they moved
                     // away from on the TV.
                     stillWanted = { casting && castSession != null && castAsRemux != key && remuxInFlight == key },
+                    // Another audio of what the TV plays: it goes on with the old one meanwhile,
+                    // so the new one starts where the TV is BY THEN, and only once it covers that
+                    // -- never "the nearest point" minutes back (review 2026-10-01).
+                    maxWaitSec = if (followTv) Int.MAX_VALUE else com.arkiv.player.playback.RemuxHls.RESUME_WAIT_SEC,
+                    wantedNow = { if (followTv) castSession?.lastKnownPositionMs(item.episodeId) ?: resumeAt else resumeAt },
                 ) { start ->
                     val session = castSession ?: return@await false
                     val retryPl = PlaylistData(listOf(item), 0, start.fromMs, requested = item.episodeId)
                     val retryReq = castRequestFor(retryPl, 0, start.fromMs) ?: return@await false
                     android.util.Log.w(
                         "ArkivCast",
-                        "remux has ${start.readySec.toInt()}s ready → casting it as HLS from ${start.fromMs}ms (the phone was at ${resumeAt}ms)",
+                        "remux has ${start.readySec.toInt()}s ready → casting it as HLS from ${start.fromMs}ms " +
+                            "(${if (followTv) "where the TV was" else "the phone was at ${resumeAt}ms"})",
                     )
                     session.setMedia(retryReq)
                     castToReceiver = item.episodeId

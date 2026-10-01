@@ -50,6 +50,17 @@ class CastSessionManager(
      * them): such a request is never replayed on a reconnect -- see [CastReconnect].
      */
     private val stillServed: (uri: String) -> Boolean = { true },
+    /**
+     * The session ended: [intentional] when the person pressed stop. What the phone serves for the
+     * TV (the growing remux and its export) is not needed any more -- nobody else stops it when the
+     * player screen is closed (review 2026-10-01).
+     */
+    private val onEnded: (intentional: Boolean) -> Unit = {},
+    /**
+     * A (re)connect replays [request] from its `startPositionMs`: lets the server behind its URL
+     * start its playlist there too (the remux's `#EXT-X-START` still said the first cast's start).
+     */
+    private val onReplay: (request: CastRequest) -> Unit = {},
 ) {
     // Fails fast and with an explicit cause if something builds this off the main thread, instead
     // of an obscure crash inside the Cast SDK (CastPlayer/CastContext require it, see class doc).
@@ -278,6 +289,7 @@ class CastSessionManager(
                 unwatchReceiverStatus()
                 _trouble.value = null
                 loadSentAt = 0L
+                runCatching { onEnded(false) }
             }
         })
         // The one case the listener does NOT cover: starting the app with a session already alive
@@ -327,6 +339,7 @@ class CastSessionManager(
         // somehow didn't arrive, the phone's bar would be left hanging, showing a dead cast.
         _casting.value = false
         keepAlive(false, "")
+        runCatching { onEnded(true) }
         scope.launch {
             withContext(Dispatchers.Main) {
                 // player.stop() is NOT called here: endCurrentSession(true) -- below -- already

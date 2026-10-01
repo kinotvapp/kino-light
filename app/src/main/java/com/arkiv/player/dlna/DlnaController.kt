@@ -89,6 +89,13 @@ class DlnaController(
     @Volatile
     private var attempt = 0
 
+    /**
+     * The remux a cast is waiting on (staged on [remuxHls], not on the TV yet), so [stop] can
+     * retire it: stopped mid-wait, its export was left running (or paced forever) with nobody to cast it.
+     */
+    @Volatile
+    private var waitingRemuxKey: String? = null
+
     /** The TV's requests to the remux server and to the finished remux's file server, counted and logged. */
     private val remuxRequests = DlnaLanRequests("remux-hls", timings = false)
 
@@ -454,15 +461,17 @@ class DlnaController(
 
         if (route == CastStrategy.Route.REMUX) {
             var start: RemuxCastStart.Start? = null
+            waitingRemuxKey = key
             RemuxCastStart.await(
                 remuxHls, key, startMs,
                 inProgress = tsRemuxer::inProgress,
-                leftover = tsRemuxer::leftover,
-                // A finished remux ends the wait too: then the whole file goes, below.
+                // A finished remux ends the wait too: then the whole file goes, below. A wait
+                // given up (the cast stopped or superseded meanwhile) retires the remux with it.
                 stillWanted = { attempt == mine && !export.isCompleted },
                 lan = remuxRequests,
                 diagPrefix = "dlna ",
             ) { start = it; true }
+            if (waitingRemuxKey == key) waitingRemuxKey = null
             if (attempt != mine) {
                 DlnaLog.i("cast: superseded while the remux was getting ready")
                 return false
@@ -704,6 +713,10 @@ class DlnaController(
         cast = null
         proxy.stop()
         releaseRemux(ended)
+        waitingRemuxKey?.let { key ->
+            waitingRemuxKey = null
+            runCatching { remuxHls.unstage(key) }
+        }
         DlnaCastService.stop(appContext)
     }
 

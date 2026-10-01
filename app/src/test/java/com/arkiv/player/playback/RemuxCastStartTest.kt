@@ -35,7 +35,7 @@ class RemuxCastStartTest {
         var got: RemuxCastStart.Start? = null
         val took = RemuxCastStart.await(
             server, "key", wantedMs = 0L,
-            inProgress = { part to false }, leftover = { null }, stillWanted = { true },
+            inProgress = { part to false }, stillWanted = { true },
             leadSec = 5.0, maxTicks = 3, tickMs = 0L,
         ) { got = it; true }
         assertTrue(took)
@@ -54,7 +54,7 @@ class RemuxCastStartTest {
         var ticks = 0
         val took = RemuxCastStart.await(
             server, "key", wantedMs = 60_000L,
-            inProgress = { part to false }, leftover = { null },
+            inProgress = { part to false },
             stillWanted = { ++ticks <= 2 },
             leadSec = 5.0, maxTicks = 10, tickMs = 0L,
         ) { offered++; true }
@@ -66,7 +66,7 @@ class RemuxCastStartTest {
     fun `nothing on disk yet is nothing served`() = runBlocking {
         val took = RemuxCastStart.await(
             server, "key", wantedMs = 0L,
-            inProgress = { null }, leftover = { null }, stillWanted = { true },
+            inProgress = { null }, stillWanted = { true },
             maxTicks = 3, tickMs = 0L,
         ) { true }
         assertFalse(took)
@@ -79,7 +79,7 @@ class RemuxCastStartTest {
         var offers = 0
         val took = RemuxCastStart.await(
             server, "key", wantedMs = 0L,
-            inProgress = { part to false }, leftover = { null }, stillWanted = { true },
+            inProgress = { part to false }, stillWanted = { true },
             leadSec = 5.0, maxTicks = 5, tickMs = 0L,
         ) { ++offers == 3 }
         assertTrue(took)
@@ -102,7 +102,7 @@ class RemuxCastStartTest {
         }
         var url: String? = null
         RemuxCastStart.await(
-            server, "key", 0L, inProgress = { part to false }, leftover = { null }, stillWanted = { true },
+            server, "key", 0L, inProgress = { part to false }, stillWanted = { true },
             lan = lan, diagPrefix = "dlna ", leadSec = 5.0, maxTicks = 2, tickMs = 0L,
         ) { url = it.url; true }
         val c = URL(url!!.replace("master.m3u8", "init.mp4")).openConnection() as HttpURLConnection
@@ -112,5 +112,95 @@ class RemuxCastStartTest {
         assertEquals(1, started.size)
         assertTrue(started[0].startsWith("GET /r/"))
         assertEquals(body.size.toLong(), finished.single().second)
+    }
+
+    @Test
+    fun `an earlier cast's leftover alone is not offered until the new run wrote its header`() = runBlocking {
+        val source = Fmp4Fixture.copyTo(tmp.newFolder())
+        val bytes = source.readBytes()
+        val index = Fmp4Fixture.indexOf(source)
+        val leftover = File(tmp.root, "x.mp4.prev").apply { writeBytes(bytes) }
+        val reusing = RemuxHlsServer(lanIp = { "127.0.0.1" }, leftoverOf = { if (it == "key") leftover else null })
+        val part = File(tmp.root, "x.mp4.part")
+        try {
+            var offered = 0
+            // The leftover covers the start, the new run has nothing on disk: nothing goes to the TV
+            // (its request would have been the TS playlist, with the remux paced against it forever).
+            assertFalse(
+                RemuxCastStart.await(
+                    reusing, "key", 0L, inProgress = { if (part.exists()) part to false else null },
+                    stillWanted = { true }, leadSec = 1.0, maxTicks = 3, tickMs = 0L,
+                ) { offered++; true },
+            )
+            assertEquals(0, offered)
+            assertFalse(reusing.isServing("key"))
+            // Its header written: the leftover, now vouched for, starts the cast at once.
+            part.writeBytes(bytes.copyOfRange(0, index.initEnd.toInt()))
+            var got: RemuxCastStart.Start? = null
+            assertTrue(
+                RemuxCastStart.await(
+                    reusing, "key", 0L, inProgress = { part to false },
+                    stillWanted = { true }, leadSec = 1.0, maxTicks = 3, tickMs = 0L,
+                ) { got = it; true },
+            )
+            assertTrue(got!!.readySec > 0.0)
+            assertTrue(reusing.isServing("key"))
+        } finally {
+            reusing.stop()
+        }
+    }
+
+    @Test
+    fun `another audio waits staged while the TV keeps the one it plays, and only swaps once it covers the TV`() = runBlocking {
+        val retired = Collections.synchronizedList(mutableListOf<String>())
+        val local = RemuxHlsServer(lanIp = { "127.0.0.1" }, onRetired = { retired += it })
+        try {
+            val tvFile = remuxOnDisk()
+            val onTv = local.serve("audio0", { tvFile to true })!!
+            val part = remuxOnDisk()
+            var tvAtMs = 0L
+            var ticks = 0
+            var offeredWhileShort = false
+            val took = RemuxCastStart.await(
+                local, "audio1", wantedMs = 60_000L,
+                inProgress = { part to false }, stillWanted = { true },
+                leadSec = 1.0, maxTicks = 10, tickMs = 0L,
+                // The TV keeps playing; past the usual wait it is still waited for, not jumped back.
+                maxWaitSec = Int.MAX_VALUE,
+                wantedNow = {
+                    ticks++
+                    // Far ahead of what the remux has for the first ticks, then within it.
+                    tvAtMs = if (ticks < 4) 60_000L else 2_000L
+                    tvAtMs
+                },
+            ) { start ->
+                if (tvAtMs > 5_000L) offeredWhileShort = true
+                // Until the load, the TV's URL answers and nothing was retired.
+                assertFalse(local.revoked(onTv))
+                assertTrue(retired.isEmpty())
+                assertEquals(2_000L, start.fromMs)
+                true
+            }
+            assertTrue(took)
+            assertFalse(offeredWhileShort)
+            assertTrue(local.isServing("audio1"))
+            assertTrue(local.revoked(onTv))
+            assertEquals(listOf("audio0"), retired.toList())
+        } finally {
+            local.stop()
+        }
+    }
+
+    @Test
+    fun `a wait that runs out leaves the remux unpaced`() = runBlocking {
+        val part = remuxOnDisk()
+        val took = RemuxCastStart.await(
+            server, "key", wantedMs = 600_000L,
+            inProgress = { part to false }, stillWanted = { true },
+            leadSec = 5.0, maxTicks = 3, tickMs = 0L,
+        ) { true }
+        assertFalse(took)
+        assertEquals("nothing planned any more", -1, server.startProgressPercent())
+        assertFalse(server.remuxShouldWait("key"))
     }
 }
