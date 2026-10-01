@@ -5,6 +5,8 @@ import androidx.media3.cast.MediaItemConverter
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
+import com.google.android.gms.cast.HlsSegmentFormat
+import com.google.android.gms.cast.HlsVideoSegmentFormat
 import com.google.android.gms.cast.MediaInfo
 import com.google.android.gms.cast.MediaQueueItem
 
@@ -33,25 +35,35 @@ class DurationAwareMediaItemConverter : MediaItemConverter {
     override fun toMediaQueueItem(mediaItem: MediaItem): MediaQueueItem {
         val item = base.toMediaQueueItem(mediaItem)
         val extras = mediaItem.requestMetadata.extras
-        val durationMs = extras?.getLong(KEY_DURATION_MS, C.TIME_UNSET) ?: C.TIME_UNSET
-        val isLive = extras?.getBoolean(KEY_LIVE, false) ?: false
-        if (durationMs <= 0L && !isLive) return item
+        val shape = CastStreamShape.of(
+            durationMs = extras?.getLong(KEY_DURATION_MS, C.TIME_UNSET) ?: C.TIME_UNSET,
+            isLive = extras?.getBoolean(KEY_LIVE, false) ?: false,
+            hlsFmp4 = extras?.getBoolean(KEY_HLS_FMP4, false) ?: false,
+        ) ?: return item
 
         val info = item.media ?: return item
         val withDuration = MediaInfo.Builder(info.contentId)
-            // LIVE for a file still being written: it has no end yet, and calling it "buffered"
-            // makes the receiver invent one and stall against it. The duration goes to -1, which
-            // is what the API asks for on a live stream.
-            .setStreamType(if (isLive) MediaInfo.STREAM_TYPE_LIVE else info.streamType)
+            // LIVE for a live channel: it has no end, and calling it "buffered" makes the receiver
+            // invent one and stall against it. The duration goes to -1, which is what the API asks
+            // for on a live stream.
+            .setStreamType(if (shape.live) MediaInfo.STREAM_TYPE_LIVE else info.streamType)
             .setContentType(info.contentType)
             .setContentUrl(info.contentUrl ?: info.contentId)
             .setMetadata(info.metadata)
-            .setStreamDuration(if (isLive) -1L else durationMs)
+            .setStreamDuration(shape.streamDurationMs)
             .setCustomData(info.customData)
+            .apply {
+                // fMP4 segments: without this the receiver's HLS player takes them for MPEG-TS.
+                if (shape.fmp4Segments) {
+                    setHlsSegmentFormat(HlsSegmentFormat.FMP4)
+                    setHlsVideoSegmentFormat(HlsVideoSegmentFormat.FMP4)
+                }
+            }
             .build()
         android.util.Log.i(
             TAG,
-            if (isLive) "announcing it as LIVE (no end to chase)" else "telling the receiver the title runs ${durationMs}ms",
+            if (shape.live) "announcing it as LIVE (no end to chase)" else
+                "telling the receiver the title runs ${shape.streamDurationMs}ms" + if (shape.fmp4Segments) " · HLS of fMP4 segments" else "",
         )
         return MediaQueueItem.Builder(withDuration)
             // Chain straight into the next item. Without these the Default Media Receiver puts its
@@ -72,6 +84,9 @@ class DurationAwareMediaItemConverter : MediaItemConverter {
         /** Key under which "treat this as live" rides in `MediaItem.requestMetadata.extras`. */
         const val KEY_LIVE = "arkiv.comoEnVivo"
 
+        /** Key under which "an HLS playlist of fMP4 segments" rides in the same extras. */
+        const val KEY_HLS_FMP4 = "arkiv.hlsFmp4"
+
         /**
          * Seconds before an item ends that the receiver should start fetching the next one. It is
          * what lets one queue entry run into the next without the receiver stopping to announce
@@ -80,5 +95,22 @@ class DurationAwareMediaItemConverter : MediaItemConverter {
         private const val PRELOAD_SECONDS = 10.0
 
         private const val TAG = "ArkivCast"
+    }
+}
+
+/**
+ * What the `MediaInfo` says about the stream, decided apart from the Cast SDK's builders so it can
+ * be tested on the JVM. Null = nothing to add, media3's default `MediaInfo` goes out unchanged.
+ */
+internal data class CastStreamShape(val live: Boolean, val streamDurationMs: Long, val fmp4Segments: Boolean) {
+    companion object {
+        fun of(durationMs: Long, isLive: Boolean, hlsFmp4: Boolean): CastStreamShape? {
+            if (durationMs <= 0L && !isLive && !hlsFmp4) return null
+            return CastStreamShape(
+                live = isLive,
+                streamDurationMs = if (isLive || durationMs <= 0L) -1L else durationMs,
+                fmp4Segments = hlsFmp4 && !isLive,
+            )
+        }
     }
 }

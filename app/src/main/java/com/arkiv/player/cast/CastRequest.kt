@@ -35,6 +35,12 @@ data class CastRequest(
      * the app saves, the bar -- has to add this back or it files minute 62 as minute 0.
      */
     val offsetMs: Long = 0,
+    /**
+     * An HLS playlist whose segments are fragmented MP4 (the Chromecast remux, see
+     * `RemuxHlsServer`) rather than MPEG-TS. The receiver has to be told: its HLS player assumes
+     * TS segments otherwise.
+     */
+    val hlsFmp4: Boolean = false,
 )
 
 /**
@@ -80,6 +86,7 @@ object CastRequestBuilder {
         durationMs: Long = 0,
         asLive: Boolean = false,
         offsetMs: Long = 0,
+        hlsFmp4: Boolean = false,
     ): CastRequest? {
         val uri = when {
             isLive || requiresLanUrl -> lanUrl
@@ -106,6 +113,7 @@ object CastRequestBuilder {
             durationMs = if (isLive) 0L else durationMs.coerceAtLeast(0),
             asLive = asLive,
             offsetMs = offsetMs.coerceAtLeast(0),
+            hlsFmp4 = hlsFmp4 && !isLive,
         )
     }
 

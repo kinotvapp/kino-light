@@ -1482,6 +1482,18 @@ class AppGraph(context: Context) {
         )
     }
 
+    /**
+     * Serves the Chromecast remux -- usually still being written -- as an HLS playlist of its own
+     * fMP4 fragments, so the receiver gets finished segments it can buffer and seek instead of one
+     * endless chunked response. See [com.arkiv.player.playback.RemuxHlsServer].
+     */
+    val remuxHlsServer: com.arkiv.player.playback.RemuxHlsServer by lazy {
+        com.arkiv.player.playback.RemuxHlsServer(
+            lanIp = { lanIp() },
+            log = { android.util.Log.i("ArkivRemuxHls", it) },
+        )
+    }
+
     val tsRemuxer: com.arkiv.player.playback.TsRemuxer by lazy {
         com.arkiv.player.playback.TsRemuxer(appContext, appContext.cacheDir, applicationScope)
     }

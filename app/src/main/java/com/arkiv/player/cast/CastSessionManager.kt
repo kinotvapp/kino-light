@@ -329,6 +329,7 @@ class CastSessionManager(
                             android.os.Bundle().apply {
                                 putLong(DurationAwareMediaItemConverter.KEY_DURATION_MS, r.durationMs)
                                 putBoolean(DurationAwareMediaItemConverter.KEY_LIVE, r.asLive)
+                                putBoolean(DurationAwareMediaItemConverter.KEY_HLS_FMP4, r.hlsFmp4)
                             },
                         )
                         .build(),
