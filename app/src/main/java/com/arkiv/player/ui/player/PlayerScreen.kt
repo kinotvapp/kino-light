@@ -3214,7 +3214,7 @@ private fun PlayerContent(
                         var horizontal = false
                         var decided = false
                         var startX = 0f
-                        var seekTarget = 0L
+                        var swipeTarget = 0L
                         var totalDy = 0f
                         detectDragGestures(
                             onDragStart = { o ->
@@ -3222,7 +3222,7 @@ private fun PlayerContent(
                                 totalDy = 0f
                                 // While casting, the horizontal seek must start/apply on the
                                 // active player (Chromecast), not always the local one.
-                                seekTarget = currentPlayer.currentPosition.coerceAtLeast(0)
+                                swipeTarget = currentPlayer.currentPosition.coerceAtLeast(0)
                             },
                             onDragEnd = {
                                 // Live (Task 14): the vertical swipe IS zapping -- up moves to the
@@ -3237,7 +3237,7 @@ private fun PlayerContent(
                                         liveState.showInfo()
                                     }
                                 } else if (horizontal) {
-                                    currentPlayer.seekTo(seekTarget); mirror.jumpTo(seekTarget); bump()
+                                    currentPlayer.seekTo(swipeTarget); mirror.jumpTo(swipeTarget); bump()
                                 }
                                 gestures.clearHud()
                             },
@@ -3249,9 +3249,15 @@ private fun PlayerContent(
                                 // entirely in onDragEnd, above. No seek/volume/brightness, see its comment.
                                 if (currentIsLive) return@detectDragGestures
                                 if (horizontal) {
-                                    val dur = currentPlayer.duration.coerceAtLeast(1)
-                                    seekTarget = (seekTarget + (drag.x / size.width * 90_000f).toLong()).coerceIn(0L, dur)
-                                    gestures.showHud("⏱ ${formatDuration(seekTarget)}")
+                                    // The bound is the duration the bar shows (the mirror keeps the last one known,
+                                    // the phone's for a cast remux), not the active player's raw one: after a cast
+                                    // auto-reconnect the CastPlayer reports TIME_UNSET, which the old
+                                    // `coerceAtLeast(1)` turned into a 1 ms ceiling and so a seek to 0:00 on the TV.
+                                    // With no duration known at all the swipe stays relative to where it started.
+                                    // (The mirror, not contentDurationMs(): a local fun here would make this lambda
+                                    // capture everything it reads, and PlayerContent is at ART's register limit.)
+                                    swipeTarget = seekTarget(swipeTarget, (drag.x / size.width * 90_000f).toLong(), mirror.durationMs)
+                                    gestures.showHud("⏱ ${formatDuration(swipeTarget)}")
                                 } else if (startX <= size.width / 2) {
                                     // Volume-by-swipe was REMOVED (user request): the only way to
                                     // change volume is now the on-screen slider button (see

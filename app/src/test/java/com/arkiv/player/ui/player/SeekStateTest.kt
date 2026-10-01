@@ -46,6 +46,18 @@ class SeekStateTest {
         assertEquals(0L, seekTarget(base = 5_000L, deltaMs = -10_000L, durationMs = 0L))
     }
 
+    /**
+     * The swipe-seek after a cast auto-reconnect: the CastPlayer reports `C.TIME_UNSET` (a large
+     * negative). Clamped with `coerceAtLeast(1)` that was a 1 ms ceiling and the TV went to 0:00;
+     * it must stay a relative move from where the swipe started.
+     */
+    @Test
+    fun `a TIME_UNSET duration is unknown, never a ceiling near zero`() {
+        val unset = Long.MIN_VALUE + 1
+        assertEquals(2_620_000L, seekTarget(base = 2_579_683L, deltaMs = 40_317L, durationMs = unset))
+        assertEquals(2_539_683L, seekTarget(base = 2_579_683L, deltaMs = -40_000L, durationMs = unset))
+    }
+
     // ---- the burst ----
 
     /**
