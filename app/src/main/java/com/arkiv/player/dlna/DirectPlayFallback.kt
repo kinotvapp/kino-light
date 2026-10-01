@@ -17,4 +17,13 @@ internal object DirectPlayFallback {
         stage == "set_uri" -> upnpCode in SET_URI_REJECTIONS
         else -> false
     }
+
+    /**
+     * The renderer refused the growing remux as HLS, with a UPnP fault ([upnpCode], HTTP 500): it
+     * does not take that playlist after all (listing HLS is no promise about fMP4 segments), so the
+     * whole MP4 is worth the wait. A 701 left after the retries is a busy renderer, not a format
+     * it refuses; no answer at all is not a refusal either.
+     */
+    fun wholeFileAfterHls(upnpCode: Int?, http: Int): Boolean =
+        http == 500 && upnpCode != null && upnpCode != 701
 }

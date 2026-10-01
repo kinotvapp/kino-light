@@ -1332,7 +1332,7 @@ private fun PlayerContent(
                 // Already on the TV (another audio was picked while casting): the TV's position,
                 // not the phone player's, which has sat paused where the cast began.
                 val tvPosition = if (castToReceiver == item.episodeId) castSession.lastKnownPositionMs(item.episodeId) else null
-                val requestedPosition = (tvPosition ?: livePosition ?: item.startPositionMs).coerceAtLeast(0L)
+                val requestedPosition = com.arkiv.player.cast.CastStart.resumePointMs(tvPosition, livePosition, item.startPositionMs)
                 android.util.Log.w(
                     "ArkivCast",
                     "resume point: ${requestedPosition}ms (${if (livePosition != null) "live position" else "the item's startPosition, player not ready"})",
@@ -1421,31 +1421,26 @@ private fun PlayerContent(
         if (item.kind == SourceKind.MAGIS) {
             val resumeAt = resumeMs
             graph.applicationScope.launch(Dispatchers.Main) {
-                repeat(600) { tick ->
-                    delay(1000)
-                    if (!casting || castSession == null) return@launch
-                    if (castAsRemux == key) return@launch
-                    // The person picked another audio meanwhile: this remux is no longer wanted,
-                    // and casting it would put the audio they moved away from on the TV.
-                    if (remuxInFlight != key) return@launch
-                    // An earlier cast's leftover is enough to start: when it already covers where the
-                    // phone is, the server serves it before the new run has written anything.
-                    if (graph.tsRemuxer.inProgress(key) == null && graph.tsRemuxer.leftover(key) == null) return@repeat
-                    graph.remuxHlsServer.serve(key) { graph.tsRemuxer.inProgress(key) }
-                    // Paced against where the TV will start, until the TV asks on its own.
-                    graph.remuxHlsServer.planStart(key, resumeAt)
-                    val ready = graph.remuxHlsServer.availableSec(key)
-                    val lead = com.arkiv.player.playback.RemuxHls.START_LEAD_SEC
-                    val from = com.arkiv.player.playback.RemuxHls.castStart(resumeAt, ready, lead, tick + 1) ?: return@repeat
-                    val retryPl = PlaylistData(listOf(item), 0, from, requested = item.episodeId)
-                    val retryReq = castRequestFor(retryPl, 0, from) ?: return@repeat
+                // The wait itself is shared with DLNA (RemuxCastStart); loading it is Cast's own.
+                com.arkiv.player.playback.RemuxCastStart.await(
+                    graph.remuxHlsServer, key, resumeAt,
+                    inProgress = graph.tsRemuxer::inProgress,
+                    leftover = graph.tsRemuxer::leftover,
+                    // Gone, already on the TV, or the person picked another audio meanwhile: this
+                    // remux is no longer wanted, and casting it would put the audio they moved
+                    // away from on the TV.
+                    stillWanted = { casting && castSession != null && castAsRemux != key && remuxInFlight == key },
+                ) { start ->
+                    val session = castSession ?: return@await false
+                    val retryPl = PlaylistData(listOf(item), 0, start.fromMs, requested = item.episodeId)
+                    val retryReq = castRequestFor(retryPl, 0, start.fromMs) ?: return@await false
                     android.util.Log.w(
                         "ArkivCast",
-                        "remux has ${ready.toInt()}s ready → casting it as HLS from ${from}ms (the phone was at ${resumeAt}ms)",
+                        "remux has ${start.readySec.toInt()}s ready → casting it as HLS from ${start.fromMs}ms (the phone was at ${resumeAt}ms)",
                     )
-                    castSession.setMedia(retryReq)
+                    session.setMedia(retryReq)
                     castToReceiver = item.episodeId
-                    return@launch
+                    true
                 }
             }
         }
@@ -4480,9 +4475,11 @@ private fun PlayerContent(
         val ep = castMagis?.takeIf { it.kind == SourceKind.MAGIS || it.kind == SourceKind.PLUGIN }
             ?: playlistRef.value?.items?.getOrNull(currentIndex)
             ?: liveItem
+        // Where the person is, for the TV to start there (dlnaStartMs): never 0:00 when elsewhere.
+        val livePositionMs = runCatching { activePlayer.currentPosition }.getOrNull()
         controller.pause()
         scope.launch {
-            val ok = sendToRenderer(dlna, device, ep, { graph.lanIp() }, graph.liveHlsProxy, tracksState.castAudioChoice)
+            val ok = sendToRenderer(dlna, device, ep, { graph.lanIp() }, graph.liveHlsProxy, tracksState.castAudioChoice, livePositionMs)
             if (ok) {
                 dlnaState.markActive(device)
             } else {

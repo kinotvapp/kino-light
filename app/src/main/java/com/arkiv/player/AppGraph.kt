@@ -1677,7 +1677,13 @@ class AppGraph(context: Context) {
             tsRemuxer = tsRemuxer,
             // Its OWN server, not [localFileServer]: that one is single-file and would have its
             // socket stolen out from under it by whichever of DLNA/Chromecast casts second.
-            localFileServer = com.arkiv.player.playback.LocalFileServer(lanIp = { lanIp() }),
+            // Its requests count as the TV's (DlnaDiagnosis) and are timed in the cast's trail.
+            localFileServer = com.arkiv.player.playback.LocalFileServer(
+                lanIp = { lanIp() },
+                lanRequests = com.arkiv.player.dlna.DlnaLanRequests("file", timings = true),
+            ),
+            // The Chromecast's own remux server: same pacing, same reuse of an earlier remux.
+            remuxHls = remuxHlsServer,
         )
     }
 

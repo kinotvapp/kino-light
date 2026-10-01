@@ -4,7 +4,17 @@ import android.content.Context
 import android.net.wifi.WifiManager
 import android.os.SystemClock
 import com.arkiv.player.crash.Crash
+import com.arkiv.player.cast.CastStrategy
 import com.arkiv.player.crash.DlnaFailure
+import com.arkiv.player.playback.RemuxCastStart
+import com.arkiv.player.playback.RemuxPolicy
+import com.arkiv.player.playback.TsRemuxer
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -51,6 +61,12 @@ class DlnaController(
      *  restarts its socket on every change, so sharing it with Chromecast would steal the port out
      *  from under whichever of the two casts second. */
     private val localFileServer: com.arkiv.player.playback.LocalFileServer,
+    /**
+     * The SAME server the Chromecast casts its growing remux from (`AppGraph.remuxHlsServer`), so
+     * DLNA gets its pacing (`RemuxPacing`, wired into [tsRemuxer]), the reuse of an earlier cast's
+     * remux (`RemuxLeftover`) and its fixes for free. One title at a time, like the TV.
+     */
+    private val remuxHls: com.arkiv.player.playback.RemuxHlsServer,
 ) {
 
     private val appContext = context.applicationContext
@@ -66,6 +82,16 @@ class DlnaController(
     private val TRANSPORT_INFO_BODY = "<u:GetTransportInfo xmlns:u=\"$AVT\"><InstanceID>0</InstanceID></u:GetTransportInfo>"
     private val proxy = DlnaProxyServer()
 
+    /** Where a cast waits on its remux; the export itself runs in [tsRemuxer]'s own scope. */
+    private val remuxScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** Bumped by every new cast and by [stop]: a remux wait that finds it changed has been superseded. */
+    @Volatile
+    private var attempt = 0
+
+    /** The TV's requests to the remux server and to the finished remux's file server, counted and logged. */
+    private val remuxRequests = DlnaLanRequests("remux-hls", timings = false)
+
     private companion object {
         /** UPnP AVTransport error 701: the renderer can't make that transition right now. */
         const val TRANSITION_NOT_AVAILABLE = 701
@@ -78,6 +104,9 @@ class DlnaController(
 
         /** Nothing legitimate is casting for longer than this; a leaked cast must not hold the foreground service forever. */
         const val MAX_CAST_MS = 8L * 60 * 60 * 1000
+
+        /** The container sniff's read deadline: long enough for a slow CDN to open, short enough to still be a start. */
+        const val SNIFF_READ_MS = 30_000L
     }
 
     /**
@@ -107,6 +136,14 @@ class DlnaController(
         /** While a fallback may still recover this cast, its failure report waits here instead of being sent. */
         @Volatile var deferReport = false
         @Volatile var pendingReport: (() -> Unit)? = null
+        /** Where the TV should be once it plays (see [DlnaSeek]); 0 = the top, nothing to do. */
+        @Volatile var startMs = 0L
+        @Volatile var seekAttempts = 0
+        @Volatile var seekSettled = false
+        /** A `Seek` was accepted: the next position read is logged, to see whether the TV really went there. */
+        @Volatile var seekVerify = false
+        /** The remux this cast plays while it grows (the HLS route): stopped with the cast. */
+        @Volatile var remuxKey: String? = null
     }
 
     @Volatile
@@ -324,7 +361,16 @@ class DlnaController(
         title: String,
         /** The audio the phone has on, for the remux to carry; null = the file's default. */
         audio: com.arkiv.player.cast.CastAudioChoice? = null,
+        /** Where the person is ([com.arkiv.player.cast.CastStart]): the TV is put there once it plays. */
+        startMs: Long = 0L,
+        /**
+         * What the remux is filed under: the CDN url for Magis, stable across token refreshes and
+         * the same key the Chromecast uses -- so a title remuxed (or half-remuxed) for one is
+         * reused by the other. [archiveUrl] when there is nothing steadier.
+         */
+        remuxKeyUrl: String = archiveUrl,
     ): Boolean {
+        val mine = ++attempt
         // A file:// (a download) can't be proxied: OkHttp only speaks http(s), so the TV would get a
         // connection that closes with nothing, silently. Say so instead.
         if (!archiveUrl.startsWith("http", ignoreCase = true)) {
@@ -339,47 +385,152 @@ class DlnaController(
         // A renderer that trusts a wrong "video/mp4" label seeks around forever looking for box
         // structure that isn't there -- see VideoContainer's KDoc.
         val container = com.arkiv.player.playback.VideoContainer.of(sniffHeader(archiveUrl), archiveUrl)
+        val format = CastStrategy.formatOf(archiveUrl, container.mime)
 
-        // A bare TS is what stalled the Samsung TVs that DO claim mp4 support (mime_listed=true).
-        // But some renderers -- often an OLDER TV with no mp4 in its list at all, like a 2011
-        // Philips -- already list MPEG-TS as playable: asking first, instead of always remuxing,
-        // is what keeps this fix from costing THEM the time and battery of a conversion they never
-        // needed, and serves them the one container their whole `sink_mimes` list agrees on.
-        if (com.arkiv.player.playback.RemuxPolicy.needsRemux(container.mime)) {
-            val sinkMimes = fetchSinkMimes(device)
-            if (sinkMimes.isNotEmpty() && DlnaXml.isSupported(container.mime, sinkMimes)) {
-                DlnaLog.i("cast: renderer already lists ${container.mime} (${sinkMimes.size} types): skipping the remux")
-                // A TV can list a container and still refuse the file (an LG webOS answered Play with 501 Action Failed): its
-                // rejection is held back, and if it is the kind a real MP4 fixes, the remux below is tried before giving up.
-                if (playViaProxy(device, archiveUrl, container, title, deferReport = true)) return true
-                val direct = cast
-                val why = direct?.soapRejection
-                if (why == null || !DirectPlayFallback.shouldRemux(why.first, why.second, why.third)) {
-                    direct?.pendingReport?.invoke()
+        // The route is the Chromecast's own decision (CastStrategy), with what THIS renderer lists
+        // as its input. A bare TS is what stalled the Samsung TVs that DO claim mp4 support; but some
+        // renderers -- often an OLDER TV with no mp4 in its list at all, like a 2011 Philips -- list
+        // MPEG-TS as playable, and asking first keeps them from paying for a remux they never
+        // needed. Only asked for a TS: nothing else depends on it.
+        val sinkMimes = if (format == CastStrategy.Format.MPEG_TS) fetchSinkMimes(device) else emptyList()
+        val receiver = DlnaRenderer.receiverOf(sinkMimes)
+        // Never DIRECT: a renderer gets plain http from the phone (many take no https or redirects).
+        val route = CastStrategy.choose(format, needsHeaders = true, directAllowed = false, remuxAvailable = true, receiver = receiver)
+        DlnaLog.diag("route ${route.name} for ${format.name} · renderer ${DlnaRenderer.summary(sinkMimes)} · phone at ${startMs / 1000}s")
+
+        if (route != CastStrategy.Route.REMUX && route != CastStrategy.Route.REMUX_FILE) {
+            if (format != CastStrategy.Format.MPEG_TS) return playViaProxy(device, archiveUrl, container, title, startMs)
+            DlnaLog.i("cast: renderer already lists ${container.mime} (${sinkMimes.size} types): skipping the remux")
+            // A TV can list a container and still refuse the file (an LG webOS answered Play with 501 Action Failed): its
+            // rejection is held back, and if it is the kind a real MP4 fixes, the remux is tried before giving up.
+            if (playViaProxy(device, archiveUrl, container, title, startMs, deferReport = true)) return true
+            val direct = cast
+            val why = direct?.soapRejection
+            val next = if (why != null && DirectPlayFallback.shouldRemux(why.first, why.second, why.third)) {
+                CastStrategy.afterRejection(format, route, receiver, remuxAvailable = true)
+            } else {
+                CastStrategy.Route.NONE
+            }
+            if (next == CastStrategy.Route.NONE) {
+                direct?.pendingReport?.invoke()
+                return false
+            }
+            DlnaLog.diagW("cast: the TV rejected the file as it is (${why?.first} upnp=${why?.second}): retrying as ${next.name}")
+            return castRemux(device, archiveUrl, remuxKeyUrl, title, audio, next, startMs, mine)
+        }
+        return castRemux(device, archiveUrl, remuxKeyUrl, title, audio, route, startMs, mine)
+    }
+
+    /**
+     * The TS remuxed into a real MP4 by the SAME engine, cache and audio choice the Chromecast uses
+     * (TsRemuxer, keyed by [RemuxPolicy.keyFrom]), with its patient CDN reads. [route]:
+     * - [CastStrategy.Route.REMUX]: the remux goes out WHILE it is written, as the growing HLS
+     *   playlist of [remuxHls], from the phone's position once the remux covers it -- the same
+     *   wait as the Chromecast's ([RemuxCastStart]). A renderer that refuses it falls back to:
+     * - [CastStrategy.Route.REMUX_FILE]: the whole MP4 once finished, served with ranges. What
+     *   every DLNA cast of a TS did before; still the one for renderers that list no HLS.
+     * A remux already finished on disk is always sent whole: nothing to wait for, and a file with
+     * a length and ranges is what every renderer seeks best in.
+     */
+    private suspend fun castRemux(
+        device: DlnaDevice,
+        archiveUrl: String,
+        remuxKeyUrl: String,
+        title: String,
+        audio: com.arkiv.player.cast.CastAudioChoice?,
+        route: CastStrategy.Route,
+        startMs: Long,
+        mine: Int,
+    ): Boolean {
+        // Keyed and remuxed with the phone's audio: a remux carries ONE audio track, and
+        // without this it was Transformer's pick, whatever the phone's menu said.
+        val key = RemuxPolicy.keyFrom(remuxKeyUrl, 0L, audio?.ordinal)
+        tsRemuxer.alreadyDone(key)?.let { file ->
+            DlnaLog.diag("remux already whole on disk: sending the MP4 file")
+            val c = beginCast(device, kind = "vod-remux", mime = com.arkiv.player.playback.Container.MP4.mime, title = title, source = archiveUrl, startMs = startMs)
+            return playRemuxFile(c, file, title)
+        }
+        val export = remuxScope.async { tsRemuxer.remux(archiveUrl, key, audio) }
+
+        if (route == CastStrategy.Route.REMUX) {
+            var start: RemuxCastStart.Start? = null
+            RemuxCastStart.await(
+                remuxHls, key, startMs,
+                inProgress = tsRemuxer::inProgress,
+                leftover = tsRemuxer::leftover,
+                // A finished remux ends the wait too: then the whole file goes, below.
+                stillWanted = { attempt == mine && !export.isCompleted },
+                lan = remuxRequests,
+                diagPrefix = "dlna ",
+            ) { start = it; true }
+            if (attempt != mine) {
+                DlnaLog.i("cast: superseded while the remux was getting ready")
+                return false
+            }
+            val ready = start
+            if (ready != null) {
+                val url = ready.url
+                if (url == null) {
+                    if (remuxHls.isServing(key)) remuxHls.stop()
+                    tsRemuxer.stop(key)
+                    val c = beginCast(device, kind = "vod-remux-hls", mime = CastStrategy.MIME_HLS, title = title, source = archiveUrl)
+                    return failPreflight(c, "no_wifi_ip", "No se detectó la red WiFi del teléfono", "wifiEnabled=${wifi.isWifiEnabled}")
+                }
+                // The playlist's #EXT-X-START says where to begin; the Seek after Play backs it up.
+                remuxHls.planStart(key, ready.fromMs)
+                val c = beginCast(device, kind = "vod-remux-hls", mime = CastStrategy.MIME_HLS, title = title, source = archiveUrl, startMs = ready.fromMs)
+                c.deferReport = true
+                c.remuxKey = key
+                DlnaLog.diag("remux has ${ready.readySec.toInt()}s ready → sending it as HLS from ${ready.fromMs / 1000}s (phone at ${startMs / 1000}s)")
+                if (startPlayback(c, url, title)) {
+                    watchRemux(c, export)
+                    return true
+                }
+                c.remuxKey = null
+                if (remuxHls.isServing(key)) remuxHls.stop()
+                val why = c.soapRejection
+                if (why == null || !DirectPlayFallback.wholeFileAfterHls(why.second, why.third)) {
+                    // Nothing is going to play it: stop converting the rest of the title (what it wrote stays).
+                    tsRemuxer.stop(key)
+                    c.pendingReport?.invoke()
                     return false
                 }
-                DlnaLog.w("cast: the TV rejected the file as it is (${why.first} upnp=${why.second}): retrying through the remux")
-            }
-            // Remux into a real MP4, the exact same fix already shipped for Chromecast and the same
-            // on-disk cache (see RemuxPolicy/TsRemuxer) -- a title already remuxed for the Chromecast
-            // bar is reused here too, instead of lying about the container like this used to.
-            val c = beginCast(device, kind = "vod-remux", mime = com.arkiv.player.playback.Container.MP4.mime, title = title, source = archiveUrl)
-            // Keyed and remuxed with the phone's audio: a remux carries ONE audio track, and
-            // without this it was Transformer's pick, whatever the phone's menu said.
-            val key = com.arkiv.player.playback.RemuxPolicy.keyFrom(archiveUrl, 0L, audio?.ordinal)
-            return when (val result = tsRemuxer.remux(archiveUrl, key, audio)) {
-                is com.arkiv.player.playback.TsRemuxer.RemuxResult.Failed ->
-                    failPreflight(c, "remux_failed", "No se pudo preparar el video para la TV", "reason=${result.reason}")
-                is com.arkiv.player.playback.TsRemuxer.RemuxResult.Done -> {
-                    val localUrl = localFileServer.serve(result.file)
-                        ?: return failPreflight(c, "no_wifi_ip", "No se detectó la red WiFi del teléfono", "wifiEnabled=${wifi.isWifiEnabled}")
-                    DlnaLog.i("cast: remuxed ${result.file.name} (${result.file.length()}B) -> serving as $localUrl")
-                    startPlayback(c, localUrl, title)
-                }
+                DlnaLog.diagW("cast: the TV refused the remux as HLS (${why.first} upnp=${why.second}): waiting for the whole MP4 instead")
+            } else {
+                // The remux finished (or failed) before it covered the start point: the file decides.
+                if (remuxHls.isServing(key)) remuxHls.stop()
             }
         }
 
-        return playViaProxy(device, archiveUrl, container, title)
+        val c = beginCast(device, kind = "vod-remux", mime = com.arkiv.player.playback.Container.MP4.mime, title = title, source = archiveUrl, startMs = startMs)
+        return when (val result = export.await()) {
+            is TsRemuxer.RemuxResult.Failed ->
+                failPreflight(c, "remux_failed", "No se pudo preparar el video para la TV", "reason=${result.reason}")
+            is TsRemuxer.RemuxResult.Done -> {
+                if (attempt != mine) return false
+                playRemuxFile(c, result.file, title)
+            }
+        }
+    }
+
+    /** The finished remux [file], served whole with ranges by the DLNA's own [localFileServer]. */
+    private fun playRemuxFile(c: Cast, file: java.io.File, title: String): Boolean {
+        val localUrl = localFileServer.serve(file)
+            ?: return failPreflight(c, "no_wifi_ip", "No se detectó la red WiFi del teléfono", "wifiEnabled=${wifi.isWifiEnabled}")
+        DlnaLog.i("cast: remuxed ${file.name} (${file.length()}B) -> serving as $localUrl")
+        return startPlayback(c, localUrl, title)
+    }
+
+    /** Says in the trail how the remux behind a playing HLS cast ends: a failure there is a TV about to stall. */
+    private fun watchRemux(c: Cast, export: Deferred<TsRemuxer.RemuxResult>) {
+        remuxScope.launch {
+            val result = runCatching { export.await() }.getOrNull() ?: return@launch
+            if (cast !== c) return@launch
+            when (result) {
+                is TsRemuxer.RemuxResult.Done -> DlnaLog.diag("remux finished: the TV's playlist just gets its end")
+                is TsRemuxer.RemuxResult.Failed -> DlnaLog.diagW("remux FAILED mid-cast (${result.reason}): the TV will stop where it ends")
+            }
+        }
     }
 
     /** Proxies [archiveUrl] to the TV as-is, honestly labeled as [container] -- no remux involved. */
@@ -388,9 +539,10 @@ class DlnaController(
         archiveUrl: String,
         container: com.arkiv.player.playback.Container,
         title: String,
+        startMs: Long,
         deferReport: Boolean = false,
     ): Boolean {
-        val c = beginCast(device, kind = "vod-proxy", mime = container.mime, title = title, source = archiveUrl)
+        val c = beginCast(device, kind = "vod-proxy", mime = container.mime, title = title, source = archiveUrl, startMs = startMs)
         c.deferReport = deferReport
         val ip = wifiIp() ?: return failPreflight(c, "no_wifi_ip", "No se detectó la red WiFi del teléfono", "wifiEnabled=${wifi.isWifiEnabled}")
         val token = proxy.setTarget(archiveUrl, container.mime)
@@ -406,21 +558,31 @@ class DlnaController(
      *  source didn't answer in time -- the container then falls back to the URL's extension (see
      *  [com.arkiv.player.playback.VideoContainer.of]), same as when there are no bytes at all. */
     private fun sniffHeader(url: String): ByteArray {
-        val req = Request.Builder().url(url)
+        val builder = Request.Builder().url(url)
             .header("User-Agent", "Arkiv")
             .header("Range", "bytes=0-${com.arkiv.player.playback.VideoContainer.SIGNATURE_BYTES - 1}")
+        // The remux's patience (RemuxPolicy), not the SOAP calls' 8 s: a CDN that takes 7 s to open
+        // (measured 2026-10-01) made this come back empty, and an empty answer is a TS cast as "mp4".
+        // The loopback proxy is asked for its patient deadlines too, as the remux asks; never a remote host.
+        if (url.startsWith("http://127.0.0.1:")) builder.header(com.arkiv.player.playback.ArchiveCacheProxy.REMUX_HEADER, "1")
+        val patient = client.newBuilder()
+            .connectTimeout(RemuxPolicy.INPUT_CONNECT_MS.toLong(), TimeUnit.MILLISECONDS)
+            .readTimeout(SNIFF_READ_MS, TimeUnit.MILLISECONDS)
             .build()
+        val req = builder.build()
         return runCatching {
-            client.newCall(req).execute().use { resp ->
+            patient.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) ByteArray(0) else resp.body?.bytes() ?: ByteArray(0)
             }
         }.getOrDefault(ByteArray(0))
     }
 
     /** Plays a raw URL already reachable over LAN (today, the live channel's HLS proxy). */
-    fun playRawUrl(device: DlnaDevice, url: String, title: String, mime: String = "video/mp4"): Boolean {
+    fun playRawUrl(device: DlnaDevice, url: String, title: String, mime: String = "video/mp4", startMs: Long = 0L): Boolean {
+        ++attempt
         val kind = if (mime.contains("mpegurl", ignoreCase = true)) "live-hls" else "raw-url"
-        val c = beginCast(device, kind = kind, mime = mime, title = title, source = url)
+        val c = beginCast(device, kind = kind, mime = mime, title = title, source = url, startMs = startMs)
+        DlnaLog.diag("route ${kind} (sent as it is) · phone at ${startMs / 1000}s")
         return startPlayback(c, url, title)
     }
 
@@ -433,14 +595,15 @@ class DlnaController(
         failPreflight(c, stage, userMessage, detail)
     }
 
-    private fun beginCast(device: DlnaDevice, kind: String, mime: String, title: String, source: String): Cast {
+    private fun beginCast(device: DlnaDevice, kind: String, mime: String, title: String, source: String, startMs: Long = 0L): Cast {
         monitorTask?.cancel(false)
         val c = Cast(DlnaLog.newSession(), device, kind, mime)
+        c.startMs = startMs
         cast = c
         lastError = null
         DlnaLog.i(
             "cast start · kind=$kind device='${device.friendlyName}' (${device.manufacturer} ${device.model}) " +
-                "title='${title.take(60)}' source=${DlnaXml.safeUrl(source)}",
+                "title='${title.take(60)}' source=${DlnaXml.safeUrl(source)} start=${startMs / 1000}s",
         )
         return c
     }
@@ -533,12 +696,28 @@ class DlnaController(
     }
 
     fun stop(device: DlnaDevice) {
+        attempt++
         monitorTask?.cancel(false)
         soap(device.controlUrl, "Stop", "<u:Stop xmlns:u=\"$AVT\"><InstanceID>0</InstanceID></u:Stop>")
-        DlnaLog.i("cast: stopped · TV made ${DlnaLog.lanHits.get()} request(s) to our servers, ${DlnaLog.lanBytes.get()} bytes")
+        DlnaLog.diag("cast: stopped · TV made ${DlnaLog.lanHits.get()} request(s) to our servers, ${DlnaLog.lanBytes.get()} bytes")
+        val ended = cast
         cast = null
         proxy.stop()
+        releaseRemux(ended)
         DlnaCastService.stop(appContext)
+    }
+
+    /**
+     * Stops the growing remux [c] was playing and stops handing it out, as the Chromecast does when
+     * its cast ends: the remux covers the whole title, so a cast that ends after ten minutes would
+     * otherwise keep pulling the rest of it down the person's connection. What it wrote is kept
+     * (`RemuxLeftover`): casting the title again starts on it at once.
+     */
+    private fun releaseRemux(c: Cast?) {
+        val key = c?.remuxKey ?: return
+        c.remuxKey = null
+        runCatching { tsRemuxer.stop(key) }
+        if (remuxHls.isServing(key)) runCatching { remuxHls.stop() }
     }
 
     /**
@@ -686,6 +865,7 @@ class DlnaController(
         }
         val mimes = fetchSinkMimes(c.device)
         c.sinkMimes = mimes
+        DlnaLog.diag("renderer formats: ${DlnaRenderer.summary(mimes)}")
         if (mimes.isEmpty()) {
             DlnaLog.i("renderer formats: none listed (can't tell)")
         } else if (DlnaXml.isSupported(c.mime, mimes)) {
@@ -749,6 +929,8 @@ class DlnaController(
         c.lastPositionMs = position
         val stalledMs = if (info.state.equals("PLAYING", true) && position != null) now - c.positionSince else 0L
 
+        positionTv(c, info.state, position, sincePlay)
+
         if (c.polls % 5 == 1) {
             DlnaLog.i("monitor: state=${info.state} position=${position?.div(1000)}s duration=${pos?.durationMs?.div(1000)}s stalled=${stalledMs}ms requests=${DlnaLog.lanHits.get()} bytes=${DlnaLog.lanBytes.get()}")
         }
@@ -779,6 +961,51 @@ class DlnaController(
     }
 
     /**
+     * Puts the TV at [Cast.startMs] once it plays: an AVTransport `Seek` (see [DlnaSeek]), retried
+     * once if refused, then left playing where it is. Runs on the monitor's thread, from [pollOnce].
+     */
+    private fun positionTv(c: Cast, state: String?, positionMs: Long?, sincePlayMs: Long) {
+        if (c.seekVerify && positionMs != null && state.equals("PLAYING", true)) {
+            c.seekVerify = false
+            DlnaLog.diag("start: after the Seek the TV reports ${positionMs / 1000}s (wanted ${c.startMs / 1000}s)")
+        }
+        if (c.seekSettled) return
+        when (DlnaSeek.next(c.startMs, state, positionMs, sincePlayMs, c.seekAttempts)) {
+            DlnaSeek.Step.NONE, DlnaSeek.Step.WAIT -> Unit
+            DlnaSeek.Step.ALREADY_THERE -> {
+                c.seekSettled = true
+                DlnaLog.diag("start: the TV is already at ${positionMs?.div(1000)}s (wanted ${c.startMs / 1000}s): no Seek")
+            }
+            DlnaSeek.Step.GIVE_UP -> {
+                c.seekSettled = true
+                DlnaLog.diagW("start: the TV never played within ${DlnaSeek.GIVE_UP_AFTER_MS / 1000}s: no Seek to ${c.startMs / 1000}s")
+            }
+            DlnaSeek.Step.SEEK -> {
+                c.seekAttempts++
+                val target = DlnaSeek.relTime(c.startMs)
+                val r = soap(
+                    c.device.controlUrl, "Seek",
+                    "<u:Seek xmlns:u=\"$AVT\"><InstanceID>0</InstanceID><Unit>REL_TIME</Unit><Target>$target</Target></u:Seek>",
+                    readTimeoutSec = 20,
+                )
+                if (r.ok) {
+                    c.seekSettled = true
+                    c.seekVerify = true
+                    DlnaLog.diag("start: Seek to $target accepted (attempt ${c.seekAttempts}, TV was ${state} at ${positionMs?.div(1000)}s)")
+                } else {
+                    val last = c.seekAttempts >= DlnaSeek.MAX_ATTEMPTS
+                    if (last) c.seekSettled = true
+                    DlnaLog.diagW(
+                        "start: Seek to $target REFUSED (attempt ${c.seekAttempts}, http=${r.http} upnp=${r.fault?.code} " +
+                            "'${r.fault?.description ?: DlnaXml.describeError(r.fault?.code)}' error=${r.error})" +
+                            if (last) ": it keeps playing from where it is" else ": retrying once",
+                    )
+                }
+            }
+        }
+    }
+
+    /**
      * The cast is over without the person pressing Stop (the video ended, the TV left, a safety limit): stop
      * watching, close the proxy and release the foreground service. Sends nothing to the TV.
      */
@@ -787,6 +1014,7 @@ class DlnaController(
         monitorTask?.cancel(false)
         if (cast === c) cast = null
         proxy.stop()
+        releaseRemux(c)
         DlnaCastService.stop(appContext)
     }
 
