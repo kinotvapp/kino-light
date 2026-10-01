@@ -141,7 +141,7 @@ internal fun communityRows(
     query: String,
 ): List<CatalogRow> {
     val entries = dedupeDiscovered(discovered, catalog, installed).map { d ->
-        CatalogEntry(id = d.id, repo = d.address, name = d.name, description = d.description, tags = listOf("por ${d.owner}"))
+        CatalogEntry(id = d.id, repo = d.address, name = d.name, description = d.description, tags = listOf("por ${d.owner}"), sealed = d.sealed)
     }
     return filterCatalog(entries, query).map { e ->
         // Any spelling of the same repo, and Xuper's legacy install on the new official repo ([sameAddress]).

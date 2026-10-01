@@ -34,6 +34,8 @@ internal data class InstalledCardModel(
     val switchEnabled: Boolean,
     /** Whether "Configurar" belongs among this plugin's actions: only when its manifest declares settings. */
     val hasSettings: Boolean,
+    /** The tile's pill: [SEALED_CODE_PILL] for sealed code (apiVersion 5), else none -- as every installed card had. */
+    val pill: String? = null,
 )
 
 /**
@@ -55,6 +57,7 @@ internal fun installedCardModel(plugin: InstalledPlugin, art: CatalogArt?): Inst
         switchChecked = plugin.isUsable,
         switchEnabled = status != PluginStatus.DAMAGED,
         hasSettings = plugin.manifest.settings.isNotEmpty(),
+        pill = if (plugin.manifest.entrySealed) SEALED_CODE_PILL else null,
     )
 }
 

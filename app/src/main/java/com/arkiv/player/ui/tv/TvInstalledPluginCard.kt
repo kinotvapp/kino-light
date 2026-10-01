@@ -81,7 +81,7 @@ internal fun TvInstalledPluginCard(
         ),
     ) {
         Box(Modifier.clearAndSetSemantics { }) {
-            PluginCardSurface(name = model.name, iconFile = model.iconFile, tileColorArgb = model.tileColorArgb, pill = null) {
+            PluginCardSurface(name = model.name, iconFile = model.iconFile, tileColorArgb = model.tileColorArgb, pill = model.pill) {
                 CardTexts(plugin, model, message, reserveMessageLines, liveNotice, reserveNoticeLines)
             }
             Icon(
