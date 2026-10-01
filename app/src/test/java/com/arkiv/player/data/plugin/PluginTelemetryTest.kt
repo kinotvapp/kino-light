@@ -120,6 +120,14 @@ class PluginTelemetryTest {
         assertEquals("all_dropped", PluginTelemetry.droppedList("p", "search", """[{"id":1}]""", 0)!!.detail["output"])
         assertEquals("not_a_list", PluginTelemetry.droppedList("p", "home", "<html>", 0)!!.detail["output"])
         assertNull(PluginTelemetry.droppedList("p", "search", """[{"id":1}]""", 1))
+        // ERRORES-9P0: a home row with no items (a channels-only plugin) is nothing to show, not a bug.
+        assertNull(PluginTelemetry.droppedList("p", "home", """[{"id":"fast_home","title":"FAST","items":[]}]""", 0))
+        assertNull(PluginTelemetry.droppedList("p", "home", """[{"id":"a","title":"A","items":[]},{"id":"b","title":"B","items":null}]""", 0))
+        // ...but a row that did carry entries, all of them invalid, still is.
+        assertEquals(
+            "all_dropped",
+            PluginTelemetry.droppedList("p", "home", """[{"id":"a","title":"A","items":[]},{"id":"b","title":"B","items":[{"x":1}]}]""", 0)!!.detail["output"],
+        )
         // A host the person decides on is not the plugin's bug.
         assertNull(PluginTelemetry.invalidOutput("p", "resolve", PluginContractException("El video apunta a x.com, que el plugin no declaró")))
         assertEquals("drm", PluginTelemetry.invalidOutput("p", "resolve", PluginContractException("El video tiene DRM y los plugins no lo soportan"))!!.detail["output"])
