@@ -25,6 +25,8 @@ data class SourcesState(
     /** Source → its error's exception, for the ones that sent one (see `SearchEvent.SourceError.cause`). */
     val causes: Map<String, Throwable> = emptyMap(),
     val labels: Map<String, String> = emptyMap(),
+    /** The sources that announced themselves (`SourceStart`), in arrival order. */
+    val announced: List<String> = emptyList(),
 ) {
     fun withResponse(source: String) = copy(responded = responded + source)
     fun withFailure(source: String, error: String, cause: Throwable? = null) = copy(
@@ -32,6 +34,33 @@ data class SourcesState(
         causes = if (cause == null) causes else causes + (source to cause),
     )
     fun withLabel(source: String, label: String) = if (label.isBlank()) this else copy(labels = labels + (source to label))
+
+    /** A source's `SourceStart`: its label, and its place among the [announced] ones. */
+    fun withStart(source: String, label: String) =
+        withLabel(source, label).let { if (source in it.announced) it else it.copy(announced = it.announced + source) }
+}
+
+/**
+ * The tab of every plugin that was searched ([SourcesState.announced]), results or not. Without
+ * these, a plugin that answered with nothing simply wasn't on screen (no chip, no section, no line),
+ * which looked like it was never searched -- e.g. Internet Archive or a Nuvio scraper on a "deadpool"
+ * typed search. Built-in Caracol isn't here: it has its own fixed tab ([SourceTab.fixed]).
+ */
+fun announcedTabs(state: SourcesState): List<SourceTab> =
+    state.announced
+        .filter { PluginIds.pluginIdOfSource(it) != null }
+        .mapNotNull { tabForSource(it, state.labels) }
+
+/**
+ * The TV's "Todo" line for the plugins that were searched and answered with nothing ("Sin
+ * resultados en Internet Archive, PelisPlusHD."), or null when there's none: the TV draws a row
+ * only for a source with results, so without it those plugins left no trace below the chips. A
+ * down plugin isn't here ([downSourceNotices] already says so), nor one still searching.
+ */
+fun quietSourcesText(sources: List<com.arkiv.player.ui.catalog.PlaySource>, state: SourcesState, searching: SearchingSources): String? {
+    val withResults = sources.map { tabOf(it) }.toSet()
+    val quiet = announcedTabs(state).filter { it !in withResults && !isDown(it, state) && !searching.isSearching(it) }
+    return if (quiet.isEmpty()) null else "Sin resultados en ${quiet.joinToString(", ") { it.label }}."
 }
 
 /** A source's tab by its name in the events, or null if it isn't known which one it is. */

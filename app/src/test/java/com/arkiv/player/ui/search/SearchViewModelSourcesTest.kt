@@ -274,6 +274,26 @@ class SearchViewModelSourcesTest {
         assertEquals(SearchPhase.QUERY, vm.phase.value)
         assertEquals(null, vm.selected.value)
     }
+
+    /** Fire TV 0.9.44: a plugin that answers a typed search with nothing is still on screen. */
+    @Test fun `a plugin searched with zero results is exposed as announced`() = runTest {
+        val vm = vm(TestSource {
+            listOf(
+                SearchEvent.SourceStart("plugin:xuper", label = "Xuper"),
+                SearchEvent.SourceStart("plugin:archive-org", label = "Internet Archive"),
+                SearchEvent.ResultEvent("plugin:xuper", GatewayResult(source = "plugin:xuper", title = "Deadpool", ref = "plg1:xuper:1")),
+                SearchEvent.SourceDone("plugin:xuper", 1, 5),
+                SearchEvent.SourceDone("plugin:archive-org", 0, 5),
+                SearchEvent.Done(10),
+            )
+        })
+        vm.searchSourcesByText("deadpool")
+        advanceUntilIdle()
+        val state = vm.sourcesState.value
+        assertEquals(listOf("plugin:xuper", "plugin:archive-org"), state.announced)
+        assertEquals(listOf("Xuper", "Internet Archive"), announcedTabs(state).map { it.label })
+        assertEquals("Sin resultados en Internet Archive.", quietSourcesText(vm.sources.value, state, vm.searchingSources.value))
+    }
 }
 
 /** A source whose flow the test builds, to be able to leave a source halfway through. */

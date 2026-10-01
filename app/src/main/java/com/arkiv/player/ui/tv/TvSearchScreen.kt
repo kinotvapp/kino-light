@@ -698,10 +698,12 @@ private fun TvResultsContent(
     // Filter by source. The counters come from `ordered` (already deduplicated), not `sources`, so
     // the chip's number is exactly the count of rows that'll be seen on picking it.
     var tab by remember { mutableStateOf(SourceTab.ALL) }
-    val counts = countsByTab(ordered)
+    // Every searched plugin gets its chip, at zero if it brought nothing (see `announcedTabs`).
+    val announced = com.arkiv.player.ui.search.announcedTabs(sourcesState)
+    val counts = countsByTab(ordered, announced = announced)
     // Each tab spins while its source is still searching, and "Todo" while any is missing: see
     // [SearchingSources].
-    val tabs = tabsFor(ordered)
+    val tabs = tabsFor(ordered, announced = announced)
     val loadingOf = tabs.associateWith { searchingSources.isSearching(it) }
 
     // Initial focus on the first source as soon as the first batch shows up (progressive: doesn't
@@ -830,6 +832,23 @@ private fun TvResultsContent(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.padding(horizontal = 48.dp, vertical = 4.dp),
                     )
+                }
+            }
+
+            // The plugins searched with nothing to show: rows are drawn only for sources with
+            // results, so without this line they'd leave no trace in "Todo" but their chip.
+            if (tab == SourceTab.ALL) {
+                com.arkiv.player.ui.search.quietSourcesText(ordered, sourcesState, searchingSources)?.let { quiet ->
+                    item {
+                        Text(
+                            quiet,
+                            color = ArkivTextSecondary,
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(horizontal = 48.dp, vertical = 4.dp),
+                        )
+                    }
                 }
             }
 

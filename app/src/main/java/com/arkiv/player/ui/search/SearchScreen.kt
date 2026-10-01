@@ -604,14 +604,16 @@ private fun ResultsContent(
     // a plugin and the list was back on "Todo", with the item you'd just tapped buried among dozens of results.
     // The KEY is saved (a `SourceTab` isn't Saveable); a plugin tab that's gone falls back to "Todo".
     var tabKey by rememberSaveable { mutableStateOf(SourceTab.ALL.key) }
-    val tabs = tabsFor(sources)
+    // Every searched plugin gets its chip and its section, "Sin resultados" included.
+    val announced = announcedTabs(sourcesState)
+    val tabs = tabsFor(sources, announced = announced)
     val tab = tabs.firstOrNull { it.key == tabKey } ?: SourceTab.ALL
     // Plugin sections start open like the fixed ones; this remembers the ones the person closed.
     var collapsedPlugins by rememberSaveable { mutableStateOf(setOf<String>()) }
 
     val caracol = sources.filterIsInstance<PlaySource.Ditu>()
     val anyLoading = searchingSources.any
-    val counts = countsByTab(sources)
+    val counts = countsByTab(sources, announced = announced)
     // Each chip spins while its source is still searching, and "Todo" while any one is missing:
     // see [SearchingSources].
     val loadingOf = tabs.associateWith { searchingSources.isSearching(it) }

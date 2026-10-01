@@ -329,7 +329,7 @@ class SearchViewModel(
                             }
                             is com.arkiv.player.data.gateway.SearchEvent.SourceStart -> {
                                 // Plugins announce a human name; the tabs and "no respondió" lines use it.
-                                _sourcesState.value = _sourcesState.value.withLabel(ev.source, ev.label)
+                                _sourcesState.value = _sourcesState.value.withStart(ev.source, ev.label)
                                 updateSearching { it.sourceStarted(ev.source) }
                             }
                             else -> Unit

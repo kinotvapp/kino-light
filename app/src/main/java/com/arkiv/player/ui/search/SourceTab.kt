@@ -43,18 +43,29 @@ fun tabOf(source: PlaySource): SourceTab = when (source) {
 }
 
 /**
- * "Todo", Caracol, then one tab per plugin present in [sources], in order of first appearance.
- * While Caracol is hidden ([CaracolVisibility]) its tab isn't there at all.
+ * "Todo", Caracol, then one tab per plugin present in [sources], in order of first appearance,
+ * then one per plugin that was searched but brought nothing ([announced], from [announcedTabs]):
+ * a searched plugin always has its chip, at zero if need be. While Caracol is hidden
+ * ([CaracolVisibility]) its tab isn't there at all.
  */
-fun tabsFor(sources: List<PlaySource>, caracolVisible: Boolean = CaracolVisibility.visible): List<SourceTab> =
+fun tabsFor(
+    sources: List<PlaySource>,
+    caracolVisible: Boolean = CaracolVisibility.visible,
+    announced: List<SourceTab> = emptyList(),
+): List<SourceTab> =
     SourceTab.fixed(caracolVisible) +
-        sources.filterIsInstance<PlaySource.Plugin>().map(::tabOf).distinct()
+        (sources.filterIsInstance<PlaySource.Plugin>().map(::tabOf) + announced.filter { it !in SourceTab.fixed(true) })
+            .distinct()
 
 /** How many sources per tab (ALL included), to paint on the chip. Fixed tabs always have a key,
  *  even at zero, so the chips don't jump around as results arrive. */
-fun countsByTab(sources: List<PlaySource>, caracolVisible: Boolean = CaracolVisibility.visible): Map<SourceTab, Int> {
+fun countsByTab(
+    sources: List<PlaySource>,
+    caracolVisible: Boolean = CaracolVisibility.visible,
+    announced: List<SourceTab> = emptyList(),
+): Map<SourceTab, Int> {
     val counts = sources.groupingBy { tabOf(it) }.eachCount()
-    return tabsFor(sources, caracolVisible).associateWith { tab -> if (tab == SourceTab.ALL) sources.size else counts[tab] ?: 0 }
+    return tabsFor(sources, caracolVisible, announced).associateWith { tab -> if (tab == SourceTab.ALL) sources.size else counts[tab] ?: 0 }
 }
 
 fun filterByTab(sources: List<PlaySource>, tab: SourceTab): List<PlaySource> =
