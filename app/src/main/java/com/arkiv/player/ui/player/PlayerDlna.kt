@@ -366,6 +366,8 @@ internal fun DlnaCastButtons(
                 val themed = ContextThemeWrapper(ctx, androidx.appcompat.R.style.Theme_AppCompat_DayNight)
                 MediaRouteButton(themed).also {
                     CastButtonFactory.setUpMediaRouteButton(ctx.applicationContext, it)
+                    // One entry per TV: Play services lists the same Cast device twice.
+                    it.dialogFactory = com.arkiv.player.cast.DedupedCastDialogFactory()
                 }
             },
         )
