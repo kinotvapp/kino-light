@@ -77,6 +77,23 @@ object RemuxPolicy {
     fun needsRemux(mime: String?): Boolean = mime == Container.MPEGTS.mime
 
     /**
+     * What the phone's own reading of the video's pixel aspect [par] says about the remux, for the
+     * cast log. It used to print "BLOCKED by a non-square pixel" for anything but exactly 1 --
+     * including a missing format (a live channel) and par=1.00125 (a 1280x534 HEVC title) -- while
+     * the remux went ahead as a plain copy at ~15x real time and played fine (2026-10-01). A ratio
+     * within rounding of square is square; a really non-square one MAY make Transformer re-encode,
+     * which shows as a remux far slower than usual, so the log says that instead of a verdict.
+     */
+    fun transmuxOutlook(par: Float?): String = when {
+        par == null -> "unknown, no video format available"
+        kotlin.math.abs(par - 1f) < SQUARE_PIXEL_TOLERANCE -> "possible (square pixel)"
+        else -> "possible, but a non-square pixel may make it re-encode (watch the remux speed)"
+    }
+
+    /** How far from 1 a pixel aspect still counts as square: SAR rounding in the SPS, not a real anamorphic frame. */
+    private const val SQUARE_PIXEL_TOLERANCE = 0.01f
+
+    /**
      * Name of the remuxed copy for [originKey].
      *
      * Keyed by the ORIGIN, not by the title: two episodes can share a title, and the same episode

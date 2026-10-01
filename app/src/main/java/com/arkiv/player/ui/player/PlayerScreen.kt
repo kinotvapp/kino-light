@@ -980,9 +980,8 @@ private fun PlayerContent(
         android.util.Log.w(
             "ArkivCast",
             "source video · mime=${videoLocal?.sampleMimeType} ${videoLocal?.width}x${videoLocal?.height} " +
-                "par=${videoLocal?.pixelWidthHeightRatio} → transmux ${
-                    if (videoLocal?.pixelWidthHeightRatio == 1f) "possible" else "BLOCKED by a non-square pixel"
-                }",
+                "par=${videoLocal?.pixelWidthHeightRatio} → transmux " +
+                com.arkiv.player.playback.RemuxPolicy.transmuxOutlook(videoLocal?.pixelWidthHeightRatio),
         )
         // .coerceAtLeast(0): media3 reports an unset channel count as Format.NO_VALUE (-1), which
         // would otherwise show up in the log below as "canales=-1". Doesn't change the decodable
@@ -1371,13 +1370,8 @@ private fun PlayerContent(
         android.util.Log.w(
             "ArkivCast",
             "source video · mime=${fmt?.sampleMimeType} ${fmt?.width}x${fmt?.height} " +
-                "par=${fmt?.pixelWidthHeightRatio} → transmux ${
-                    when (fmt?.pixelWidthHeightRatio) {
-                        null -> "unknown, no video format available"
-                        1f -> "possible"
-                        else -> "BLOCKED by a non-square pixel"
-                    }
-                }",
+                "par=${fmt?.pixelWidthHeightRatio} → transmux " +
+                com.arkiv.player.playback.RemuxPolicy.transmuxOutlook(fmt?.pixelWidthHeightRatio),
         )
 
         if (!com.arkiv.player.playback.RemuxPolicy.needsRemux(mime)) {

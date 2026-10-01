@@ -181,4 +181,15 @@ class RemuxPolicyTest {
         }
         assertTrue("budget $budget", RemuxPolicy.INPUT_READ_MS > budget)
     }
+
+    @Test
+    fun `the transmux log never says BLOCKED for a missing format or a rounding-level pixel aspect`() {
+        assertEquals("unknown, no video format available", RemuxPolicy.transmuxOutlook(null))
+        assertEquals("possible (square pixel)", RemuxPolicy.transmuxOutlook(1f))
+        // 1280x534 HEVC measured 2026-10-01: remuxed as a copy and played fine.
+        assertEquals("possible (square pixel)", RemuxPolicy.transmuxOutlook(1.00125f))
+        val anamorphic = RemuxPolicy.transmuxOutlook(4f / 3f)
+        assertTrue(anamorphic, anamorphic.contains("may make it re-encode"))
+        assertFalse(anamorphic.contains("BLOCKED"))
+    }
 }
