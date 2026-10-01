@@ -1515,28 +1515,11 @@ private fun PlayerContent(
         val key = magisRemuxKey(mg) ?: return false
         return key !in remuxFailed && castAsRemux != key && graph.tsRemuxer.alreadyDone(key) == null
     }
+    // Shown on the cast card (see "Casting to Chromecast" below), inside the player's own Box. It
+    // used to be a cover composed HERE, before that Box, which is fillMaxSize and black: the cover
+    // was painted underneath it and never seen, so the person only read "Reproduciendo en
+    // Chromecast" over a TV that was still waiting (2026-10-01).
     val preparingForTv = preparingForTvNow()
-    if (preparingForTv) {
-        Box(
-            Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.75f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                CircularProgressIndicator(color = Color.White)
-                Spacer(Modifier.height(16.dp))
-                Text(
-                    "Preparándolo para la TV" + if (remuxProgress in 0..100) " — $remuxProgress%" else "",
-                    color = Color.White,
-                )
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "Solo la primera vez de cada título",
-                    color = Color.White.copy(alpha = 0.7f),
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-        }
-    }
 
     /**
      * What the progress bar is being drawn from, while casting.
@@ -3458,8 +3441,7 @@ private fun PlayerContent(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Icon(Icons.Default.Tv, contentDescription = null, tint = ArkivRed)
-                Text("Reproduciendo en Chromecast", color = Color.White)
+                CastCardContent(preparingForTv, remuxProgress)
             }
         }
 

@@ -1,5 +1,8 @@
 package com.arkiv.player.ui.player
 
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.filled.Tv
+import androidx.compose.ui.unit.dp
 import com.arkiv.player.data.plugin.PluginIds
 import com.arkiv.player.playback.SourceKind
 
@@ -198,3 +201,31 @@ internal fun CastScreenPresence(session: com.arkiv.player.cast.CastSessionManage
     }
     androidx.compose.runtime.LaunchedEffect(session, episodeId) { session.onScreenTitle(episodeId) }
 }
+
+/**
+ * The cast card's text: "Preparándolo para la TV… NN%" with a spinner while the TV waits for the
+ * remux to reach the phone's position, "Reproduciendo en Chromecast" otherwise. Out of
+ * `PlayerContent` (ART's verifier limit). [progress] outside 0..100 means no figure to show.
+ */
+@androidx.compose.runtime.Composable
+internal fun CastCardContent(preparing: Boolean, progress: Int) {
+    if (preparing) {
+        androidx.compose.material3.CircularProgressIndicator(
+            color = androidx.compose.ui.graphics.Color.White,
+            strokeWidth = 2.dp,
+            modifier = androidx.compose.ui.Modifier.size(20.dp),
+        )
+        androidx.compose.material3.Text(castPreparingText(progress), color = androidx.compose.ui.graphics.Color.White)
+    } else {
+        androidx.compose.material3.Icon(
+            androidx.compose.material.icons.Icons.Default.Tv,
+            contentDescription = null,
+            tint = com.arkiv.player.ui.theme.ArkivRed,
+        )
+        androidx.compose.material3.Text("Reproduciendo en Chromecast", color = androidx.compose.ui.graphics.Color.White)
+    }
+}
+
+/** "Preparándolo para la TV…", with the remux's [progress] when it is a percentage. */
+internal fun castPreparingText(progress: Int): String =
+    "Preparándolo para la TV…" + if (progress in 0..100) " $progress%" else ""
