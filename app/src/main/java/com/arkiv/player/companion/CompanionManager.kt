@@ -53,9 +53,13 @@ class CompanionManager(context: Context) {
     private val peers: PeerStore = PeerStore(appContext)
     private val discovery: CompanionDiscovery = CompanionDiscovery(appContext, identity)
 
-    private val hostTransport: CompanionHostTransport = CompanionHostTransport(scope, identity, peers)
+    /** The end-to-end key each paired device shares with this one (plugin passwords travel under it). */
+    val peerKeys: PeerKeyStore = KeystorePeerKeyStore(appContext)
+    private val keyAgreement = CompanionKeyAgreement(peerKeys)
+
+    private val hostTransport: CompanionHostTransport = CompanionHostTransport(scope, identity, peers, keyAgreement)
     private val controllerTransport: CompanionControllerTransport =
-        CompanionControllerTransport(scope, identity, peers)
+        CompanionControllerTransport(scope, identity, peers, keyAgreement)
 
     /** Discovered hosts on the LAN (mDNS browse results). Empty until [startBrowsing] is called. */
     val hosts: StateFlow<List<DiscoveredHost>> = discovery.hosts
@@ -276,9 +280,9 @@ class CompanionManager(context: Context) {
      * runs synchronously from the `ON_START` lifecycle observer (`ArkivApp.wireCompanionLifecycle`),
      * typically before `startHost`/`startAutoConnect`'s async connect has produced a peer.
      */
-    fun startSync(source: RoomSyncSource, apply: SyncApply, cursors: SyncCursorStore) {
+    fun startSync(source: RoomSyncSource, apply: SyncApply, cursors: SyncCursorStore, peerScoped: PeerScopedTable? = null) {
         if (syncEngine != null) return
-        syncEngine = CompanionSyncEngine(scope, incoming, ::send, source, apply, cursors, source.changes)
+        syncEngine = CompanionSyncEngine(scope, incoming, ::send, source, apply, cursors, source.changes, peerScoped)
         syncEngine?.start(syncPeerId)
     }
 
@@ -302,6 +306,7 @@ class CompanionManager(context: Context) {
         // forgotten. A forgotten-then-dropped active peer releases the WifiLock via followController's
         // Error handler; leaving the Connect screen releases it via onDispose.
         peers.remove(deviceId)
+        keyAgreement.forget(deviceId)
     }
 
     private fun followHost() {

@@ -614,6 +614,7 @@ abstract class ArkivDatabase : RoomDatabase() {
         private val MIGRATION_35_36 = object : Migration(35, 36) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 NuvioReposMigration.STATEMENTS.forEach { db.execSQL(it) }
+                db.execSQL(NuvioReposMigration.ADD_SECRETS_AT)
             }
         }
 

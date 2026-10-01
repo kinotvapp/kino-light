@@ -14,7 +14,7 @@ class PluginInstallMappersTest {
         id = "archive", address = "kinotvapp/kino-plugin-archive", name = "Internet Archive", version = "1.2.0",
         sha256 = "a".repeat(64), enabled = false,
         approvedJson = PluginReach(hosts = listOf("archive.org"), anyVideoHost = true).toJson().toString(),
-        settingsJson = JSONObject().put("quality", "720").toString(), updatedAt = 42, deleted = false,
+        settingsJson = JSONObject().put("quality", "720").toString(), updatedAt = 42, deleted = false, secretsAt = 40,
     )
 
     private fun wire(change: JSONObject.() -> Unit = {}) = pluginInstallToJson(base).apply(change)

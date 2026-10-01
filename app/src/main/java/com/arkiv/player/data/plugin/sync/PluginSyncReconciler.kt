@@ -152,6 +152,7 @@ class PluginSyncReconciler(
         host.applyGrants(id, reach)
         if (!row.enabled && !XuperPrivilege.grants(local.record)) host.setEnabled(id, false)
         applySettings(row, local)
+        host.adoptSecrets(id)
     }
 
     private suspend fun follow(row: PluginInstallEntity, local: InstalledPlugin) {
@@ -163,6 +164,7 @@ class PluginSyncReconciler(
         val reach = reachOf(row)
         host.applyGrants(id, reach)
         applySettings(row, host.installed(id) ?: return)
+        host.adoptSecrets(id)
         maybeUpdate(row, host.installed(id) ?: return, reach)
     }
 

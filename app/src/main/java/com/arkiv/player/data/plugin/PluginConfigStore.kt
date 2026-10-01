@@ -227,6 +227,71 @@ class PluginConfigStore(private val dataDir: (pluginId: String) -> File, private
     }
 
     /**
+     * The passwords the person set for this plugin (setting key to value), for plugin sync to seal
+     * end-to-end for their other devices. Keystore IO. Never logged.
+     */
+    fun secretValues(pluginId: String, settings: List<PluginSetting>): Map<String, String> {
+        val stored = readFile(pluginId)
+        val out = LinkedHashMap<String, String>()
+        for (s in settings) {
+            if (s.type != SettingType.PASSWORD || s.key !in stored.secrets) continue
+            secrets.get(secretKey(pluginId, s.key))?.takeIf { it.isNotEmpty() }?.let { out[s.key] = it }
+        }
+        return out
+    }
+
+    /**
+     * Passwords another of the person's devices sent (already opened end-to-end): each one this
+     * manifest declares as a password is stored and listed as set. Only sets, never clears: a peer
+     * without a value (an older plugin version, nothing typed there) leaves this device's alone.
+     * Returns whether anything changed (and the revision moved). Keystore IO.
+     */
+    fun applySecrets(pluginId: String, settings: List<PluginSetting>, values: Map<String, String>): Boolean {
+        val stored = readFile(pluginId)
+        val names = stored.secrets.toMutableSet()
+        var changed = false
+        for (s in settings) {
+            if (s.type != SettingType.PASSWORD) continue
+            val v = values[s.key]?.takeIf { it.isNotEmpty() && it.length <= MAX_SECRET_CHARS } ?: continue
+            val key = secretKey(pluginId, s.key)
+            if (s.key in names && secrets.get(key) == v) continue
+            secrets.put(key, v)
+            names += s.key
+            changed = true
+        }
+        if (!changed) return false
+        val json = JSONObject().put("values", stored.values).put("secrets", JSONArray(names.toList())).put("revision", stored.revision + 1)
+        writeFileAtomically(File(dataDir(pluginId), FILE_NAME), json.toString().toByteArray(Charsets.UTF_8))
+        return true
+    }
+
+    /**
+     * Passwords for a plugin not installed here yet: kept in the [SecretStore] only (no `config.json`
+     * names them), until [adoptSecrets] runs once the plugin is installed. Keys outside the plugin's
+     * own `plugin.<id>.` namespace can't be written.
+     */
+    fun storeSecrets(pluginId: String, values: Map<String, String>) {
+        for ((k, v) in values) {
+            if (!SECRET_NAME.matches(k) || v.isEmpty() || v.length > MAX_SECRET_CHARS) continue
+            secrets.put(secretKey(pluginId, k), v)
+        }
+    }
+
+    /**
+     * Just installed: the passwords [storeSecrets] kept for it that its manifest declares are listed
+     * as set. Returns whether anything changed (and the revision moved). Keystore IO.
+     */
+    fun adoptSecrets(pluginId: String, settings: List<PluginSetting>): Boolean {
+        val stored = readFile(pluginId)
+        val adopt = settings.filter { it.type == SettingType.PASSWORD && it.key !in stored.secrets && !secrets.get(secretKey(pluginId, it.key)).isNullOrEmpty() }
+        if (adopt.isEmpty()) return false
+        val names = stored.secrets + adopt.map { it.key }
+        val json = JSONObject().put("values", stored.values).put("secrets", JSONArray(names.toList())).put("revision", stored.revision + 1)
+        writeFileAtomically(File(dataDir(pluginId), FILE_NAME), json.toString().toByteArray(Charsets.UTF_8))
+        return true
+    }
+
+    /**
      * Uninstall: the file (usually already gone with the data dir) and every secret of the plugin —
      * the ones [settings] declares AND any `plugin.<id>.` key an earlier version declared and a
      * later update renamed or dropped (spec §1.3: uninstall deletes both).
@@ -267,6 +332,12 @@ class PluginConfigStore(private val dataDir: (pluginId: String) -> File, private
 
     companion object {
         const val FILE_NAME = "config.json"
+
+        /** A password value from another device longer than this is not one a person typed. */
+        const val MAX_SECRET_CHARS = 2048
+
+        /** A setting key, as a manifest may declare it. */
+        private val SECRET_NAME = Regex("^[A-Za-z0-9_.-]{1,64}$")
 
         /** 12 settings of at most 2 KB each fit many times over; anything bigger isn't ours. */
         private const val MAX_FILE_BYTES = 256L * 1024

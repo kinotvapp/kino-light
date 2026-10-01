@@ -945,13 +945,22 @@ class AppGraph(context: Context) {
     }
 
     /** Records the person's plugin actions in `plugin_installs` for companion sync (see [pluginAdmin]). */
+    private val pluginSecretStamps: com.arkiv.player.data.plugin.sync.SecretStamps by lazy {
+        com.arkiv.player.data.plugin.sync.PrefsSecretStamps(appContext)
+    }
+
+    /** Plugin passwords between the person's devices, sealed end-to-end with each peer's pairing key. */
+    val pluginSecretSync: com.arkiv.player.data.plugin.sync.PluginSecretSync by lazy {
+        com.arkiv.player.data.plugin.sync.PluginSecretSync(database.pluginInstallDao(), companion.peerKeys, pluginSyncHost, pluginSecretStamps)
+    }
+
     /** "Tus repositorios de Nuvio": the Nuvio repos the person opened on any of their devices (synced). */
     val nuvioRepoList: com.arkiv.player.data.plugin.sync.NuvioRepoList by lazy {
         com.arkiv.player.data.plugin.sync.NuvioRepoList(database.nuvioRepoDao())
     }
 
     val pluginSyncMirror: com.arkiv.player.data.plugin.sync.PluginSyncMirror by lazy {
-        com.arkiv.player.data.plugin.sync.PluginSyncMirror(database.pluginInstallDao(), pluginSyncHost, applicationScope)
+        com.arkiv.player.data.plugin.sync.PluginSyncMirror(database.pluginInstallDao(), pluginSyncHost, applicationScope, secretStamps = pluginSecretStamps)
     }
 
     /** Applies the plugin rows another of the person's devices sent: silent installs within what they approved there. */

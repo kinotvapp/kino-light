@@ -803,6 +803,9 @@ dependencies {
     // kino.html.select for plugins (CSS selectors over fetched HTML).
     implementation("org.jsoup:jsoup:1.18.3")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
+    // Companion end-to-end key (X25519 + HKDF) for plugin passwords: pure Java, every API level. Already
+    // on the runtime classpath through security-crypto; declared to compile against it (same version).
+    implementation("com.google.crypto.tink:tink-android:1.8.0")
 
     // Companion LAN (phone<->TV): WebSocket server+client for the pairing/transport channel.
     implementation("org.java-websocket:Java-WebSocket:1.5.7")

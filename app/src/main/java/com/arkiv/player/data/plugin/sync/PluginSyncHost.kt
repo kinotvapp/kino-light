@@ -40,6 +40,15 @@ interface PluginSyncHost {
 
     /** Overlays [values] on the plugin's shared settings and refreshes it like a settings save. */
     suspend fun applySharedSettings(id: String, values: Map<String, Any>)
+
+    /** The passwords the person set for [plugin] here ([PluginConfigStore.secretValues]). Keystore IO. Never logged. */
+    suspend fun secretValues(plugin: InstalledPlugin): Map<String, String> = emptyMap()
+
+    /** Passwords another device sent, already opened: stored for [id], installed or not yet. */
+    suspend fun applySecrets(id: String, values: Map<String, String>) {}
+
+    /** [id] was just installed: the passwords kept for it become its own. */
+    suspend fun adoptSecrets(id: String) {}
 }
 
 /** Production [PluginSyncHost]: the undecorated admin, so nothing sync does is recorded back as the person's action. */
@@ -69,4 +78,8 @@ class DefaultPluginSyncHost(
     override suspend fun checkUpdate(id: String): UpdateOutcome = admin.checkUpdate(id)
     override fun applyGrants(id: String, reach: PluginReach) = registry.applyPeerGrants(id, reach.hosts, reach.rejectedHosts, reach.anyVideoHost)
     override suspend fun applySharedSettings(id: String, values: Map<String, Any>) { admin.applySharedSettings(id, values) }
+    override suspend fun secretValues(plugin: InstalledPlugin): Map<String, String> =
+        withContext(io) { config.secretValues(plugin.id, plugin.manifest.settings) }
+    override suspend fun applySecrets(id: String, values: Map<String, String>) { admin.applySyncedSecrets(id, values) }
+    override suspend fun adoptSecrets(id: String) { admin.adoptSyncedSecrets(id) }
 }

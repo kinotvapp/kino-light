@@ -31,4 +31,15 @@ class NuvioReposMigrationTest {
             assertEquals(42L, c.clockOf("c/d"))
         }
     }
+
+    @Test fun `a v35 plugin_installs table gains the password clock, every row at 0`() {
+        DriverManager.getConnection("jdbc:sqlite::memory:").use { c ->
+            c.createStatement().use { st ->
+                PluginInstallsMigration.STATEMENTS.forEach(st::execute)
+                st.execute("INSERT INTO plugin_installs (id, address, name, version, sha256, enabled, approvedJson, settingsJson, updatedAt, deleted) VALUES ('s1','a/b','Uno','1.0.0','',1,'{}','{}',5,0)")
+                st.execute(NuvioReposMigration.ADD_SECRETS_AT)
+                st.executeQuery("SELECT secretsAt FROM plugin_installs WHERE id = 's1'").use { r -> r.next(); assertEquals(0L, r.getLong(1)) }
+            }
+        }
+    }
 }

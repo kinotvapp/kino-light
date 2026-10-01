@@ -22,6 +22,7 @@ fun pluginInstallToJson(e: PluginInstallEntity): JSONObject = JSONObject().apply
     put("settings", runCatching { JSONObject(e.settingsJson) }.getOrDefault(JSONObject()))
     put("updatedAt", e.updatedAt)
     put("deleted", e.deleted)
+    put("secretsAt", e.secretsAt)
 }
 
 private val VERSION = Regex("^[0-9A-Za-z.+-]{1,32}$")
@@ -69,5 +70,6 @@ fun jsonToPluginInstall(json: JSONObject): PluginInstallEntity? {
         settingsJson = SharedSettings.toJson(SharedSettings.fromJson(json.optJSONObject("settings"))).toString(),
         updatedAt = json.optLong("updatedAt"),
         deleted = json.optBoolean("deleted"),
+        secretsAt = json.optLong("secretsAt").coerceAtLeast(0),
     )
 }

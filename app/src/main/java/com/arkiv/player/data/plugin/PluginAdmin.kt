@@ -128,8 +128,40 @@ class DefaultPluginAdmin(
     }
 
     /**
+     * Plugin sync: the passwords another of the person's devices sent, already opened end-to-end.
+     * Installed here: stored and listed ([PluginConfigStore.applySecrets]) and, when anything changed,
+     * the plugin refreshed like a settings save. Not installed (yet): kept for [adoptSyncedSecrets].
+     */
+    suspend fun applySyncedSecrets(id: String, values: Map<String, String>): Boolean = withContext(io) {
+        val p = registry.find(id)
+        if (p == null) {
+            config.storeSecrets(id, values)
+            return@withContext false
+        }
+        if (!config.applySecrets(id, p.manifest.settings, values)) return@withContext false
+        refreshAfterSyncedSettings(id)
+        true
+    }
+
+    /** Plugin sync: just installed, the passwords another device sent before it was are now its own. */
+    suspend fun adoptSyncedSecrets(id: String): Boolean = withContext(io) {
+        val p = registry.find(id) ?: return@withContext false
+        if (!config.adoptSecrets(id, p.manifest.settings)) return@withContext false
+        refreshAfterSyncedSettings(id)
+        true
+    }
+
+    private fun refreshAfterSyncedSettings(id: String) {
+        forgetHomeCache(id)
+        registry.reload()
+        forgetSession(id)
+        runtimes.close(id)
+        afterSessionClosed(id)
+    }
+
+    /**
      * Plugin sync: overlays the shared settings another of the person's devices sent
-     * ([PluginConfigStore.applyShared]: never a password or a typed server) and, when anything
+     * ([PluginConfigStore.applyShared]: never a password) and, when anything
      * changed, refreshes the plugin in the same order as [saveSettings]. Returns whether it changed.
      */
     suspend fun applySharedSettings(id: String, values: Map<String, Any>): Boolean = withContext(io) {

@@ -28,6 +28,8 @@ class PluginSyncMirror(
     scope: CoroutineScope,
     private val clock: () -> Long = System::currentTimeMillis,
     private val log: (String) -> Unit = { runCatching { android.util.Log.w("KinoPluginSync", it) } },
+    /** Where the person's own password saves are stamped, so the same passwords coming back are not re-applied. */
+    private val secretStamps: SecretStamps = SecretStamps.NONE,
 ) {
     private val events = Channel<suspend () -> Unit>(Channel.UNLIMITED)
 
@@ -61,7 +63,7 @@ class PluginSyncMirror(
             val keep = old?.takeIf { !it.deleted && it.address == local.record.address }
             val reach = PluginReach.fromRecord(local.record).let { r -> keep?.let { PluginReach.fromJson(JSONObject(it.approvedJson)).union(r) } ?: r }
             val settings = (keep?.let { SharedSettings.fromJson(JSONObject(it.settingsJson)) }.orEmpty()) + host.sharedSettings(local)
-            put(rowOf(local, reach, settings, enabled = local.record.enabled), old)
+            put(rowOf(local, reach, settings, enabled = local.record.enabled).copy(secretsAt = keep?.secretsAt ?: 0L), old)
         }
         then(id)
     }
@@ -101,12 +103,25 @@ class PluginSyncMirror(
         put(old.copy(approvedJson = reach.toJson().toString()), old)
     }
 
-    /** The person saved [id]'s settings here: its shared ones replace the row's. */
+    /**
+     * The person saved [id]'s settings here: its shared ones replace the row's. A plugin with password
+     * settings also gets a new [PluginInstallEntity.secretsAt], so its passwords are sealed again for
+     * the person's other devices (never written in the row).
+     */
     fun recordSettings(id: String) = post {
         val local = host.installed(id) ?: return@post
-        val old = dao.get(id) ?: return@post put(rowOf(local, PluginReach.fromRecord(local.record), host.sharedSettings(local), local.record.enabled), null)
-        if (old.deleted || old.address != local.record.address) return@post
-        put(old.copy(settingsJson = SharedSettings.toJson(host.sharedSettings(local)).toString()), old)
+        val hasPasswords = local.manifest.settings.any { it.type == com.arkiv.player.data.plugin.SettingType.PASSWORD }
+        val existing = dao.get(id)
+        val old = existing?.takeIf { !it.deleted && it.address == local.record.address }
+        if (existing != null && old == null) return@post
+        val base = old ?: rowOf(local, PluginReach.fromRecord(local.record), host.sharedSettings(local), local.record.enabled)
+        var row = base.copy(settingsJson = SharedSettings.toJson(host.sharedSettings(local)).toString())
+        if (hasPasswords) {
+            val stamp = maxOf(clock(), (old?.secretsAt ?: 0L) + 1)
+            row = row.copy(secretsAt = stamp)
+            secretStamps.set(id, stamp)
+        }
+        put(row, old)
     }
 
     /**

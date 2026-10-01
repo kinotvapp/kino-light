@@ -290,6 +290,12 @@ data class PluginInstallEntity(
     val settingsJson: String = "{}",
     val updatedAt: Long = 0,
     val deleted: Boolean = false,
+    /**
+     * When the person last saved this plugin's passwords on one of their devices (0 = never). The
+     * passwords themselves never go in this row: they travel sealed end-to-end ("plugin_secrets",
+     * see `PluginSecretSync`), and this clock is what tells sync there is something new to seal.
+     */
+    @androidx.room.ColumnInfo(defaultValue = "0") val secretsAt: Long = 0,
 )
 
 /**

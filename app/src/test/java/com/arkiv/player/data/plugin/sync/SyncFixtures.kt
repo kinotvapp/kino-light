@@ -111,4 +111,12 @@ internal class FakeSyncHost : PluginSyncHost {
         actions += "settings:$id"
         settings[id] = settings[id].orEmpty() + values
     }
+    val secrets = HashMap<String, Map<String, String>>()
+    override suspend fun secretValues(plugin: InstalledPlugin) = secrets[plugin.id].orEmpty()
+    override suspend fun applySecrets(id: String, values: Map<String, String>) {
+        actions += "secrets:$id"
+        secrets[id] = secrets[id].orEmpty() + values
+    }
+    val adopted = mutableListOf<String>()
+    override suspend fun adoptSecrets(id: String) { adopted += id }
 }

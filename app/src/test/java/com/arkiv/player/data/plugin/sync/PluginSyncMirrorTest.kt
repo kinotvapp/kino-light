@@ -124,4 +124,32 @@ class PluginSyncMirrorTest {
         assertEquals("beto", JSONObject(dao.rows.getValue("archive").settingsJson).getString("user"))
         assertNull(dao.rows["other"])
     }
+
+    @Test fun `saving a plugin's settings stamps its passwords for sealing, only when it has password settings`() = runTest {
+        val stamps = object : SecretStamps {
+            val map = HashMap<String, Long>()
+            override fun get(id: String) = map[id] ?: 0L
+            override fun set(id: String, stamp: Long) { map[id] = stamp }
+        }
+        val m = PluginSyncMirror(dao, host, backgroundScope, clock = { now }, log = {}, secretStamps = stamps)
+        val withPassword = installed("srv", address = "someone/server").let {
+            it.copy(manifest = it.manifest.copy(settings = listOf(com.arkiv.player.data.plugin.PluginSetting("password", "Contraseña", com.arkiv.player.data.plugin.SettingType.PASSWORD))))
+        }
+        host.plugins["srv"] = withPassword
+        host.plugins["archive"] = installed()
+        m.recordSettings("srv")
+        m.recordSettings("archive")
+        runCurrent()
+        assertEquals(1_000L, dao.rows.getValue("srv").secretsAt)
+        assertEquals(1_000L, stamps.get("srv"))
+        assertEquals(0L, dao.rows.getValue("archive").secretsAt)
+        // A second save in the same millisecond still moves the clock.
+        m.recordSettings("srv")
+        runCurrent()
+        assertEquals(1_001L, dao.rows.getValue("srv").secretsAt)
+        // A re-install by the person keeps the stamp.
+        m.recordInstall("srv")
+        runCurrent()
+        assertEquals(1_001L, dao.rows.getValue("srv").secretsAt)
+    }
 }

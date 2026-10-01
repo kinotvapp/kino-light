@@ -24,6 +24,8 @@ class CompanionHostTransport(
     private val scope: CoroutineScope,
     private val identity: CompanionIdentity,
     private val peers: PeerStore,
+    /** The end-to-end key exchange riding the hello/welcome; null keeps the link exactly as before. */
+    private val keyAgreement: CompanionKeyAgreement? = null,
 ) {
     private val _state = MutableStateFlow(LinkState.Idle)
     val state: StateFlow<LinkState> = _state.asStateFlow()
@@ -97,9 +99,11 @@ class CompanionHostTransport(
                         peerConn = conn
                         lastSeen = System.currentTimeMillis()   // reset for the NEW peer
                         _connectedPeerId.value = did
-                        conn.send(newEnvelope(TYPE_WELCOME, JSONObject()
+                        val welcome = JSONObject()
                             .put("deviceId", identity.deviceId).put("name", identity.deviceName)
-                            .put("token", r.token)).encode())
+                            .put("token", r.token)
+                        keyAgreement?.hostAccept(identity.deviceId, did, env.payload, welcome)
+                        conn.send(newEnvelope(TYPE_WELCOME, welcome).encode())
                         _state.value = LinkState.Connected
                     }
                     is PairResult.Reject -> {
@@ -142,6 +146,8 @@ class CompanionControllerTransport(
     private val scope: CoroutineScope,
     private val identity: CompanionIdentity,
     private val peers: PeerStore,
+    /** The end-to-end key exchange riding the hello/welcome; null keeps the link exactly as before. */
+    private val keyAgreement: CompanionKeyAgreement? = null,
 ) {
     private val _state = MutableStateFlow(LinkState.Idle)
     val state: StateFlow<LinkState> = _state.asStateFlow()
@@ -157,6 +163,8 @@ class CompanionControllerTransport(
     @Volatile private var lastSeen = 0L
     @Volatile private var hostDeviceId: String? = null
     @Volatile private var establishedThisDial = false
+    /** This dial's half of the key exchange, until the host's welcome answers it. */
+    @Volatile private var pendingKx: CompanionKeyAgreement.Pending? = null
 
     fun connect(ip: String, port: Int, code: String?, knownDeviceId: String? = null) {
         disconnect()
@@ -182,6 +190,8 @@ class CompanionControllerTransport(
                 _state.value = LinkState.Pairing
                 val payload = JSONObject().put("deviceId", identity.deviceId).put("name", identity.deviceName)
                 if (token != null) payload.put("token", token) else if (code != null) payload.put("code", code)
+                // A first pairing (no token) never reuses a key an earlier pairing with that host left.
+                pendingKx = keyAgreement?.controllerHello(hostDeviceId.takeIf { token != null }, payload)
                 send(newEnvelope(TYPE_HELLO, payload).encode())
             }
             override fun onMessage(message: String) { onCtrlMessage(message) }
@@ -215,6 +225,14 @@ class CompanionControllerTransport(
                 val remote = (client as? WebSocketClient)?.remoteSocketAddress
                 peers.save(Peer(did, nm, tok, remote?.address?.hostAddress ?: "", remote?.port ?: 0))
                 establishedThisDial = true
+                val kx = keyAgreement
+                val pending = pendingKx
+                pendingKx = null
+                if (kx != null && pending != null && !kx.controllerWelcome(identity.deviceId, did, pending, env.payload)) {
+                    // The host no longer knows our key: dial again at once to agree a new one.
+                    runCatching { client?.close() }
+                    return
+                }
                 _state.value = LinkState.Connected
             }
             TYPE_REJECT -> {

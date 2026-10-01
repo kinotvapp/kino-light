@@ -25,7 +25,7 @@ import java.util.concurrent.ConcurrentHashMap
  * to match reality — `missing()` then reads that corrected list, never the Keystore itself. Nothing
  * here logs a value.
  */
-class EncryptedSecretStore(private val context: Context) : SecretStore {
+class EncryptedSecretStore(private val context: Context, private val file: String = FILE) : SecretStore {
     private val memory = ConcurrentHashMap<String, String>()
 
     private val prefs: SharedPreferences? by lazy {
@@ -33,7 +33,7 @@ class EncryptedSecretStore(private val context: Context) : SecretStore {
             create = {
                 EncryptedSharedPreferences.create(
                     context,
-                    FILE,
+                    file,
                     MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
                     EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                     EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
@@ -41,7 +41,7 @@ class EncryptedSecretStore(private val context: Context) : SecretStore {
             },
             discardUndecryptable = {
                 Log.w(TAG, "plugin secrets undecryptable: starting a new file")
-                runCatching { context.deleteSharedPreferences(FILE) }
+                runCatching { context.deleteSharedPreferences(file) }
             },
             unencrypted = {
                 Log.w(TAG, "plugin secrets unavailable: keeping them in memory for this run")
