@@ -113,6 +113,15 @@ internal fun pluginCastModeFor(
     }
 }
 
+/**
+ * Whether a plugin stream nothing describes gets its first bytes probed for the cast
+ * ([PlayerData.probedMime]): a title always (while casting before it is published, since the cast
+ * decides on it then; otherwise after, off the phone's start); a [live] channel only while [casting]. A probe is one more connection to the stream, and on every
+ * zap of an M3U/Xtream list it cost up to 2 s more and, on a single-connection provider or a
+ * one-use link, could get the player itself refused (review 2026-10-01).
+ */
+internal fun pluginCastProbe(live: Boolean, casting: Boolean): Boolean = !live || casting
+
 /** What the person is told when a cast session is up and this plugin title cannot go to the TV. */
 internal fun pluginNoCastMessage(item: PlayerData): String =
     if (item.drm) "Este título está protegido y no se puede enviar a la TV"

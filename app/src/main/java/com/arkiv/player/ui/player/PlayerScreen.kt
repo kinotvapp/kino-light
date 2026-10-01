@@ -451,6 +451,7 @@ private fun PlayerContent(
                     historyScope = graph.applicationScope,
                     startPluginCastProxy = { graph.pluginCastProxy.start() },
                     probePluginMime = { url, headers, hosts -> graph.pluginCastProxy.probeMime(url, headers, hosts) },
+                    castingNow = { graph.castSession?.casting?.value == true },
                 )
             }
         },

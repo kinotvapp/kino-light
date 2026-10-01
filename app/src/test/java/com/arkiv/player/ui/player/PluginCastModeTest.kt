@@ -111,4 +111,12 @@ class PluginCastModeTest {
         assertEquals("Este título está protegido y no se puede enviar a la TV", pluginNoCastMessage(plugin("https://x/a.mp4", drm = true)))
         assertEquals("Este título no se puede enviar a la TV", pluginNoCastMessage(plugin("https://x/a.mpd")))
     }
+
+    @Test
+    fun `a title's stream is probed for the cast, a live channel's only while casting`() {
+        assertTrue(pluginCastProbe(live = false, casting = false))
+        assertTrue(pluginCastProbe(live = false, casting = true))
+        assertFalse("every zap would pay one more connection", pluginCastProbe(live = true, casting = false))
+        assertTrue(pluginCastProbe(live = true, casting = true))
+    }
 }

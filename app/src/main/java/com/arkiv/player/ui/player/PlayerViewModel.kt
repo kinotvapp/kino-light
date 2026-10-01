@@ -441,6 +441,8 @@ class PlayerViewModel internal constructor(
      */
     private val probePluginMime: (url: String, headers: Map<String, String>, hosts: com.arkiv.player.data.plugin.EffectiveHosts) -> String? =
         { _, _, _ -> null },
+    /** Is a cast session up right now? A live channel's stream is only probed then (see [pluginCastProbe]). */
+    private val castingNow: () -> Boolean = { false },
 ) : ViewModel() {
 
     /** One question per host per playback attempt; see [onPluginHostRefused]. */
@@ -1857,15 +1859,14 @@ class PlayerViewModel internal constructor(
         }
         // Only for the cast: a stream nothing describes gets its first bytes looked at, so the TV
         // buttons know what it is (see pluginCastModeFor). Never Xuper's (its own path), never DRM.
-        val probedMime = if (!xuper && play.drmLicenseUrl.isBlank() && play.drmClearKey.isEmpty() &&
-            pluginStreamFormat(play.url, play.mime).first == PluginStreamFormat.UNKNOWN
-        ) {
-            withContext(Dispatchers.IO) { runCatching { probePluginMime(play.url, play.headers, streamHosts) }.getOrNull() }
-                .orEmpty().also { Log.i(PLAY, "loadPlugin() cast format probe → ${it.ifBlank { "nothing" }}") }
-        } else {
-            ""
-        }
-        _magisItem.value = PlayerData(
+        // While casting it is the cast's own decision, taken the moment the item is published: read
+        // first, as before. Otherwise after publishing (see below).
+        val casting = castingNow()
+        val probe = !xuper && play.drmLicenseUrl.isBlank() && play.drmClearKey.isEmpty() &&
+            pluginStreamFormat(play.url, play.mime).first == PluginStreamFormat.UNKNOWN &&
+            pluginCastProbe(live, casting)
+        val probedMime = if (probe && casting) castProbe(play.url, play.headers, streamHosts) else ""
+        val published = PlayerData(
             episodeId = episodeId,
             itemId = episodeId.substringBefore("::"),
             title = channel?.title ?: header?.itemTitle ?: name,
@@ -1886,8 +1887,27 @@ class PlayerViewModel internal constructor(
             startPositionMs = startPos,
             startPaused = startPaused && !live,
         )
+        _magisItem.value = published
         Log.w(PLAY, "loadPlugin() published · mime=${play.mime.ifBlank { "sniff" }} subs=${play.subtitles.size} drm=${play.drmLicenseUrl.isNotBlank()} startPos=$startPos")
+        // AFTER publishing, off the way of the phone's own start: it used to hold every open up to
+        // 2 s more on a stream with no extension (review 2026-10-01). Only the cast reads it, and a
+        // copy differing in it alone does not rebuild the phone's player (same url, headers, mime).
+        if (probe && !casting) {
+            viewModelScope.launch {
+                val mime = castProbe(play.url, play.headers, streamHosts)
+                if (mime.isNotEmpty() && _magisItem.value === published) _magisItem.value = published.copy(probedMime = mime)
+            }
+        }
     }
+
+    /** [probePluginMime] for the cast, off the main thread: "" when it found nothing. */
+    private suspend fun castProbe(
+        url: String,
+        headers: Map<String, String>,
+        hosts: com.arkiv.player.data.plugin.EffectiveHosts,
+    ): String =
+        withContext(Dispatchers.IO) { runCatching { probePluginMime(url, headers, hosts) }.getOrNull() }
+            .orEmpty().also { Log.i(PLAY, "loadPlugin() cast format probe → ${it.ifBlank { "nothing" }}") }
 
     /**
      * Validated start position (safe resume): applies the saved position only when resuming makes
