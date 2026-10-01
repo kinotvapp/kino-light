@@ -58,12 +58,24 @@ internal object VodNetworkRecovery {
     fun step(attempt: Int, canReResolve: Boolean): NetworkRetryStep =
         if (attempt == 2 && canReResolve) NetworkRetryStep.RE_RESOLVE else NetworkRetryStep.REPREPARE
 
-    /** The wait before attempt [attempt], counted from when the app is back in front. */
-    fun delayMs(attempt: Int): Long = when {
-        attempt <= 1 -> 500L
-        attempt == 2 -> 1_500L
-        else -> 4_000L
+    /**
+     * The wait before attempt [attempt], counted from when the app is back in front, plus a
+     * backoff on the [recent] recoveries of this player overall ([NetworkRecoveryBudget]): a CDN
+     * that opens, reaches READY and dies again resets [attempt] every time, and was retried every
+     * 0.5-4 s for as long as it kept doing it (review 2026-10-01).
+     */
+    fun delayMs(attempt: Int, recent: Int = 0): Long {
+        val base = when {
+            attempt <= 1 -> 500L
+            attempt == 2 -> 1_500L
+            else -> 4_000L
+        }
+        val extra = if (recent <= MAX_RETRIES) 0L else minOf(MAX_BACKOFF_MS, 2_000L shl (recent - MAX_RETRIES - 1).coerceAtMost(4))
+        return base + extra
     }
+
+    /** The longest backoff [delayMs] adds. */
+    const val MAX_BACKOFF_MS = 30_000L
 
     /**
      * Whether a title may be resolved again after a network error: a plugin's VOD title (the only
@@ -74,6 +86,28 @@ internal object VodNetworkRecovery {
      */
     fun canReResolve(kind: SourceKind?, live: Boolean, hostQuestionOpen: Boolean): Boolean =
         kind == SourceKind.PLUGIN && !live && !hostQuestionOpen
+}
+
+/**
+ * How many network recoveries one player gets overall: [max] within [windowMs], READY or not in
+ * between. [VodNetworkRecovery.MAX_RETRIES] counts since the last READY only, so a stream that
+ * opens and dies over and over never ran out of them; past this the error takes its usual route.
+ */
+internal class NetworkRecoveryBudget(private val max: Int = 8, private val windowMs: Long = 10 * 60_000L) {
+    private val taken = ArrayDeque<Long>()
+
+    /** Recoveries spent within the window, as of [nowMs]. */
+    fun recent(nowMs: Long): Int {
+        while (taken.isNotEmpty() && nowMs - taken.first() >= windowMs) taken.removeFirst()
+        return taken.size
+    }
+
+    /** Spends one recovery at [nowMs] if the window has one left. */
+    fun tryTake(nowMs: Long): Boolean {
+        if (recent(nowMs) >= max) return false
+        taken.addLast(nowMs)
+        return true
+    }
 }
 
 /** What one network recovery attempt does. See [VodNetworkRecovery.step]. */

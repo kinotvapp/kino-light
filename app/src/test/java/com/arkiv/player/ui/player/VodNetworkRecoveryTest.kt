@@ -94,4 +94,21 @@ class VodNetworkRecoveryTest {
         budget.reset()
         assertTrue(budget.tryTake(2L))
     }
+
+    // A CDN that opens, reaches READY and dies again resets the per-READY attempts every time.
+    @Test fun `recoveries are capped overall, READY or not, and back off`() {
+        val budget = NetworkRecoveryBudget(max = 8, windowMs = 600_000L)
+        val now = 1_000_000L
+        repeat(8) { assertTrue(budget.tryTake(now + it)) }
+        assertFalse(budget.tryTake(now + 9))
+        assertEquals(8, budget.recent(now + 9))
+        // After the window, the stream gets them back.
+        assertTrue(budget.tryTake(now + 600_000L))
+        // The first few recoveries wait as before; past them each wait grows, up to a ceiling.
+        assertEquals(VodNetworkRecovery.delayMs(1), VodNetworkRecovery.delayMs(1, recent = VodNetworkRecovery.MAX_RETRIES))
+        val later = (VodNetworkRecovery.MAX_RETRIES + 1..VodNetworkRecovery.MAX_RETRIES + 8).map { VodNetworkRecovery.delayMs(1, it) }
+        assertEquals(later.sorted(), later)
+        assertTrue(later.first() > VodNetworkRecovery.delayMs(1))
+        assertEquals(500L + VodNetworkRecovery.MAX_BACKOFF_MS, later.last())
+    }
 }

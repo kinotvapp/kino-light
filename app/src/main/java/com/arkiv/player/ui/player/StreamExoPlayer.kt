@@ -249,7 +249,7 @@ internal fun StreamExoPlayer(
      * when the caller took it (this player is then rebuilt from a fresh Stream), false to re-prepare
      * in place instead. Null: nothing to resolve again, every attempt re-prepares.
      */
-    onNetworkReResolve: ((positionMs: Long, playWhenReady: Boolean) -> Boolean)? = null,
+    onNetworkReResolve: ((positionMs: Long, playWhenReady: Boolean, reprepare: () -> Unit) -> Boolean)? = null,
     /** Whether the first prepare starts playing. False only for a stream rebuilt by a recovery while paused. */
     startPlaying: Boolean = true,
     /**
@@ -404,6 +404,7 @@ internal fun StreamExoPlayer(
     // since it was last READY, and one deferred until the cast ends.
     var everReady by remember(prepared) { mutableStateOf(false) }
     var networkRetries by remember(prepared) { mutableStateOf(0) }
+    val networkBudget = remember(prepared) { NetworkRecoveryBudget() }
     var networkRetryAfterCast by remember(prepared) { mutableStateOf(false) }
 
     var videoAspectRatio by remember(exoPlayer) { mutableFloatStateOf(0f) }
@@ -575,7 +576,7 @@ internal fun StreamExoPlayer(
                 val undeclared = if (onUndeclaredHost != null) undeclaredPlaybackHost(error) else null
                 val networkRetry = undeclared == null && VodNetworkRecovery.shouldRetry(
                     error.errorCode, live = onLiveError != null, everReady = everReady, retriesSpent = networkRetries,
-                )
+                ) && networkBudget.tryTake(System.currentTimeMillis())
                 val route = playerErrorRoute(
                     networkRetry = networkRetry,
                     live = liveKind != null,
@@ -622,14 +623,16 @@ internal fun StreamExoPlayer(
                             // In the background the network may be cut for this app: an attempt
                             // there would only burn the budget. The person is away anyway.
                             lifecycle.currentStateFlow.first { it.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED) }
-                            delay(VodNetworkRecovery.delayMs(attempt))
+                            delay(VodNetworkRecovery.delayMs(attempt, networkBudget.recent(System.currentTimeMillis())))
                             // Something else already re-prepared it (a seek does not, a new source does).
                             if (exoPlayer.playerError == null) return@launch
                             // Read now, not at the error: the person may have pressed play meanwhile.
                             val at = exoPlayer.currentPosition.coerceAtLeast(0L)
                             val playing = exoPlayer.playWhenReady
                             val step = VodNetworkRecovery.step(attempt, canReResolve = onNetworkReResolve != null)
-                            if (step == NetworkRetryStep.RE_RESOLVE && onNetworkReResolve!!(at, playing)) {
+                            // A resolve that fails (still no network) re-prepares in place instead.
+                            val reprepare = { if (exoPlayer.playerError != null) runCatching { exoPlayer.prepare() } }
+                            if (step == NetworkRetryStep.RE_RESOLVE && onNetworkReResolve!!(at, playing) { reprepare() }) {
                                 Log.w(TAG, "network error ($msg) -> attempt $attempt/${VodNetworkRecovery.MAX_RETRIES}: resolving the stream again at ${at}ms playing=$playing")
                                 return@launch
                             }

@@ -1293,8 +1293,12 @@ class PlayerViewModel internal constructor(
      * [NetworkReResolveBudget]'s few times. Resolved again through [loadPlugin] at [positionMs] --
      * where the player was, not the saved progress, which can be minutes older -- and paused if it
      * was ([playWhenReady] false). False: not taken, the player re-prepares in place instead.
+     *
+     * The player on screen stays until the new Stream IS there: a resolve that fails (the network
+     * still down) calls [reprepare] instead of showing the plugin's error -- it used to drop the
+     * item first and turn a passing outage into an error screen (review 2026-10-01).
      */
-    fun onVodNetworkReResolve(positionMs: Long, playWhenReady: Boolean): Boolean {
+    fun onVodNetworkReResolve(positionMs: Long, playWhenReady: Boolean, reprepare: () -> Unit): Boolean {
         val item = _magisItem.value ?: return false
         val live = com.arkiv.player.data.plugin.PluginIds.isLiveEpisode(item.episodeId)
         if (!VodNetworkRecovery.canReResolve(item.kind, live, hostQuestionOpen = hostPromptJob?.isActive == true)) return false
@@ -1303,12 +1307,13 @@ class PlayerViewModel internal constructor(
             return false
         }
         Log.w(PLAY, "network recovery: ${item.episodeId} lost its connection -> resolving again at ${positionMs}ms paused=${!playWhenReady}")
-        // Through null first, like [onMagisExoError]'s retry: an equal PlayerData (same URL) would be dropped by StateFlow.
-        _magisItem.value = null
         viewModelScope.launch {
             // Another title loaded meanwhile: its own load decides.
             if (loadedEpisodeId != item.episodeId) return@launch
-            loadPlugin(item.episodeId, resumeAt = positionMs, startPaused = !playWhenReady)
+            loadPlugin(item.episodeId, resumeAt = positionMs, startPaused = !playWhenReady, onResolveFailed = {
+                Log.w(PLAY, "network recovery: resolving ${item.episodeId} failed too -> re-preparing in place")
+                if (_magisItem.value === item) reprepare()
+            })
         }
         return true
     }
@@ -1758,7 +1763,12 @@ class PlayerViewModel internal constructor(
      * [resumeAt]/[startPaused]: only the network recovery's re-resolve ([onVodNetworkReResolve]),
      * which resumes where the player was, and paused if it was; null = the saved progress, playing.
      */
-    private suspend fun loadPlugin(episodeId: String, resumeAt: Long? = null, startPaused: Boolean = false) {
+    private suspend fun loadPlugin(
+        episodeId: String,
+        resumeAt: Long? = null,
+        startPaused: Boolean = false,
+        onResolveFailed: (() -> Unit)? = null,
+    ) {
         val pluginId = com.arkiv.player.data.plugin.PluginIds.pluginIdOfEpisode(episodeId)
         val access = pluginAccessFor(pluginId, plugins)
         val blocked = access.blockedMessage()
@@ -1791,8 +1801,12 @@ class PlayerViewModel internal constructor(
         Log.w(PLAY, "loadPlugin() episodeId=$episodeId plugin=$pluginId live=$live ref=${ref?.take(16)}…")
         if (ref.isNullOrBlank()) { _error.value = if (live) "No se encontró el canal de $name" else "No se encontró la fuente de $name"; return }
 
-        _playlist.value = null
-        _webExtras.value = null
+        // The network recovery keeps the player on screen as it is (extras included: they rebuild
+        // it) until the new Stream is there.
+        if (onResolveFailed == null) {
+            _playlist.value = null
+            _webExtras.value = null
+        }
         _resolving.value = true
         val resolved = if (plan is PluginLivePlay.Direct) {
             Result.success(plan.playable)
@@ -1809,6 +1823,11 @@ class PlayerViewModel internal constructor(
         if (play == null) {
             val failure = resolved.exceptionOrNull()
             Log.w(PLAY, "loadPlugin() failed: ${failure?.message}", failure)
+            // The network recovery's re-resolve: the player on screen stays and tries in place.
+            if (onResolveFailed != null) {
+                onResolveFailed()
+                return
+            }
             // geo_blocked: the same dialog as a portal-side region block (spec §3.6).
             when (val outcome = PluginLoadFailure.from(failure, name, com.arkiv.player.data.plugin.PluginsPlace.of(isTv))) {
                 is PluginLoadFailure.Blocked -> _blocked.value = outcome.message
@@ -1817,6 +1836,9 @@ class PlayerViewModel internal constructor(
             }
             return
         }
+        // The network recovery's re-resolve may bring back the same URL at the same spot: an equal
+        // PlayerData would be dropped by StateFlow, so through null first, like [onMagisExoError]'s retry.
+        if (onResolveFailed != null) _magisItem.value = null
         // Every freshly-resolved stream starts `retried = false`, even one this same retry branch
         // just brought back: the age gate in `shouldResolveAgain` is what stops a retry loop, not an
         // extra "only the very first stream of this title" restriction -- a long movie whose URL
