@@ -84,7 +84,14 @@ export function validateManifest(text, { knownPermissions = contract.permissions
   if (!Number.isInteger(o.apiVersion)) return bad("apiVersion", 'El campo "apiVersion" debe ser un número entero');
   if (o.apiVersion > contract.maxApiVersion) return bad("apiVersion", "Este plugin necesita una versión más nueva de Kino");
   if (o.apiVersion < 1) return bad("apiVersion", 'El campo "apiVersion" debe ser 1 o mayor');
-  if (!isSafeRelativePath(o.entry) || !o.entry.endsWith(".js")) return bad("entry", 'El campo "entry" debe ser una ruta relativa a un archivo .js');
+  // apiVersion 5's sealedEntry (sealed code). Below that apiVersion it is unknown and ignored like
+  // any other field: an older manifest reaches the entry rule exactly as it always did.
+  const se = m.sealedEntry;
+  const entrySealed = o.apiVersion >= se.apiVersion && Object.prototype.hasOwnProperty.call(o, "sealedEntry");
+  if (entrySealed) {
+    if (Object.prototype.hasOwnProperty.call(o, "entry")) return bad("entry", 'Usa "entry" o "sealedEntry", no los dos');
+    if (!isSafeRelativePath(o.sealedEntry) || !o.sealedEntry.endsWith(se.extension)) return bad("sealedEntry", 'El campo "sealedEntry" debe ser una ruta relativa a un archivo .kjs');
+  } else if (!isSafeRelativePath(o.entry) || !o.entry.endsWith(".js")) return bad("entry", 'El campo "entry" debe ser una ruta relativa a un archivo .js');
   if (!Array.isArray(o.hosts)) return bad("hosts", 'Falta el campo "hosts"');
   // Empty is judged once the settings are read (below), and only from noHostsApiVersion: an older
   // manifest gets the refusal it always got, at the point it always got it.
@@ -174,7 +181,9 @@ export function validateManifest(text, { knownPermissions = contract.permissions
   if (hosts.length === 0 && !(o.settings || []).some((x) => x.type === "url" || (x.type === "list" && Array.isArray(x.fields) && x.fields.some((f) => f.type === "url")))) {
     return bad("hosts", 'El campo "hosts" solo puede estar vacío si el plugin tiene un ajuste de tipo "url"');
   }
-  return { ok: true, manifest: { ...o, hosts: [...new Set(hosts)], capabilities: caps, permissions: o.permissions || [], settings: o.settings || [], insecureHosts, liveStreamHostsAny, streamHostsAny, fetchHostsAny, discoverable, secrets } };
+  // A sealed manifest's `entry` is its sealedEntry (the .kjs), as the app's PluginManifest.entry; `entrySealed` says which (absent on a plain manifest, as before).
+  const sealedFields = entrySealed ? { entry: o.sealedEntry, entrySealed: true } : {};
+  return { ok: true, manifest: { ...o, hosts: [...new Set(hosts)], capabilities: caps, permissions: o.permissions || [], settings: o.settings || [], insecureHosts, liveStreamHostsAny, streamHostsAny, fetchHostsAny, discoverable, secrets, ...sealedFields } };
 }
 
 /**

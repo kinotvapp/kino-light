@@ -1,7 +1,7 @@
 {
-  "$comment": "Kino plugin contract, apiVersion 1, 2, 3 and 4. The single source of truth for every number and rule a plugin meets. The app checks each value against its own code, and a test in the app pins this file to it; sdk/validate.mjs, sdk/run.mjs and the guide's tables read this file.",
-  "apiVersion": 4,
-  "maxApiVersion": 4,
+  "$comment": "Kino plugin contract, apiVersion 1, 2, 3, 4 and 5. The single source of truth for every number and rule a plugin meets. The app checks each value against its own code, and a test in the app pins this file to it; sdk/validate.mjs, sdk/run.mjs and the guide's tables read this file.",
+  "apiVersion": 5,
+  "maxApiVersion": 5,
   "capabilities": {
     "names": ["search", "home", "browse", "episodes", "resolve", "download", "drm", "channels"],
     "required": ["resolve"],
@@ -34,7 +34,8 @@
     "streamHosts": { "value": "any", "apiVersion": 4 },
     "fetchHosts": { "value": "any", "apiVersion": 4 },
     "discoverable": { "default": true },
-    "secrets": { "apiVersion": 4, "namePattern": "^[A-Za-z][A-Za-z0-9_]{0,31}$", "maxSecrets": 16, "maxValueBytes": 4096, "prefix": "kino-sealed:v1:" }
+    "secrets": { "apiVersion": 4, "namePattern": "^[A-Za-z][A-Za-z0-9_]{0,31}$", "maxSecrets": 16, "maxValueBytes": 4096, "prefix": "kino-sealed:v1:" },
+    "sealedEntry": { "apiVersion": 5, "fromApp": "0.9.46", "extension": ".kjs", "magic": "KSC1", "formatVersion": 1, "alg": 1, "compressions": [0, 1], "flags": 1, "headerBytes": 44, "minBytes": 169, "maxPlainBytes": 4194304, "recommendedMaxPlainBytes": 2097152, "consentLine": "El código de este plugin está cifrado" }
   },
   "hostRules": {
     "labelPattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",

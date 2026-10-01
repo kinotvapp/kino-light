@@ -80,6 +80,19 @@ class PluginContractParityTest {
         assertEquals(SealedSecrets.MAX_SECRETS, secrets.getInt("maxSecrets"))
         assertEquals(SealedSecrets.MAX_PLAINTEXT_BYTES, secrets.getInt("maxValueBytes"))
         assertEquals(SealedSecrets.PREFIX_V1, secrets.getString("prefix"))
+        val code = m.getJSONObject("sealedEntry")
+        assertEquals(ManifestParser.SEALED_CODE_API_VERSION, code.getInt("apiVersion"))
+        assertEquals(SealedCode.EXTENSION, code.getString("extension"))
+        assertEquals(SealedCode.MAGIC, code.getString("magic"))
+        assertEquals(SealedCode.FORMAT_VERSION, code.getInt("formatVersion"))
+        assertEquals(SealedCode.ALG_X25519_AES_GCM, code.getInt("alg"))
+        assertEquals(listOf(SealedCode.COMPRESSION_NONE, SealedCode.COMPRESSION_DEFLATE), code.getJSONArray("compressions").let { a -> (0 until a.length()).map { a.getInt(it) } })
+        assertEquals(SealedCode.FLAG_SIGNED, code.getInt("flags"))
+        assertEquals(SealedCode.HEADER_BYTES, code.getInt("headerBytes"))
+        assertEquals(SealedCode.MIN_BYTES, code.getInt("minBytes"))
+        assertEquals(SealedCode.MAX_PLAIN_BYTES, code.getInt("maxPlainBytes"))
+        assertEquals(SealedCode.RECOMMENDED_MAX_PLAIN_BYTES, code.getInt("recommendedMaxPlainBytes"))
+        assertEquals(PluginConsent.SEALED_CODE_LINE, code.getString("consentLine"))
     }
 
     @Test fun `host rules`() {
