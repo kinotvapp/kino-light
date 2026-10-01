@@ -323,7 +323,7 @@ class RemuxHlsServer(
                                 "start ${fmt(s.plannedStartSec)}s, ended=${s.timelineComplete()}",
                         )
                     }
-                    sendText(out, RemuxHls.mediaPlaylist(segments, s.timelineComplete()), head)
+                    sendText(out, RemuxHls.mediaPlaylist(segments, s.timelineComplete(), s.plannedStartSec), head)
                 }
             }
             "init.mp4" -> sendInit(out, s, head)
@@ -497,11 +497,21 @@ object RemuxHls {
         return at
     }
 
-    fun mediaPlaylist(segments: List<Segment>, complete: Boolean): String = buildString {
+    /**
+     * The media playlist. [startSec], when the cast has planned one, goes out as
+     * `#EXT-X-START:TIME-OFFSET=…,PRECISE=YES` so the receiver begins exactly there. Without it the
+     * KALLEY, loaded "from 0" on a growing (EVENT) playlist, first asked for segment 46 (~406 s) --
+     * picking its own starting point as for a live stream -- and only came back to s0 after ~40 s
+     * (2026-10-01).
+     */
+    fun mediaPlaylist(segments: List<Segment>, complete: Boolean, startSec: Double? = null): String = buildString {
         val target = maxOf(TARGET_DURATION, Math.ceil(segments.maxOfOrNull { it.durationSec } ?: 0.0).toInt())
         append("#EXTM3U\n")
         append("#EXT-X-VERSION:7\n")
         append("#EXT-X-TARGETDURATION:$target\n")
+        if (startSec != null) {
+            append(String.format(java.util.Locale.US, "#EXT-X-START:TIME-OFFSET=%.3f,PRECISE=YES\n", startSec.coerceAtLeast(0.0)))
+        }
         append("#EXT-X-MEDIA-SEQUENCE:0\n")
         append("#EXT-X-PLAYLIST-TYPE:").append(if (complete) "VOD" else "EVENT").append('\n')
         append("#EXT-X-INDEPENDENT-SEGMENTS\n")
@@ -622,6 +632,13 @@ object RemuxHls {
      */
     fun startIfCovered(wantedMs: Long, availableSec: Double, leadSec: Double): Long? =
         if (availableSec * 1000.0 >= wantedMs + leadSec * 1000.0) wantedMs.coerceAtLeast(0L) else null
+
+    /**
+     * The start position handed to the receiver for a remux load: never exactly 0. Loaded with
+     * 0 ms on a growing playlist the KALLEY started at ~406 s instead (see [mediaPlaylist]): a zero
+     * start reads as "none given" there, so the beginning is asked for as 1 ms.
+     */
+    fun loadStartMs(startMs: Long): Long = startMs.coerceAtLeast(1L)
 
     /** A phone seek while the remux is still being written, held inside what can be played. */
     fun clampSeek(targetMs: Long, availableSec: Double, complete: Boolean, marginSec: Double = 10.0): Long {

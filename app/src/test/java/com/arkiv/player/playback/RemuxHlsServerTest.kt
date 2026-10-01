@@ -237,6 +237,15 @@ class RemuxHlsServerTest {
     }
 
     @Test
+    fun `the playlist the TV reads starts where the cast was planned`() {
+        val remux = GrowingRemux()
+        remux.grow(remux.bytes.size)
+        val media = server.serve("key", remux.locate)!!.replace("master.m3u8", "media.m3u8")
+        server.planStart("key", 3_000L)
+        assertTrue(String(get(media).body).contains("#EXT-X-START:TIME-OFFSET=3.000,PRECISE=YES"))
+    }
+
+    @Test
     fun `an earlier remux is only reused for its own key, and only when it holds something playable`() {
         val remux = GrowingRemux()
         val index = Fmp4Fixture.indexOf(remux.source)

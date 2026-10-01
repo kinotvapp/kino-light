@@ -94,4 +94,25 @@ class RemuxHlsTest {
         assertEquals(0L, RemuxHls.clampSeek(20_000, availableSec = 5.0, complete = false))
         assertEquals(3_600_000L, RemuxHls.clampSeek(3_600_000, availableSec = 60.0, complete = true))
     }
+
+    @Test
+    fun `a planned start goes in the playlist, the very beginning included`() {
+        val segments = listOf(RemuxHls.Segment(0, 0, 6.0), RemuxHls.Segment(1, 1, 6.0))
+        assertTrue(RemuxHls.mediaPlaylist(segments, complete = false, startSec = 0.0).contains("#EXT-X-START:TIME-OFFSET=0.000,PRECISE=YES\n"))
+        assertTrue(RemuxHls.mediaPlaylist(segments, complete = false, startSec = 499.521).contains("#EXT-X-START:TIME-OFFSET=499.521,PRECISE=YES\n"))
+        assertFalse(RemuxHls.mediaPlaylist(segments, complete = false).contains("EXT-X-START"))
+    }
+
+    @Test
+    fun `the receiver is never loaded at exactly zero`() {
+        assertEquals(1L, RemuxHls.loadStartMs(0L))
+        assertEquals(499_521L, RemuxHls.loadStartMs(499_521L))
+    }
+
+    @Test
+    fun `segment start times add up the ones before`() {
+        val segments = listOf(RemuxHls.Segment(0, 1, 10.167), RemuxHls.Segment(2, 3, 10.0), RemuxHls.Segment(4, 5, 10.0))
+        assertEquals(0.0, RemuxHls.startOf(segments, 0), 1e-9)
+        assertEquals(20.167, RemuxHls.startOf(segments, 2), 1e-9)
+    }
 }

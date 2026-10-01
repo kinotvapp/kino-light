@@ -1159,6 +1159,7 @@ private fun PlayerContent(
                         graph.remuxHlsServer.availableSec(key),
                         graph.remuxHlsServer.isComplete(key),
                     ).also { graph.remuxHlsServer.planStart(key, it) }
+                        .let { com.arkiv.player.playback.RemuxHls.loadStartMs(it) }
                 }
                 remuxLocal != null || isPluginLiveCast(item) -> 0L
                 else -> startPositionMs
