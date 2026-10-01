@@ -70,6 +70,9 @@ class RemuxHlsServer(
         /** Start of the last segment the TV asked for, in seconds of the title. */
         @Volatile var lastRequestedSec: Double? = null
 
+        /** A request far behind the TV, held until the next one confirms it (see [RemuxPacing.onSegmentRequest]). */
+        @Volatile var heldBackSec: Double? = null
+
         /** Seconds this run of the remux has written (it always starts at 0:00). */
         @Volatile var mainSec: Double = 0.0
 
@@ -144,6 +147,7 @@ class RemuxHlsServer(
         val s = source?.takeIf { it.key == key } ?: return
         s.plannedStartSec = startMs.coerceAtLeast(0L) / 1000.0
         s.lastRequestedSec = null
+        s.heldBackSec = null
         s.playlistLogged = false
     }
 
@@ -337,7 +341,14 @@ class RemuxHlsServer(
                     out.write(response("404 Not Found", "text/plain", 0))
                 } else {
                     val at = RemuxHls.startOf(segments, n)
-                    if (!head) s.lastRequestedSec = at
+                    if (!head) {
+                        val tv = RemuxPacing.onSegmentRequest(s.lastRequestedSec, s.plannedStartSec, s.heldBackSec, at)
+                        if (tv.heldBackSec != null) {
+                            com.arkiv.player.cast.CastDiag.i("TV probe of $name at ${fmt(at)}s, far behind ${fmt(s.lastRequestedSec ?: s.plannedStartSec)}s: not taken as its position yet")
+                        }
+                        s.lastRequestedSec = tv.lastRequestedSec
+                        s.heldBackSec = tv.heldBackSec
+                    }
                     val sent = runCatching { sendSegment(out, s, segment, head) }
                     com.arkiv.player.cast.CastDiag.i(
                         "TV $method $name at ${fmt(at)}s (${String.format(java.util.Locale.US, "%.1f", segment.durationSec)}s) " +

@@ -2,6 +2,7 @@ package com.arkiv.player.playback
 
 import com.arkiv.player.playback.RemuxPacing.MAX_LEAD_SEC
 import com.arkiv.player.playback.RemuxPacing.RESUME_LEAD_SEC
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -56,5 +57,32 @@ class RemuxPacingTest {
     @Test
     fun `past the head's end it is paced like any remux`() {
         assertTrue(pause(anchor = 1_500.0, main = 1_700.0, playable = 1_700.0, headEnd = 1_630.0))
+    }
+
+    // ---- where the TV is, from what it asks for ----
+
+    @Test
+    fun `an isolated probe far behind the TV does not move its position`() {
+        // Measured 2026-10-01: cast planned at 2580 s, Shaka fetched s157 (1377 s) first.
+        val probe = RemuxPacing.onSegmentRequest(lastRequestedSec = null, plannedStartSec = 2_580.0, heldBackSec = null, requestedSec = 1_377.0)
+        assertEquals(RemuxPacing.TvRequests(null, 1_377.0), probe)
+        // Then the segment it plays: taken, and the probe forgotten.
+        val playing = RemuxPacing.onSegmentRequest(probe.lastRequestedSec, 2_580.0, probe.heldBackSec, 2_576.0)
+        assertEquals(RemuxPacing.TvRequests(2_576.0, null), playing)
+    }
+
+    @Test
+    fun `a seek backwards is taken once the next request follows it`() {
+        val first = RemuxPacing.onSegmentRequest(2_600.0, 2_580.0, null, 1_200.0)
+        assertEquals(RemuxPacing.TvRequests(2_600.0, 1_200.0), first)
+        val next = RemuxPacing.onSegmentRequest(first.lastRequestedSec, 2_580.0, first.heldBackSec, 1_206.0)
+        assertEquals(RemuxPacing.TvRequests(1_206.0, null), next)
+    }
+
+    @Test
+    fun `requests near or ahead of the TV are taken as they come`() {
+        assertEquals(RemuxPacing.TvRequests(2_560.0, null), RemuxPacing.onSegmentRequest(2_600.0, null, null, 2_560.0))
+        assertEquals(RemuxPacing.TvRequests(3_000.0, null), RemuxPacing.onSegmentRequest(2_600.0, null, null, 3_000.0))
+        assertEquals(RemuxPacing.TvRequests(10.0, null), RemuxPacing.onSegmentRequest(null, null, null, 10.0))
     }
 }

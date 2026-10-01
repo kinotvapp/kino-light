@@ -36,6 +36,43 @@ object RemuxPacing {
     const val CATCH_UP_SPEED = 3.0
 
     /**
+     * How far behind where the TV is a segment request may land and still be taken at face value.
+     * Further back is a probe until the next request confirms it: the receiver's Shaka fetches one
+     * stray segment (s157 at 1377 s, with the cast starting at 2580 s, 2026-10-01) before the ones
+     * it plays, and taking it as the TV's position paused the remux for nothing.
+     */
+    const val PROBE_BEHIND_SEC = 60.0
+
+    /**
+     * How close after a held-back request the next one has to land to confirm it: a real seek
+     * backwards plays on, so its next request is the following segment or two.
+     */
+    const val CONFIRM_WITHIN_SEC = 30.0
+
+    /** The TV's position as the pacing tracks it: see [onSegmentRequest]. */
+    data class TvRequests(val lastRequestedSec: Double?, val heldBackSec: Double?)
+
+    /**
+     * The TV asked for the segment starting at [requestedSec]. Taken as its position unless it is
+     * more than [PROBE_BEHIND_SEC] behind where it was ([lastRequestedSec], else [plannedStartSec]);
+     * such a request is held ([heldBackSec]) and only taken when the next one follows it within
+     * [CONFIRM_WITHIN_SEC] -- a seek backwards. An isolated probe changes nothing.
+     */
+    fun onSegmentRequest(
+        lastRequestedSec: Double?,
+        plannedStartSec: Double?,
+        heldBackSec: Double?,
+        requestedSec: Double,
+    ): TvRequests {
+        val anchor = lastRequestedSec ?: plannedStartSec ?: return TvRequests(requestedSec, null)
+        if (requestedSec >= anchor - PROBE_BEHIND_SEC) return TvRequests(requestedSec, null)
+        if (heldBackSec != null && requestedSec > heldBackSec && requestedSec - heldBackSec <= CONFIRM_WITHIN_SEC) {
+            return TvRequests(requestedSec, null)
+        }
+        return TvRequests(lastRequestedSec, requestedSec)
+    }
+
+    /**
      * Should the remux wait now?
      *
      * @param anchorSec where the TV is in the title: the start of the last segment it requested,
