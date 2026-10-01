@@ -130,8 +130,20 @@ val GatewayEpisode.seasonOrOne: Int get() = (season ?: 1).coerceAtLeast(1)
  */
 fun chapterListKey(season: Int, number: Int): String = "$season-$number"
 
-/** The chapter's key in the page's lists (see [chapterListKey]). */
-val GatewayEpisode.listKey: String get() = chapterListKey(seasonOrOne, number)
+/**
+ * The chapter's key in the page's lists (see [chapterListKey]). Unlike [seasonOrOne], season 0
+ * (specials) keeps its own key: S0E1 is listed beside S1E1 and both used to become "1-1", a
+ * duplicate key that crashes the LazyColumn/LazyRow (ERRORES-5EM/7ME).
+ */
+val GatewayEpisode.listKey: String get() = chapterListKey(season?.coerceAtLeast(0) ?: 1, number)
+
+/**
+ * The chapters a page may list: the first of each [listKey], in the source's order. A source that
+ * repeats a number inside one season would otherwise hand the lists a duplicate key, which Compose
+ * rejects with a crash; the repeat could not be told apart in the library either
+ * (`PluginEntities.chapterId` keys by season and number too).
+ */
+fun uniqueChapters(chapters: List<GatewayEpisode>): List<GatewayEpisode> = chapters.distinctBy { it.listKey }
 
 /** The season to print next to this chapter: its own when the source gave one, else [fallback]. */
 fun GatewayEpisode.labelSeason(fallback: Int?): Int? = season?.let { seasonOrOne } ?: fallback
