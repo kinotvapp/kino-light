@@ -14,13 +14,32 @@ object CastReconnect {
     /**
      * The request to load on a (re)connect, or null when there is nothing safe to replay: nothing
      * pending, or its URL is no longer served ([stillServed] false) -- whoever owns the title then
-     * builds a fresh one from the current state. A replay resumes at [lastKnownMs], the last
-     * position the receiver reported for it, unless it is live (no position to resume).
+     * builds a fresh one from the current state. A replay resumes at the best position known
+     * ([resumeAt]), unless it is live (no position to resume).
      */
-    fun replay(pending: CastRequest?, stillServed: (String) -> Boolean, lastKnownMs: Long?): CastRequest? {
+    fun replay(pending: CastRequest?, stillServed: (String) -> Boolean, lastKnownMs: Long?, savedMs: Long? = null): CastRequest? {
         pending ?: return null
         if (!stillServed(pending.uri)) return null
-        if (pending.asLive || pending.durationMs <= 0L || lastKnownMs == null || lastKnownMs <= 0L) return pending
-        return pending.copy(startPositionMs = lastKnownMs)
+        if (pending.asLive || pending.durationMs <= 0L) return pending
+        val at = resumeAt(pending, lastKnownMs, savedMs)
+        return if (at == pending.startPositionMs) pending else pending.copy(startPositionMs = at)
     }
+
+    /**
+     * Where a replay of [pending] starts, freshest first: [lastKnownMs], the receiver's last
+     * report; the request's own start when it was a real position; [savedMs], the progress saved
+     * for the title. Only with none of them, the request's start as it was. A load "from the top"
+     * ([CastIdleWatch.TOP_MS]) is not a position: it replayed a title the TV had been playing for
+     * a while from 0:00 whenever the receiver dropped before reporting.
+     */
+    fun resumeAt(pending: CastRequest, lastKnownMs: Long?, savedMs: Long?): Long =
+        lastKnownMs?.takeIf { it > CastIdleWatch.TOP_MS }
+            ?: pending.startPositionMs.takeIf { it > CastIdleWatch.TOP_MS }
+            ?: savedMs?.takeIf { it > CastIdleWatch.TOP_MS }
+            ?: pending.startPositionMs
+
+    /** Is the saved progress worth reading for a replay of [pending] ([resumeAt] would use it)? */
+    fun needsSaved(pending: CastRequest, lastKnownMs: Long?): Boolean =
+        !pending.asLive && pending.durationMs > 0L &&
+            (lastKnownMs ?: 0L) <= CastIdleWatch.TOP_MS && pending.startPositionMs <= CastIdleWatch.TOP_MS
 }

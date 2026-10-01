@@ -48,4 +48,20 @@ class CastReconnectTest {
         val live = remux.copy(startPositionMs = 0, durationMs = 0, asLive = true, hlsFmp4 = false)
         assertSame(live, CastReconnect.replay(live, stillServed = { true }, lastKnownMs = 90_000))
     }
+
+    @Test
+    fun `a replay that knows nothing of a load from the top resumes at the saved progress, not 0`() {
+        val fromTop = remux.copy(startPositionMs = CastIdleWatch.TOP_MS)
+        assertEquals(true, CastReconnect.needsSaved(fromTop, lastKnownMs = null))
+        assertEquals(true, CastReconnect.needsSaved(fromTop, lastKnownMs = CastIdleWatch.TOP_MS))
+        assertEquals(412_000L, CastReconnect.replay(fromTop, { true }, lastKnownMs = null, savedMs = 412_000)!!.startPositionMs)
+        // The receiver's report and a real start still come first, and need no saved progress.
+        assertEquals(false, CastReconnect.needsSaved(fromTop, lastKnownMs = 90_000))
+        assertEquals(90_000L, CastReconnect.replay(fromTop, { true }, lastKnownMs = 90_000, savedMs = 412_000)!!.startPositionMs)
+        assertEquals(false, CastReconnect.needsSaved(remux, lastKnownMs = null))
+        assertSame(remux, CastReconnect.replay(remux, { true }, lastKnownMs = null, savedMs = 412_000))
+        // Nothing known anywhere: the request as it was.
+        assertSame(fromTop, CastReconnect.replay(fromTop, { true }, lastKnownMs = null, savedMs = null))
+        assertSame(fromTop, CastReconnect.replay(fromTop, { true }, lastKnownMs = null, savedMs = 0))
+    }
 }

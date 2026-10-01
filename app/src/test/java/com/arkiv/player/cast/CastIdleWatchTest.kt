@@ -173,4 +173,33 @@ class CastIdleWatchTest {
         watch.onNewMedia(ep, startMs = 0)
         assertEquals(Decision.Ask(null), watch.onLoadStalled())
     }
+
+    @Test
+    fun `a remux load from the top (1 ms) is not a known position`() {
+        watch.onNewMedia(ep, CastIdleWatch.TOP_MS)
+        assertNull(watch.lastKnownMs(ep))
+        watch.onNewMedia(ep, 2L)
+        assertEquals(2L, watch.lastKnownMs(ep))
+    }
+
+    @Test
+    fun `a question dismissed without an answer is asked again on the next stall`() {
+        watch.onNewMedia(ep, startMs = 170_093)
+        watch.onOwnLoad()
+        assertEquals(Decision.Ask(170_093), watch.onLoadStalled())
+        assertEquals(Decision.Ignore, watch.onLoadStalled())
+        watch.onDismissed()
+        assertEquals(Decision.Ask(170_093), watch.onLoadStalled())
+    }
+
+    @Test
+    fun `only the media of the last load disarms the load watchdog`() {
+        val old = "http://192.168.2.11:39919/r/aaaa/master.m3u8"
+        val new = "http://192.168.2.11:39919/r/bbbb/master.m3u8"
+        assertEquals(false, CastIdleWatch.isLoadedMedia(old, new))
+        assertEquals(true, CastIdleWatch.isLoadedMedia(new, new))
+        // Unknown on either side: as before.
+        assertEquals(true, CastIdleWatch.isLoadedMedia(null, new))
+        assertEquals(true, CastIdleWatch.isLoadedMedia(old, null))
+    }
 }

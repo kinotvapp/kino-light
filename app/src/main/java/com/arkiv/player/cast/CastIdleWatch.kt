@@ -58,10 +58,11 @@ class CastIdleWatch(private val clock: () -> Long = System::currentTimeMillis) {
      * where the person was. Keeping the receiver's position from an EARLIER load of the same title
      * retried a new cast from where the previous session had been (`Retry(fromMs=511422)` for a
      * load sent from 642833 ms, 2026-10-01); a start of 0 knows nothing, and a retry then uses the
-     * request's own start.
+     * request's own start. A remux load "from the top" goes out as [TOP_MS] and knows nothing
+     * either: taken as a position, those 1 ms beat the phone's resume point in every fallback.
      */
     fun onNewMedia(episodeId: String, startMs: Long = 0L) {
-        lastKnownMs = startMs.takeIf { it > 0L }
+        lastKnownMs = startMs.takeIf { it > TOP_MS }
         this.episodeId = episodeId
         retried = false
         asking = false
@@ -94,6 +95,14 @@ class CastIdleWatch(private val clock: () -> Long = System::currentTimeMillis) {
 
     /** The person chose "Reintentar": one load, and a new failure asks again. */
     fun onUserRetry() {
+        asking = false
+    }
+
+    /**
+     * The question was dismissed without an answer: a later stall of the same media asks again.
+     * It stayed "asked" before, and "Cargando en el receptor…" could hang with nobody asking.
+     */
+    fun onDismissed() {
         asking = false
     }
 
@@ -142,6 +151,19 @@ class CastIdleWatch(private val clock: () -> Long = System::currentTimeMillis) {
     }
 
     companion object {
+        /**
+         * The start a remux load "from the top" is sent with (`RemuxHls.loadStartMs`: a zero start
+         * reads as "none given" on the KALLEY): not a position anybody was at.
+         */
+        const val TOP_MS = 1L
+
+        /**
+         * Is the media the receiver reports ([statusUrl], its content URL) the one of the last load
+         * ([loadedUrl])? Unknown on either side counts as yes, as before.
+         */
+        fun isLoadedMedia(statusUrl: String?, loadedUrl: String?): Boolean =
+            statusUrl == null || loadedUrl == null || statusUrl == loadedUrl
+
         /** After our own load, an INTERRUPTED on the receiver is the old media making way. */
         const val LOAD_GRACE_MS = 10_000L
 

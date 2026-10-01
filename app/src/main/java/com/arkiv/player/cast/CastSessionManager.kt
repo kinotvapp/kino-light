@@ -133,6 +133,12 @@ class CastSessionManager(
     @Volatile private var loadSentAt = 0L
 
     /**
+     * The URL of the last load, so the watchdog over [loadSentAt] is only cleared by THAT media
+     * playing: on a reload (another audio) the old item's PLAYING arrives first and disarmed it.
+     */
+    @Volatile private var loadedUri: String? = null
+
+    /**
      * Player screens in the foreground right now. While one is, a (re)connect replays nothing: the
      * screen sends its own fresh load for what it shows the moment the session is up, and the
      * replay landed 6 ms ahead of it -- two LOADs on one connect, the older one stale (a live
@@ -399,6 +405,7 @@ class CastSessionManager(
 
     private suspend fun load(r: CastRequest) = withContext(Dispatchers.Main) {
         idleWatch.onOwnLoad()
+        loadedUri = r.uri
         loadSentAt = System.currentTimeMillis()
         android.util.Log.i(
             TAG,
@@ -460,8 +467,8 @@ class CastSessionManager(
             pending = null
             return
         }
-        val replay = CastReconnect.replay(r, stillServed, idleWatch.lastKnownMs(r.episodeId))
-        if (replay == null) {
+        val lastKnown = idleWatch.lastKnownMs(r.episodeId)
+        if (CastReconnect.replay(r, stillServed, lastKnown) == null) {
             android.util.Log.w(
                 TAG,
                 "session available · the pending load's server/token is gone, NOT replaying it " +
@@ -470,7 +477,20 @@ class CastSessionManager(
             pending = null
             return
         }
-        scope.launch { load(replay) }
+        scope.launch {
+            // Nothing known of this load (the receiver never reported, and it went out "from the
+            // top"): the progress saved for the title is the best there is, never 0:00 by default.
+            val saved = if (CastReconnect.needsSaved(r, lastKnown)) {
+                runCatching { repository.getPlayback(r.episodeId) }.getOrNull()
+                    ?.takeIf { !it.deleted }?.let { it.positionMs - r.offsetMs }
+            } else {
+                null
+            }
+            val replay = CastReconnect.replay(r, stillServed, lastKnown, saved) ?: return@launch
+            android.util.Log.i(TAG, "session available · replaying ${r.episodeId} from ${replay.startPositionMs}ms")
+            runCatching { onReplay(replay) }
+            load(replay)
+        }
     }
 
     private fun watchReceiverStatus() {
@@ -510,8 +530,13 @@ class CastSessionManager(
                 // Playing, paused, buffering or loading.
                 receiverActive = true
                 val playing = status.playerState == MediaStatus.PLAYER_STATE_PLAYING
-                // Paused counts too: the receiver got far enough to have a picture to pause on.
-                if (playing || status.playerState == MediaStatus.PLAYER_STATE_PAUSED) loadSentAt = 0L
+                // Paused counts too: the receiver got far enough to have a picture to pause on. Only
+                // the media of the last load: the one before it still reports PLAYING meanwhile.
+                if ((playing || status.playerState == MediaStatus.PLAYER_STATE_PAUSED) &&
+                    CastIdleWatch.isLoadedMedia(status.mediaInfo?.contentUrl, loadedUri)
+                ) {
+                    loadSentAt = 0L
+                }
                 if (r != null && player.currentMediaItem?.mediaId == r.episodeId) {
                     idleWatch.onPosition(r.episodeId, client.approximateStreamPosition, playing)
                 }
@@ -628,6 +653,8 @@ class CastSessionManager(
     /** The message was dismissed without choosing: the session is left as it is. */
     fun dismissTrouble() {
         _trouble.value = null
+        // A later stall of the same media asks again instead of leaving "Cargando…" up forever.
+        idleWatch.onDismissed()
     }
 
     /**
