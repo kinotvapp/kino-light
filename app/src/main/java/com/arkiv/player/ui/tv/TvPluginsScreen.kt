@@ -339,7 +339,7 @@ internal fun TvPluginsHost(chrome: @Composable (vm: PluginsViewModel, addRequest
             },
         )
     }
-    state.confirmUninstall?.let { PluginUninstallDialog(it, onConfirm = vm::confirmUninstall, onCancel = vm::cancelUninstall) }
+    state.confirmUninstall?.let { PluginUninstallDialog(it, isTv = true, onConfirm = vm::confirmUninstall, onCancel = vm::cancelUninstall) }
     state.configuring?.let { PluginConfigDialog(it, isTv = true, vm = vm) }
 }
 

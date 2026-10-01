@@ -154,15 +154,33 @@ private fun ConsentHostList(hosts: List<String>, newHosts: List<String>, expande
 }
 
 /**
- * "¿Desinstalar X?" — the library keeps its titles, which is said up front. The buttons are the TV's own [TvCompactAction], red while
- * focused like every other dialog's, and focus starts on "Desinstalar": the person just chose "Desinstalar X", and a confirmation that
- * started on "Cancelar" turned the natural second OK into a silent cancel, which TV-box users reported as "the plugin cannot be deleted".
- * Back and "Cancelar" still cancel.
+ * Which buttons "¿Desinstalar X?" draws. The TV's [com.arkiv.player.ui.tv.TvCompactAction] is a tv-material `Surface`, whose
+ * `onClick` only answers the D-pad/keyboard OK: a finger tap on it does nothing. 0.9.44 drew those on the phone too, and neither
+ * "Cancelar" nor "Desinstalar" reacted to a touch (reported by phone users), so the phone gets Material buttons.
+ */
+enum class UninstallDialogButtons {
+    /** Material [TextButton]s, which take touch (and a keyboard). */
+    TOUCH,
+
+    /** [com.arkiv.player.ui.tv.TvCompactAction]s, red while focused, with focus starting on "Desinstalar". */
+    TV;
+
+    companion object {
+        fun forDevice(isTv: Boolean): UninstallDialogButtons = if (isTv) TV else TOUCH
+    }
+}
+
+/**
+ * "¿Desinstalar X?" — the library keeps its titles, which is said up front. On the TV the buttons are the TV's own [TvCompactAction],
+ * red while focused like every other dialog's, and focus starts on "Desinstalar": the person just chose "Desinstalar X", and a
+ * confirmation that started on "Cancelar" turned the natural second OK into a silent cancel, which TV-box users reported as "the plugin
+ * cannot be deleted". On the phone they are touch buttons (see [UninstallDialogButtons]). Back and "Cancelar" still cancel.
  */
 @Composable
-fun PluginUninstallDialog(plugin: InstalledPlugin, onConfirm: () -> Unit, onCancel: () -> Unit) {
+fun PluginUninstallDialog(plugin: InstalledPlugin, isTv: Boolean, onConfirm: () -> Unit, onCancel: () -> Unit) {
+    val buttons = UninstallDialogButtons.forDevice(isTv)
     val confirmFocus = remember { FocusRequester() }
-    FocusWhenReady(confirmFocus)
+    if (buttons == UninstallDialogButtons.TV) FocusWhenReady(confirmFocus)
     Dialog(onDismissRequest = onCancel) {
         Surface(shape = RoundedCornerShape(16.dp), color = ArkivSurface, modifier = Modifier.widthIn(max = 480.dp)) {
             Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -171,11 +189,19 @@ fun PluginUninstallDialog(plugin: InstalledPlugin, onConfirm: () -> Unit, onCanc
                     "Lo que guardaste de este plugin se queda en tu biblioteca, pero no se va a poder ver hasta que lo vuelvas a instalar.",
                     style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary,
                 )
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    com.arkiv.player.ui.tv.TvCompactAction(label = "Cancelar", modifier = Modifier.weight(1f), onClick = onCancel)
-                    com.arkiv.player.ui.tv.TvCompactAction(
-                        label = "Desinstalar", modifier = Modifier.weight(1f).focusRequester(confirmFocus), onClick = onConfirm,
-                    )
+                when (buttons) {
+                    UninstallDialogButtons.TV -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        com.arkiv.player.ui.tv.TvCompactAction(label = "Cancelar", modifier = Modifier.weight(1f), onClick = onCancel)
+                        com.arkiv.player.ui.tv.TvCompactAction(
+                            label = "Desinstalar", modifier = Modifier.weight(1f).focusRequester(confirmFocus), onClick = onConfirm,
+                        )
+                    }
+                    UninstallDialogButtons.TOUCH -> Row(
+                        Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),
+                    ) {
+                        TextButton(onClick = onCancel, modifier = Modifier.focusRing()) { Text("Cancelar") }
+                        TextButton(onClick = onConfirm, modifier = Modifier.focusRing()) { Text("Desinstalar", color = ArkivRed) }
+                    }
                 }
             }
         }
