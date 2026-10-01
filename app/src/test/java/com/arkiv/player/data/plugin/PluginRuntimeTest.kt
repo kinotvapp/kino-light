@@ -61,7 +61,7 @@ class PluginRuntimeTest {
 
     @Test fun `kino globals carry the environment`() = runBlocking {
         val rt = open("export async function home() { return [kino.apiVersion, kino.appVersion, kino.lang] }")
-        assertEquals("[4,\"9.9.9\",\"es-CO\"]", rt.call("home", "null", 5_000))
+        assertEquals("[5,\"9.9.9\",\"es-CO\"]", rt.call("home", "null", 5_000))
     }
 
     @Test fun `kino fetch is async and exposes json`() = runBlocking {

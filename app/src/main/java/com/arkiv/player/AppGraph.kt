@@ -744,13 +744,15 @@ class AppGraph(context: Context) {
 
     private suspend fun openPluginRuntime(id: String): ScriptRuntime {
         val plugin = pluginRegistry.find(id) ?: throw PluginScriptException("El plugin no está instalado")
+        val openStarted = System.nanoTime()
+        var sealedOpenMs = -1L
         // Off Main, lazily (only when this runtime is first needed, never from the startup warm-up):
         // a plain entry is read exactly as before; a sealed one is opened in memory (SealedCode),
         // never written decrypted anywhere.
         val script = try {
             com.arkiv.player.data.plugin.loadEntryScript(
                 pluginStore, plugin, sealAgreement,
-                onSealedOpened = { ms, size -> if (BuildConfig.DEBUG) android.util.Log.i("KinoSealedCode", "[$id] opened in ${ms} ms ($size chars)") },
+                onSealedOpened = { ms, _ -> sealedOpenMs = ms },
             )
         } catch (e: PluginDamagedException) {
             pluginRegistry.markDamaged(id)
@@ -806,6 +808,10 @@ class AppGraph(context: Context) {
         val secrets = pluginSecretsFor(plugin, sealAgreement, tmdbApiKey = { credentialsStore.read()?.tmdbApiKey })
         val host = pluginHostFor(plugin, http, storage, config, cookies, magisPluginBridge, secrets)
         val runtime = PluginRuntime.open(id, script, host, PluginEnv(appVersion = BuildConfig.VERSION_NAME), calls)
+        if (BuildConfig.DEBUG && plugin.manifest.entrySealed) {
+            // Debug diagnostics only: durations and size, never a byte of the script.
+            android.util.Log.i("KinoSealedCode", "[$id] runtime ready in ${(System.nanoTime() - openStarted) / 1_000_000} ms; sealed open $sealedOpenMs ms; ${script.length} chars")
+        }
         // F5: drop this plugin's PluginHttp the moment its runtime is closed -- idle timeout, or an
         // explicit pool.close() from DefaultPluginAdmin's disable/update/uninstall -- so pluginHttps
         // never keeps a stale, no-longer-approved host list around after the runtime that used it is
