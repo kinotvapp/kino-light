@@ -160,3 +160,41 @@ internal fun pluginCastUri(item: PlayerData, lanIp: String?): String? =
 /** A castable plugin item is a live channel: the receiver starts at the live edge, not a saved position. */
 internal fun isPluginLiveCast(item: PlayerData): Boolean =
     item.kind == SourceKind.PLUGIN && PluginIds.isLiveEpisode(item.episodeId)
+
+/**
+ * Tells the cast session that a player screen is in the foreground showing [episodeId]: while it
+ * is, a (re)connect replays no old load (the screen sends its own, newest wins), and outside a
+ * cast a pending load for any other title -- or for anything at all once the screen is left -- is
+ * dropped as stale. See `CastSessionManager.onScreenForeground` / `onScreenTitle`.
+ *
+ * A composable of its own so `PlayerContent`, at ART's verifier limit, carries one call instead of
+ * the effects and the lifecycle observer.
+ */
+@androidx.compose.runtime.Composable
+internal fun CastScreenPresence(session: com.arkiv.player.cast.CastSessionManager?, episodeId: String) {
+    if (session == null) return
+    val owner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(session, owner) {
+        var foreground = false
+        fun set(open: Boolean) {
+            if (open == foreground) return
+            foreground = open
+            session.onScreenForeground(open)
+        }
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            when (event) {
+                androidx.lifecycle.Lifecycle.Event.ON_START -> set(true)
+                androidx.lifecycle.Lifecycle.Event.ON_STOP -> set(false)
+                else -> Unit
+            }
+        }
+        owner.lifecycle.addObserver(observer)
+        onDispose {
+            owner.lifecycle.removeObserver(observer)
+            set(false)
+            // Leaving the player: outside a cast nothing of it may replay at a later connect.
+            session.onScreenTitle(null)
+        }
+    }
+    androidx.compose.runtime.LaunchedEffect(session, episodeId) { session.onScreenTitle(episodeId) }
+}

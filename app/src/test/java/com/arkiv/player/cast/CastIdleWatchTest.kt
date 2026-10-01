@@ -162,4 +162,15 @@ class CastIdleWatchTest {
         assertEquals(Idle.ERROR, Idle.fromCast(4))
         assertEquals(Idle.NONE, Idle.fromCast(42))
     }
+
+    @Test
+    fun `a load that never played asks once, from where the load started`() {
+        watch.onNewMedia(ep, startMs = 170_093)
+        watch.onOwnLoad()
+        assertEquals(Decision.Ask(170_093), watch.onLoadStalled())
+        assertEquals("asked already: no second dialog", Decision.Ignore, watch.onLoadStalled())
+        // A new title gets its own watch.
+        watch.onNewMedia(ep, startMs = 0)
+        assertEquals(Decision.Ask(null), watch.onLoadStalled())
+    }
 }

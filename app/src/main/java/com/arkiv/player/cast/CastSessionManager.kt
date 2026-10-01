@@ -112,6 +112,23 @@ class CastSessionManager(
     /** When an automatic or asked-for retry was sent and has not played yet, or 0. */
     @Volatile private var retryingSince = 0L
 
+    /**
+     * When the last load was handed to the receiver and it has not played since, or 0. The
+     * watchdog over it ([onLoadStalled]) is what keeps "Cargando en el receptor…" from hanging: a
+     * load that fails on the receiver without ever leaving idle reports nothing at all to the phone
+     * (measured 2026-10-01: a live load refused with ERR_CONNECTION_REFUSED took the next load's
+     * video element down with it, and the phone showed "Cargando…" with idle heartbeats for minutes).
+     */
+    @Volatile private var loadSentAt = 0L
+
+    /**
+     * Player screens in the foreground right now. While one is, a (re)connect replays nothing: the
+     * screen sends its own fresh load for what it shows the moment the session is up, and the
+     * replay landed 6 ms ahead of it -- two LOADs on one connect, the older one stale (a live
+     * channel left from before, whose failure killed the title the person had just opened).
+     */
+    private val openScreens = java.util.concurrent.atomic.AtomicInteger(0)
+
     /** Last receiver state/idle reason written to [CastDiag], so only the changes are. */
     private var lastDiagStatus = ""
 
@@ -260,6 +277,7 @@ class CastSessionManager(
                 keepAlive(false, "")
                 unwatchReceiverStatus()
                 _trouble.value = null
+                loadSentAt = 0L
             }
         })
         // The one case the listener does NOT cover: starting the app with a session already alive
@@ -368,6 +386,7 @@ class CastSessionManager(
 
     private suspend fun load(r: CastRequest) = withContext(Dispatchers.Main) {
         idleWatch.onOwnLoad()
+        loadSentAt = System.currentTimeMillis()
         android.util.Log.i(
             TAG,
             "loading on the receiver · mime=${r.mimeType} · from=${r.startPositionMs}ms · ${com.arkiv.player.dlna.DlnaXml.safeUrl(r.uri)}",
@@ -420,6 +439,14 @@ class CastSessionManager(
             android.util.Log.w(TAG, "session available but nothing pending: nothing will be loaded")
             return
         }
+        if (openScreens.get() > 0) {
+            // Newest request wins, one LOAD per connect: the open player screen builds a fresh one
+            // from what it shows (see [openScreens]). The old one is dropped, so a screen that
+            // ends up not casting leaves no stale title behind for the bar or a later reconnect.
+            android.util.Log.i(TAG, "session available · a player screen is open and sends its own load: NOT replaying ${r.episodeId}")
+            pending = null
+            return
+        }
         val replay = CastReconnect.replay(r, stillServed, idleWatch.lastKnownMs(r.episodeId))
         if (replay == null) {
             android.util.Log.w(
@@ -470,6 +497,8 @@ class CastSessionManager(
                 // Playing, paused, buffering or loading.
                 receiverActive = true
                 val playing = status.playerState == MediaStatus.PLAYER_STATE_PLAYING
+                // Paused counts too: the receiver got far enough to have a picture to pause on.
+                if (playing || status.playerState == MediaStatus.PLAYER_STATE_PAUSED) loadSentAt = 0L
                 if (r != null && player.currentMediaItem?.mediaId == r.episodeId) {
                     idleWatch.onPosition(r.episodeId, client.approximateStreamPosition, playing)
                 }
@@ -525,6 +554,42 @@ class CastSessionManager(
      */
     fun lastKnownPositionMs(episodeId: String): Long? = idleWatch.lastKnownMs(episodeId)
 
+    /**
+     * A load the receiver never got to play within [LOAD_STALL_MS]: ask ("Reintentar" / "Ver en el
+     * celular") instead of leaving "Cargando en el receptor…" up forever. A retry in course has its
+     * own watch ([onRetryStalled]). Main thread.
+     */
+    private fun onLoadStalled() {
+        loadSentAt = 0L
+        val r = pending ?: return
+        if (player.isPlaying || retryingSince > 0L) return
+        val decision = idleWatch.onLoadStalled()
+        android.util.Log.w(TAG, "the load never played · ${LOAD_STALL_MS}ms · ep=${r.episodeId} → $decision")
+        if (decision is CastIdleWatch.Decision.Ask) {
+            reportFailure("load_never_played")
+            _trouble.value = Trouble(r.title, retrying = false)
+        }
+    }
+
+    /**
+     * A player screen came to the foreground showing [episodeId] (or left it, [episodeId] null).
+     * Outside a cast, a pending request for anything else is stale -- left from a title the person
+     * moved away from -- and is dropped so no later connect replays it. Inside a cast it stays:
+     * the cast goes on with the player closed, and the bar and the progress save read it.
+     */
+    fun onScreenTitle(episodeId: String?) {
+        if (_casting.value) return
+        val p = pending ?: return
+        if (p.episodeId == episodeId) return
+        android.util.Log.i(TAG, "dropping the stale pending load of ${p.episodeId} (screen now on ${episodeId ?: "nothing"})")
+        pending = null
+    }
+
+    /** A player screen entered ([open] true) or left the foreground. See [openScreens]. */
+    fun onScreenForeground(open: Boolean) {
+        if (open) openScreens.incrementAndGet() else openScreens.updateAndGet { (it - 1).coerceAtLeast(0) }
+    }
+
     /** "Reintentar": one more load from where the receiver last was. */
     fun retryAfterTrouble() {
         val r = pending ?: run { _trouble.value = null; return }
@@ -540,6 +605,10 @@ class CastSessionManager(
      */
     fun watchOnPhone() {
         _trouble.value = null
+        // The person chose the phone: nothing of this title may come back on its own at the next
+        // connect (the replay would load it over whatever they pick next).
+        pending = null
+        loadSentAt = 0L
         scope.launch(Dispatchers.Main) { runCatching { castContext.sessionManager.endCurrentSession(true) } }
     }
 
@@ -566,6 +635,10 @@ class CastSessionManager(
                 val since = retryingSince
                 if (since > 0L && System.currentTimeMillis() - since > RETRY_STALL_MS) {
                     withContext(Dispatchers.Main) { onRetryStalled() }
+                }
+                val loadAt = loadSentAt
+                if (loadAt > 0L && System.currentTimeMillis() - loadAt > LOAD_STALL_MS) {
+                    withContext(Dispatchers.Main) { onLoadStalled() }
                 }
                 val request = pending
                 if (request == null) {
@@ -632,5 +705,7 @@ class CastSessionManager(
         const val STUCK_TICKS = 6
         /** How long a retry may go without playing before the person is asked. */
         const val RETRY_STALL_MS = 60_000L
+        /** How long any load may go without playing (or pausing) before the person is asked. */
+        const val LOAD_STALL_MS = 45_000L
     }
 }

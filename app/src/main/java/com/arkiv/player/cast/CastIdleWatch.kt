@@ -107,6 +107,17 @@ class CastIdleWatch(private val clock: () -> Long = System::currentTimeMillis) {
         return Decision.Ask(lastKnownMs)
     }
 
+    /**
+     * A load was handed to the receiver and it never played: nothing to retry on its own (the
+     * receiver gave no reason, and loading the same thing again would likely hang the same way),
+     * so the person is asked, once.
+     */
+    fun onLoadStalled(): Decision {
+        if (asking) return Decision.Ignore
+        asking = true
+        return Decision.Ask(lastKnownMs)
+    }
+
     /** The receiver went IDLE for [reason] while [episodeId] was what we had asked of it. */
     fun onIdle(reason: Idle, episodeId: String?, durationMs: Long): Decision {
         if (episodeId == null || episodeId != this.episodeId || stoppedOnPurpose) return Decision.Ignore

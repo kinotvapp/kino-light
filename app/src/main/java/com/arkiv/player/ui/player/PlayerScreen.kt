@@ -576,6 +576,8 @@ private fun PlayerContent(
         castSession?.casting ?: kotlinx.coroutines.flow.MutableStateFlow(false)
     }
     val casting by castingFlow.collectAsStateWithLifecycle()
+    // One LOAD per connect, and no stale title replayed: see its KDoc.
+    CastScreenPresence(castSession, episodeId)
 
     // What the screen knows about the active player (position, duration, playing, buffering) lives
     // together in `PlayerMirror.kt`: the values almost the whole interface reads at once.
