@@ -6,6 +6,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -28,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -53,7 +56,9 @@ import com.arkiv.player.ui.theme.ArkivTheme
 import com.arkiv.player.ui.tv.ArkivTvRoot
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 
 /**
  * Head start given to the intro before starting to compose the app: without this the main thread
@@ -73,18 +78,9 @@ private val INTRO_HEAD_START_MS = com.arkiv.player.ui.INTRO_DURATION_MS.toLong()
 /** Margin after starting the root's composition before uncovering the app with the fade. */
 private const val CONTENT_SETTLE_MS = 400L
 
-/** Longest the splash waits for the heavy credential/Magis chain to warm up before composing the
- *  root anyway. The wait itself never blocks the UI thread (the splash keeps animating), so this is
- *  only a hang-guard; on a normal device the wait ends as soon as warm-up finishes, well under it.
- *
- *  Kept SHORT (8 s) on purpose: the HOME composition does NOT force the slow lazy (it reads
- *  `magisHomeCatalog`, which defers `liveCatalog`/`magisPortal` into a lambda that runs off-main in
- *  the flow, and `repository`/`tmdbApi`, which only decrypt credentials -- not the O-MVLL 3DES). So
- *  the home never blocks the UI thread on the 3DES, and telemetry (SlowStartup) confirms it: weak TV
- *  boxes report 12-16 s warm-ups with NO paired ANR. Waiting longer here would just make the splash
- *  as long as the warm-up (12-16 s) for no benefit. Search/Live DO force the 3DES on main, but the
- *  user reaches them after the background warm-up has had time to finish. */
-private const val WARMUP_MAX_WAIT_MS = 8000L
+/** After this long on the splash, a "Preparando Kino…" note shows on it: the root waits for the
+ *  warm-up with no timeout (see `startupContent`), and a weak TV box can still take seconds. */
+private const val PREPARING_HINT_MS = 6000L
 
 /**
  * Whether a rooted device gets blocked. **Off on purpose**: today we want a device with root to
@@ -224,43 +220,72 @@ class MainActivity : AppCompatActivity() {
                 // home's rows) saturates the main thread and the animation's clock jumps straight
                 // to the end without ever getting drawn. By giving it ~1s of free thread time, the
                 // intro actually plays, and only then does the app start composing, behind the fade.
+                //
+                // And the root waits for the warm-up, with NO timeout (see `startupContent`): it reads
+                // lazies (Magis portal/session: native 3DES + Keystore) the warm-up builds off the main
+                // thread, and composing it before that finished is what froze the UI thread
+                // (ERRORES-7I7/78K/9OA/1T/13/7I4). The splash keeps the main thread free meanwhile.
                 var splashDone by remember { mutableStateOf(false) }
-                var loadContent by remember { mutableStateOf(false) }
+                var introDone by remember { mutableStateOf(false) }
                 var contentSettled by remember { mutableStateOf(false) }
+                var showPreparing by remember { mutableStateOf(false) }
+                // Read OFF the main thread: the store is Keystore-backed.
+                var credentialsRead by remember { mutableStateOf(false) }
+                var hasCredentials by remember { mutableStateOf(false) }
+                val warmedUp by graph.warmedUp.collectAsState()
+                val startupScope = rememberCoroutineScope()
                 LaunchedEffect(Unit) {
                     if (!isTv) delay(INTRO_HEAD_START_MS)
-                    // Also wait for the heavy credential/Magis chain to finish warming up OFF the
-                    // main thread before composing the root. Otherwise, on a slow phone / TV box the
-                    // composition reads a still-building `by lazy` (the native 3DES key resolution,
-                    // seconds long) and blocks the UI thread past the ANR threshold. The wait keeps
-                    // the main thread free (the splash animates), and is capped so it never hangs.
-                    withTimeoutOrNull(WARMUP_MAX_WAIT_MS) { graph.warmedUp.first { it } }
-                    loadContent = true
+                    introDone = true
+                }
+                LaunchedEffect(Unit) {
+                    graph.warmedUp.first { it }
+                    hasCredentials = withContext(Dispatchers.IO) { graph.credentialsStore.read() != null }
+                    credentialsRead = true
+                }
+                LaunchedEffect(Unit) {
+                    delay(PREPARING_HINT_MS)
+                    showPreparing = true
+                }
+                val content = startupContent(introDone, warmedUp, credentialsRead, hasCredentials)
+                LaunchedEffect(content) {
+                    if (content != StartupContent.ACTIVATION && content != StartupContent.APP) return@LaunchedEffect
                     // The root's composition blocks the main thread; this wait only resumes once
                     // it's done, so the fade uncovers something already drawn.
                     delay(CONTENT_SETTLE_MS)
                     contentSettled = true
                 }
+                // After a first activation the Magis chain was never warmed (a fresh install has
+                // nothing to warm): build it off the main thread now, then let the root compose.
+                val onActivated: () -> Unit = {
+                    credentialsRead = false
+                    startupScope.launch {
+                        withContext(Dispatchers.IO) { graph.warmUpCredentials() }
+                        hasCredentials = withContext(Dispatchers.IO) { graph.credentialsStore.read() != null }
+                        credentialsRead = true
+                    }
+                }
                 Box(Modifier.fillMaxSize()) {
-                    if (loadContent) {
-                        var credentials by remember { mutableStateOf(graph.credentialsStore.read()) }
-                        if (credentials == null) {
-                            // Blocks all other navigation until activation succeeds -- see
-                            // docs/superpowers/specs/2026-09-15-split-credential-activation-design.md.
-                            if (isTv) {
-                                com.arkiv.player.ui.tv.TvActivationScreen(
-                                    activator = graph.credentialsActivator,
-                                    store = graph.credentialsStore,
-                                    onActivated = { credentials = graph.credentialsStore.read() },
-                                )
-                            } else {
-                                com.arkiv.player.ui.ActivationScreen(
-                                    activator = graph.credentialsActivator,
-                                    store = graph.credentialsStore,
-                                    onActivated = { credentials = graph.credentialsStore.read() },
-                                )
-                            }
-                        } else if (isTv) {
+                    when (content) {
+                        StartupContent.NONE -> Unit
+                        // Behind the splash at cold start; on its own after an activation.
+                        StartupContent.PREPARING -> if (splashDone) PreparingScreen()
+                        // Blocks all other navigation until activation succeeds -- see
+                        // docs/superpowers/specs/2026-09-15-split-credential-activation-design.md.
+                        StartupContent.ACTIVATION -> if (isTv) {
+                            com.arkiv.player.ui.tv.TvActivationScreen(
+                                activator = graph.credentialsActivator,
+                                store = graph.credentialsStore,
+                                onActivated = onActivated,
+                            )
+                        } else {
+                            com.arkiv.player.ui.ActivationScreen(
+                                activator = graph.credentialsActivator,
+                                store = graph.credentialsStore,
+                                onActivated = onActivated,
+                            )
+                        }
+                        StartupContent.APP -> if (isTv) {
                             // Decorative motion switch (see EffectsPolicy) for everything under the
                             // TV root, read by the cards' focus zoom without each one touching settings.
                             CompositionLocalProvider(LocalReducedEffects provides rememberReducedEffects()) {
@@ -282,6 +307,8 @@ class MainActivity : AppCompatActivity() {
                             canExit = contentSettled,
                             onFinished = { splashDone = true },
                         )
+                        // A slow warm-up keeps the splash up: say so.
+                        if (showPreparing && content == StartupContent.PREPARING) PreparingNote()
                     }
 
                     // OTA: shows up on its own when AppGraph detects a new version (the check at
@@ -339,4 +366,30 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun isTelevision(): Boolean = DeviceType.isTelevision(this)
+}
+
+/** The note on the splash while a slow warm-up holds it up. */
+@androidx.compose.runtime.Composable
+private fun PreparingNote() {
+    Box(Modifier.fillMaxSize().padding(bottom = 48.dp), contentAlignment = Alignment.BottomCenter) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            androidx.compose.material3.CircularProgressIndicator(
+                modifier = Modifier.size(20.dp),
+                color = Color.White.copy(alpha = 0.7f),
+                strokeWidth = 2.dp,
+            )
+            Text("Preparando Kino…", style = MaterialTheme.typography.bodyMedium, color = Color.White.copy(alpha = 0.7f))
+        }
+    }
+}
+
+/** Full screen while the warm-up runs after a first activation (the splash is gone by then). */
+@androidx.compose.runtime.Composable
+private fun PreparingScreen() {
+    Box(Modifier.fillMaxSize().background(com.arkiv.player.ui.theme.ArkivBlack), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            androidx.compose.material3.CircularProgressIndicator(color = Color.White)
+            Text("Preparando Kino…", style = MaterialTheme.typography.bodyLarge, color = Color.White)
+        }
+    }
 }
