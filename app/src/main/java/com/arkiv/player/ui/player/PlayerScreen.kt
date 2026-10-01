@@ -1885,13 +1885,12 @@ private fun PlayerContent(
         if (!exoRenderedSomething && p.playWhenReady && p.playerError == null && hasVideo) {
             val f = selectedVideoFormat(p.currentTracks)
             val audio = p.currentTracks.groups.count { it.type == C.TRACK_TYPE_AUDIO }
-            com.arkiv.player.crash.Crash.report(
-                com.arkiv.player.playback.NoVideoFrame(
-                    "in-screen audio-only after ${com.arkiv.player.playback.DecoderWatchdog.NO_VIDEO_REPORT_MS}ms · " +
-                        "codec=${f?.sampleMimeType} ${f?.width}x${f?.height} audioTracks=$audio " +
-                        "src=${if (isMagis) "magis" else if (isDitu) "ditu" else "live"} state=${p.playbackState}",
+            com.arkiv.player.crash.StableReports.reportNoVideoFrame(
+                com.arkiv.player.crash.StableReports.noVideoFrame(
+                    "in-screen ${if (isMagis) "magis" else if (isDitu) "ditu" else "live"}",
+                    com.arkiv.player.playback.DecoderWatchdog.NO_VIDEO_REPORT_MS,
+                    f?.sampleMimeType, f?.width, f?.height, audio, p.playbackState,
                 ),
-                "video-no-frame",
             )
         }
     }
@@ -1938,13 +1937,11 @@ private fun PlayerContent(
             localVideo.markNoVideoReported()
             val f = selectedVideoFormat(controller.currentTracks)
             val audioTracks = controller.currentTracks.groups.count { it.type == C.TRACK_TYPE_AUDIO }
-            com.arkiv.player.crash.Crash.report(
-                com.arkiv.player.playback.NoVideoFrame(
-                    "audio-only after ${waitMs}ms · codec=${f?.sampleMimeType} ${f?.width}x${f?.height} " +
-                        "videoTracks=$videoTracks audioTracks=$audioTracks software=${localVideo.loadPrefersSoftware} " +
-                        "state=${controller.playbackState}",
+            com.arkiv.player.crash.StableReports.reportNoVideoFrame(
+                com.arkiv.player.crash.StableReports.noVideoFrame(
+                    "local", waitMs, f?.sampleMimeType, f?.width, f?.height, audioTracks, controller.playbackState,
+                    mapOf("video_tracks" to "$videoTracks", "software" to "${localVideo.loadPrefersSoftware}"),
                 ),
-                "video-no-frame",
             )
         }
 

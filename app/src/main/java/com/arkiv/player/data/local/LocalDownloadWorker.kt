@@ -176,9 +176,12 @@ class LocalDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
                         )
                     }
                 } else if (DownloadRetryPolicy.reports(outcome.transient, outcome.permanent, outcome.expected)) {
+                    // The episode goes to extras: in the message it opened one issue per episode.
+                    val report = com.arkiv.player.crash.StableReports.offlineDownloadFailed(entity.episodeId, outcome.reason)
                     com.arkiv.player.crash.Crash.report(
-                        com.arkiv.player.crash.OfflineDownloadFailed("${entity.episodeId}: ${outcome.reason}"),
+                        com.arkiv.player.crash.OfflineDownloadFailed(report.message),
                         "offline-download",
+                        extras = report.extras,
                     )
                 }
                 // The "row already removed" check ISN'T needed here: this branch notifies nothing
