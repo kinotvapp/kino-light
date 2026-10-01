@@ -474,6 +474,14 @@ class TsRemuxer(
      * plays it straight away.
      */
     fun stop(key: String) {
+        // Cancelling the export cancels its Transformer, which only takes calls on the main thread
+        // (the cancellation handler runs on the caller's): a retired remux, a cast session's end
+        // or a DLNA stop reach this from other threads, where the cancel threw and the export ran on.
+        val main = android.os.Looper.getMainLooper()
+        if (android.os.Looper.myLooper() != main) {
+            android.os.Handler(main).post { stop(key) }
+            return
+        }
         val job = activeExports.remove(key) ?: return
         Log.w(TAG, "cast ended → stopping the remux of ${RemuxPolicy.fileName(key)}")
         job.cancel()
