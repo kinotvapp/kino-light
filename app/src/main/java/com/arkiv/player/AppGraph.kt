@@ -1691,7 +1691,7 @@ class AppGraph(context: Context) {
             // Its OWN server, not [localFileServer]: that one is single-file and would have its
             // socket stolen out from under it by whichever of DLNA/Chromecast casts second.
             localFileServer = com.arkiv.player.playback.LocalFileServer(lanIp = { lanIp() }),
-        )
+        ).also { it.subtitleSidecar = { castSubtitles.dlnaSidecar() } }
     }
 
     /**

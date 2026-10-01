@@ -36,6 +36,10 @@ class DlnaProxyServer {
         .connectionPool(okhttp3.ConnectionPool(0, 1, TimeUnit.SECONDS))
         .build()
 
+    /** Extra response header lines (CRLF-terminated) for the video, e.g. Samsung's `CaptionInfo.sec`. */
+    @Volatile
+    var extraHeaders: String = ""
+
     private val dlnaContentFeatures =
         "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000"
 
@@ -164,7 +168,7 @@ class DlnaProxyServer {
                         total?.let { head.append("Content-Length: ").append(it).append("\r\n") }
                         head.append("Accept-Ranges: bytes\r\n")
                         head.append("contentFeatures.dlna.org: ").append(dlnaContentFeatures).append("\r\n")
-                        head.append("transferMode.dlna.org: Streaming\r\n")
+                        head.append("transferMode.dlna.org: Streaming\r\n").append(extraHeaders)
                         head.append("Connection: close\r\n\r\n")
                         out.write(head.toString().toByteArray(Charsets.US_ASCII))
                         out.flush()
@@ -178,7 +182,7 @@ class DlnaProxyServer {
                     resp.header("Content-Range")?.let { sb.append("Content-Range: ").append(it).append("\r\n") }
                     sb.append("Accept-Ranges: bytes\r\n")
                     sb.append("contentFeatures.dlna.org: ").append(dlnaContentFeatures).append("\r\n")
-                    sb.append("transferMode.dlna.org: Streaming\r\n")
+                    sb.append("transferMode.dlna.org: Streaming\r\n").append(extraHeaders)
                     sb.append("Connection: close\r\n\r\n")
                     out.write(sb.toString().toByteArray(Charsets.US_ASCII))
                     if (!method.equals("HEAD", true)) {

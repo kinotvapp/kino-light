@@ -66,6 +66,12 @@ class DlnaController(
     private val TRANSPORT_INFO_BODY = "<u:GetTransportInfo xmlns:u=\"$AVT\"><InstanceID>0</InstanceID></u:GetTransportInfo>"
     private val proxy = DlnaProxyServer()
 
+    /**
+     * The title's subtitles for the TV (see [DlnaSubtitles]): read on every send, so the one on the
+     * phone when the video is sent is the one the TV gets. Set by AppGraph; none by default.
+     */
+    @Volatile internal var subtitleSidecar: () -> DlnaSidecar? = { null }
+
     private companion object {
         /** UPnP AVTransport error 701: the renderer can't make that transition right now. */
         const val TRANSITION_NOT_AVAILABLE = 701
@@ -461,7 +467,11 @@ class DlnaController(
         // failed on a real LG. Put it in a known state first.
         prepareRenderer(c)
 
-        val didl = xmlEscape(didlLiteFor(url, title, c.mime))
+        // The title's, if it has any (a live channel never offers any: see castSubtitleSources).
+        val subs = runCatching(subtitleSidecar).getOrNull()
+        DlnaSubtitles.captionHeader(subs).let { proxy.extraHeaders = it; localFileServer.extraHeaders = it }
+        subs?.selected?.let { DlnaLog.i("cast: with subtitles · ${it.language} + ${subs.others.size} more") }
+        val didl = xmlEscape(didlLiteFor(url, title, c.mime, subs))
         DlnaLog.i("cast: SetAVTransportURI · url=${DlnaXml.safeUrl(url)} mime=${c.mime}")
         val setUriBody = "<u:SetAVTransportURI xmlns:u=\"$AVT\"><InstanceID>0</InstanceID>" +
             "<CurrentURI>${xmlEscape(url)}</CurrentURI>" +
@@ -790,16 +800,18 @@ class DlnaController(
         DlnaCastService.stop(appContext)
     }
 
-    private fun didlLiteFor(url: String, title: String, mime: String): String =
+    private fun didlLiteFor(url: String, title: String, mime: String, subs: DlnaSidecar? = null): String =
         "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" " +
             "xmlns:dc=\"http://purl.org/dc/elements/1.1/\" " +
-            "xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\">" +
+            "xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\"" + DlnaSubtitles.namespaces(subs) + ">" +
             "<item id=\"0\" parentID=\"-1\" restricted=\"1\">" +
             "<dc:title>${xmlEscape(title)}</dc:title>" +
             "<upnp:class>object.item.videoItem</upnp:class>" +
             "<res protocolInfo=\"http-get:*:$mime:" +
-            "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000\">" +
+            "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000\"" +
+            DlnaSubtitles.videoResAttributes(subs, ::xmlEscape) + ">" +
             "${xmlEscape(url)}</res>" +
+            DlnaSubtitles.itemElements(subs, ::xmlEscape) +
             "</item></DIDL-Lite>"
 
     private fun xmlEscape(s: String): String = s
