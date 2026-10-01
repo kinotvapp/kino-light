@@ -421,6 +421,13 @@ class ArchiveCacheProxy(
         /** Path prefix every proxy URL starts with, followed by the token and the route. */
         private const val TOKEN_PREFIX = "/t/"
 
+        /**
+         * Request header the Chromecast remux puts on its reads (loopback only), asking for the
+         * patient [OriginPolicy.Profile.MAGIS_REMUX] deadlines. It only changes how long the proxy
+         * waits for the CDN, for a token the caller already holds.
+         */
+        const val REMUX_HEADER = "X-Kino-Remux"
+
         /** The token in a request [path] (`/t/<token>/<route>`), or null if it has none. */
         internal fun tokenIn(path: String): String? {
             if (!path.startsWith(TOKEN_PREFIX)) return null
@@ -556,6 +563,7 @@ class ArchiveCacheProxy(
                     .toFloatOrNull()?.takeIf { it > 0f } ?: 0f
                 val rangeHeader = lines.firstOrNull { it.startsWith("Range:", true) }
                     ?.substringAfter(':')?.trim()
+                val forRemux = lines.any { it.startsWith("$REMUX_HEADER:", true) }
 
                 val key = keyFor(origin)
                 val out = s.getOutputStream()
@@ -565,7 +573,8 @@ class ArchiveCacheProxy(
                 // (the player buffering at 0% forever).
                 android.util.Log.w(
                     "ArchiveCacheProxy",
-                    "← requests range=${rangeHeader ?: "(all)"} direct=$direct window=$fraction path=${path.substringBefore('?')}",
+                    "← requests range=${rangeHeader ?: "(all)"} direct=$direct window=$fraction path=${path.substringBefore('?')}" +
+                        (if (forRemux) " (cast remux: patient deadlines)" else ""),
                 )
 
                 // HLS playlist over the SAME stream, for the Cast receiver. It refuses a bare
@@ -605,7 +614,7 @@ class ArchiveCacheProxy(
                     if (!passthrough(
                             origin, rangeHeader, out, extraHeaders,
                             uniqueKey = key, fraction = fraction,
-                            profile = OriginPolicy.Profile.MAGIS,
+                            profile = if (forRemux) OriginPolicy.Profile.MAGIS_REMUX else OriginPolicy.Profile.MAGIS,
                         )
                     ) {
                         android.util.Log.w("ArchiveCacheProxy", "direct: the origin didn't serve the range")

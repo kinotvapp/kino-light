@@ -23,6 +23,49 @@ object RemuxPolicy {
     /** Remuxed copies live here, under the app's own cache dir. */
     const val FOLDER = "remux"
 
+    /** Connect timeout of the remux's own reads (loopback to the proxy: a connect is instant). */
+    const val INPUT_CONNECT_MS = 15_000
+
+    /**
+     * Read timeout of the remux's own reads. Longer than everything the proxy may spend opening the
+     * CDN for it ([OriginPolicy.Profile.MAGIS_REMUX]: four deadlines and the waits between them),
+     * so the proxy's patience is never cut short by ours. media3's default (8 s) is what turned a
+     * CDN taking 4-7 s to open into a dead remux (2026-10-01).
+     */
+    const val INPUT_READ_MS = 120_000
+
+    /**
+     * How many times in a row the remux's input may fail before the export gives up. ExoPlayer's
+     * own default (3) is meant for a viewer who can press play again; a remux that dies costs the
+     * whole cast. Each retry reopens where it was.
+     */
+    const val INPUT_LOAD_RETRIES = 8
+
+    /** Attempts of a whole export that fails before it has written anything worth keeping. */
+    const val EXPORT_ATTEMPTS = 3
+
+    /** Below this much written, a failed export is a failed START, and starting again is cheap. */
+    const val RETRY_MAX_WRITTEN_BYTES = 4L * 1024 * 1024
+
+    /**
+     * Should an export that failed with [errorCode] (media3 `ExportException.errorCode`) after
+     * writing [writtenBytes] be started again, it being attempt [attempt] (0-based)?
+     *
+     * Only failures of the INPUT or of time are retried: 1000 (unspecified: the asset loader's
+     * source error lands here), 2xxx (I/O) and 7002 (muxing timeout). A decoder, encoder or muxer
+     * refusing the stream (3xxx-6xxx, 7001) fails the same way every time. And only at the start:
+     * past [RETRY_MAX_WRITTEN_BYTES] the TV may already be playing the file, which a new run would
+     * pull from under it -- the input's own retries ([INPUT_LOAD_RETRIES]) cover the middle.
+     */
+    fun retryExport(attempt: Int, errorCode: Int, writtenBytes: Long): Boolean {
+        if (attempt + 1 >= EXPORT_ATTEMPTS) return false
+        if (writtenBytes > RETRY_MAX_WRITTEN_BYTES) return false
+        return errorCode == 1000 || errorCode in 2000..2999 || errorCode == 7002
+    }
+
+    /** Wait before export attempt [attempt] + 1: 2 s, then 6 s. */
+    fun retryDelayMs(attempt: Int): Long = if (attempt <= 0) 2_000L else 6_000L
+
     /**
      * Does [mime] need remuxing before this receiver will play it properly?
      *

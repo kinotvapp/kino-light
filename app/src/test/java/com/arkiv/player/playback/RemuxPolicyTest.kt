@@ -150,4 +150,35 @@ class RemuxPolicyTest {
     fun `an empty cache needs no eviction`() {
         assertTrue(RemuxPolicy.toDelete(emptyList(), incomingBytes = GB).isEmpty())
     }
+
+    @Test
+    fun `a remux that dies at the start on its input or on time is tried again, a bounded number of times`() {
+        assertTrue(RemuxPolicy.retryExport(0, 1000, 0L)) // asset loader: source error
+        assertTrue(RemuxPolicy.retryExport(0, 2001, 0L)) // I/O
+        assertTrue(RemuxPolicy.retryExport(1, 7002, 1024L)) // muxing timeout
+        assertFalse(RemuxPolicy.retryExport(RemuxPolicy.EXPORT_ATTEMPTS - 1, 2001, 0L))
+    }
+
+    @Test
+    fun `a remux the device or the file cannot do is not retried`() {
+        assertFalse(RemuxPolicy.retryExport(0, 3001, 0L)) // decoder
+        assertFalse(RemuxPolicy.retryExport(0, 4001, 0L)) // encoder
+        assertFalse(RemuxPolicy.retryExport(0, 7001, 0L)) // muxer refused
+    }
+
+    @Test
+    fun `a remux the TV may already be playing is not started over`() {
+        assertFalse(RemuxPolicy.retryExport(0, 2001, RemuxPolicy.RETRY_MAX_WRITTEN_BYTES + 1))
+    }
+
+    @Test
+    fun `the remux waits for the proxy longer than the proxy waits for the CDN`() {
+        val profile = OriginPolicy.Profile.MAGIS_REMUX
+        var budget = 0L
+        repeat(OriginPolicy.attempts(profile)) { a ->
+            budget += OriginPolicy.responseMs(a, profile)
+            if (a < OriginPolicy.attempts(profile) - 1) budget += OriginPolicy.waitMs(a, profile)
+        }
+        assertTrue("budget $budget", RemuxPolicy.INPUT_READ_MS > budget)
+    }
 }

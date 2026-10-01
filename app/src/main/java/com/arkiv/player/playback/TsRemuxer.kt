@@ -5,6 +5,8 @@ import android.util.Log
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.extractor.amr.AmrExtractor
@@ -106,7 +108,8 @@ class TsRemuxer(
     /** Result of asking for a remux. `Done` carries a file that is complete and playable. */
     sealed interface RemuxResult {
         data class Done(val file: File) : RemuxResult
-        data class Failed(val reason: String) : RemuxResult
+        /** [code] is media3's `ExportException.errorCode` (0 when it is not an export error). */
+        data class Failed(val reason: String, val code: Int = 0, val writtenBytes: Long = 0L) : RemuxResult
     }
 
     /** The finished remux for [key] if one is already on disk, or null. */
@@ -151,10 +154,25 @@ class TsRemuxer(
             return RemuxResult.Done(it)
         }
         val job = activeExports.computeIfAbsent(key) {
-            scope.async { export(inputUri, key, audio) }
+            scope.async { exportRetrying(inputUri, key, audio) }
                 .also { j -> j.invokeOnCompletion { activeExports.remove(key, j) } }
         }
         return job.await()
+    }
+
+    /** [export], started again when it fails at the start for a reason worth retrying (see [RemuxPolicy.retryExport]). */
+    private suspend fun exportRetrying(inputUri: String, key: String, audio: CastAudioChoice?): RemuxResult {
+        var attempt = 0
+        while (true) {
+            val result = export(inputUri, key, audio)
+            if (result !is RemuxResult.Failed || !RemuxPolicy.retryExport(attempt, result.code, result.writtenBytes)) {
+                return result
+            }
+            val wait = RemuxPolicy.retryDelayMs(attempt)
+            Log.w(TAG, "remux failed at the start (code=${result.code}, ${result.writtenBytes}B written) → attempt ${attempt + 2} in ${wait}ms")
+            delay(wait)
+            attempt++
+        }
     }
 
     /**
@@ -165,11 +183,18 @@ class TsRemuxer(
      * Transformer's own selector.
      */
     private fun assetLoaderFactory(audio: CastAudioChoice?, key: String): AssetLoader.Factory {
-        val input = PacedDataSource.Factory(DefaultDataSource.Factory(context)) { pace(key) }
+        // Patient reads, marked for the proxy so it is patient with the CDN too (REMUX_HEADER).
+        val http = DefaultHttpDataSource.Factory()
+            .setConnectTimeoutMs(RemuxPolicy.INPUT_CONNECT_MS)
+            .setReadTimeoutMs(RemuxPolicy.INPUT_READ_MS)
+            .setDefaultRequestProperties(mapOf(ArchiveCacheProxy.REMUX_HEADER to "1"))
+        val input = PacedDataSource.Factory(DefaultDataSource.Factory(context, http)) { pace(key) }
         val extractors = DefaultExtractorsFactory()
             .setAdtsExtractorFlags(AdtsExtractor.FLAG_ENABLE_CONSTANT_BITRATE_SEEKING)
             .setAmrExtractorFlags(AmrExtractor.FLAG_ENABLE_CONSTANT_BITRATE_SEEKING)
-        val sources = DefaultMediaSourceFactory(input, extractors).setEnableClippingInMediaPeriod(true)
+        val sources = DefaultMediaSourceFactory(input, extractors)
+            .setEnableClippingInMediaPeriod(true)
+            .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(RemuxPolicy.INPUT_LOAD_RETRIES))
         val decoders = DefaultDecoderFactory.Builder(context).build()
         val bitmaps = DataSourceBitmapLoader.Builder(context).build()
         return if (audio == null) {
@@ -243,11 +268,12 @@ class TsRemuxer(
                             result: ExportResult,
                             exception: ExportException,
                         ) {
+                            val written = runCatching { partial.length() }.getOrDefault(0L)
                             runCatching { partial.delete() }
                             // The code matters more than the message: it tells "this device cannot"
                             // from "this file cannot", and only the second is worth giving up on.
-                            Log.w(TAG, "remux failed (code=${exception.errorCode}): ${exception.message}", exception)
-                            if (cont.isActive) cont.resume(RemuxResult.Failed("error ${exception.errorCode}"))
+                            Log.w(TAG, "remux failed (code=${exception.errorCode}, ${written}B written): ${exception.message}", exception)
+                            if (cont.isActive) cont.resume(RemuxResult.Failed("error ${exception.errorCode}", exception.errorCode, written))
                         }
                     })
                     .build()

@@ -100,6 +100,17 @@ object OriginPolicy {
          * TsDurationProbeTest). Against this CDN, giving up fast and rolling the dice again wins.
          */
         MAGIS_PROBE(5_000, intArrayOf(3_000, 3_000, 3_000), 30_000, 50L, false),
+
+        /**
+         * The same CDN read by the Chromecast REMUX (requests marked with
+         * `ArchiveCacheProxy.REMUX_HEADER`), which plays a third game: nobody is staring at a
+         * spinner for it -- the cast waits for the remux either way -- and a remux that gives up
+         * is the expensive failure. Measured 2026-10-01: the CDN took 4-7 s to open, the 4 s first
+         * deadline cut it, and the remux died before writing a byte ("Muxer error", then "Loading
+         * finished before preparation is complete"). So: 10 s → 20 s → 30 s → 30 s, and a minute
+         * of body stall, which pacing (see RemuxPacing) can cause on purpose.
+         */
+        MAGIS_REMUX(5_000, intArrayOf(10_000, 20_000, 30_000, 30_000), 60_000, 500L, false),
     }
 
     /** Attempts against the origin before giving up. */

@@ -186,4 +186,12 @@ class OriginPolicyTest {
         // Archive.org does behave well with keep-alive, and reusing saves it the handshake.
         assertTrue(OriginPolicy.Profile.ARCHIVE.reuseSockets)
     }
+
+    @Test fun the_cast_remux_waits_out_a_cdn_that_takes_seven_seconds_to_open() {
+        // Measured 2026-10-01: 4-7 s to open, cut by MAGIS's 4 s first deadline.
+        assertTrue(OriginPolicy.responseMs(0, OriginPolicy.Profile.MAGIS_REMUX) > 7_000)
+        assertTrue(OriginPolicy.attempts(OriginPolicy.Profile.MAGIS_REMUX) >= OriginPolicy.attempts(OriginPolicy.Profile.MAGIS))
+        // The phone's own playback keeps its quick dice-rolling.
+        assertEquals(4_000, OriginPolicy.responseMs(0, OriginPolicy.Profile.MAGIS))
+    }
 }
