@@ -191,4 +191,70 @@ class PlaylistSourceTest {
         assertEquals(1, s.entries(false)!!.total)
         assertTrue(survived)
     }
+
+    private fun xmltv(id: String, title: String) =
+        "<?xml version=\"1.0\"?><tv><channel id=\"$id\"><display-name>$id</display-name></channel>" +
+            "<programme start=\"20260927160000 +0000\" stop=\"20260927170000 +0000\" channel=\"$id\"><title>$title</title></programme></tv>"
+
+    private fun headerGuideSource(listText: String, guides: Map<String, String>, listGuides: Boolean, allow: (String) -> Boolean = { true }): Pair<PlaylistSource, MutableList<String>> {
+        val seen = mutableListOf<String>()
+        val f = LivePlaylistFetcher { url, _, _ ->
+            seen += url
+            (guides[url] ?: listText).toByteArray()
+        }
+        return PlaylistSource(PluginPlaylist("https://lists.example.com/l.m3u"), f, tmp.root, { now }, {}, entryAllowed = allow, listGuides = listGuides) to seen
+    }
+
+    @Test fun `with listGuides a list naming its own guides in the header gets them merged, first one winning a channel`() = runBlocking {
+        val list = "#EXTM3U url-tvg=\"https://epg.example.com/a.xml,https://epg.example.com/b.xml\"\n#EXTINF:-1 tvg-id=\"uno\",Uno\nhttps://live.example.com/1.m3u8\n"
+        val (s, _) = headerGuideSource(list, mapOf(
+            "https://epg.example.com/a.xml" to xmltv("uno", "De A"),
+            "https://epg.example.com/b.xml" to xmltv("uno", "De B").replace("</tv>", "") +
+                "<channel id=\"dos\"><display-name>dos</display-name></channel><programme start=\"20260927160000 +0000\" stop=\"20260927170000 +0000\" channel=\"dos\"><title>Dos de B</title></programme></tv>",
+        ), listGuides = true)
+        s.entries(false)
+        assertTrue(s.hasGuide())
+        val g = s.guide(setOf("uno", "dos"), emptySet(), now - 3_600_000L, now + 86_400_000L, force = false)!!
+        assertEquals(listOf("De A"), g.programmes.getValue("uno").map { it.title })
+        assertEquals(listOf("Dos de B"), g.programmes.getValue("dos").map { it.title })
+        val live = File(tmp.root, "live")
+        assertTrue(File(live, "${s.key}.epg").exists() && File(live, "${s.key}.1.epg").exists())
+    }
+
+    @Test fun `without listGuides (plugins) the header guides are ignored`() = runBlocking {
+        val list = "#EXTM3U url-tvg=\"https://epg.example.com/a.xml\"\n#EXTINF:-1 tvg-id=\"uno\",Uno\nhttps://live.example.com/1.m3u8\n"
+        val (s, seen) = headerGuideSource(list, mapOf("https://epg.example.com/a.xml" to xmltv("uno", "De A")), listGuides = false)
+        s.entries(false)
+        assertFalse(s.hasGuide())
+        assertNull(s.guide(setOf("uno"), emptySet(), now - 3_600_000L, now + 86_400_000L, force = false))
+        assertEquals(listOf("https://lists.example.com/l.m3u"), seen)
+    }
+
+    @Test fun `a header guide the entry filter refuses (a LAN address inside a downloaded list) is never fetched`() = runBlocking {
+        val list = "#EXTM3U url-tvg=\"http://192.168.1.1/epg.xml,https://epg.example.com/a.xml\"\n#EXTINF:-1 tvg-id=\"uno\",Uno\nhttps://live.example.com/1.m3u8\n"
+        val (s, seen) = headerGuideSource(list, mapOf("https://epg.example.com/a.xml" to xmltv("uno", "De A")), listGuides = true,
+            allow = { (OwnSourceValidator.checkUrl(it) is OwnUrlCheck.Ok) })
+        s.entries(false)
+        val g = s.guide(setOf("uno"), emptySet(), now - 3_600_000L, now + 86_400_000L, force = false)!!
+        assertEquals(listOf("De A"), g.programmes.getValue("uno").map { it.title })
+        assertFalse(seen.any { "192.168" in it })
+    }
+
+    @Test fun `a guide the person typed wins over the list's header guides`() = runBlocking {
+        val list = "#EXTM3U url-tvg=\"https://epg.example.com/a.xml\"\n#EXTINF:-1 tvg-id=\"uno\",Uno\nhttps://live.example.com/1.m3u8\n"
+        val seen = mutableListOf<String>()
+        val f = LivePlaylistFetcher { url, _, _ ->
+            seen += url
+            when (url) {
+                "https://typed.example.com/g.xml" -> xmltv("uno", "Tecleada")
+                "https://epg.example.com/a.xml" -> xmltv("uno", "De la lista")
+                else -> list
+            }.toByteArray()
+        }
+        val s = PlaylistSource(PluginPlaylist("https://lists.example.com/l.m3u", epgUrl = "https://typed.example.com/g.xml"), f, tmp.root, { now }, {}, listGuides = true)
+        s.entries(false)
+        val g = s.guide(setOf("uno"), emptySet(), now - 3_600_000L, now + 86_400_000L, force = false)!!
+        assertEquals(listOf("Tecleada"), g.programmes.getValue("uno").map { it.title })
+        assertFalse("https://epg.example.com/a.xml" in seen)
+    }
 }

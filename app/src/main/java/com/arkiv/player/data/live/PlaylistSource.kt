@@ -32,6 +32,10 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
  * - The M3U parse drops hidden/adult groups and entries [entryAllowed] refuses as it goes, so the
  *   channel cap holds only channels that can be shown.
  * - With no [cacheDir] there is nowhere to stream to: no playlist ([entries] is null).
+ * - The guide is the declared `epgUrl`. With [listGuides] and none declared, it is the list's own
+ *   header guides (`url-tvg` / `x-tvg-url`, [M3uResult.epgUrls]) that [entryAllowed] accepts --
+ *   addresses found inside a downloaded list, so they pass the same filter as its channels --
+ *   saved as `<key>.epg`, `<key>.1.epg`, ... and merged, the first guide winning a channel.
  * - After every save, `live/` is kept under [cacheBudgetBytes] ([pruneLiveDir]), then every plugin's
  *   `live/` together under [allCachesBudgetBytes] ([pruneAllLiveDirs]) when [allCachesRoot] is given.
  *
@@ -51,6 +55,8 @@ internal class PlaylistSource(
     /** The folder holding EVERY plugin's data dir (`plugin-data`); null = no global ceiling ([pruneAllLiveDirs]). */
     private val allCachesRoot: File? = null,
     private val allCachesBudgetBytes: Long = MAX_ALL_LIVE_CACHES_BYTES,
+    /** With no declared `epgUrl`, use the guides the list's own header names (the person's own lists; plugins declare theirs). */
+    private val listGuides: Boolean = false,
 ) {
     /** The current declaration. A new token in its URL keeps this source (and its key and parsed list): see [adopt]. */
     @Volatile var playlist: PluginPlaylist = playlist
@@ -59,7 +65,7 @@ internal class PlaylistSource(
 
     /** Test seam: runs between the M3U encoding sniff and the read (a file vanishing mid-parse). */
     @Volatile internal var beforeRead: (File) -> Unit = {}
-    private var parsed: M3uResult? = null
+    @Volatile private var parsed: M3uResult? = null
     /** The budget [parsed] was parsed or trimmed to. */
     private var parsedMax = 0
     private var parsedUntil = 0L
@@ -134,12 +140,42 @@ internal class PlaylistSource(
         }
     }
 
-    /** Null = no EPG, or it could not be downloaded nor read from disk. A truncated guide is returned as is. */
+    /** The guides [guide] reads: the declared one, else (with [listGuides]) the parsed list's own, filtered. */
+    fun guideUrls(): List<String> {
+        val declared = playlist.epgUrl
+        if (declared.isNotEmpty()) return listOf(declared)
+        if (!listGuides) return emptyList()
+        return parsed?.epgUrls.orEmpty().filter(entryAllowed).take(M3uParser.MAX_LIST_EPGS)
+    }
+
+    fun hasGuide(): Boolean = guideUrls().isNotEmpty()
+
+    /**
+     * Null = no EPG, or none could be downloaded nor read from disk. A truncated guide is returned as
+     * is. Several guides ([guideUrls]) are merged: the first one holding a channel keeps it.
+     */
     suspend fun guide(wantedIds: Set<String>, wantedNames: Set<String>, fromMs: Long, toMs: Long, force: Boolean): XmltvGuide? {
-        val pl = playlist
-        if (pl.epgUrl.isEmpty() || cacheDir == null) return null
-        val file = fileOf("epg")
-        refresh(pl.epgUrl, file, PluginLiveContract.MAX_EPG_BYTES, force)
+        if (cacheDir == null) return null
+        var merged: XmltvGuide? = null
+        guideUrls().forEachIndexed { i, url ->
+            val g = guideOf(url, fileOf(if (i == 0) "epg" else "$i.epg"), wantedIds, wantedNames, fromMs, toMs, force) ?: return@forEachIndexed
+            merged = merged?.let { m ->
+                XmltvGuide(
+                    displayNames = g.displayNames + m.displayNames,
+                    programmes = g.programmes + m.programmes,
+                    truncated = m.truncated || g.truncated,
+                )
+            } ?: g
+        }
+        return merged
+    }
+
+    private suspend fun guideOf(
+        url: String, file: File, wantedIds: Set<String>, wantedNames: Set<String>, fromMs: Long, toMs: Long, force: Boolean,
+    ): XmltvGuide? {
+        // The list's own download headers (its credentials) go to the declared guide only, never to a host the list named.
+        val headers = if (url == playlist.epgUrl) playlist.headers else emptyMap()
+        refresh(url, file, PluginLiveContract.MAX_EPG_BYTES, force, headers)
         if (!withContext(Dispatchers.IO) { file.exists() }) return null
         return parseGate.withPermit {
             withContext(Dispatchers.Default) {
@@ -148,9 +184,9 @@ internal class PlaylistSource(
                     inUse(file) { XmltvParser.open(file) }.use { input ->
                         XmltvParser.parse(input, fromMs, toMs, wantedIds, wantedNames, deadline = { System.currentTimeMillis() > until })
                     }
-                }.onFailure { log("guide ${pl.epgUrl.take(100)} unreadable: ${it.message}") }.getOrNull()
+                }.onFailure { log("guide ${url.take(100)} unreadable: ${it.message}") }.getOrNull()
             }
-        }?.also { if (it.truncated) log("guide ${pl.epgUrl.take(100)} was cut short; using what was read") }
+        }?.also { if (it.truncated) log("guide ${url.take(100)} was cut short; using what was read") }
     }
 
     private fun fileOf(ext: String) = File(File(cacheDir, LIVE_DIR), "$key.$ext")
@@ -158,14 +194,14 @@ internal class PlaylistSource(
     private enum class Refresh { FRESH, DOWNLOADED, FAILED }
 
     /** Downloads [url] over [file] when it is missing, older than `refreshHours`, or [force]d. On FAILED the saved copy (if any) stands. */
-    private suspend fun refresh(url: String, file: File, max: Long, force: Boolean): Refresh {
+    private suspend fun refresh(url: String, file: File, max: Long, force: Boolean, headers: Map<String, String> = playlist.headers): Refresh {
         val now = clock()
         val fresh = withContext(Dispatchers.IO) { file.exists() && now - file.lastModified() < refreshMs }
         if (fresh && !force) return Refresh.FRESH
         val tmp = File(file.parentFile, "${file.name}.tmp")
         return try {
             withContext(Dispatchers.IO) { file.parentFile?.mkdirs() }
-            fetcher.fetchTo(url, playlist.headers, max, tmp)
+            fetcher.fetchTo(url, headers, max, tmp)
             withContext(Dispatchers.IO) {
                 tmp.setLastModified(now)
                 // Rename over the saved copy (atomic on the same directory); the good copy is never deleted first.
