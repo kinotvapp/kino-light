@@ -29,6 +29,23 @@ class OwnSourceProbeTest {
         assertTrue(failed(OwnKind.PLAYLIST, "<html></html>").contains("lista M3U"))
     }
 
+    @Test fun `a W3U list is recognised by its content and says what it holds`() {
+        val text = "﻿{\"name\":\"L\",\"groups\":[{\"name\":\"Dep\",\"url\":\"https://x.example.com/d.w3u\"}," +
+            "{\"name\":\"N\",\"stations\":[{\"name\":\"A\",\"url\":\"https://a.example.com/a.m3u8\"},{\"name\":\"B\",\"url\":\"https://a.example.com/b.m3u8\"},]}]}"
+        assertEquals("Lista Wiseplay (W3U): encontré 2 canales y 1 lista enlazada, que se carga al guardar", ok(OwnKind.PLAYLIST, text).message)
+        assertEquals("Lista Wiseplay (W3U): encontré 1 canal", ok(OwnKind.PLAYLIST, "{\"name\":\"L\",\"stations\":[{\"name\":\"A\",\"url\":\"https://a.example.com/a\"}]}").message)
+    }
+
+    @Test fun `JSON that is not a W3U list, or a W3U with nothing playable, is refused`() {
+        assertTrue(failed(OwnKind.PLAYLIST, "{\"foo\":1}").contains("W3U"))
+        assertTrue(failed(OwnKind.PLAYLIST, "{\"name\":\"L\",\"stations\":[{\"name\":\"A\",\"url\":\"acestream://x\"}]}").contains("no tiene canales"))
+    }
+
+    @Test fun `a list typed as a channel is told to be added as a list`() {
+        assertTrue(failed(OwnKind.CHANNEL, "{\"name\":\"L\",\"stations\":[{\"name\":\"A\",\"url\":\"https://a.example.com/a\"}]}").contains("agrégala como lista"))
+        assertTrue(failed(OwnKind.CHANNEL, "#EXTM3U\n#EXTINF:-1,Uno\nhttp://a.example.com/1.m3u8\n").contains("agrégala como lista"))
+    }
+
     @Test fun `run maps a download failure to a Spanish message`() = runTest {
         val r = OwnSourceProbe.run(OwnKind.CHANNEL, "http://a.example.com/1.m3u8", emptyMap()) { _, _, _ -> throw IOException("timeout") }
         assertTrue((r as OwnProbe.Failed).message.startsWith("No se pudo leer la dirección"))

@@ -92,7 +92,7 @@ private fun TvOwnSourceForm(ui: OwnFormUi, vm: OwnSourcesViewModel) {
             if (ui.editingId == null) {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     TvCompactAction(label = (if (!playlist) "✓ " else "") + "Canal", onClick = { vm.change(f.copy(kind = OwnKind.CHANNEL)) })
-                    TvCompactAction(label = (if (playlist) "✓ " else "") + "Lista M3U", onClick = { vm.change(f.copy(kind = OwnKind.PLAYLIST)) })
+                    TvCompactAction(label = (if (playlist) "✓ " else "") + OwnSourcesCopy.KIND_PLAYLIST, onClick = { vm.change(f.copy(kind = OwnKind.PLAYLIST)) })
                 }
             }
             TvOwnTextField(OwnSourcesCopy.NAME, f.name, ui.errors[OwnField.NAME], focusManager, Modifier.focusRequester(nameFocus)) { vm.change(f.copy(name = it)) }

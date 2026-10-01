@@ -6,14 +6,16 @@ import com.arkiv.player.data.live.OwnLive
 object OwnSourcesCopy {
     const val ADD_MENU = "Agregar canal o lista"
     const val ADD_CHANNEL = "Agregar un canal"
-    const val ADD_PLAYLIST = "Agregar una lista M3U"
+    const val ADD_PLAYLIST = "Agregar una lista (M3U o W3U)"
     const val MY_SOURCES = "Mis canales y listas"
     const val TITLE_CHANNEL = "Agregar un canal"
-    const val TITLE_PLAYLIST = "Agregar una lista M3U"
+    const val TITLE_PLAYLIST = "Agregar una lista (M3U o W3U)"
+    /** The kind chip of the add dialog: the format is told by the content, so one choice covers M3U and W3U. */
+    const val KIND_PLAYLIST = "Lista M3U o W3U"
     const val TITLE_EDIT = "Editar"
     const val NAME = "Nombre"
     const val URL_CHANNEL = "Dirección del canal (.m3u8)"
-    const val URL_PLAYLIST = "Dirección de la lista (.m3u)"
+    const val URL_PLAYLIST = "Dirección de la lista (.m3u o .w3u)"
     const val URL_CHANNEL_HINT = "Ej.: http://miservidor.com/canal.m3u8"
     const val URL_PLAYLIST_HINT = "Ej.: http://miservidor.com/get.php?username=...&password=...&type=m3u_plus"
     const val GROUP = "Grupo (opcional)"
@@ -30,7 +32,7 @@ object OwnSourcesCopy {
     const val DELETE = "Eliminar"
     const val CLEARTEXT = "Esta dirección no va cifrada (http). Funciona, pero quien controle tu red podría ver qué miras."
     const val EMPTY_TITLE = "Aún no tienes canales propios"
-    const val EMPTY_BODY = "Toca «+» para agregar un canal .m3u8 o una lista M3U. Si tienes un celular o una TV vinculados, se copiarán solos."
+    const val EMPTY_BODY = "Toca «+» para agregar un canal .m3u8 o una lista M3U o W3U (Wiseplay). Si tienes un celular o una TV vinculados, se copiarán solos."
     const val TOO_MANY = "Llegaste al máximo de ${OwnLive.MAX_SOURCES} canales y listas. Elimina alguno para agregar otro."
     const val SAVE_FAILED = "No se pudo guardar. Intenta de nuevo."
 
