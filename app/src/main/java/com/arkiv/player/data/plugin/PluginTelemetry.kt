@@ -70,6 +70,8 @@ data class PluginFacts(
     val nuvioRepo: String? = null,
     val nuvioScraperId: String? = null,
     val privateHosts: Set<String> = emptySet(),
+    /** apiVersion 5 author-signed: tagged `plugin_signed` (triage only). Absent for an unsigned plugin. */
+    val signed: Boolean = false,
 ) {
     companion object {
         val UNKNOWN = PluginFacts(version = null, apiVersion = null, origin = "unknown")
@@ -183,7 +185,8 @@ class PluginTelemetry(
         return Event(
             message = "plugin $id $function $kind",
             fingerprint = fingerprintOf(failure),
-            tags = mapOf("plugin_id" to id, "plugin_function" to function, "plugin_kind" to kind, "plugin_origin" to f.origin),
+            tags = mapOf("plugin_id" to id, "plugin_function" to function, "plugin_kind" to kind, "plugin_origin" to f.origin) +
+                (if (f.signed) mapOf("plugin_signed" to "true") else emptyMap()),
             extras = extras,
         )
     }
@@ -338,6 +341,7 @@ class PluginTelemetry(
             put("plugin_origin", f.origin)
             publicNuvioRepo(f.nuvioRepo)?.let { put("nuvio_repo", safeWord(it)) }
             f.nuvioScraperId?.let { put("nuvio_scraper", safeWord(it)) }
+            if (f.signed) put("plugin_signed", "true")
         }
 
         /** A plugin id (or `owner/repo` for one that has none yet), cut to a safe alphabet. */

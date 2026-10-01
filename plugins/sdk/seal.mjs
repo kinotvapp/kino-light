@@ -6,6 +6,14 @@
 //
 //   node sdk/seal.mjs --repo owner/repo[/path] --name apiKey
 //
+// Signed plugins (apiVersion 5's `signature`, Kino 0.9.46+): the entry script stays plain, readable
+// JavaScript, signed with the author's own Ed25519 key; the signature goes into the manifest:
+//   node sdk/seal.mjs --keygen [--key kino-author-key.pem]          (once; keep the key, never commit it)
+//   node sdk/seal.mjs --sign --repo owner/repo[/path] [--manifest kino-plugin.json] [--key kino-author-key.pem]
+// Sign again after every change to the entry script or the version. Kino pins the key at the first
+// install: every update must be signed with the SAME key, or Kino refuses it -- losing the key means
+// everyone has to uninstall and install the plugin again.
+//
 // The value is read from stdin when it is piped, or from a hidden prompt otherwise -- NEVER from a
 // command-line argument, which would land in shell history and process listings. One line goes to
 // stdout: `kino-sealed:v1:...`; paste it into the manifest's `secrets` field.
@@ -14,9 +22,10 @@
 // when it does). Tests only: it lets the kit and the app's Kotlin tests agree on a fixture without
 // the production private key ever leaving the app's native sources. Never use it to seal a secret
 // for a real, published plugin.
-import { createCipheriv, createPublicKey, diffieHellman, generateKeyPairSync, hkdfSync, randomBytes } from "node:crypto";
+import { createCipheriv, createHash, createPrivateKey, createPublicKey, diffieHellman, generateKeyPairSync, hkdfSync, randomBytes, sign as cryptoSign, verify as cryptoVerify } from "node:crypto";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { contract } from "./contract.mjs";
 
 /** Kino's v1 production public key (spec §3); the private half lives only in the app's native library. */
@@ -81,6 +90,60 @@ export function seal(value, binding, name, publicKeyHex = process.env.KINO_SEAL_
   const tag = cipher.getAuthTag();
   const raw = Buffer.concat([ephPublicRaw, nonce, ciphertext, tag]);
   return `${contract.manifest.secrets.prefix}${raw.toString("base64url")}`;
+}
+
+// ---------- signed plugins (apiVersion 5's signature; app: SignedEntry.kt) ----------
+//
+// The manifest's "signature": { "authorKey": <64 hex>, "value": <128 hex> } is an Ed25519 signature
+// over the UTF-8 bytes of "kino-signed-entry:v1\n" + binding + "\n" + id + "\n" + version + "\n" +
+// sha256 hex of the entry file's bytes -- so it covers that exact script and cannot be replayed onto
+// another repository, plugin id or version.
+
+const SIG = contract.manifest.signature;
+const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
+
+/** The raw 32-byte Ed25519 public key of a KeyObject (public or private). */
+export function rawAuthorKey(key) {
+  const pub = key.type === "private" ? createPublicKey(key) : key;
+  return pub.export({ format: "der", type: "spki" }).subarray(ED25519_SPKI_PREFIX.length);
+}
+
+/** What the person reads on the consent sheet for an author key: `ABCD-EF01-2345-6789` (first 8 bytes of its SHA-256). */
+export function fingerprint(rawKey) {
+  return createHash("sha256").update(rawKey).digest().subarray(0, 8).toString("hex").toUpperCase().match(/.{4}/g).join("-");
+}
+
+/** A new author key pair, the private half as PKCS#8 PEM (keep it secret, never commit it). */
+export function generateAuthorKey() {
+  const { privateKey } = generateKeyPairSync("ed25519");
+  return { pem: privateKey.export({ format: "pem", type: "pkcs8" }), raw: rawAuthorKey(privateKey) };
+}
+
+/** The exact bytes an author signs for [script] (a Buffer) as plugin [id] version [version] from [binding]. */
+export function signedMessage(script, binding, id, version) {
+  const digest = createHash("sha256").update(script).digest("hex");
+  return Buffer.from(`${SIG.domain}\n${normalizeBinding(binding)}\n${id}\n${version}\n${digest}`, "utf8");
+}
+
+/** The manifest's `signature` object for [script], signed with [authorPrivateKeyPem]. */
+export function signEntry(script, binding, id, version, authorPrivateKeyPem) {
+  if (!new RegExp(contract.manifest.idPattern).test(String(id))) throw new Error(`invalid plugin id: "${String(id).slice(0, 40)}"`);
+  const author = createPrivateKey(authorPrivateKeyPem);
+  if (author.asymmetricKeyType !== "ed25519") throw new Error("the author key must be an Ed25519 private key (node sdk/seal.mjs --keygen)");
+  return {
+    authorKey: rawAuthorKey(author).toString("hex"),
+    value: cryptoSign(null, signedMessage(Buffer.from(script), binding, id, version), author).toString("hex"),
+  };
+}
+
+/** True when [signature] (the manifest's object) signs [script] as [id] [version] from [binding]. */
+export function verifyEntry(signature, script, binding, id, version) {
+  try {
+    const pub = createPublicKey({ key: Buffer.concat([ED25519_SPKI_PREFIX, Buffer.from(signature.authorKey, "hex")]), format: "der", type: "spki" });
+    return cryptoVerify(null, signedMessage(Buffer.from(script), binding, id, version), pub, Buffer.from(signature.value, "hex"));
+  } catch {
+    return false;
+  }
 }
 
 function readStdin() {
@@ -162,6 +225,8 @@ export async function readValue() {
 
 async function main(argv) {
   const opt = (name) => { const i = argv.indexOf(name); return i === -1 ? undefined : argv[i + 1]; };
+  if (argv.includes("--keygen")) return keygen(opt("--key") || "kino-author-key.pem");
+  if (argv.includes("--sign")) return mainSign(opt);
   const repo = opt("--repo");
   const name = opt("--name");
   if (!repo || !name) {
@@ -194,6 +259,45 @@ async function main(argv) {
   } catch (e) {
     console.error(e.message);
     return 1;
+  }
+}
+
+function keygen(keyFile) {
+  if (existsSync(keyFile)) {
+    console.error(`${keyFile} already exists: not overwritten. Kino pins your key at the first install; a new key means everyone must reinstall.`);
+    return 2;
+  }
+  const { pem, raw } = generateAuthorKey();
+  writeFileSync(keyFile, pem, { mode: 0o600 });
+  console.error(`author key written to ${keyFile} (fingerprint ${fingerprint(raw)})`);
+  console.error("keep it safe and private: add it to .gitignore, never commit or share it. Every update must be signed with it.");
+  return 0;
+}
+
+function mainSign(opt) {
+  const repo = opt("--repo");
+  if (!repo) {
+    console.error("usage: node sdk/seal.mjs --sign --repo owner/repo[/path] [--manifest kino-plugin.json] [--key kino-author-key.pem]");
+    return 2;
+  }
+  try {
+    normalizeBinding(repo);
+    const manifestFile = opt("--manifest") || "kino-plugin.json";
+    const m = JSON.parse(readFileSync(manifestFile, "utf8"));
+    if (!(m.apiVersion >= SIG.apiVersion)) throw new Error(`${manifestFile} needs "apiVersion": ${SIG.apiVersion} or newer to carry a signature`);
+    if (typeof m.entry !== "string") throw new Error(`${manifestFile} has no "entry"`);
+    const keyFile = opt("--key") || "kino-author-key.pem";
+    if (!existsSync(keyFile)) throw new Error(`no author key at ${keyFile}: create one once with node sdk/seal.mjs --keygen --key ${keyFile}`);
+    const entryFile = join(dirname(manifestFile), m.entry);
+    const signature = signEntry(readFileSync(entryFile), repo, m.id, m.version, readFileSync(keyFile, "utf8"));
+    m.signature = signature;
+    writeFileSync(manifestFile, JSON.stringify(m, null, 2) + "\n");
+    console.error(`signed ${entryFile} as ${m.id} ${m.version} for ${normalizeBinding(repo)} with key ${fingerprint(Buffer.from(signature.authorKey, "hex"))}; the signature is in ${manifestFile}`);
+    console.error(`sign again after any change to ${m.entry} or the version; requires Kino ${SIG.fromApp} or newer`);
+    return 0;
+  } catch (e) {
+    console.error(e.message);
+    return 2;
   }
 }
 

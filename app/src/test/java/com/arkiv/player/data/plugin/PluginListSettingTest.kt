@@ -48,8 +48,8 @@ class PluginListSettingTest {
         }
     }
 
-    @Test fun `apiVersion 5 is still newer than this Kino`() {
-        assertEquals("apiVersion", invalid(manifest(api = 5)).field)
+    @Test fun `apiVersion 6 is still newer than this Kino`() {
+        assertEquals("apiVersion", invalid(manifest(api = 6)).field)
     }
 
     @Test fun `a list needs one to four fields, of type text or url, with their own keys and names`() {

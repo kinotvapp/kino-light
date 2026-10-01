@@ -28,7 +28,7 @@ class ApiVersion4Test {
         )
 
     @Test fun `one version, every feature on its own gate`() {
-        assertEquals(4, ManifestParser.SUPPORTED_API)
+        assertEquals(5, ManifestParser.SUPPORTED_API) // apiVersion 5 (sealed code) moved only the ceiling: every v4 gate stays at 4
         assertEquals(4, ManifestParser.STREAM_HOSTS_API_VERSION)
         assertEquals(4, ManifestParser.SECRETS_API_VERSION)
         assertEquals(4, PluginSettings.LIST_API_VERSION)

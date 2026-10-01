@@ -44,6 +44,8 @@ data class InstallPreview(
     val newFetchHostsAny: Boolean = false,
     /** Set for a Nuvio-origin install/update: the converted script to write, skipping the fetch. */
     val nuvioOrigin: NuvioOrigin? = null,
+    /** Set only for an author-signed entry (apiVersion 5): the verified script and its author key, downloaded at preview. */
+    val signedEntry: SignedEntryPreview? = null,
 )
 
 sealed interface UpdateOutcome {
@@ -165,7 +167,9 @@ class PluginInstaller(
 
     suspend fun install(preview: InstallPreview): InstalledRecord {
         val m = preview.manifest
-        val script = preview.nuvioOrigin?.script ?: try {
+        // A signed entry was downloaded and its signature verified at preview: install exactly those bytes.
+        if (m.signature != null && preview.signedEntry == null) throw InstallException(BAD_SIGNATURE_MESSAGE)
+        val script = preview.nuvioOrigin?.script ?: preview.signedEntry?.script ?: try {
             fetcher.fetch(preview.address.rawUrl(m.entry), MAX_SCRIPT_BYTES)
         } catch (e: FileNotFoundException) {
             reportInstall(preview, "download", mapOf("error" to "not_found"))
@@ -191,6 +195,8 @@ class PluginInstaller(
      */
     internal suspend fun commit(preview: InstallPreview, script: ByteArray, icon: ByteArray?): InstalledRecord {
         val m = preview.manifest
+        // A signed entry: only the very bytes whose signature was checked at preview are ever stored.
+        if (preview.signedEntry != null && !script.contentEquals(preview.signedEntry.script)) throw InstallException(BAD_SIGNATURE_MESSAGE)
         val exports = try {
             probe(script.toString(Charsets.UTF_8), m.secrets.keys)
         } catch (e: PluginException) {
@@ -220,6 +226,8 @@ class PluginInstaller(
             // The person's broad video permission, like a reactive "yes": until they revoke it or uninstall.
             anyVideoHost = previous?.record?.anyVideoHost == true,
             nuvioRepo = preview.nuvioOrigin?.repo, nuvioScraperId = preview.nuvioOrigin?.scraperId,
+            // The key the person accepted on the consent sheet (pinned); null for an unsigned plugin.
+            authorKey = preview.signedEntry?.authorKey?.let(SignedEntry::hex),
         )
         val staging = store.newStaging(m.id)
         try {
@@ -266,7 +274,7 @@ class PluginInstaller(
         // them. A new REQUIRED setting doesn't: the update applies and the plugin shows "Falta configurar".
         if (preview.newHosts.isNotEmpty() || preview.newPermissions.isNotEmpty() ||
             preview.newCapabilities.isNotEmpty() || preview.newInsecureHosts.isNotEmpty() || preview.newLiveStreamHostsAny ||
-            preview.newStreamHostsAny || preview.newSealedSecrets || preview.newFetchHostsAny
+            preview.newStreamHostsAny || preview.newSealedSecrets || preview.newFetchHostsAny || preview.signedEntry?.firstKey == true
         ) {
             touch {
                 it.copy(
@@ -298,7 +306,7 @@ class PluginInstaller(
             PluginFailure(
                 m.id, "install:$stage", if (nuvio != null) PluginFailureKind.CONVERSION else PluginFailureKind.INSTALL,
                 raw = raw, detail = detail,
-                facts = PluginFacts(m.version, m.apiVersion, if (nuvio != null) "nuvio" else "repo", nuvio?.repo, nuvio?.scraperId),
+                facts = PluginFacts(m.version, m.apiVersion, if (nuvio != null) "nuvio" else "repo", nuvio?.repo, nuvio?.scraperId, signed = m.signature != null),
             ),
         )
     }
@@ -338,7 +346,28 @@ class PluginInstaller(
             return previewFor(headTwin)
         }
         verifySeals(address, manifest)
-        return diffAgainstInstalled(address, manifest, json)
+        val signedEntry = manifest.signature?.let { fetchSignedEntry(address, manifest, it) }
+        return diffAgainstInstalled(address, manifest, json, signedEntry = signedEntry)
+    }
+
+    /**
+     * Downloads a signed entry at preview time -- so a script that is not what its author signed is
+     * refused before anyone is asked, and the consent sheet can name the key -- and checks the
+     * signature over those exact bytes, this repo/folder, id and version. Any ref is fine (the code
+     * is readable; the binding never includes the ref). The key pin is checked in [diffAgainstInstalled].
+     */
+    private suspend fun fetchSignedEntry(address: PluginAddress, manifest: PluginManifest, signature: EntrySignature): SignedEntryPreview {
+        val script = try {
+            fetcher.fetch(address.rawUrl(manifest.entry), MAX_SCRIPT_BYTES)
+        } catch (e: FileNotFoundException) {
+            throw InstallException("No encontré ${manifest.entry} en ${address.canonical}")
+        } catch (e: IOException) {
+            throw InstallException(installReadFailureMessage(e))
+        }
+        if (!SignedEntry.verify(signature, SealedSecrets.bindingOf(address), manifest.id, manifest.version, script)) {
+            throw InstallException(BAD_SIGNATURE_MESSAGE)
+        }
+        return SignedEntryPreview(script, signature.authorKey, firstKey = true)
     }
 
     /**
@@ -367,11 +396,20 @@ class PluginInstaller(
      * Diffs a freshly built [manifest] against whatever [manifest.id] already has installed (if
      * anything): shared by [previewFor] and [NuvioPluginInstaller]'s own preview step (Task 5).
      */
-    internal fun diffAgainstInstalled(address: PluginAddress, manifest: PluginManifest, json: String, nuvioOrigin: NuvioOrigin? = null): InstallPreview {
+    internal fun diffAgainstInstalled(
+        address: PluginAddress, manifest: PluginManifest, json: String, nuvioOrigin: NuvioOrigin? = null,
+        signedEntry: SignedEntryPreview? = null,
+    ): InstallPreview {
         val existing = store.get(manifest.id)
         if (existing != null && existing.record.address != address.canonical) {
             throw InstallException("Ya hay un plugin con ese id (${manifest.id}), instalado desde ${existing.record.address}")
         }
+        // A signed plugin's author key, pinned at its first signed install: an update signed by another
+        // key, or no longer signed at all, is refused (uninstall + install accepts it). A plugin that
+        // was never signed has no pinned key, so nothing here applies to it.
+        val pinned = existing?.record?.authorKey
+        if (pinned != null && signedEntry == null) throw InstallException(SIGNATURE_DROPPED_MESSAGE)
+        if (pinned != null && signedEntry != null && pinned != SignedEntry.hex(signedEntry.authorKey)) throw InstallException(AUTHOR_KEY_CHANGED_MESSAGE)
         val approved = existing?.record?.hosts.orEmpty().toSet()
         val approvedPermissions = existing?.record?.permissions.orEmpty().toSet()
         val approvedCapabilities = existing?.record?.capabilities.orEmpty().toSet()
@@ -387,6 +425,7 @@ class PluginInstaller(
             newStreamHostsAny = manifest.streamHostsAny && existing?.record?.streamHostsAny != true,
             newFetchHostsAny = manifest.fetchHostsAny && nuvioOrigin != null && existing?.record?.fetchHostsAny != true,
             nuvioOrigin = nuvioOrigin,
+            signedEntry = signedEntry?.let { SignedEntryPreview(it.script, it.authorKey, firstKey = pinned == null) },
         )
     }
 
@@ -427,5 +466,13 @@ class PluginInstaller(
         const val NON_HEAD_SEALS_MESSAGE = "Los datos sellados solo funcionan si instalas el plugin desde su rama principal, sin @rama"
         /** Shown when a seal doesn't open for this plugin's address (wrong repo, wrong name, tampered, or malformed). */
         const val WRONG_SEALS_MESSAGE = "Los datos sellados de este plugin no son para este repositorio o están dañados"
+
+        // Author-signed plugins (apiVersion 5's `signature`, [SignedEntry]).
+        const val BAD_SIGNATURE_MESSAGE =
+            "La firma del autor no es válida: el código no es el que firmó, o no es para este repositorio, este plugin o esta versión"
+        const val AUTHOR_KEY_CHANGED_MESSAGE =
+            "Esta versión está firmada con otra clave de autor, así que no se instala. Si confías en el cambio, desinstala el plugin y vuelve a instalarlo."
+        const val SIGNATURE_DROPPED_MESSAGE =
+            "Esta versión ya no está firmada por su autor, así que no se instala. Si confías en el cambio, desinstala el plugin y vuelve a instalarlo."
     }
 }

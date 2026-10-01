@@ -35,6 +35,12 @@ data class ConsentLine(val text: String, val warning: Boolean = false, val isNew
 
 /** The consent sheet's lines beyond the host list (spec §1.2, §1.3, and round 2's §"Security"). Pure. */
 object PluginConsent {
+    /**
+     * The consent sheet's line for an author-signed plugin (apiVersion 5), also the kit's (validate.mjs).
+     * Just that: the key's fingerprint is shown in the plugin's details (Gestionar), not here.
+     */
+    const val SIGNED_LINE = "Firmado por su autor"
+
     fun extraLines(preview: InstallPreview): List<ConsentLine> {
         val m = preview.manifest
         val out = ArrayList<ConsentLine>()
@@ -52,6 +58,10 @@ object PluginConsent {
         }
         if (m.secrets.isNotEmpty()) {
             out += ConsentLine("Usa datos sellados por su autor", isNew = preview.isUpdate && preview.newSealedSecrets)
+        }
+        // Author-signed (apiVersion 5): said plainly, no extra confirmation; the key is pinned on accept.
+        preview.signedEntry?.let { signed ->
+            out += ConsentLine(SIGNED_LINE, isNew = preview.isUpdate && signed.firstKey)
         }
         m.insecureHosts.forEach { host ->
             out += ConsentLine("Conexión sin cifrar con $host", danger = true, isNew = preview.isUpdate && host in preview.newInsecureHosts)

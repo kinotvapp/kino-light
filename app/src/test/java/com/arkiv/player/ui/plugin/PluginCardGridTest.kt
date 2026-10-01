@@ -52,7 +52,8 @@ class CatalogSignedTagTest {
         assertEquals("Firmado", SIGNED_TAG)
     }
 
-    @Test fun `no catalog entry is signed until the signature flag is wired`() {
+    @Test fun `only a signed entry carries the tag`() {
         assertEquals(null, cardSignedTag(row))
+        assertEquals(SIGNED_TAG, cardSignedTag(row.copy(entry = row.entry.copy(signed = true))))
     }
 }

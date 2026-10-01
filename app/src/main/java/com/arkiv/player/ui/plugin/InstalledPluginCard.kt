@@ -100,13 +100,7 @@ internal fun InstalledPluginCard(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text(
-                model.statusLabel,
-                style = MaterialTheme.typography.bodySmall,
-                color = if (model.statusIsProblem) ArkivRed else ArkivTextSecondary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            InstalledStatusLine(model)
             if (liveNotice != null || reserveNoticeLines) {
                 Text(
                     liveNotice ?: " ",
@@ -179,6 +173,34 @@ internal fun InstalledPluginCard(
 }
 
 /**
+ * An installed card's status line (phone and TV): [InstalledCardModel.statusLabel] in its own colour, then
+ * " · Firmado" for an author-signed plugin. The status gives way (ellipsis) on a narrow card, never the tag.
+ */
+@Composable
+internal fun InstalledStatusLine(model: InstalledCardModel) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            model.statusLabel,
+            style = MaterialTheme.typography.bodySmall,
+            color = if (model.statusIsProblem) ArkivRed else ArkivTextSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        model.signedTag?.let {
+            Text(
+                " · $it",
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.Medium,
+                color = Color.White,
+                maxLines = 1,
+                softWrap = false,
+            )
+        }
+    }
+}
+
+/**
  * "Gestionar"'s sheet: the plugin's full host list (the card's own line is capped to
  * [installedHostsLines] and may cut it), then Configurar (only when [InstalledCardModel.hasSettings]), Buscar
  * actualización (its label switches to "Revisar actualización" the same way the row's did, once an update is
@@ -214,6 +236,15 @@ private fun InstalledActionsSheet(
                 color = ArkivTextSecondary,
                 modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 12.dp),
             )
+            // An author-signed plugin: the fingerprint of its pinned key (the consent sheet only says "Firmado").
+            installedAuthorKeyLine(plugin.record)?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = ArkivTextSecondary,
+                    modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 12.dp),
+                )
+            }
             // The broad video permission, when granted: what it lets the plugin do; its revoke action is below.
             installedAnyVideoHostLine(plugin.record)?.let {
                 Text(

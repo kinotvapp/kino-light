@@ -128,7 +128,7 @@ fun PluginCard(
                 maxLines = cardDescriptionLines(),
                 overflow = TextOverflow.Ellipsis,
             )
-            CardTags(cardTags(entry.tags))
+            CardTags(listOfNotNull(cardSignedTag(row)) + cardTags(entry.tags))
             if (status != null) {
                 Text(
                     cardStatusLabel(status),

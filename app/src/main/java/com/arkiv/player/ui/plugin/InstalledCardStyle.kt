@@ -34,6 +34,12 @@ internal data class InstalledCardModel(
     val switchEnabled: Boolean,
     /** Whether "Configurar" belongs among this plugin's actions: only when its manifest declares settings. */
     val hasSettings: Boolean,
+    /**
+     * [SIGNED_PILL] for an author-signed plugin (apiVersion 5), else null. An installed card draws it on its
+     * status line, after [statusLabel] ("Activo · Firmado"), never as a tile pill: the TV card's settings
+     * gear sits in the tile's top corner, where a pill would run under it.
+     */
+    val signedTag: String? = null,
 )
 
 /**
@@ -55,6 +61,7 @@ internal fun installedCardModel(plugin: InstalledPlugin, art: CatalogArt?): Inst
         switchChecked = plugin.isUsable,
         switchEnabled = status != PluginStatus.DAMAGED,
         hasSettings = plugin.manifest.settings.isNotEmpty(),
+        signedTag = if (plugin.manifest.signature != null) SIGNED_PILL else null,
     )
 }
 

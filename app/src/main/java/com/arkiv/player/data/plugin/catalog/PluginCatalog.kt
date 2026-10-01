@@ -20,6 +20,8 @@ data class CatalogEntry(
     val bundled: Boolean = false,
     /** Capabilities this build must have for the entry to be shown (for example `xuper-bridge`). */
     val requires: List<String> = emptyList(),
+    /** Signed by its author (apiVersion 5's `signature`): listed like any other, "Firmado" on its card's status line. */
+    val signed: Boolean = false,
 )
 
 data class PluginCatalog(val entries: List<CatalogEntry>)
@@ -83,6 +85,7 @@ object PluginCatalogParser {
             legacyDefault = o.optBoolean("legacyDefault", false),
             bundled = o.optBoolean("bundled", false),
             requires = strings(o.optJSONArray("requires")),
+            signed = o.optBoolean("signed", false),
         )
     }
 

@@ -679,6 +679,7 @@ class AppGraph(context: Context) {
             // The person's own servers (URL settings) and every host they approved themselves at
             // playback (installed hosts the manifest never declared): never named in a report.
             privateHosts = p.userHosts.map { it.host }.toSet() + (r.hosts - p.manifest.hosts.toSet()),
+            signed = p.manifest.signature != null,
         )
     }
 

@@ -44,7 +44,7 @@ class ManifestParserTest {
     @Test fun `version must be semver`() = assertEquals("version", invalidField(base().put("version", "1.0")))
 
     @Test fun `apiVersion above the supported one says Kino must be updated`() {
-        val r = ManifestParser.parse(base().put("apiVersion", 5).toString()) as ManifestResult.Invalid
+        val r = ManifestParser.parse(base().put("apiVersion", ManifestParser.SUPPORTED_API + 1).toString()) as ManifestResult.Invalid
         assertEquals("apiVersion", r.field)
         assertEquals("Este plugin necesita una versión más nueva de Kino", r.message)
         assertEquals("apiVersion", invalidField(base().put("apiVersion", "1")))

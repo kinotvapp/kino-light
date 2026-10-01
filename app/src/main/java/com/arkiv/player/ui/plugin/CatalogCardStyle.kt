@@ -161,25 +161,24 @@ internal fun artForInstalled(art: Map<String, CatalogArt>, address: String): Cat
     art.entries.firstOrNull { sameAddress(it.key, address) }?.value
 
 /**
- * The pill on a card's tile: what the person already used, else none. Community cards carry no pill: they
- * sit under the "De la comunidad" header already, and installing one still shows "Plugin no verificado".
+ * The pill on a card's tile: what the person already used, else none. A signed plugin's "Firmado" is never a
+ * pill: it goes on the status line ([cardSignedTag]). Community cards carry no pill: they sit under the "De la
+ * comunidad" header already, and installing one still shows "Plugin no verificado".
  */
 internal fun cardPill(row: CatalogRow): String? = if (row.entry.legacyDefault) "Lo que ya usabas" else null
 
 /** The word a signed plugin's card adds to its status line, never anything else ("Seguro", "Verificado"). */
 internal const val SIGNED_TAG = "Firmado"
 
+/** The tag of an author-signed plugin (apiVersion 5) on an installed card's status line too. */
+const val SIGNED_PILL = SIGNED_TAG
+
 /**
  * The tag a TV recommended or community card adds to its status line for a plugin signed by its author
  * ([SIGNED_TAG]), or null. On the TV it is never a tile pill and never in a corner: the line under the name
- * says it, as "Instalado · Firmado" (the phone's cards keep their own design).
- *
- * Always null on this branch: the catalog and discovery entries do not carry the signature flag yet. The
- * signed-plugins work (feat/sealed-code) wires it here (its entry's `signed`); the TV card already has the
- * slot for it ([withSignedTag]).
+ * says it, as "Instalado · Firmado". The phone's catalog card shows it first in its tag row, never as a pill.
  */
-@Suppress("UNUSED_PARAMETER")
-internal fun cardSignedTag(row: CatalogRow): String? = null
+internal fun cardSignedTag(row: CatalogRow): String? = if (row.entry.signed) SIGNED_TAG else null
 
 /** [label] followed by " · [signedTag]" ("Instalado · Firmado"), or [label] alone when there is no tag. */
 internal fun withSignedTag(label: String, signedTag: String?): String =

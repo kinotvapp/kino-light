@@ -5,10 +5,14 @@
 //     and that every declared capability is an exported function (the app refuses the install
 //     otherwise).
 //   node sdk/validate.mjs <plugin folder> --run <function> [argument] [cursor] [--config k=v] [--replay file]
+//   A signed plugin (apiVersion 5's signature): the signature is checked against the entry file for
+//   `--repo owner/repo[/path]`, by default the folder's GitHub origin; an author key (*.pem) tracked
+//   by git is refused.
 //     also runs one function and reports every entry the app would drop, and why. With
 //     `--run liveCategories`, each declared playlist is downloaded and parsed as the app would.
 // It also prints the consent sheet's extra lines, the red ones marked, as the person will read them.
 // Exit code 0 = Kino would accept it; 1 = it wouldn't (the reasons are on stderr).
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -17,6 +21,7 @@ import { checkOutput, contract, kb, requiredExports, validateManifest } from "./
 import { createKino } from "./kino-shim.mjs";
 import { call, parseArgs, resolveFirstLiveRef } from "./run.mjs";
 import { loadPlaylist } from "./live-playlist.mjs";
+import { fingerprint, normalizeBinding, verifyEntry } from "./seal.mjs";
 
 // Every return carries { ok, problems, drops, output, consent, notes } — even the early ones, before
 // a `kino` even exists — so a caller (this file's own CLI included) never has to guess which fields
@@ -27,7 +32,7 @@ const refused = (problems) => ({ ok: false, problems, drops: [], output: null, c
  * The consent sheet's lines beyond the host list, as the app's PluginConsent.extraLines builds them
  * for a first install. `danger` lines are drawn in red.
  */
-export function consentLines(m) {
+export function consentLines(m, { authorFingerprint = null } = {}) {
   const out = [];
   const line = (text, danger = false) => out.push({ text, danger });
   (m.permissions || []).forEach((p) => line(`Permiso: ${p}`));
@@ -37,13 +42,36 @@ export function consentLines(m) {
   if (m.capabilities.includes("drm")) line("Reproduce video protegido (DRM)");
   if (m.capabilities.includes("channels")) line("Agrega canales en vivo a la pestaña En vivo");
   if (m.secrets && Object.keys(m.secrets).length) line("Usa datos sellados por su autor");
+  if (authorFingerprint) line(contract.manifest.signature.consentLine);
   (m.insecureHosts || []).forEach((h) => line(`Conexión sin cifrar con ${h}`, true));
   if (m.liveStreamHostsAny) line("Puede reproducir canales desde cualquier servidor que indique su lista", true);
   if (m.streamHostsAny) line("Puede reproducir video desde cualquier servidor que indique", true);
   return out;
 }
 
-export async function validate(dirArg, { run = null, args = [], config = {}, replay = null, fetchImpl = globalThis.fetch } = {}) {
+/** Files of [dir]'s git repository, among [paths], that git tracks (none when [dir] is not in a repository). */
+function trackedByGit(dir, paths) {
+  const r = spawnSync("git", ["ls-files", "--", ...paths], { cwd: dir, encoding: "utf8" });
+  return r.status === 0 ? r.stdout.split("\n").filter(Boolean) : [];
+}
+
+/** `owner/repo[/folder]` from [dir]'s git origin on GitHub, or null. */
+export function bindingFromGit(dir) {
+  const git = (...a) => spawnSync("git", a, { cwd: dir, encoding: "utf8" });
+  const origin = git("remote", "get-url", "origin");
+  if (origin.status !== 0) return null;
+  const match = origin.stdout.trim().match(/github\.com[/:]([^/]+)\/([^/]+?)(\.git)?\/?$/i);
+  if (!match) return null;
+  const prefix = git("rev-parse", "--show-prefix");
+  const folder = prefix.status === 0 ? prefix.stdout.trim().replace(/\/+$/, "") : "";
+  try {
+    return normalizeBinding([match[1], match[2], folder].filter(Boolean).join("/"));
+  } catch {
+    return null;
+  }
+}
+
+export async function validate(dirArg, { run = null, args = [], config = {}, replay = null, fetchImpl = globalThis.fetch, repo = null } = {}) {
   const problems = [];
   const dir = resolve(dirArg);
   const manifestFile = join(dir, "kino-plugin.json");
@@ -52,8 +80,8 @@ export async function validate(dirArg, { run = null, args = [], config = {}, rep
   const checked = validateManifest(manifestText);
   if (!checked.ok) return refused([`kino-plugin.json: ${checked.field}: ${checked.message}`]);
   const m = checked.manifest;
-  const consent = consentLines(m);
   const notes = [];
+  let authorFingerprint = null;
   if (!m.discoverable) notes.push("No aparecerá en la búsqueda de Kino");
   // Accepted from Kino 0.9.45 on; older apps still refuse the install, so the author is told. They
   // counted the raw entries (duplicates too), so this does as well.
@@ -66,9 +94,27 @@ export async function validate(dirArg, { run = null, args = [], config = {}, rep
   if (m.secrets && Object.keys(m.secrets).length) {
     notes.push("No se puede comprobar aquí para qué repositorio se sellaron los secretos: Kino lo comprueba al instalar. Además, solo se abren si la persona instala el plugin desde su rama principal, sin @rama.");
   }
+  const sg = contract.manifest.signature;
+  if (m.apiVersion >= sg.apiVersion) {
+    notes.push(`apiVersion ${m.apiVersion}: requiere Kino ${sg.fromApp} o superior; las versiones anteriores lo rechazan con «Este plugin necesita una versión más nueva de Kino»`);
+  }
   const entry = join(dir, m.entry);
-  if (!existsSync(entry)) return { ...refused([`entry ${m.entry} not found`]), consent, notes };
+  if (!existsSync(entry)) return { ...refused([`entry ${m.entry} not found`]), consent: consentLines(m), notes };
   if (statSync(entry).size > contract.manifest.entryMaxBytes) problems.push(`${m.entry} is bigger than ${kb(contract.manifest.entryMaxBytes)}: Kino refuses it`);
+  if (m.signature) {
+    authorFingerprint = fingerprint(Buffer.from(m.signature.authorKey, "hex"));
+    notes.push(`${sg.authorKeyLabel}: ${authorFingerprint} (Kino la muestra en los detalles del plugin, no en la ventana de instalación)`);
+    // The author key committed by mistake: anyone could then sign "updates" Kino accepts.
+    trackedByGit(dir, ["*.pem"]).forEach((f) => problems.push(`${f} is tracked by git: anyone can read your author key on GitHub. Remove it (git rm --cached ${f}), add it to .gitignore, and since it leaked, make a new key (everyone must reinstall)`));
+    let binding = null;
+    try { binding = repo ? normalizeBinding(repo) : bindingFromGit(dir); } catch (e) { problems.push(e.message); }
+    if (!binding) {
+      notes.push("No sé desde qué repositorio se instalará (usa --repo owner/repo[/carpeta]): la firma no se comprobó aquí; Kino la comprueba al instalar.");
+    } else if (!verifyEntry(m.signature, readFileSync(entry), binding, m.id, m.version)) {
+      problems.push(`signature: ${sg.badSignatureMessage} (for ${binding}). Sign again: node sdk/seal.mjs --sign --repo ${binding}`);
+    }
+  }
+  const consent = consentLines(m, { authorFingerprint });
   if (m.icon && existsSync(join(dir, m.icon)) && statSync(join(dir, m.icon)).size > contract.manifest.iconMaxBytes) problems.push(`${m.icon} is bigger than ${kb(contract.manifest.iconMaxBytes)}: Kino skips it`);
   const scratch = mkdtempSync(join(tmpdir(), "kino-validate-"));
   const drops = [];
@@ -120,11 +166,15 @@ export async function validate(dirArg, { run = null, args = [], config = {}, rep
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const { opts, rest } = parseArgs(process.argv.slice(2));
+  // --repo is validate's own (run.mjs's parser doesn't know it): taken out before the rest is read.
+  const argv = process.argv.slice(2);
+  const repoAt = argv.indexOf("--repo");
+  const repo = repoAt === -1 ? null : argv.splice(repoAt, 2)[1];
+  const { opts, rest } = parseArgs(argv);
   const runAt = rest.indexOf("--run");
   const dir = rest[0];
   if (!dir) {
-    console.error("usage: node sdk/validate.mjs <plugin folder> [--run <function> [argument] [cursor]] [--config k=v] [--replay file]");
+    console.error("usage: node sdk/validate.mjs <plugin folder> [--run <function> [argument] [cursor]] [--config k=v] [--replay file] [--repo owner/repo[/path]]");
     process.exitCode = 2;
   } else {
     const result = await validate(dir, {
@@ -132,6 +182,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       args: runAt === -1 ? [] : rest.slice(runAt + 2),
       config: opts.config,
       replay: opts.replay,
+      repo,
     });
     if (result.consent.length) {
       // Red on a terminal, as on the consent sheet; "(en rojo)" either way so a log keeps it.

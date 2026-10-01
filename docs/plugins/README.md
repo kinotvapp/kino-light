@@ -19,7 +19,7 @@ API for your editor (`/// <reference path="./kino.d.ts" />` at the top of `plugi
 1. [What a plugin is](#1-what-a-plugin-is)
 2. [A first plugin](#2-a-first-plugin)
 3. [The manifest](#3-the-manifest)
-4. [The contract (apiVersion 1 to 4)](#4-the-contract-apiversion-1-to-4)
+4. [The contract (apiVersion 1 to 5)](#4-the-contract-apiversion-1-to-5)
 5. [The `kino` API](#5-the-kino-api)
 6. [Limits and engine quirks](#6-limits-and-engine-quirks)
 7. [Test it locally](#7-test-it-locally)
@@ -156,8 +156,9 @@ names the field.
 | `id` | Required. `^[a-z0-9][a-z0-9-]{1,39}$` (2 to 40 lowercase letters, digits or hyphens, not starting with a hyphen). Not one of `magis`, `ditu`, `live`, `local`, `unknown`, `plugin`. It is the plugin's identity: never change it once people have installed it. |
 | `name` | Required. 1 to 40 characters. |
 | `version` | Required. `MAJOR.MINOR.PATCH` and nothing else (no `-beta`, no `+build`), each number up to 6 digits and without leading zeros. |
-| `apiVersion` | Required. `1`, `2`, `3` or `4`. A higher number than Kino supports is refused with "Este plugin necesita una versión más nueva de Kino". Declare the lowest number that has what you use, so your plugin also runs on older Kino builds. |
+| `apiVersion` | Required. `1`, `2`, `3`, `4` or `5` (5 only for a [signed plugin](#signed-plugins-apiversion-5-kino-0946)). A higher number than Kino supports is refused with "Este plugin necesita una versión más nueva de Kino". Declare the lowest number that has what you use, so your plugin also runs on older Kino builds. |
 | `entry` | Required. Relative path of the JavaScript file: letters, digits, `.`, `_`, `-` and `/` only, no `..`, at most 200 characters, ends in `.js`. The file is at most 1 MB. |
+| `signature` | Optional, apiVersion 5 only: `{ "authorKey": …, "value": … }`, written by `sdk/seal.mjs --sign` — your signature over the entry file. See [Signed plugins](#signed-plugins-apiversion-5-kino-0946). |
 | `hosts` | Required. At least 1 entry, with no upper limit from Kino 0.9.45 (only the manifest's 16 KB bounds it); Kino 0.9.44 and older refuse more than 20, and `sdk/validate.mjs` warns "Más de 20 hosts: Kino 0.9.44 o anterior rechaza este plugin; necesita Kino 0.9.45 o superior". From apiVersion 2 it may be empty, `[]`, when the plugin has a `url` setting: see [The person's own servers](#the-persons-own-servers). Each a lowercase DNS name (`archive.org`), `*.` plus a DNS name (`*.archive.org`), or (apiVersion 2 only) an object `{ "host": "…", "insecureHttp": true }` (below). Host names only: no scheme, port or path. No bare `*`, no IP addresses, no `localhost`, nothing ending in `.local`, `.lan`, `.internal`, `.localhost` or `.home.arpa`, and at least one dot. **`*.x` covers subdomains only, not `x` itself**: if you need both, list both. |
 | `capabilities` | Required. A subset of `search`, `home`, `browse`, `episodes`, `resolve`, `download`, `drm`, `channels`. Must include `resolve` and at least one of `search` or `home`. `search`, `home`, `browse`, `episodes` and `resolve` must each be an exported function of the entry file, or the install fails with "El plugin no carga: le falta ...". `download` and `drm` need `apiVersion: 2` and are declarative flags instead — the app acts on them, not your code, so nothing extra to export; declaring one shows its consent line ("Puede descargar videos para verlos sin conexión" / "Reproduce video protegido (DRM)") and needs approval again on an update that adds it. `download` gives your titles offline downloads (see [Downloads](#downloads-apiversion-2)); `drm` lets a `Stream` carry a Widevine license (see [A Widevine-protected stream](#a-widevine-protected-stream-apiversion-2)). `channels` needs `apiVersion: 3` and the exports `liveCategories` and `liveChannels` (see [Channels in the En vivo tab](#channels-in-the-en-vivo-tab-apiversion-3)). |
 | `settings` | Optional. What the person fills in on your plugin's "Configurar" screen: see below. |
@@ -564,7 +565,65 @@ host-and-https check, the `kino.crypto` restrictions and redaction. `--record` n
 value to a fixtures file either — a canonical placeholder stands in for it, so a committed recording
 never carries a secret however it is replayed later. See [section 7](#7-test-it-locally).
 
-## 4. The contract (apiVersion 1 to 4)
+### Signed plugins (apiVersion 5, Kino 0.9.46+)
+
+Strictly optional: you may **sign** your plugin with your own author key, so the people who install
+it know every update comes from you. Your code stays plain, readable JavaScript — signing hides
+nothing. Nothing changes for any unsigned plugin, at any apiVersion.
+
+```json
+"apiVersion": 5,
+"entry": "plugin.js",
+"signature": { "authorKey": "<64 hex>", "value": "<128 hex>" }
+```
+
+Kino 0.9.45 and older refuse an apiVersion 5 manifest with "Este plugin necesita una versión más
+nueva de Kino"; `sdk/validate.mjs` reminds you. Below apiVersion 5 a `signature` is ignored.
+
+**What is signed.** `value` is an Ed25519 signature, by the key in `authorKey`, over the UTF-8 text
+
+```
+kino-signed-entry:v1\n<owner/repo[/path], lowercase>\n<id>\n<version>\n<sha256 hex of the entry file>
+```
+
+So it covers your exact `plugin.js` and is bound to the repo (and folder), the plugin `id` and the
+`version`: it can't be replayed onto another repo, plugin or version, and a single changed byte of
+the script breaks it. The ref is not part of it: a signed plugin installs from any branch or tag.
+
+**What Kino does.** At install and at every update — never when the plugin runs, so it costs
+nothing at runtime — Kino downloads the script, checks the signature (refused with "La firma del
+autor no es válida…" before anyone is asked) and **pins your key** the first time (trust on first
+use). The consent sheet just says "Firmado por su autor"; the plugin's details (phone: Gestionar; TV:
+the installed plugin's actions) show "Clave del autor: ABCD-EF01-2345-6789" (the first 8 bytes of the
+key's SHA-256, also printed by `validate.mjs`). Catalog and community cards carry a "Firmado" pill, and
+an installed card says it on its status line ("Activo · Firmado").
+
+**Updates.** Every update must be signed with the **same** key. An update signed by another key, or
+no longer signed, is refused ("Esta versión está firmada con otra clave de autor…" / "Esta versión
+ya no está firmada por su autor…"); only uninstalling and installing again accepts it. So keep your
+key safe and backed up: losing it means everyone has to reinstall. An unsigned plugin that becomes
+signed asks the person again before updating.
+
+**The workflow.**
+
+```
+node sdk/seal.mjs --keygen                       # once: writes kino-author-key.pem (never commit it)
+node sdk/seal.mjs --sign --repo owner/repo       # signs plugin.js, writes "signature" into kino-plugin.json
+node sdk/validate.mjs . --repo owner/repo        # checks the signature, exports, and that no *.pem is tracked
+```
+
+Sign again after **any** change to the entry file or the `version` — `validate.mjs` fails until you
+do. `--sign` takes `--manifest` and `--key` (default `kino-author-key.pem`); `validate.mjs` reads the
+repo from the folder's GitHub `origin` when you omit `--repo`. **Never commit the key**: put
+`*.pem` in `.gitignore`; `validate.mjs` fails when one is tracked.
+
+**What it does and doesn't protect.** It proves each update was signed by whoever held the key at
+the first install: someone who gets push access to your repo (or a compromised account) can't ship
+an update people accept without your key. It does not make the first install trustworthy (that is
+what the first-time line says), it does not protect a leaked key, and it does not hide your code.
+Keep using `secrets` for keys and tokens.
+
+## 4. The contract (apiVersion 1 to 5)
 
 Your entry file is one ES module that exports one `async` function for each capability you
 declared, and nothing is called that you did not declare:
@@ -894,7 +953,7 @@ unknown code becomes a plain error.
 `kino` is a global object, frozen, always there. Nothing else from the outside world is.
 
 ```js
-kino.apiVersion   // 4 -- the highest apiVersion this build of Kino understands, not your manifest's
+kino.apiVersion   // 5 -- the highest apiVersion this build of Kino understands, not your manifest's
 kino.appVersion   // the version of Kino, for example "1.42.0"
 kino.lang         // "es-CO"
 ```

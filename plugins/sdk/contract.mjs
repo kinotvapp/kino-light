@@ -85,6 +85,17 @@ export function validateManifest(text, { knownPermissions = contract.permissions
   if (o.apiVersion > contract.maxApiVersion) return bad("apiVersion", "Este plugin necesita una versión más nueva de Kino");
   if (o.apiVersion < 1) return bad("apiVersion", 'El campo "apiVersion" debe ser 1 o mayor');
   if (!isSafeRelativePath(o.entry) || !o.entry.endsWith(".js")) return bad("entry", 'El campo "entry" debe ser una ruta relativa a un archivo .js');
+  // apiVersion 5's signature (the author's Ed25519 key and signature over the entry). Below that
+  // apiVersion it is unknown and ignored like any other field.
+  const sg = m.signature;
+  const signed = o.apiVersion >= sg.apiVersion && Object.prototype.hasOwnProperty.call(o, "signature");
+  if (signed) {
+    const s = o.signature;
+    const hex = (v, n) => typeof v === "string" && v.length === n && /^[0-9a-f]*$/.test(v);
+    const wellFormed = s !== null && typeof s === "object" && !Array.isArray(s) &&
+      Object.keys(s).sort().join(",") === "authorKey,value" && hex(s.authorKey, sg.authorKeyHexChars) && hex(s.value, sg.valueHexChars);
+    if (!wellFormed) return bad("signature", sg.badFieldMessage);
+  }
   if (!Array.isArray(o.hosts)) return bad("hosts", 'Falta el campo "hosts"');
   // Empty is judged once the settings are read (below), and only from noHostsApiVersion: an older
   // manifest gets the refusal it always got, at the point it always got it.
@@ -174,7 +185,10 @@ export function validateManifest(text, { knownPermissions = contract.permissions
   if (hosts.length === 0 && !(o.settings || []).some((x) => x.type === "url" || (x.type === "list" && Array.isArray(x.fields) && x.fields.some((f) => f.type === "url")))) {
     return bad("hosts", 'El campo "hosts" solo puede estar vacío si el plugin tiene un ajuste de tipo "url"');
   }
-  return { ok: true, manifest: { ...o, hosts: [...new Set(hosts)], capabilities: caps, permissions: o.permissions || [], settings: o.settings || [], insecureHosts, liveStreamHostsAny, streamHostsAny, fetchHostsAny, discoverable, secrets } };
+  const out = { ...o, hosts: [...new Set(hosts)], capabilities: caps, permissions: o.permissions || [], settings: o.settings || [], insecureHosts, liveStreamHostsAny, streamHostsAny, fetchHostsAny, discoverable, secrets };
+  // `signature` only where the app reads it (apiVersion 5+): an ignored one is dropped, as the app drops it.
+  if (!signed) delete out.signature;
+  return { ok: true, manifest: out };
 }
 
 /**
