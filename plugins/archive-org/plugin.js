@@ -13,6 +13,16 @@ const FILMS = "collection:(feature_films) AND mediatype:(movies)";
 const TV = "collection:(classic_tv) AND mediatype:(movies)";
 const CARTOONS = "collection:(animationandcartoons) AND mediatype:(movies)";
 
+// kino.log never breaks what it reports on: in Kino 0.9.43 release builds a call to it threw (an R8 rename),
+// which would turn one failed row or title into a failed Home or search.
+function log(...args) {
+  try {
+    kino.log(...args);
+  } catch {
+    // nothing to do: the log line is lost, the result is not
+  }
+}
+
 function advancedUrl(query, rows, page = 1, sort = "downloads desc") {
   const parts = ["q=" + encodeURIComponent(query)];
   for (const f of FIELDS) parts.push("fl%5B%5D=" + f);
@@ -80,14 +90,17 @@ function parseSource(raw) {
   return null;
 }
 
+// Six url/cat slot pairs (url1, cat1 ... url6, cat6): plain settings every Kino since apiVersion 1 understands, so the
+// plugin installs on Kino versions without list settings (the `sources` list of 1.3.0-1.4.1 needed apiVersion 4).
+// Kino hands a plugin only the settings its manifest declares, so an old stored list never reaches this code.
+const SLOTS = 6;
 function sources() {
   const out = [];
-  const entries = kino.config.get("sources");
-  (Array.isArray(entries) ? entries : []).forEach((e, i) => {
-    const s = parseSource(e.url);
-    // `id` is the archive.org identifier; `key` is this address's position; `category` is the optional row name the person gave it.
-    if (s) out.push({ ...s, key: "src" + (i + 1), category: String(e.category || "").trim().slice(0, 60) });
-  });
+  for (let i = 1; i <= SLOTS; i++) {
+    const s = parseSource(kino.config.get("url" + i));
+    // `id` is the archive.org identifier; `key` is this address's slot; `category` is the optional row name the person gave it.
+    if (s) out.push({ ...s, key: "src" + i, category: String(kino.config.get("cat" + i) || "").trim().slice(0, 60) });
+  }
   return out;
 }
 
@@ -135,7 +148,7 @@ async function cardsOf(found, sourceList) {
       try {
         parts = await videoCards(d.identifier, d);
       } catch (e) {
-        kino.log("videos of", d.identifier, "failed", e.message);
+        log("videos of", d.identifier, "failed", e.message);
       }
     }
     if (parts.length) out.push(...parts);
@@ -151,7 +164,7 @@ async function titleOf(source) {
     const title = first(data && data.result && data.result.title);
     if (title) return String(title).slice(0, 80);
   } catch (e) {
-    kino.log("title failed", source.id, e.message);
+    log("title failed", source.id, e.message);
   }
   return source.id;
 }
@@ -283,7 +296,7 @@ export async function search(query) {
         }
       }
     } catch (e) {
-      kino.log("search in the person's addresses failed", e.message);
+      log("search in the person's addresses failed", e.message);
     }
   }
   // Every form in both collections, all at once. A form archive.org fails on is left out; only when
@@ -307,7 +320,7 @@ export async function search(query) {
   const found = [];
   for (const a of answers) {
     if (a.error) {
-      kino.log("search failed for one title", a.error.message);
+      log("search failed for one title", a.error.message);
       continue;
     }
     for (const d of a.found) {
@@ -347,7 +360,7 @@ export async function home() {
       const found = await docs(await queryOf(row.sources), ROW_SIZE, 1, NEWEST);
       if (found.length) out.push({ id: row.key, title: row.title || (await titleOf(row.sources[0])), ref: row.key, items: await cardsOf(found, row.sources) });
     } catch (e) {
-      kino.log("home row failed", row.key, e.message);
+      log("home row failed", row.key, e.message);
     }
   }
   for (const row of ROWS) {
@@ -355,7 +368,7 @@ export async function home() {
       const found = await docs(row.query, ROW_SIZE);
       out.push({ id: row.id, title: row.title, ref: row.id, items: found.map((d) => toItem(d, row.kind)) });
     } catch (e) {
-      kino.log("home row failed", row.id, e.message);
+      log("home row failed", row.id, e.message);
     }
   }
   return out;

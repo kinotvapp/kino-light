@@ -23,8 +23,8 @@ are dropped by Kino, whose episode numbers start at 1.
 
 ## Your own addresses (Configurar)
 
-Under Ajustes > Plugins > Internet Archive > Configurar the person can add up to thirty archive.org
-addresses with the "Agregar" button (a dialog with Dirección and an optional Categoría); each one is then listed as a text line with an "Editar" button:
+Under Ajustes > Plugins > Internet Archive > Configurar the person can fill up to six archive.org
+addresses (Dirección 1 to 6), each with an optional category name (Categoría 1 to 6):
 
 | Address | What it lists |
 | --- | --- |
@@ -40,7 +40,9 @@ inside the addresses is also searched (by every title asked, in one request), an
 archive.org, or not one of the three forms above, is ignored: the plugin only ever talks to
 archive.org. With no addresses the plugin behaves exactly as before.
 
-This is one `list` setting (`sources`, apiVersion 4), so it needs a Kino version that supports list settings.
+These are twelve plain settings (`url1`/`cat1` ... `url6`/`cat6`), so the manifest stays at apiVersion 3 and installs
+on every Kino from 0.9.43 on. Versions 1.3.0 to 1.4.1 used one `list` setting (`sources`, apiVersion 4) that Kino
+0.9.43 could not install; addresses saved in that list are not carried over and have to be typed again.
 
 ## Hosts, and why `*.archive.org`
 
