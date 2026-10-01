@@ -679,6 +679,7 @@ class AppGraph(context: Context) {
             // The person's own servers (URL settings) and every host they approved themselves at
             // playback (installed hosts the manifest never declared): never named in a report.
             privateHosts = p.userHosts.map { it.host }.toSet() + (r.hosts - p.manifest.hosts.toSet()),
+            sealed = p.manifest.entrySealed,
         )
     }
 
@@ -743,8 +744,14 @@ class AppGraph(context: Context) {
 
     private suspend fun openPluginRuntime(id: String): ScriptRuntime {
         val plugin = pluginRegistry.find(id) ?: throw PluginScriptException("El plugin no está instalado")
+        // Off Main, lazily (only when this runtime is first needed, never from the startup warm-up):
+        // a plain entry is read exactly as before; a sealed one is opened in memory (SealedCode),
+        // never written decrypted anywhere.
         val script = try {
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { pluginStore.readVerifiedScript(id) }
+            com.arkiv.player.data.plugin.loadEntryScript(
+                pluginStore, plugin, sealAgreement,
+                onSealedOpened = { ms, size -> if (BuildConfig.DEBUG) android.util.Log.i("KinoSealedCode", "[$id] opened in ${ms} ms ($size chars)") },
+            )
         } catch (e: PluginDamagedException) {
             pluginRegistry.markDamaged(id)
             throw e

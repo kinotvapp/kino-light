@@ -242,7 +242,7 @@ class PluginInstallerTest {
 
     @Test fun `an update needing a newer Kino is reported, not applied`() = runBlocking {
         publish("1.0.0"); installFresh()
-        publish("2.0.0", api = 5)
+        publish("2.0.0", api = ManifestParser.SUPPORTED_API + 1)
         val o = installer.checkUpdate("demo") as UpdateOutcome.Failed
         assertEquals("Este plugin necesita una versión más nueva de Kino", o.message)
         assertEquals("1.0.0", store.get("demo")!!.record.version)

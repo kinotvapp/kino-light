@@ -44,6 +44,10 @@ data class InstallPreview(
     val newFetchHostsAny: Boolean = false,
     /** Set for a Nuvio-origin install/update: the converted script to write, skipping the fetch. */
     val nuvioOrigin: NuvioOrigin? = null,
+    /** Set only for a sealed entry (apiVersion 5): the verified `.kjs` and its author key, downloaded at preview. */
+    val sealedEntry: SealedEntryPreview? = null,
+    /** The entry is sealed and the installed version's was not (always, on a first install of sealed code). */
+    val newSealedCode: Boolean = false,
 )
 
 sealed interface UpdateOutcome {
@@ -165,7 +169,9 @@ class PluginInstaller(
 
     suspend fun install(preview: InstallPreview): InstalledRecord {
         val m = preview.manifest
-        val script = preview.nuvioOrigin?.script ?: try {
+        // A sealed entry was downloaded and verified at preview: install exactly those bytes.
+        if (m.entrySealed && preview.sealedEntry == null) throw InstallException(WRONG_CODE_MESSAGE)
+        val script = preview.nuvioOrigin?.script ?: preview.sealedEntry?.blob ?: try {
             fetcher.fetch(preview.address.rawUrl(m.entry), MAX_SCRIPT_BYTES)
         } catch (e: FileNotFoundException) {
             reportInstall(preview, "download", mapOf("error" to "not_found"))
@@ -191,8 +197,10 @@ class PluginInstaller(
      */
     internal suspend fun commit(preview: InstallPreview, script: ByteArray, icon: ByteArray?): InstalledRecord {
         val m = preview.manifest
+        // A sealed entry is opened in memory for the probe only; what is stored is the sealed file.
+        val source = if (m.entrySealed) openForProbe(preview, script) else script.toString(Charsets.UTF_8)
         val exports = try {
-            probe(script.toString(Charsets.UTF_8), m.secrets.keys)
+            probe(source, m.secrets.keys)
         } catch (e: PluginException) {
             reportInstall(preview, "probe", raw = e.message)
             throw InstallException("El plugin no carga: ${e.message}")
@@ -220,6 +228,8 @@ class PluginInstaller(
             // The person's broad video permission, like a reactive "yes": until they revoke it or uninstall.
             anyVideoHost = previous?.record?.anyVideoHost == true,
             nuvioRepo = preview.nuvioOrigin?.repo, nuvioScraperId = preview.nuvioOrigin?.scraperId,
+            // The key the person accepted on the consent sheet (pinned); null for a plain entry.
+            authorKey = preview.sealedEntry?.authorKey?.let(SealedCode::hex),
         )
         val staging = store.newStaging(m.id)
         try {
@@ -266,7 +276,7 @@ class PluginInstaller(
         // them. A new REQUIRED setting doesn't: the update applies and the plugin shows "Falta configurar".
         if (preview.newHosts.isNotEmpty() || preview.newPermissions.isNotEmpty() ||
             preview.newCapabilities.isNotEmpty() || preview.newInsecureHosts.isNotEmpty() || preview.newLiveStreamHostsAny ||
-            preview.newStreamHostsAny || preview.newSealedSecrets || preview.newFetchHostsAny
+            preview.newStreamHostsAny || preview.newSealedSecrets || preview.newFetchHostsAny || preview.newSealedCode
         ) {
             touch {
                 it.copy(
@@ -298,7 +308,7 @@ class PluginInstaller(
             PluginFailure(
                 m.id, "install:$stage", if (nuvio != null) PluginFailureKind.CONVERSION else PluginFailureKind.INSTALL,
                 raw = raw, detail = detail,
-                facts = PluginFacts(m.version, m.apiVersion, if (nuvio != null) "nuvio" else "repo", nuvio?.repo, nuvio?.scraperId),
+                facts = PluginFacts(m.version, m.apiVersion, if (nuvio != null) "nuvio" else "repo", nuvio?.repo, nuvio?.scraperId, sealed = m.entrySealed),
             ),
         )
     }
@@ -332,13 +342,54 @@ class PluginInstaller(
                 throw InstallException(r.message)
             }
         }
-        if (headTwin != null && manifest.secrets.isNotEmpty()) {
+        if (headTwin != null && (manifest.secrets.isNotEmpty() || manifest.entrySealed)) {
             val atHead = runCatching { fetcher.fetch(headTwin.rawUrl(PluginStore.MANIFEST_FILE), ManifestParser.MAX_BYTES + 1) }.getOrNull()
-            if (atHead == null || !atHead.contentEquals(bytes)) throw InstallException(treeSealsMessage(headTwin))
+            if (atHead == null || !atHead.contentEquals(bytes)) {
+                throw InstallException(if (manifest.secrets.isNotEmpty()) treeSealsMessage(headTwin) else treeCodeMessage(headTwin))
+            }
             return previewFor(headTwin)
         }
         verifySeals(address, manifest)
-        return diffAgainstInstalled(address, manifest, json)
+        val sealedEntry = if (manifest.entrySealed) fetchSealedEntry(address, manifest) else null
+        return diffAgainstInstalled(address, manifest, json, sealedEntry = sealedEntry)
+    }
+
+    /**
+     * Downloads a sealed entry at preview time -- so the consent sheet can name its author key and a
+     * blob that isn't for this plugin is refused before anyone is asked -- and verifies it: HEAD-only
+     * ([SealedSecrets.opensAt], same rule and reason as sealed secrets), a valid author signature,
+     * and that it opens for this repo/folder and id (the plaintext is discarded right away). The key
+     * pin itself is checked against the installed record in [diffAgainstInstalled].
+     */
+    private suspend fun fetchSealedEntry(address: PluginAddress, manifest: PluginManifest): SealedEntryPreview {
+        if (!SealedSecrets.opensAt(address)) throw InstallException(NON_HEAD_CODE_MESSAGE)
+        val blob = try {
+            fetcher.fetch(address.rawUrl(manifest.entry), MAX_SCRIPT_BYTES)
+        } catch (e: FileNotFoundException) {
+            throw InstallException("No encontré ${manifest.entry} en ${address.canonical}")
+        } catch (e: IOException) {
+            throw InstallException(installReadFailureMessage(e))
+        }
+        val authorKey = try {
+            SealedCode.verifiedAuthorKey(blob)
+        } catch (e: SealException) {
+            throw InstallException(if (e.message == SealedCode.BAD_SIGNATURE) BAD_SIGNATURE_MESSAGE else WRONG_CODE_MESSAGE)
+        }
+        openSealed(address, manifest.id, blob, authorKey)
+        return SealedEntryPreview(blob, authorKey, firstKey = true)
+    }
+
+    /** Opens a sealed entry in memory, mapping any failure to the person's Spanish message. */
+    private fun openSealed(address: PluginAddress, id: String, blob: ByteArray, authorKey: ByteArray): String = try {
+        SealedCode.open(blob, SealedSecrets.bindingOf(address), id, sealAgreement ?: throw SealException(SealedSecrets.NO_NATIVE_MESSAGE), sealRecipient, authorKey)
+    } catch (e: SealException) {
+        throw InstallException(if (e.message == SealedSecrets.NO_NATIVE_MESSAGE) NO_CODE_NATIVE_MESSAGE else WRONG_CODE_MESSAGE)
+    }
+
+    private fun openForProbe(preview: InstallPreview, blob: ByteArray): String {
+        val sealed = preview.sealedEntry ?: throw InstallException(WRONG_CODE_MESSAGE)
+        if (!blob.contentEquals(sealed.blob)) throw InstallException(WRONG_CODE_MESSAGE)
+        return openSealed(preview.address, preview.manifest.id, blob, sealed.authorKey)
     }
 
     /**
@@ -367,11 +418,20 @@ class PluginInstaller(
      * Diffs a freshly built [manifest] against whatever [manifest.id] already has installed (if
      * anything): shared by [previewFor] and [NuvioPluginInstaller]'s own preview step (Task 5).
      */
-    internal fun diffAgainstInstalled(address: PluginAddress, manifest: PluginManifest, json: String, nuvioOrigin: NuvioOrigin? = null): InstallPreview {
+    internal fun diffAgainstInstalled(
+        address: PluginAddress, manifest: PluginManifest, json: String, nuvioOrigin: NuvioOrigin? = null,
+        sealedEntry: SealedEntryPreview? = null,
+    ): InstallPreview {
         val existing = store.get(manifest.id)
         if (existing != null && existing.record.address != address.canonical) {
             throw InstallException("Ya hay un plugin con ese id (${manifest.id}), instalado desde ${existing.record.address}")
         }
+        // Sealed code's author key, pinned at its first install: an update signed by another key, or
+        // one that is no longer sealed+signed at all, is refused (uninstall + install accepts it).
+        // A plugin that never had sealed code has no pinned key, so nothing here applies to it.
+        val pinned = existing?.record?.authorKey
+        if (pinned != null && sealedEntry == null) throw InstallException(SEALED_CODE_DROPPED_MESSAGE)
+        if (pinned != null && sealedEntry != null && pinned != SealedCode.hex(sealedEntry.authorKey)) throw InstallException(AUTHOR_KEY_CHANGED_MESSAGE)
         val approved = existing?.record?.hosts.orEmpty().toSet()
         val approvedPermissions = existing?.record?.permissions.orEmpty().toSet()
         val approvedCapabilities = existing?.record?.capabilities.orEmpty().toSet()
@@ -387,6 +447,8 @@ class PluginInstaller(
             newStreamHostsAny = manifest.streamHostsAny && existing?.record?.streamHostsAny != true,
             newFetchHostsAny = manifest.fetchHostsAny && nuvioOrigin != null && existing?.record?.fetchHostsAny != true,
             nuvioOrigin = nuvioOrigin,
+            sealedEntry = sealedEntry?.let { SealedEntryPreview(it.blob, it.authorKey, firstKey = pinned == null) },
+            newSealedCode = sealedEntry != null && pinned == null,
         )
     }
 
@@ -427,5 +489,17 @@ class PluginInstaller(
         const val NON_HEAD_SEALS_MESSAGE = "Los datos sellados solo funcionan si instalas el plugin desde su rama principal, sin @rama"
         /** Shown when a seal doesn't open for this plugin's address (wrong repo, wrong name, tampered, or malformed). */
         const val WRONG_SEALS_MESSAGE = "Los datos sellados de este plugin no son para este repositorio o están dañados"
+
+        // Sealed code (apiVersion 5's `sealedEntry`, [SealedCode]).
+        const val NO_CODE_NATIVE_MESSAGE = "Este Kino no puede abrir código sellado"
+        const val NON_HEAD_CODE_MESSAGE = "El código sellado solo funciona si instalas el plugin desde su rama principal, sin @rama"
+        fun treeCodeMessage(headTwin: PluginAddress) =
+            "El código sellado solo funciona desde la rama principal del repositorio: escribe ${headTwin.canonical}"
+        const val WRONG_CODE_MESSAGE = "El código sellado de este plugin no es para este repositorio o está dañado"
+        const val BAD_SIGNATURE_MESSAGE = "La firma del autor de este plugin no es válida"
+        const val AUTHOR_KEY_CHANGED_MESSAGE =
+            "Esta versión está firmada con otra clave de autor, así que no se instala. Si confías en el cambio, desinstala el plugin y vuelve a instalarlo."
+        const val SEALED_CODE_DROPPED_MESSAGE =
+            "Esta versión ya no trae el código firmado por su autor, así que no se instala. Si confías en el cambio, desinstala el plugin y vuelve a instalarlo."
     }
 }
