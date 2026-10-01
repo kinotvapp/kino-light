@@ -1043,7 +1043,7 @@ private fun PlayerContent(
             // because the proxy url carries tokens that change on every resolve.
             SourceKind.MAGIS -> remuxMagis ?: lanIp?.let {
                 if (magisIsTs(item)) {
-                    com.arkiv.player.playback.ArchiveCacheProxy.lanPlaylistUrl(item.mediaUrl, it)
+                    magisTsPlaylistUrl(graph, item.mediaUrl, it, runCatching { (magisPlayer ?: controller).duration }.getOrDefault(0L))
                 } else {
                     com.arkiv.player.playback.ArchiveCacheProxy.lanUrl(item.mediaUrl, it)
                 }
@@ -1411,8 +1411,8 @@ private fun PlayerContent(
         // It goes out as soon as the remux holds [RemuxHls.START_LEAD_SEC] past where the phone
         // was -- seconds, not the minute the old 40 MB head start cost -- and starts THERE.
         // A resume point the remux is slow to reach is waited for up to
-        // [RemuxHls.RESUME_WAIT_SEC]; past that the cast starts from the top rather than keep the
-        // person staring at "Preparándolo para la TV".
+        // [RemuxHls.RESUME_WAIT_SEC]; past that the cast starts at the furthest point the remux
+        // has reached before it (RemuxHls.castStart) -- never back at 0:00.
         if (item.kind == SourceKind.MAGIS) {
             val resumeAt = resumeMs
             graph.applicationScope.launch(Dispatchers.Main) {
@@ -1429,8 +1429,7 @@ private fun PlayerContent(
                     graph.remuxHlsServer.planStart(key, resumeAt)
                     val ready = graph.remuxHlsServer.availableSec(key)
                     val lead = com.arkiv.player.playback.RemuxHls.START_LEAD_SEC
-                    val from = com.arkiv.player.playback.RemuxHls.startIfCovered(resumeAt, ready, lead)
-                        ?: if (tick + 1 >= com.arkiv.player.playback.RemuxHls.RESUME_WAIT_SEC && ready >= lead) 0L else return@repeat
+                    val from = com.arkiv.player.playback.RemuxHls.castStart(resumeAt, ready, lead, tick + 1) ?: return@repeat
                     val retryPl = PlaylistData(listOf(item), 0, from, requested = item.episodeId)
                     val retryReq = castRequestFor(retryPl, 0, from) ?: return@repeat
                     android.util.Log.w(
@@ -1452,11 +1451,18 @@ private fun PlayerContent(
             android.util.Log.w("ArkivCast", "remux failed → falling back to HLS segments for this title")
             remuxFailed.add(key)
             if (item.kind == SourceKind.MAGIS && casting && castSession != null) {
-                val now = runCatching { contentPositionMs() }.getOrDefault(0L).coerceAtLeast(0L)
+                // The freshest position: the receiver's for this title, else where the phone was --
+                // not the receiver's bare position, which with nothing loaded yet is 0:00.
+                val now = castSession.lastKnownPositionMs(item.episodeId) ?: resumeMs
                 val fallbackPl = PlaylistData(listOf(item), 0, now, requested = item.episodeId)
-                castRequestFor(fallbackPl, 0, now)?.let {
-                    castSession.setMedia(it)
+                val fallback = castRequestFor(fallbackPl, 0, now)
+                if (fallback != null) {
+                    castSession.setMedia(fallback)
                     castToReceiver = item.episodeId
+                } else {
+                    // No fallback that would play (see magisTsPlaylistUrl): say so instead of
+                    // handing the TV a URL that answers 502.
+                    android.widget.Toast.makeText(context, "No se pudo preparar este título para la TV", android.widget.Toast.LENGTH_LONG).show()
                 }
             }
             return@LaunchedEffect
@@ -1475,7 +1481,11 @@ private fun PlayerContent(
         }
         // Anything else on the receiver (the TS segments a failed wait fell back to, another
         // audio) is replaced by the remux FROM WHERE THE RECEIVER IS, not from the top.
-        val from = runCatching { contentPositionMs() }.getOrDefault(0L).coerceAtLeast(0L)
+        val from = if (item.kind == SourceKind.MAGIS) {
+            castSession.lastKnownPositionMs(item.episodeId) ?: resumeMs
+        } else {
+            runCatching { contentPositionMs() }.getOrDefault(0L).coerceAtLeast(0L)
+        }
         // Magis has no playlist -- same synthetic one-item PlaylistData the rest of this screen
         // uses for it, so castRequestFor stays the single place that decides what goes to the TV.
         val pl = if (item.kind == SourceKind.MAGIS) {
@@ -2401,6 +2411,9 @@ private fun PlayerContent(
         } else if (wasCasting) {
             castToReceiver = null
             castAsRemux = null
+            // A remux that failed in this session is tried again in the next one, instead of
+            // that one going straight to a fallback.
+            remuxFailed.clear()
             // Stop converting what nobody is going to watch. The remux covers the whole title, so
             // a cast that ends after ten minutes would otherwise keep pulling the other hour and
             // fifty down the person's connection.

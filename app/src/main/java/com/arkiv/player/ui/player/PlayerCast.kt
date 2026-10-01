@@ -119,6 +119,29 @@ internal fun castShapeFor(item: PlayerData?, graph: com.arkiv.player.AppGraph): 
 internal fun rememberCastShape(item: PlayerData?, graph: com.arkiv.player.AppGraph): PlayerData? =
     androidx.compose.runtime.remember(item) { castShapeFor(item, graph) }
 
+/**
+ * The LAN URL of `ArchiveCacheProxy`'s HLS playlist over a Magis/Xuper `.ts` ([proxyUrl] is its
+ * loopback stream URL), or null when that playlist could not be built -- it would answer the TV a
+ * 502 and the TV would show an error (every time, 2026-10-01). [durationMs] is the phone player's
+ * duration, which is what lets the proxy build it without probing the CDN.
+ *
+ * Only a fallback: the cast's way for a `.ts` is the fMP4 remux, faster to start and to seek on
+ * the receiver; this one is used when the remux failed.
+ */
+internal fun magisTsPlaylistUrl(
+    graph: com.arkiv.player.AppGraph,
+    proxyUrl: String,
+    lanIp: String,
+    durationMs: Long,
+): String? {
+    graph.archiveCacheProxy.rememberDuration(proxyUrl, durationMs)
+    if (!graph.archiveCacheProxy.canServePlaylist(proxyUrl)) {
+        com.arkiv.player.cast.CastDiag.w("ts playlist fallback unavailable (no duration known): not offered to the TV")
+        return null
+    }
+    return com.arkiv.player.playback.ArchiveCacheProxy.lanPlaylistUrl(proxyUrl, lanIp)
+}
+
 /** Loopback authority `PluginCastProxy` writes; [pluginCastUri] respells only these. */
 private const val LOOPBACK = "http://127.0.0.1:"
 

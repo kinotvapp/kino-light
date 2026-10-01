@@ -417,6 +417,33 @@ class ArchiveCacheProxy(
         tokenIn(proxyUrl.substringAfter("://").let { "/" + it.substringAfter('/', "") })?.let(tokens::revoke)
     }
 
+    /** The stream [proxyUrl]'s token names while it is live, or null. */
+    private fun streamOf(proxyUrl: String): ProxyTokens.Stream? =
+        tokenIn(proxyUrl.substringAfter("://").let { "/" + it.substringAfter('/', "") })?.let(tokens::resolve)
+
+    /**
+     * The phone's own player knows how long [proxyUrl]'s title runs: remembered as its duration,
+     * so the cast's HLS playlist ([lanPlaylistUrl]) can be built without probing the CDN for it.
+     * The probe ([TsDurationProbe] over 256 KB at each end) fails on titles whose last PCR sits
+     * further from the end (a Xuper film: 652 KB) and against a CDN slower than its 3 s deadline,
+     * and then the playlist was a 502 every time (2026-10-01). Ignored when not positive.
+     */
+    fun rememberDuration(proxyUrl: String, durationMs: Long) {
+        if (durationMs <= 0L) return
+        val stream = streamOf(proxyUrl) ?: return
+        durations.putIfAbsent(stream.origin, durationMs)
+    }
+
+    /**
+     * Can `/hls.m3u8` be answered for [proxyUrl] without a trip to the CDN that may fail? Only
+     * then is its playlist URL handed to a TV: a playlist that cannot be built is a 502, and the
+     * receiver shows an error for it. (The size, the other half, is fetched with retries.)
+     */
+    fun canServePlaylist(proxyUrl: String): Boolean {
+        val stream = streamOf(proxyUrl) ?: return false
+        return segments[stream.origin] != null || (durations[stream.origin] ?: 0L) > 0L
+    }
+
     companion object {
         /** Path prefix every proxy URL starts with, followed by the token and the route. */
         private const val TOKEN_PREFIX = "/t/"
@@ -427,6 +454,14 @@ class ArchiveCacheProxy(
          * waits for the CDN, for a token the caller already holds.
          */
         const val REMUX_HEADER = "X-Kino-Remux"
+
+        /**
+         * On every media response: a Cast receiver reads segments with XHR/fetch (Shaka), which
+         * needs the origin allowed and Content-Range/Length readable on a 206.
+         */
+        private const val CORS_HEADERS =
+            "Access-Control-Allow-Origin: *\r\n" +
+                "Access-Control-Expose-Headers: Content-Length, Content-Range, Accept-Ranges\r\n"
 
         /** The token in a request [path] (`/t/<token>/<route>`), or null if it has none. */
         internal fun tokenIn(path: String): String? {
@@ -544,6 +579,22 @@ class ArchiveCacheProxy(
                     )
                     s.getOutputStream().apply {
                         write("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray())
+                        flush()
+                    }
+                    return@runCatching
+                }
+                // A browser-style preflight: the Cast receiver sends one before a ranged segment
+                // request (Range is not a "simple" header). Answered for a valid token only.
+                if (reqLine.startsWith("OPTIONS ")) {
+                    s.getOutputStream().apply {
+                        write(
+                            (
+                                "HTTP/1.1 204 No Content\r\n" + CORS_HEADERS +
+                                    "Access-Control-Allow-Methods: GET, HEAD, OPTIONS\r\n" +
+                                    "Access-Control-Allow-Headers: *\r\n" +
+                                    "Content-Length: 0\r\nConnection: close\r\n\r\n"
+                                ).toByteArray(),
+                        )
                         flush()
                     }
                     return@runCatching
@@ -1523,7 +1574,7 @@ class ArchiveCacheProxy(
         val headerWentOut = runCatching {
             out.write(
                 (
-                    "HTTP/1.1 206 Partial Content\r\nAccept-Ranges: bytes\r\n" +
+                    "HTTP/1.1 206 Partial Content\r\nAccept-Ranges: bytes\r\n" + CORS_HEADERS +
                         "Content-Length: $length\r\n" +
                         "Content-Range: bytes $requested-$until/$total\r\n" +
                         "Content-Type: application/octet-stream\r\n\r\n"
@@ -1756,7 +1807,7 @@ class ArchiveCacheProxy(
                 val end = clientRange!!.start + chunk.size - 1
                 out.write(
                     (
-                        "HTTP/1.1 206 Partial Content\r\nAccept-Ranges: bytes\r\n" +
+                        "HTTP/1.1 206 Partial Content\r\nAccept-Ranges: bytes\r\n" + CORS_HEADERS +
                             "Content-Length: ${chunk.size}\r\n" +
                             "Content-Range: bytes ${clientRange.start}-$end/$total\r\n" +
                             "Content-Type: application/octet-stream\r\n\r\n"
@@ -1814,6 +1865,7 @@ class ArchiveCacheProxy(
         val resp = buildString {
             append("HTTP/1.1 $statusLine\r\n")
             append("Accept-Ranges: bytes\r\n")
+            append(CORS_HEADERS)
             if (contentLength != null) append("Content-Length: $contentLength\r\n")
             if (isPartial && contentRange != null) append("Content-Range: $contentRange\r\n")
             append("Content-Type: application/octet-stream\r\n\r\n")
