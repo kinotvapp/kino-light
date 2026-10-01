@@ -1329,7 +1329,10 @@ private fun PlayerContent(
                 // that way. `startPositionMs` is where the item was told to open, which is the
                 // right answer whenever the live position is not available yet.
                 val livePosition = runCatching { magisPlayer?.currentPosition }.getOrNull()?.takeIf { it > 0 }
-                val requestedPosition = (livePosition ?: item.startPositionMs).coerceAtLeast(0L)
+                // Already on the TV (another audio was picked while casting): the TV's position,
+                // not the phone player's, which has sat paused where the cast began.
+                val tvPosition = if (castToReceiver == item.episodeId) castSession.lastKnownPositionMs(item.episodeId) else null
+                val requestedPosition = (tvPosition ?: livePosition ?: item.startPositionMs).coerceAtLeast(0L)
                 android.util.Log.w(
                     "ArkivCast",
                     "resume point: ${requestedPosition}ms (${if (livePosition != null) "live position" else "the item's startPosition, player not ready"})",
@@ -1392,8 +1395,13 @@ private fun PlayerContent(
             // audio's remux, or the segments a download starts on) it has to be reloaded with this
             // one, or the TV keeps the audio the phone just moved away from.
             if (castToReceiver == item.episodeId && castAsRemux != key) {
-                val pl = PlaylistData(listOf(item), 0, 0L, requested = item.episodeId)
-                castRequestFor(pl, 0, 0L)?.let {
+                // From where the TV was, not from the top (see CastAudio.reloadStartMs).
+                val at = com.arkiv.player.cast.CastAudio.reloadStartMs(
+                    com.arkiv.player.cast.CastAudioRoute.REMUX,
+                    castSession.lastKnownPositionMs(item.episodeId) ?: 0L,
+                )
+                val pl = PlaylistData(listOf(item), 0, at, requested = item.episodeId)
+                castRequestFor(pl, 0, at)?.let {
                     android.util.Log.w("ArkivCast", "audio changed while casting → reloading the receiver with the remux already on disk")
                     castSession.setMedia(it)
                     castToReceiver = item.episodeId
@@ -2756,8 +2764,8 @@ private fun PlayerContent(
     /**
      * Says what picking another audio while casting does on the TV. The work itself happens in the
      * remux effect (the audio is one of its keys); this only tells the person, because the answer
-     * is not obvious: a remuxed title starts over from the beginning with the new audio (a remux
-     * has no index to seek by, see `CastAudio.reloadStartMs`), and anything else cannot change at all.
+     * is not obvious: a remuxed title is remuxed again with the new audio and resumes where the TV
+     * was once that remux gets there (see `CastAudio.reloadStartMs`), and anything else cannot change at all.
      *
      * The first audio seen in a cast is only recorded: the tracks arriving after the cast began is
      * not a change the person made.
@@ -2775,7 +2783,7 @@ private fun PlayerContent(
             com.arkiv.player.cast.CastAudio.onChoiceChanged(casting, castAudioRoute(), previous, castAudioOrdinal)
         ) {
             com.arkiv.player.cast.CastAudioSwitch.REMUX_AND_RELOAD ->
-                "Preparando el nuevo audio para la TV: el video va a empezar desde el inicio"
+                "Preparando el nuevo audio para la TV: sigue desde donde ibas"
             com.arkiv.player.cast.CastAudioSwitch.PHONE_ONLY ->
                 "El audio cambió solo en el teléfono: en la TV este video no permite cambiarlo"
             com.arkiv.player.cast.CastAudioSwitch.NONE -> null
@@ -3826,15 +3834,17 @@ private fun PlayerContent(
                         // landscape has the room and keeps the single row it always had.
                         val isPortrait = LocalConfiguration.current.orientation ==
                             Configuration.ORIENTATION_PORTRAIT
-                        // Casting, tracks are chosen on the LOCAL player, so these hide entirely.
-                        val hasSecondaryButtons = !isTv && !casting
+                        // Casting, only the audio/subtitles button stays (with rotate and the fun
+                        // fact): picking an audio is how the TV gets another one (the remux effect
+                        // reloads it), and zoom, volume and chapter marks act on the phone's player.
+                        val hasSecondaryButtons = !isTv
                         val secondaryIcons: @Composable () -> Unit = {
                             // Rotate (phone only): forces the orientation the system's auto-rotate
                             // wouldn't otherwise give -- most people keep it off. Scoped to this
                             // screen only: nextPlayerOrientation's KDoc has why the rest of the app
                             // never sees it.
                             PlayerRotateButton(isLandscape) { activity?.requestedOrientation = it }
-                            if (hasMarkersToFix) {
+                            if (hasMarkersToFix && !casting) {
                                 ChapterMarkersMenu(
                                     state = markers,
                                     isTv = false,
@@ -3854,14 +3864,14 @@ private fun PlayerContent(
                             // zoom is finicky, and wide movies come with thick letterbox bars, so
                             // two buttons crop the video to fill the screen. Night mode stays
                             // reachable through the left-edge brightness gesture (and the TV UI).
-                            IconButton(onClick = { gestures.zoomOut() }) {
+                            if (!casting) IconButton(onClick = { gestures.zoomOut() }) {
                                 Icon(
                                     Icons.Default.ZoomOut,
                                     contentDescription = "Alejar (menos zoom)",
                                     tint = if (gestures.zoomIsFit) Color.White else ArkivRed,
                                 )
                             }
-                            IconButton(onClick = { gestures.zoomIn() }) {
+                            if (!casting) IconButton(onClick = { gestures.zoomIn() }) {
                                 Icon(
                                     Icons.Default.ZoomIn,
                                     contentDescription = "Acercar (más zoom, recorta las barras negras)",
@@ -3879,7 +3889,7 @@ private fun PlayerContent(
                             }
                             // Volume: the rightmost of the secondary row -- a speaker button that
                             // pops a vertical slider, for people who prefer a button to the swipe.
-                            VolumeButton(gestures)
+                            if (!casting) VolumeButton(gestures)
                         }
 
                         // Previous chapter / rewind / play-pause / forward / next chapter /

@@ -88,14 +88,12 @@ class CastAudioTest {
         assertEquals(CastAudioSwitch.NONE, CastAudio.onChoiceChanged(false, CastAudioRoute.REMUX, 0, 1))
     }
 
-    /**
-     * A remux has no seek index (media3's fragmented muxer writes no `sidx`/`tfdt`), so a new audio
-     * plays from the start of its own remux; asking the receiver for a position sent it hunting.
-     */
+    /** Served as HLS, the new audio's remux starts where the TV was, not over from the start. */
     @Test
-    fun `a reloaded remux starts from zero whatever the position`() {
-        assertEquals(0L, CastAudio.reloadStartMs(CastAudioRoute.REMUX, 3_600_000L))
+    fun `a reloaded remux keeps the position`() {
+        assertEquals(3_600_000L, CastAudio.reloadStartMs(CastAudioRoute.REMUX, 3_600_000L))
         assertEquals(42_000L, CastAudio.reloadStartMs(CastAudioRoute.FIXED, 42_000L))
+        assertEquals(0L, CastAudio.reloadStartMs(CastAudioRoute.REMUX, -5L))
     }
 
     @Test

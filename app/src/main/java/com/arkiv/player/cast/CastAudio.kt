@@ -96,17 +96,14 @@ object CastAudio {
      * Where the receiver resumes after a [CastAudioSwitch.REMUX_AND_RELOAD], given the person was
      * at [positionMs] in the title.
      *
-     * Always 0 for a remux. The remux is a fragmented MP4 written by media3's muxer, which writes
-     * neither `sidx` nor `tfdt`, so the receiver has no index to seek by (asked to start at 4:52 it
-     * went hunting through the file and never played a frame, measured 2026-09-12); and clipping
-     * the remux to start at the position instead desynchronises the audio (see the remux effect in
-     * PlayerScreen). A new audio is therefore a new remux played from its own start. Anything
-     * else is never reloaded for an audio change ([CastAudioSwitch.PHONE_ONLY]); if it were, it
-     * would keep its place.
+     * Where the person was, for both routes. A remux used to restart from 0: cast as one
+     * progressive fragmented MP4 it had no index to seek by (asked to start at 4:52 the receiver
+     * went hunting and never played a frame, 2026-09-12). It is served as HLS now
+     * (`RemuxHlsServer`), where a start point is just a segment, so the new audio's remux is loaded
+     * at the position once it has got there -- the same wait as a first cast from a resume point.
      */
     fun reloadStartMs(route: CastAudioRoute, positionMs: Long): Long = when (route) {
-        CastAudioRoute.REMUX -> 0L
-        CastAudioRoute.FIXED -> positionMs.coerceAtLeast(0L)
+        CastAudioRoute.REMUX, CastAudioRoute.FIXED -> positionMs.coerceAtLeast(0L)
     }
 
     /** Null or blank on either side agrees with anything: a track with no language can be any. */

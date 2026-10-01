@@ -44,7 +44,8 @@ class CastAudioChoiceTest {
         val fixed = castTracksNote(casting = true, route = CastAudioRoute.FIXED)
         assertNotNull(remux)
         assertNotNull(fixed)
-        assertTrue(remux!!.contains("desde el inicio"))
+        assertTrue(remux!!.contains("desde donde ibas"))
+        assertTrue(!remux.contains("desde el inicio"))
         assertTrue(fixed!!.contains("no permite cambiar el audio"))
     }
 }

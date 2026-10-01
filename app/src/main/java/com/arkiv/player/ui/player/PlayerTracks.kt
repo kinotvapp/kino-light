@@ -664,7 +664,7 @@ private fun SectionTitle(text: String, first: Boolean = false) {
 internal fun castTracksNote(casting: Boolean, route: com.arkiv.player.cast.CastAudioRoute): String? = when {
     !casting -> null
     route == com.arkiv.player.cast.CastAudioRoute.REMUX ->
-        "En la TV: si cambias el audio, se prepara de nuevo y el video vuelve a empezar desde el inicio. " +
+        "En la TV: si cambias el audio, se prepara de nuevo y sigue desde donde ibas (puede tardar un poco). " +
             "Los subtítulos solo se ven en el teléfono."
     else ->
         "En la TV: este video no permite cambiar el audio, suena el que trae por defecto. " +
