@@ -27,6 +27,7 @@ import com.arkiv.player.ui.plugin.FocusWhenReady
 import com.arkiv.player.ui.plugin.InstalledCardModel
 import com.arkiv.player.ui.plugin.PluginsViewModel
 import com.arkiv.player.ui.plugin.installedAnyVideoHostLine
+import com.arkiv.player.ui.plugin.installedAuthorKeyLine
 import com.arkiv.player.ui.plugin.installedCardModel
 import com.arkiv.player.ui.plugin.pluginConsentHostLine
 import com.arkiv.player.ui.plugin.pluginStatusText
@@ -87,6 +88,10 @@ internal fun TvInstalledActionsDialog(plugin: InstalledPlugin, art: CatalogArt?,
                 style = MaterialTheme.typography.bodyMedium,
                 color = ArkivTextSecondary,
             )
+            // An author-signed plugin: the fingerprint of its pinned key (the consent sheet only says "Firmado").
+            installedAuthorKeyLine(plugin.record)?.let {
+                Text(it, style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary)
+            }
             // The broad video permission, when granted: what it lets the plugin do, right above its revoke action.
             installedAnyVideoHostLine(plugin.record)?.let {
                 Text(it, style = MaterialTheme.typography.bodyMedium, color = Color.White)

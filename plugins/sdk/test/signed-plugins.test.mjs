@@ -77,7 +77,8 @@ test("validate: a signed plugin passes with the author's fingerprint and the Kin
   try {
     const r = await validate(dir, { repo: "o/r" });
     assert.equal(r.ok, true, r.problems.join("\n"));
-    assert.deepEqual(r.consent.map((c) => c.text), [`Firmado por su autor con la clave ${fingerprint(key.raw)} (primera vez)`]);
+    assert.deepEqual(r.consent.map((c) => c.text), ["Firmado por su autor"]);
+    assert.ok(r.notes.includes(`Clave del autor: ${fingerprint(key.raw)} (Kino la muestra en los detalles del plugin, no en la ventana de instalación)`));
     assert.ok(r.notes.some((n) => /requiere Kino 0\.9\.46/.test(n)));
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

@@ -42,7 +42,7 @@ export function consentLines(m, { authorFingerprint = null } = {}) {
   if (m.capabilities.includes("drm")) line("Reproduce video protegido (DRM)");
   if (m.capabilities.includes("channels")) line("Agrega canales en vivo a la pestaña En vivo");
   if (m.secrets && Object.keys(m.secrets).length) line("Usa datos sellados por su autor");
-  if (authorFingerprint) line(`${contract.manifest.signature.consentLinePrefix} ${authorFingerprint} (primera vez)`);
+  if (authorFingerprint) line(contract.manifest.signature.consentLine);
   (m.insecureHosts || []).forEach((h) => line(`Conexión sin cifrar con ${h}`, true));
   if (m.liveStreamHostsAny) line("Puede reproducir canales desde cualquier servidor que indique su lista", true);
   if (m.streamHostsAny) line("Puede reproducir video desde cualquier servidor que indique", true);
@@ -103,6 +103,7 @@ export async function validate(dirArg, { run = null, args = [], config = {}, rep
   if (statSync(entry).size > contract.manifest.entryMaxBytes) problems.push(`${m.entry} is bigger than ${kb(contract.manifest.entryMaxBytes)}: Kino refuses it`);
   if (m.signature) {
     authorFingerprint = fingerprint(Buffer.from(m.signature.authorKey, "hex"));
+    notes.push(`${sg.authorKeyLabel}: ${authorFingerprint} (Kino la muestra en los detalles del plugin, no en la ventana de instalación)`);
     // The author key committed by mistake: anyone could then sign "updates" Kino accepts.
     trackedByGit(dir, ["*.pem"]).forEach((f) => problems.push(`${f} is tracked by git: anyone can read your author key on GitHub. Remove it (git rm --cached ${f}), add it to .gitignore, and since it leaked, make a new key (everyone must reinstall)`));
     let binding = null;

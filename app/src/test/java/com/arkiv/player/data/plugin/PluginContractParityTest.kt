@@ -85,7 +85,8 @@ class PluginContractParityTest {
         assertEquals(SignedEntry.DOMAIN, signature.getString("domain"))
         assertEquals(SignedEntry.KEY_HEX_CHARS, signature.getInt("authorKeyHexChars"))
         assertEquals(SignedEntry.SIGNATURE_HEX_CHARS, signature.getInt("valueHexChars"))
-        assertEquals(PluginConsent.SIGNED_LINE_PREFIX, signature.getString("consentLinePrefix"))
+        assertEquals(PluginConsent.SIGNED_LINE, signature.getString("consentLine"))
+        assertEquals(com.arkiv.player.ui.plugin.AUTHOR_KEY_LABEL, signature.getString("authorKeyLabel"))
         assertEquals(ManifestParser.BAD_SIGNATURE_FIELD, signature.getString("badFieldMessage"))
         assertEquals(PluginInstaller.BAD_SIGNATURE_MESSAGE, signature.getString("badSignatureMessage"))
     }

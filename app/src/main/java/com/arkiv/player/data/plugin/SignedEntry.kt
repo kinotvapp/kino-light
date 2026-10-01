@@ -57,8 +57,8 @@ object SignedEntry {
 /**
  * What a signed entry has verified at preview and carries from the consent sheet to the commit: the
  * downloaded script (installed byte for byte) and its author's key. [firstKey]: no key was pinned
- * for this plugin yet (a first install, or an update that signs a plugin that was unsigned), so the
- * consent sheet says it is the first time.
+ * for this plugin yet (a first install, or an update that signs a plugin that was unsigned), so an
+ * update's consent sheet marks its "Firmado por su autor" line new.
  */
 class SignedEntryPreview(val script: ByteArray, val authorKey: ByteArray, val firstKey: Boolean) {
     val fingerprint: String get() = SignedEntry.fingerprint(authorKey)

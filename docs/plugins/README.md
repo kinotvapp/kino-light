@@ -593,8 +593,10 @@ the script breaks it. The ref is not part of it: a signed plugin installs from a
 **What Kino does.** At install and at every update — never when the plugin runs, so it costs
 nothing at runtime — Kino downloads the script, checks the signature (refused with "La firma del
 autor no es válida…" before anyone is asked) and **pins your key** the first time (trust on first
-use). The consent sheet shows "Firmado por su autor con la clave ABCD-EF01-2345-6789 (primera vez)"
-(the first 8 bytes of the key's SHA-256), and the plugin's cards carry a "Firmado" pill.
+use). The consent sheet just says "Firmado por su autor"; the plugin's details (phone: Gestionar; TV:
+the installed plugin's actions) show "Clave del autor: ABCD-EF01-2345-6789" (the first 8 bytes of the
+key's SHA-256, also printed by `validate.mjs`). Catalog and community cards carry a "Firmado" pill, and
+an installed card says it on its status line ("Activo · Firmado").
 
 **Updates.** Every update must be signed with the **same** key. An update signed by another key, or
 no longer signed, is refused ("Esta versión está firmada con otra clave de autor…" / "Esta versión

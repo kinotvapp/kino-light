@@ -1,6 +1,7 @@
 package com.arkiv.player.ui.plugin
 
 import com.arkiv.player.data.plugin.PluginHosts
+import com.arkiv.player.data.plugin.SignedEntry
 import com.arkiv.player.data.plugin.XuperPrivilege
 
 /**
@@ -15,6 +16,16 @@ import com.arkiv.player.data.plugin.XuperPrivilege
  */
 fun installedAnyVideoHostLine(record: com.arkiv.player.data.plugin.InstalledRecord): String? =
     if (record.anyVideoHost) "Puede reproducir video desde cualquier servidor" else null
+
+/** The label of an author-signed plugin's key in its details (Gestionar), also the kit's (contract.json). */
+const val AUTHOR_KEY_LABEL = "Clave del autor"
+
+/**
+ * "Clave del autor: ABCD-EF01-2345-6789": the fingerprint of the author key pinned for [record]
+ * (an author-signed plugin, apiVersion 5), shown only in its details; null for an unsigned plugin.
+ */
+fun installedAuthorKeyLine(record: com.arkiv.player.data.plugin.InstalledRecord): String? =
+    record.authorKey?.let(SignedEntry::hexBytes)?.let { "$AUTHOR_KEY_LABEL: ${SignedEntry.fingerprint(it)}" }
 
 fun pluginConsentHostLine(address: String, hostsLabel: String): String =
     pluginConsentProtectedLine(address)

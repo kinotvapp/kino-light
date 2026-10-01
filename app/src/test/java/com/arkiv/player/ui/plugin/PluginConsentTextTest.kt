@@ -13,6 +13,15 @@ class PluginConsentTextTest {
         assertEquals("Puede reproducir video desde cualquier servidor", installedAnyVideoHostLine(record.copy(anyVideoHost = true)))
     }
 
+    @Test fun `only a signed plugin's details name its pinned author key, as a full fingerprint`() {
+        val record = com.arkiv.player.data.plugin.InstalledRecord("o/r", "1.0.0", "x", listOf("example.com"), 0L)
+        assertNull(installedAuthorKeyLine(record))
+        val key = ByteArray(32) { it.toByte() }
+        val line = installedAuthorKeyLine(record.copy(authorKey = com.arkiv.player.data.plugin.SignedEntry.hex(key)))
+        assertEquals("Clave del autor: ${com.arkiv.player.data.plugin.SignedEntry.fingerprint(key)}", line)
+        assertNull(installedAuthorKeyLine(record.copy(authorKey = "not hex")))
+    }
+
     @Test fun `the recognized Xuper repo gets the protected-connection line, not a host list`() {
         val line = pluginConsentHostLine(address = XuperPrivilege.SOURCE_REPO, hostsLabel = "example.org")
         assertEquals("Este plugin usa la conexión protegida de Xuper dentro de la app; no se conecta a internet por su cuenta.", line)

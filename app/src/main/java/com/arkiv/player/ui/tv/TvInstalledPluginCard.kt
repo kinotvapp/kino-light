@@ -28,6 +28,7 @@ import androidx.tv.material3.Card
 import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import com.arkiv.player.data.plugin.InstalledPlugin
+import com.arkiv.player.ui.plugin.InstalledStatusLine
 import com.arkiv.player.data.plugin.catalog.CatalogArt
 import com.arkiv.player.ui.LocalReducedEffects
 import com.arkiv.player.ui.cardFocusScale
@@ -36,7 +37,6 @@ import com.arkiv.player.ui.plugin.installedCardModel
 import com.arkiv.player.ui.plugin.installedHostsLines
 import com.arkiv.player.ui.plugin.installedMessageLines
 import com.arkiv.player.ui.plugin.pluginConsentHostLine
-import com.arkiv.player.ui.theme.ArkivRed
 import com.arkiv.player.ui.theme.ArkivSurfaceHigh
 import com.arkiv.player.ui.theme.ArkivTextSecondary
 
@@ -68,7 +68,7 @@ internal fun TvInstalledPluginCard(
 ) {
     val model = installedCardModel(plugin, art)
     // The notice is drawn inside the cleared column below, so the card's description carries it.
-    val label = listOfNotNull("${model.nameLine} — ${model.statusLabel}", liveNotice).joinToString(". ")
+    val label = listOfNotNull("${model.nameLine} — ${model.statusLabel}", model.signedTag, liveNotice).joinToString(". ")
     Card(
         onClick = onClick,
         // The description of the whole card is the heading the old row had; what is drawn inside is
@@ -81,7 +81,7 @@ internal fun TvInstalledPluginCard(
         ),
     ) {
         Box(Modifier.clearAndSetSemantics { }) {
-            PluginCardSurface(name = model.name, iconFile = model.iconFile, tileColorArgb = model.tileColorArgb, pill = model.pill) {
+            PluginCardSurface(name = model.name, iconFile = model.iconFile, tileColorArgb = model.tileColorArgb, pill = null) {
                 CardTexts(plugin, model, message, reserveMessageLines, liveNotice, reserveNoticeLines)
             }
             Icon(
@@ -108,13 +108,7 @@ private fun CardTexts(
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         Text(model.nameLine, style = MaterialTheme.typography.titleMedium, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text(
-            model.statusLabel,
-            style = MaterialTheme.typography.bodySmall,
-            color = if (model.statusIsProblem) ArkivRed else ArkivTextSecondary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        InstalledStatusLine(model)
         if (liveNotice != null || reserveNoticeLines) {
             Text(
                 liveNotice ?: " ",

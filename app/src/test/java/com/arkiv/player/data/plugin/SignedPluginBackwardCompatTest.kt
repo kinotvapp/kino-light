@@ -139,7 +139,7 @@ class SignedPluginBackwardCompatTest {
         val preview = nuvio.previewScraper("owner/nuvio-repo", "fakesrc")
         assertNull(preview.manifest.signature)
         assertNull(preview.signedEntry)
-        assertTrue(PluginConsent.extraLines(preview).none { it.text.startsWith(PluginConsent.SIGNED_LINE_PREFIX) })
+        assertTrue(PluginConsent.extraLines(preview).none { it.text.startsWith(PluginConsent.SIGNED_LINE) })
         val record = nuvio.install(preview)
         assertNull(record.authorKey)
         val stored = store.list().single()

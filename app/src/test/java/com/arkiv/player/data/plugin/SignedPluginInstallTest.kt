@@ -5,6 +5,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -66,12 +67,14 @@ class SignedPluginInstallTest {
 
     private val fingerprint get() = SignedEntry.fingerprint(author.publicRaw)
 
-    @Test fun `a signed plugin installs its readable script, names and pins its author key`() = runBlocking<Unit> {
+    @Test fun `a signed plugin installs its readable script, says so and pins its author key`() = runBlocking<Unit> {
         publishSigned()
         val preview = installer.preview("o/r")
         assertTrue(preview.signedEntry!!.firstKey)
         val lines = PluginConsent.extraLines(preview).map { it.text }
-        assertEquals(listOf("Firmado por su autor con la clave $fingerprint (primera vez)"), lines)
+        // Just "Firmado por su autor": the key's fingerprint is shown in the plugin's details, not on the sheet.
+        assertEquals(listOf("Firmado por su autor"), lines)
+        assertFalse(lines.single().contains(fingerprint))
         val record = installer.install(preview)
         assertEquals(SignedEntry.hex(author.publicRaw), record.authorKey)
         assertEquals(script("1.0.0"), probed.single())
@@ -127,9 +130,9 @@ class SignedPluginInstallTest {
         publishSigned("1.1.0")
         assertEquals(UpdateOutcome.Applied("1.1.0"), installer.checkUpdate("demo"))
         assertEquals(script("1.1.0"), store.readVerifiedScript("demo"))
-        // The same key on an update: named, but not "primera vez".
+        // The same key on an update: the same plain line, not marked new.
         publishSigned("1.2.0")
-        assertEquals(listOf("Firmado por su autor con la clave $fingerprint"), PluginConsent.extraLines(installer.preview("o/r")).map { it.text })
+        assertEquals(listOf(ConsentLine("Firmado por su autor")), PluginConsent.extraLines(installer.preview("o/r")))
     }
 
     @Test fun `a tampered update is refused and the installed version stays`() = runBlocking<Unit> {

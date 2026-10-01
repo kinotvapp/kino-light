@@ -13,7 +13,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** "Firmado": the pill on an author-signed plugin's card (catalog, community and installed; phone and TV share it). */
+/** "Firmado": the pill on an author-signed plugin's catalog or community card, the tag on its installed card's status line. */
 class SignedBadgeTest {
     private val entry = CatalogEntry("x", "o/x", "X", "")
 
@@ -37,12 +37,12 @@ class SignedBadgeTest {
         assertEquals("Firmado", cardPill(rows.single()))
     }
 
-    @Test fun `an installed card shows the pill only for a signed plugin`() {
+    @Test fun `an installed card tags its status line only for a signed plugin`() {
         val m = PluginManifest("demo", "Demo", "1.0.0", 5, "plugin.js", "", "", "", listOf("example.com"), setOf("search"), null, null,
             signature = EntrySignature(ByteArray(32), ByteArray(64)))
         val r = InstalledRecord("o/r", "1.0.0", "x", listOf("example.com"), 0L, authorKey = "00")
-        assertEquals("Firmado", installedCardModel(InstalledPlugin(m, r, iconFile = null), null).pill)
+        assertEquals("Firmado", installedCardModel(InstalledPlugin(m, r, iconFile = null), null).signedTag)
         val plain = m.copy(apiVersion = 4, signature = null)
-        assertNull(installedCardModel(InstalledPlugin(plain, r.copy(authorKey = null), iconFile = null), null).pill)
+        assertNull(installedCardModel(InstalledPlugin(plain, r.copy(authorKey = null), iconFile = null), null).signedTag)
     }
 }
