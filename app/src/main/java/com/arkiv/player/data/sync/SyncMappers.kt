@@ -1,8 +1,10 @@
 package com.arkiv.player.data.sync
 
+import com.arkiv.player.data.db.OwnListPartEntity
 import com.arkiv.player.data.db.OwnLiveSourceEntity
 import com.arkiv.player.data.live.OwnFormResult
 import com.arkiv.player.data.live.OwnKind
+import com.arkiv.player.data.live.OwnPastedList
 import com.arkiv.player.data.live.OwnSourceForm
 import com.arkiv.player.data.live.validate
 import com.arkiv.player.data.ChapterMarker
@@ -250,6 +252,8 @@ fun ownLiveSourceToJson(e: OwnLiveSourceEntity): JSONObject = JSONObject().apply
     put("refreshHours", e.refreshHours)
     put("updatedAt", e.updatedAt)
     put("deleted", e.deleted)
+    // Pasted lists only (an optional field: an older build ignores it, and refuses the row anyway for its url).
+    e.contentDigest?.let { put("contentDigest", it) }
 }
 
 /**
@@ -273,5 +277,29 @@ fun jsonToOwnLiveSource(json: JSONObject): OwnLiveSourceEntity? {
         refreshHours = json.optInt("refreshHours"),
     )
     val valid = form.validate(id, emptyList()) as? OwnFormResult.Valid ?: return null
-    return valid.source.copy(updatedAt = json.optLong("updatedAt"), deleted = json.optBoolean("deleted"))
+    val deleted = json.optBoolean("deleted")
+    // A pasted list (its url is `kino-list:<this id>`, checked by validate) names the text it uses; a tombstone may not.
+    val pasted = OwnPastedList.isPasted(valid.source.url)
+    val digest = json.optString("contentDigest").takeIf { pasted && OwnPastedList.isDigest(it) }
+    if (pasted && digest == null && !deleted) return null
+    return valid.source.copy(updatedAt = json.optLong("updatedAt"), deleted = deleted, contentDigest = digest)
 }
+
+fun ownListPartToJson(p: OwnListPartEntity): JSONObject = JSONObject().apply {
+    put("sourceId", p.sourceId)
+    put("part", p.part)
+    put("parts", p.parts)
+    put("digest", p.digest)
+    put("data", p.data)
+    put("updatedAt", p.updatedAt)
+}
+
+/** Null for a part this build must not store (bad id, counts, digest or data: [OwnPastedList.validPart]). */
+fun jsonToOwnListPart(json: JSONObject): OwnListPartEntity? = OwnListPartEntity(
+    sourceId = json.optString("sourceId"),
+    part = json.optInt("part", -1),
+    parts = json.optInt("parts", 0),
+    digest = json.optString("digest"),
+    data = json.optString("data"),
+    updatedAt = json.optLong("updatedAt"),
+).takeIf(OwnPastedList::validPart)

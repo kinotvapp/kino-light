@@ -52,6 +52,7 @@ class RoomSyncSource(
         "live_favorites" -> liveFavoriteDao.getLiveFavoritesSince(cursor).map(::liveFavoriteToJson)
         "live_recents" -> liveRecentDao.getLiveRecentsSince(cursor).map(::liveRecentToJson)
         "own_live_sources" -> ownLiveSourceDao?.getSince(cursor)?.map(::ownLiveSourceToJson).orEmpty()
+        "own_live_list_parts" -> ownLiveSourceDao?.partsSince(cursor)?.map(::ownListPartToJson).orEmpty()
         "plugin_installs" -> pluginInstallDao?.getSince(cursor)?.map(::pluginInstallToJson).orEmpty()
         "nuvio_repos" -> nuvioRepoDao?.getSince(cursor)?.map(::nuvioRepoToJson).orEmpty()
         else -> emptyList()
@@ -72,7 +73,8 @@ class RoomSyncSource(
     val changes: Flow<Unit> = callbackFlow {
         val database = checkNotNull(db) { "RoomSyncSource.changes requires a real ArkivDatabase" }
         val obs = object : InvalidationTracker.Observer(
-            "items", "episodes", "playback", "skip_markers", "live_favorites", "live_recents", "own_live_sources", "plugin_installs", "nuvio_repos",
+            "items", "episodes", "playback", "skip_markers", "live_favorites", "live_recents", "own_live_sources", "own_live_list_parts",
+            "plugin_installs", "nuvio_repos",
         ) {
             override fun onInvalidated(tables: Set<String>) { trySend(Unit) }
         }

@@ -69,6 +69,7 @@ class SyncApply(
             "live_favorites" -> applyLiveFavorite(row)
             "live_recents" -> applyLiveRecent(row)
             "own_live_sources" -> applyOwnLiveSource(row)
+            "own_live_list_parts" -> applyOwnListPart(row)
             "plugin_installs" -> applyPluginInstall(row)
             "nuvio_repos" -> applyNuvioRepo(row)
             else -> throw IllegalArgumentException("SyncApply: unknown table \"$table\"")
@@ -137,6 +138,27 @@ class SyncApply(
         val local = dao.get(incoming.id)
         if (!LwwMerge.pickWinner(local?.updatedAt ?: Long.MIN_VALUE, incoming.updatedAt)) return
         dao.save(incoming)
+        // A pasted list's text: each device drops the parts it no longer needs (they carry no tombstone of their own).
+        val digest = incoming.contentDigest
+        when {
+            incoming.deleted || (digest == null && local?.contentDigest != null) -> dao.deleteParts(incoming.id)
+            digest != null -> dao.deleteStaleParts(incoming.id, digest, Int.MAX_VALUE)
+        }
+    }
+
+    /**
+     * One part of a pasted list's text. Parts are pushed before their row, so a part of a source this device
+     * has not seen yet is kept. A part is dropped when its source is deleted here, or names another text than a
+     * source row at least as new as the part (a late part of a replaced text).
+     */
+    private suspend fun applyOwnListPart(row: JSONObject) {
+        val dao = ownLiveSourceDao ?: return
+        val incoming = jsonToOwnListPart(row) ?: return
+        val source = dao.get(incoming.sourceId)
+        if (source != null && (source.deleted || (source.contentDigest != incoming.digest && source.updatedAt >= incoming.updatedAt))) return
+        val local = dao.part(incoming.sourceId, incoming.part)
+        if (local != null && !LwwMerge.pickWinner(local.updatedAt, incoming.updatedAt)) return
+        dao.saveParts(listOf(incoming))
     }
 
     private suspend fun applyNuvioRepo(row: JSONObject) {

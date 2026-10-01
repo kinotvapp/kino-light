@@ -270,6 +270,32 @@ class CompanionSyncEngineTest {
         testScheduler.advanceUntilIdle()
     }
 
+    @Test fun `pasted list parts go only to a peer that announced them, and before the list rows`() = runTest {
+        val incoming = MutableSharedFlow<Envelope>(extraBufferCapacity = 8)
+        val sent = mutableListOf<Envelope>()
+        val source = FakeSyncSource()
+        source.addRow("own_live_sources", JSONObject().put("id", "p1").put("updatedAt", 10L))
+        source.addRow("own_live_list_parts", JSONObject().put("sourceId", "p1").put("part", 0).put("updatedAt", 10L))
+        val (apply, _) = fakeSyncApply()
+        val engine = CompanionSyncEngine(this, incoming, { sent += it }, source, apply, SyncCursorStore(FakeContext()), MutableSharedFlow(extraBufferCapacity = 8))
+        engine.start(MutableStateFlow<String?>(null))
+        testScheduler.advanceUntilIdle()
+        fun tablesSent(): List<String> = sent.filter { it.type == TYPE_SYNC_ROWS }.map { SyncRows.fromPayload(it.payload).table }
+
+        // 0.9.44 knows own sources but not the parts: it gets the rows (and refuses pasted ones itself), never a part.
+        incoming.emit(newEnvelope(TYPE_SYNC_HELLO, SyncHello(mapOf("playback" to 0L, "own_live_sources" to 0L)).toPayload()))
+        testScheduler.advanceUntilIdle()
+        assertEquals(listOf("own_live_sources"), tablesSent())
+
+        sent.clear()
+        incoming.emit(newEnvelope(TYPE_SYNC_HELLO, SyncHello(mapOf("own_live_sources" to 0L, "own_live_list_parts" to 0L)).toPayload()))
+        testScheduler.advanceUntilIdle()
+        assertEquals(listOf("own_live_list_parts", "own_live_sources"), tablesSent())
+
+        engine.stop()
+        testScheduler.advanceUntilIdle()
+    }
+
     @Test fun `plugin installs go only to a peer that announced them, not to one that knows only own sources`() = runTest {
         val incoming = MutableSharedFlow<Envelope>(extraBufferCapacity = 8)
         val sent = mutableListOf<Envelope>()

@@ -1,5 +1,6 @@
 package com.arkiv.player.data.sync
 
+import com.arkiv.player.companion.encode
 import com.arkiv.player.data.db.ContinueRow
 import com.arkiv.player.data.db.EpisodeEntity
 import com.arkiv.player.data.db.HistoryRow
@@ -319,6 +320,120 @@ class SyncApplyTest {
         val sync = SyncApply(FakeItemDao(), FakePlaybackDao(), FakeSkipMarkerDao(), FakeLiveFavoriteDao(), FakeLiveRecentDao(), own)
         sync.apply("own_live_sources", ownRow("a:b", "X", 10))
         assertTrue(own.rows.isEmpty())
+    }
+
+    // ---- Pasted / file lists: the row plus its text in parts ----
+
+    private fun ownSync(dao: FakeOwnLiveSourceDao) =
+        SyncApply(FakeItemDao(), FakePlaybackDao(), FakeSkipMarkerDao(), FakeLiveFavoriteDao(), FakeLiveRecentDao(), dao)
+
+    private val pastedText = "#EXTM3U\n#EXTINF:-1 group-title=\"Noticias\",Uno\nhttps://tv.example.com/uno.m3u8"
+
+    /** What the phone pushes after saving: the rows its DAO reports since [cursor], as the wire JSON, parts first. */
+    private suspend fun pushed(dao: FakeOwnLiveSourceDao, cursor: Long = 0L): List<Pair<String, JSONObject>> =
+        dao.partsSince(cursor).map { "own_live_list_parts" to ownListPartToJson(it) } +
+            dao.getSince(cursor).map { "own_live_sources" to ownLiveSourceToJson(it) }
+
+    private suspend fun phoneWithPasted(text: String = pastedText, now: Long = 1_000L): Pair<com.arkiv.player.data.live.OwnLiveStore, FakeOwnLiveSourceDao> {
+        val dao = FakeOwnLiveSourceDao()
+        val store = com.arkiv.player.data.live.OwnLiveStore(dao, { "p1" }, { now })
+        store.save(null, com.arkiv.player.data.live.OwnSourceForm(com.arkiv.player.data.live.OwnKind.PLAYLIST, "Pegada", "", pastedText = text))
+        return store to dao
+    }
+
+    @Test fun `a pasted list round-trips to the other device, in either arrival order, and works there`() = runTest {
+        val (_, phone) = phoneWithPasted()
+        val rows = pushed(phone)
+        for (order in listOf(rows, rows.reversed())) {
+            val tv = FakeOwnLiveSourceDao()
+            val sync = ownSync(tv)
+            order.forEach { (table, row) -> sync.apply(table, row) }
+            assertEquals("kino-list:p1", tv.rows.getValue("p1").url)
+            assertEquals(pastedText, com.arkiv.player.data.live.OwnLiveStore(tv).contentOf("p1"))
+        }
+    }
+
+    @Test fun `every synced part fits one companion message`() = runTest {
+        val rnd = java.util.Random(3)
+        // The 2 MB cap with text gzip barely shrinks: the most parts a list can have.
+        val line = { "#EXTINF:-1,${(1..20).map { 'a' + rnd.nextInt(26) }.joinToString("")}\nhttps://tv.example.com/${rnd.nextLong()}.m3u8\n" }
+        val text = buildString { append("#EXTM3U\n"); while (length < com.arkiv.player.data.live.OwnPastedList.MAX_BYTES - 200) append(line()) }
+        val (_, phone) = phoneWithPasted(text)
+        val parts = pushed(phone).filter { it.first == "own_live_list_parts" }
+        assertTrue(parts.size > 1)
+        val pages = com.arkiv.player.companion.chunkRows(parts.map { it.second })
+        for (page in pages) {
+            val env = com.arkiv.player.companion.newEnvelope(com.arkiv.player.companion.TYPE_SYNC_ROWS,
+                com.arkiv.player.companion.SyncRows("own_live_list_parts", page, 1L, false).toPayload()).encode()
+            assertTrue(env.toByteArray().size <= com.arkiv.player.companion.CompanionProtocol.MAX_MESSAGE_BYTES)
+        }
+    }
+
+    @Test fun `new text replaces the old on the other device, and late parts of the old text are ignored`() = runTest {
+        val (store, phone) = phoneWithPasted(now = 1_000L)
+        val tv = FakeOwnLiveSourceDao()
+        val sync = ownSync(tv)
+        val first = pushed(phone)
+        first.forEach { (t, r) -> sync.apply(t, r) }
+        val newer = "#EXTM3U\n#EXTINF:-1,Dos\nhttps://tv.example.com/dos.m3u8"
+        val phone2 = com.arkiv.player.data.live.OwnLiveStore(phone, { "p1" }, { 2_000L })
+        phone2.save("p1", com.arkiv.player.data.live.OwnSourceForm(com.arkiv.player.data.live.OwnKind.PLAYLIST, "Pegada", "kino-list:p1", pastedText = newer))
+        pushed(phone, cursor = 1_000L).forEach { (t, r) -> sync.apply(t, r) }
+        assertEquals(newer, com.arkiv.player.data.live.OwnLiveStore(tv).contentOf("p1"))
+        // A stale copy of the first text's parts arrives late: dropped, and the old parts are gone.
+        first.filter { it.first == "own_live_list_parts" }.forEach { (t, r) -> sync.apply(t, r) }
+        assertEquals(newer, com.arkiv.player.data.live.OwnLiveStore(tv).contentOf("p1"))
+        assertTrue(tv.partRows.values.all { it.digest == tv.rows.getValue("p1").contentDigest })
+        assertEquals(newer, store.contentOf("p1"))
+    }
+
+    @Test fun `deleting a pasted list on one device drops its row and text on the other`() = runTest {
+        val (store, phone) = phoneWithPasted()
+        val tv = FakeOwnLiveSourceDao()
+        val sync = ownSync(tv)
+        val earlier = pushed(phone)
+        earlier.forEach { (t, r) -> sync.apply(t, r) }
+        store.delete("p1")
+        assertTrue(phone.partRows.isEmpty())
+        // The tombstone, sealed newer by the DB trigger on a real device.
+        val tomb = ownLiveSourceToJson(phone.rows.getValue("p1").copy(updatedAt = 5_000L))
+        sync.apply("own_live_sources", tomb)
+        assertTrue(tv.rows.getValue("p1").deleted)
+        assertTrue(tv.partRows.isEmpty())
+        // Parts that arrive after the tombstone are not stored.
+        earlier.filter { it.first == "own_live_list_parts" }.forEach { (t, r) -> sync.apply(t, r) }
+        assertTrue(tv.partRows.isEmpty())
+    }
+
+    @Test fun `hostile pasted rows and parts are skipped`() = runTest {
+        val (_, phone) = phoneWithPasted()
+        val rows = pushed(phone)
+        val source = rows.first { it.first == "own_live_sources" }.second
+        val tv = FakeOwnLiveSourceDao()
+        val sync = ownSync(tv)
+        sync.apply("own_live_sources", JSONObject(source.toString()).put("url", "kino-list:otro"))     // another source's text
+        sync.apply("own_live_sources", JSONObject(source.toString()).apply { remove("contentDigest") })  // no digest
+        sync.apply("own_live_sources", JSONObject(source.toString()).put("kind", "CHANNEL"))
+        assertTrue(tv.rows.isEmpty())
+        val part = rows.first { it.first == "own_live_list_parts" }.second
+        sync.apply("own_live_list_parts", JSONObject(part.toString()).put("data", "no es base64 !"))
+        sync.apply("own_live_list_parts", JSONObject(part.toString()).put("parts", 500))
+        sync.apply("own_live_list_parts", JSONObject(part.toString()).put("digest", "corto"))
+        sync.apply("own_live_list_parts", JSONObject(part.toString()).put("sourceId", "a:b"))
+        assertTrue(tv.partRows.isEmpty())
+    }
+
+    @Test fun `an older build refuses a pasted row instead of storing a list it cannot read`() = runTest {
+        val (_, phone) = phoneWithPasted()
+        val source = pushed(phone).first { it.first == "own_live_sources" }.second
+        // What an older build checks a row's url with: not an http address, so jsonToOwnLiveSource there returns null.
+        assertTrue(com.arkiv.player.data.live.OwnSourceValidator.checkUrl(source.getString("url")) is com.arkiv.player.data.live.OwnUrlCheck.Refused)
+        // And a row from an older build (no digest field) still reads as before.
+        val legacy = ownRow("s1", "Uno", 10)
+        assertTrue(!legacy.has("contentDigest"))
+        val tv = FakeOwnLiveSourceDao()
+        ownSync(tv).apply("own_live_sources", legacy)
+        assertEquals(null, tv.rows.getValue("s1").contentDigest)
     }
 
     private fun pluginRow(id: String, updatedAt: Long, deleted: Boolean = false, address: String = "kinotvapp/kino-plugin-archive") =

@@ -284,13 +284,20 @@ class CompanionSyncEngine(
          * `when(table)` cases. Mirrors (doesn't share: that one is `private`)
          * `com.arkiv.player.data.db.SyncTriggers.TABLES`.
          */
-        val TABLES = listOf("items", "episodes", "playback", "skip_markers", "live_favorites", "live_recents", "own_live_sources", "plugin_installs", "nuvio_repos", PEER_SCOPED_TABLE)
+        val TABLES = listOf(
+            "items", "episodes", "playback", "skip_markers", "live_favorites", "live_recents",
+            // The text of pasted lists BEFORE their rows: when a pasted list's row lands, its text is already there.
+            OWN_LIST_PARTS_TABLE, "own_live_sources", "plugin_installs", "nuvio_repos", PEER_SCOPED_TABLE,
+        )
 
         /**
          * Tables added after the first six. An older peer's SyncApply throws on a table it does not
          * know, so these are pushed only to a peer whose hello lists them (see [peerKnows]).
          */
-        val OPTIONAL_TABLES = setOf("own_live_sources", "plugin_installs", "nuvio_repos", PEER_SCOPED_TABLE)
+        val OPTIONAL_TABLES = setOf(OWN_LIST_PARTS_TABLE, "own_live_sources", "plugin_installs", "nuvio_repos", PEER_SCOPED_TABLE)
+
+        /** Pasted "Mis canales" lists' text, in parts that fit one message (`OwnPastedList`). */
+        const val OWN_LIST_PARTS_TABLE = "own_live_list_parts"
 
         /** Plugin passwords, sealed per peer ([PeerScopedTable]); after `plugin_installs`, whose rows it needs. */
         const val PEER_SCOPED_TABLE = "plugin_secrets"
