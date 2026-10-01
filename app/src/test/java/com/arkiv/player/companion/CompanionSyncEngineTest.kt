@@ -422,6 +422,30 @@ class CompanionSyncEngineTest {
         engine.stop()
         testScheduler.advanceUntilIdle()
     }
+
+    @Test fun `a peer's hello that arrives before its id is known still lets optional tables be pushed to it`() = runTest {
+        // The link's peer id is derived asynchronously (stateIn): the peer's hello can be handled while it is still null.
+        val incoming = MutableSharedFlow<Envelope>(extraBufferCapacity = 8)
+        val changes = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
+        val sent = mutableListOf<Envelope>()
+        val source = FakeSyncSource()
+        val (apply, _) = fakeSyncApply()
+        val peer = MutableStateFlow<String?>(null)
+        val engine = CompanionSyncEngine(this, incoming, { sent += it }, source, apply, SyncCursorStore(FakeContext()), changes, log = {})
+        engine.start(peer)
+        testScheduler.advanceUntilIdle()
+        incoming.emit(newEnvelope(TYPE_SYNC_HELLO, SyncHello(mapOf("plugin_installs" to 0L)).toPayload()))
+        testScheduler.runCurrent()
+        peer.value = "tv"
+        testScheduler.advanceUntilIdle()
+        // A local change afterwards goes out incrementally.
+        source.addRow("plugin_installs", JSONObject().put("id", "archive").put("updatedAt", 10L))
+        changes.emit(Unit)
+        testScheduler.advanceUntilIdle()
+        assertTrue(sent.filter { it.type == TYPE_SYNC_ROWS }.any { SyncRows.fromPayload(it.payload).table == "plugin_installs" })
+        engine.stop()
+        testScheduler.advanceUntilIdle()
+    }
 }
 
 // ---- fakes ----

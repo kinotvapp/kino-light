@@ -8,6 +8,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -184,7 +187,12 @@ class CompanionSyncEngine(
 
     private suspend fun handleHello(env: Envelope) {
         val hello = SyncHello.fromPayload(env.payload)
-        peerTables = peer.value to hello.since.keys.toSet()
+        // The link's peer id is derived asynchronously: right after connecting, the peer's hello can
+        // arrive while it is still null. Keyed to null, the announced tables never counted for the
+        // real peer, so nothing optional (plugins, Nuvio repos, own sources) was pushed to it until
+        // the next connection. Wait briefly for the id instead.
+        val pid = peer.value ?: withTimeoutOrNull(PEER_ID_WAIT_MS) { peer.filterNotNull().first() }
+        peerTables = pid to hello.since.keys.toSet()
         log("hello from the peer: ${hello.since.size} tables")
         var overallHwm = 0L
         for (table in TABLES) {
@@ -288,5 +296,8 @@ class CompanionSyncEngine(
         const val PEER_SCOPED_TABLE = "plugin_secrets"
 
         const val PUSH_DEBOUNCE_MS = 3000L
+
+        /** How long a peer's hello waits for the link to say who that peer is. */
+        const val PEER_ID_WAIT_MS = 5000L
     }
 }
