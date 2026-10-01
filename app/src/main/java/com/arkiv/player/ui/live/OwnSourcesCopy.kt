@@ -36,9 +36,22 @@ object OwnSourcesCopy {
     const val TOO_MANY = "Llegaste al máximo de ${OwnLive.MAX_SOURCES} canales y listas. Elimina alguno para agregar otro."
     const val SAVE_FAILED = "No se pudo guardar. Intenta de nuevo."
 
+    /** Lists with no address (phone only: pasting and picking files is awkward on a TV). */
+    const val PASTE = "Pegar lista"
+    const val OPEN_FILE = "Abrir archivo"
+    const val PASTE_HINT = "¿No tienes la dirección? Copia el texto de la lista y toca «Pegar lista», o abre un archivo .m3u, .m3u8, .w3u o .json (máximo 2 MB)."
+    const val PASTED_LABEL = "Lista pegada"
+    const val PASTED_SAVED = "Lista pegada o abierta desde un archivo (sin dirección)"
+    const val PASTED_REPLACE = "Para cambiar sus canales, vuelve a pegar la lista o abre otro archivo."
+    const val USE_URL = "Usar una dirección"
+    const val PASTED_TV = "Esta lista se pegó o se abrió como archivo en el celular. Para cambiar sus canales, edítala allá."
+
     fun confirmDelete(name: String) = "¿Eliminar «$name»? También se quitará del otro aparato vinculado."
     fun kindLabel(playlist: Boolean) = if (playlist) "Lista" else "Canal"
+    fun fileLabel(name: String) = "Archivo «$name»"
 
     /** What the manager shows of an address: its server, so a long token never has to fit on one line. */
-    fun hostOf(url: String): String = runCatching { java.net.URI(url).host }.getOrNull() ?: url
+    fun hostOf(url: String): String =
+        if (com.arkiv.player.data.live.OwnPastedList.isPasted(url)) PASTED_LABEL
+        else runCatching { java.net.URI(url).host }.getOrNull() ?: url
 }

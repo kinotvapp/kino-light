@@ -18,6 +18,8 @@ class OwnLiveStore(
     private val dao: OwnLiveSourceDao,
     private val newId: () -> String = { UUID.randomUUID().toString() },
     private val clock: () -> Long = System::currentTimeMillis,
+    /** Where pasted text is parsed and joined (up to 2 MB): off the main thread. */
+    private val work: kotlin.coroutines.CoroutineContext = Dispatchers.Default,
 ) {
     val sources: Flow<List<OwnLiveSourceEntity>> = dao.flowAll()
 
@@ -28,7 +30,7 @@ class OwnLiveStore(
         val id = editingId ?: newId()
         val others = all.filter { it.id != id }
         // Pasted text (up to 2 MB) is parsed to be checked: off the main thread.
-        val checked = if (form.pastedText != null) withContext(Dispatchers.Default) { form.validate(id, others.map { it.url }) }
+        val checked = if (form.pastedText != null) withContext(work) { form.validate(id, others.map { it.url }) }
         else form.validate(id, others.map { it.url })
         return when (val r = checked) {
             is OwnFormResult.Invalid -> OwnSaveResult.Invalid(r.errors)
@@ -74,7 +76,7 @@ class OwnLiveStore(
         val row = dao.get(id)?.takeIf { !it.deleted && OwnPastedList.isPasted(it.url) } ?: return null
         val digest = row.contentDigest ?: return null
         val parts = dao.parts(id)
-        return withContext(Dispatchers.Default) { OwnPastedList.join(parts, digest) }
+        return withContext(work) { OwnPastedList.join(parts, digest) }
     }
 
     /** The source behind a channel code of this provider: a single channel's code IS its id, a playlist entry's is `~<list key>.<entry>`. */

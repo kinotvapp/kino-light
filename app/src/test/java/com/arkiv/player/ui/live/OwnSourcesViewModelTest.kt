@@ -159,4 +159,84 @@ class OwnSourcesViewModelTest {
         assertFalse(v.ui.value.busy)
         assertEquals(OwnSourcesCopy.SAVE_FAILED, v.ui.value.notice)
     }
+
+    // ---- "Pegar lista" / "Abrir archivo" ----
+
+    private val m3u = "#EXTM3U\n#EXTINF:-1,Uno\nhttps://tv.example.com/uno.m3u8\n#EXTINF:-1,Dos\nhttps://tv.example.com/dos.m3u8"
+    private fun pastedVm(dao: FakeDao = FakeDao(), probe: suspend (OwnSourceForm) -> OwnProbe = { OwnProbe.Ok("x") }) =
+        OwnSourcesViewModel(OwnLiveStore(dao, newId = { "id-${dao.rows.size}" }, work = Dispatchers.Unconfined), probe, work = Dispatchers.Unconfined) { saved++ } to dao
+
+    @Test fun `pasting a list fills the form with its text and says what it holds, then saves it without an address`() {
+        val (v, dao) = pastedVm()
+        v.startNew(OwnKind.PLAYLIST)
+        v.usePasted("﻿$m3u\r\n")
+        val ui = v.ui.value
+        assertEquals(m3u, ui.form.pastedText)
+        assertEquals(OwnSourcesCopy.PASTED_LABEL, ui.pasted)
+        assertEquals(OwnProbe.Ok("Encontré 2 canales"), ui.probe)
+        assertTrue(OwnField.URL !in ui.errors)
+        v.change(ui.form.copy(name = "Pegada"))
+        v.save()
+        assertFalse(v.ui.value.open)
+        assertEquals("kino-list:id-0", dao.rows.values.single().url)
+        assertTrue(dao.partRows.isNotEmpty())
+    }
+
+    @Test fun `an empty clipboard or a bad list is reported on the address and keeps the form as it was`() {
+        val (v, _) = pastedVm()
+        v.startNew(OwnKind.PLAYLIST)
+        v.usePasted(null)
+        assertEquals(com.arkiv.player.data.live.OwnPastedList.EMPTY, v.ui.value.errors[OwnField.URL])
+        v.usePasted("<html>hola</html>")
+        assertTrue(v.ui.value.errors.getValue(OwnField.URL).contains("página web"))
+        assertNull(v.ui.value.form.pastedText)
+        assertNull(v.ui.value.pasted)
+    }
+
+    @Test fun `opening a file names the list after it, and a wrong or huge file is refused`() {
+        val (v, _) = pastedVm()
+        v.startNew(OwnKind.PLAYLIST)
+        v.useFile("foto.png", m3u.toByteArray(), truncated = false)
+        assertEquals(com.arkiv.player.data.live.OwnPastedList.WRONG_FILE, v.ui.value.errors[OwnField.URL])
+        v.useFile("Fútbol.m3u", m3u.toByteArray(), truncated = true)
+        assertEquals(com.arkiv.player.data.live.OwnPastedList.TOO_LARGE, v.ui.value.errors[OwnField.URL])
+        v.useFile(null, null, truncated = false)
+        assertEquals(com.arkiv.player.data.live.OwnPastedList.UNREADABLE_FILE, v.ui.value.errors[OwnField.URL])
+        v.useFile("Fútbol.m3u", m3u.toByteArray(), truncated = false)
+        assertEquals("Fútbol", v.ui.value.form.name)
+        assertEquals(OwnSourcesCopy.fileLabel("Fútbol.m3u"), v.ui.value.pasted)
+        assertTrue(v.ui.value.errors.isEmpty())
+    }
+
+    @Test fun `going back to an address drops the pasted text, and probing a pasted list never calls the network`() {
+        var called = false
+        val (v, _) = pastedVm(probe = { called = true; OwnProbe.Ok("x") })
+        v.startNew(OwnKind.PLAYLIST)
+        v.usePasted(m3u)
+        v.probeNow()
+        assertFalse(called)
+        v.clearPasted()
+        assertNull(v.ui.value.form.pastedText)
+        assertNull(v.ui.value.pasted)
+        assertNull(v.ui.value.probe)
+    }
+
+    @Test fun `editing a pasted list shows it as pasted and keeps its text when only the name changes`() {
+        val (v, dao) = pastedVm()
+        v.startNew(OwnKind.PLAYLIST)
+        v.usePasted(m3u)
+        v.change(v.ui.value.form.copy(name = "Pegada"))
+        v.save()
+        val row = dao.rows.values.single()
+        v.startEdit(row)
+        assertEquals(OwnSourcesCopy.PASTED_SAVED, v.ui.value.pasted)
+        v.change(v.ui.value.form.copy(name = "Renombrada"))
+        v.save()
+        assertEquals("Renombrada", dao.rows.getValue(row.id).name)
+        assertEquals(row.contentDigest, dao.rows.getValue(row.id).contentDigest)
+    }
+
+    @Test fun `a pasted list is shown as pasted in the managers, not as a weird address`() {
+        assertEquals(OwnSourcesCopy.PASTED_LABEL, OwnSourcesCopy.hostOf("kino-list:abc"))
+    }
 }
