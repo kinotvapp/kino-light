@@ -50,7 +50,7 @@ import kotlinx.coroutines.delay
  * it. Nothing beyond the manifest has been downloaded yet. On an update only the new hosts are
  * marked "nuevo". Focus starts on "Cancelar".
  *
- * A Nuvio scraper can declare 20 hosts, which made the sheet taller than a TV screen, so the host
+ * A Nuvio scraper can declare a hundred hosts (there is no limit), taller than a TV screen, so the host
  * list folds to its first [CONSENT_HOSTS_COLLAPSED] rows (the new ones of an update first) behind
  * "Ver todos" ([pluginConsentHostSummary]). The permission warnings and the "no verificado" line sit
  * ABOVE the list, so neither folding nor a long expanded list ever takes them out of view. The body

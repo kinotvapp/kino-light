@@ -89,7 +89,9 @@ export function validateManifest(text, { knownPermissions = contract.permissions
   // Empty is judged once the settings are read (below), and only from noHostsApiVersion: an older
   // manifest gets the refusal it always got, at the point it always got it.
   const emptyHostsAllowedLater = o.hosts.length === 0 && o.apiVersion >= m.noHostsApiVersion;
-  if (!emptyHostsAllowedLater && (o.hosts.length < m.minHosts || o.hosts.length > m.maxHosts)) return bad("hosts", `El campo "hosts" debe tener de 1 a ${m.maxHosts} dominios`);
+  // No upper bound (Kino 0.9.45+): the 16 KB manifest cap above is the practical one. Older apps
+  // refuse more than legacyMaxHosts; validate.mjs warns about that, it is not an error.
+  if (!emptyHostsAllowedLater && o.hosts.length < m.minHosts) return bad("hosts", `El campo "hosts" debe tener al menos ${m.minHosts} dominio`);
   const hostEntries = [];
   for (const raw of o.hosts) {
     if (typeof raw === "string") { hostEntries.push({ host: raw, insecure: false }); continue; }

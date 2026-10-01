@@ -86,24 +86,24 @@ class NuvioPluginConverterTest {
         )
     }
 
-    @Test fun `TMDB goes first, then remote domains, garbage never takes a cap slot, and unnamed remote ones go last`() {
+    @Test fun `TMDB goes first, then remote domains, garbage is never declared, and unnamed remote ones go last`() {
         val remote = NuvioRemoteHosts(
             preferred = listOf("new4.moviesdrive.christmas"),
             others = (1..30).map { "mirror$it.example" },
         )
         val result = NuvioPluginConverter.convert(scraper, realisticSource, repoSlug = "owner/repo", remoteHosts = remote)
         val manifest = (ManifestParser.parse(result.manifestJson) as ManifestResult.Valid).manifest
-        assertEquals(ManifestParser.MAX_HOSTS, manifest.hosts.size)
+        // No host-count limit since 0.9.45: all 37 are declared, none dropped, no warning.
         assertEquals(
             listOf(
                 "api.themoviedb.org",
                 "new4.moviesdrive.christmas",
                 "new3.moviesdrive.christmas", "raw.githubusercontent.com",
                 "drivebot.cfd", "drivebot.sbs", "new6.gdflix.dad",
-            ) + (1..13).map { "mirror$it.example" },
+            ) + (1..30).map { "mirror$it.example" },
             manifest.hosts,
         )
-        assertTrue(result.warnings.any { "más de 20 dominios" in it })
+        assertTrue(result.warnings.isEmpty())
     }
 
     /**
@@ -124,32 +124,49 @@ class NuvioPluginConverterTest {
         append("module.exports = { getStreams: getStreams };\n")
     }
 
-    @Test fun `over the cap the scraper's own site outranks the hosts its resolvers name first`() {
-        assertTrue(NuvioHostExtractor.extractHosts(bundledManyHostsSource).indexOf("cuevana.unbuendato.com") >= ManifestParser.MAX_HOSTS)
+    @Test fun `every host past 20 is kept, the scraper's own site ahead of the hosts its resolvers name first`() {
+        assertTrue(NuvioHostExtractor.extractHosts(bundledManyHostsSource).indexOf("cuevana.unbuendato.com") >= ManifestParser.LEGACY_MAX_HOSTS)
         val result = NuvioPluginConverter.convert(scraper, bundledManyHostsSource, repoSlug = "owner/repo")
         val manifest = (ManifestParser.parse(result.manifestJson) as ManifestResult.Valid).manifest
-        assertEquals(ManifestParser.MAX_HOSTS, manifest.hosts.size)
+        // TMDB + the site + 24 resolvers + 2 mirrors: all 28, past the old 20.
+        assertEquals(28, manifest.hosts.size)
         assertEquals(listOf("api.themoviedb.org", "cuevana.unbuendato.com", "hoster1.example"), manifest.hosts.take(3))
-        // The rest keep their source order; what no longer fits is asked for at runtime.
-        assertEquals("hoster18.example", manifest.hosts.last())
-        assertTrue(result.warnings.any { "más de 20 dominios" in it })
+        // The rest keep their source order.
+        assertEquals((1..24).map { "hoster$it.example" } + listOf("mirror-a.example", "mirror-b.example"), manifest.hosts.drop(2))
+        assertTrue(result.warnings.isEmpty())
     }
 
-    @Test fun `under the cap the source order is kept as is`() {
+    @Test fun `a short list also puts the scraper's own site first and keeps the rest in source order`() {
         val small = bundledManyHostsSource.lines().filterNot { Regex("hoster(\\d+)").find(it)?.groupValues?.get(1)?.toInt()?.let { n -> n > 3 } == true }
             .joinToString("\n")
         val result = NuvioPluginConverter.convert(scraper, small, repoSlug = "owner/repo")
         assertEquals(
             listOf(
-                "api.themoviedb.org", "hoster1.example", "hoster2.example", "hoster3.example",
-                "mirror-a.example", "mirror-b.example", "cuevana.unbuendato.com",
+                "api.themoviedb.org", "cuevana.unbuendato.com", "hoster1.example", "hoster2.example", "hoster3.example",
+                "mirror-a.example", "mirror-b.example",
             ),
             result.hosts,
         )
     }
 
-    @Test fun `the host-cap warning reaches the manifest description the consent sheet shows`() {
-        val remote = NuvioRemoteHosts(emptyList(), (1..30).map { "mirror$it.example" })
+    /** More domains than fit the manifest's 16 KB: the only bound left on the declared list. */
+    private val tooManyHosts = NuvioRemoteHosts(emptyList(), (1..1500).map { "mirror-number-$it.example" })
+
+    @Test fun `a scraper naming more hosts than fit in 16 KB keeps the highest-priority ones and still parses`() {
+        val result = NuvioPluginConverter.convert(scraper, realisticSource, repoSlug = "owner/repo", remoteHosts = tooManyHosts)
+        assertTrue(result.manifestJson.toByteArray(Charsets.UTF_8).size <= ManifestParser.MAX_BYTES)
+        val manifest = (ManifestParser.parse(result.manifestJson) as ManifestResult.Valid).manifest
+        assertTrue(manifest.hosts.size.toString(), manifest.hosts.size in 500 until 1500)
+        // The scraper's own hosts come before the shared list: only the shared list's tail is cut.
+        assertEquals("api.themoviedb.org", manifest.hosts.first())
+        assertTrue("new3.moviesdrive.christmas" in manifest.hosts)
+        assertEquals(result.hosts, manifest.hosts)
+        val dropped = 1500 + 6 - manifest.hosts.size
+        assertEquals(listOf("Aviso: se detectaron demasiados dominios; $dropped quedaron fuera."), result.warnings)
+    }
+
+    @Test fun `the too-many-hosts warning reaches the manifest description the consent sheet shows`() {
+        val remote = tooManyHosts
         val longName = scraper.copy(name = "N".repeat(80))
         val result = NuvioPluginConverter.convert(longName, realisticSource, repoSlug = "an-owner-with-a-long-name/a-very-long-repository-name", remoteHosts = remote)
         assertEquals(1, result.warnings.size)

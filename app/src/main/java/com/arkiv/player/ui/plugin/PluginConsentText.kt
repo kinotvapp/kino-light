@@ -68,12 +68,14 @@ fun pluginConsentHostSummary(
     expanded: Boolean,
     limit: Int = CONSENT_HOSTS_COLLAPSED,
 ): ConsentHostSummary {
-    val (fresh, known) = hosts.partition { it in newHosts }
+    // A set: a manifest's host list has no count limit (0.9.45), so no list-in-list scan here.
+    val news = newHosts.toSet()
+    val (fresh, known) = hosts.partition { it in news }
     val ordered = fresh + known
     val collapsible = ordered.size > limit
     val visible = if (collapsible && !expanded) ordered.take(limit) else ordered
     val hidden = ordered.drop(visible.size)
-    return ConsentHostSummary(visible, hidden.size, hidden.count { it in newHosts }, collapsible)
+    return ConsentHostSummary(visible, hidden.size, hidden.count { it in news }, collapsible)
 }
 
 /** The heading above the host rows: the total is said up front whenever some of them can be folded away. */

@@ -73,7 +73,8 @@ object NuvioHostExtractor {
      *  - a template URL whose QUERY carries an expression (`` `https://cuevana.unbuendato.com/?id=${id}` ``,
      *    `` `https://site/?s=${query}` ``): the site's own search/lookup, while embed hosts are
      *    usually built on a path (`/e/${id}`).
-     * Only used to rank candidates when a scraper names more than the 20 hosts a manifest can declare.
+     * Used to rank candidates: they go ahead of the other literals, so the consent sheet's folded
+     * host list (and, past the manifest's 16 KB cap, the declared list itself) starts with the site.
      */
     fun primaryHosts(source: String): List<String> {
         val found = ArrayList<String>()

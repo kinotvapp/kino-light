@@ -430,7 +430,7 @@ class PluginHttpTest {
         assertFalse(asked)
     }
 
-    // No cap on what the person approves: with 20 hosts (the most a manifest may declare) a 21st
+    // No cap on what the person approves: with 20 hosts (the most a manifest could declare before 0.9.45) a 21st
     // and on to a 25th are still asked about, added and handed to onApproved to be persisted.
     @Test fun `past 20 hosts a new host is still asked about and added`() = runTest {
         val offline = object : Dns { override fun lookup(hostname: String): List<InetAddress> = throw java.net.UnknownHostException(hostname) }

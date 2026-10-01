@@ -218,7 +218,7 @@ class PluginInstallerTest {
             PluginManifest("demo", "Demo", "1.0.0", 1, "plugin.js", "", "", "", manifestHosts, setOf("search"), null, null),
             "{}", InstalledRecord("o/r", "1.0.0", "x", recordHosts, 0L), tmp.root,
         )
-        val twenty = (1..ManifestParser.MAX_HOSTS).map { "h$it.example.com" }
+        val twenty = (1..ManifestParser.LEGACY_MAX_HOSTS).map { "h$it.example.com" }
         val reactive = (21..25).map { "r$it.example.org" }
         val carried = PluginInstaller.hostsCarriedOver(twenty, stored(twenty, twenty + reactive + "r21.example.org"))
         assertEquals(twenty + reactive, carried)

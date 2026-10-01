@@ -105,7 +105,13 @@ object ManifestParser {
      */
     const val NO_HOSTS_API_VERSION = 2
     const val NO_HOSTS_NEEDS_URL_SETTING = "El campo \"hosts\" solo puede estar vacío si el plugin tiene un ajuste de tipo \"url\""
-    const val MAX_HOSTS = 20
+    /**
+     * The most `hosts` entries Kino 0.9.44 and older accept. NOT enforced here any more: from 0.9.45
+     * a manifest may declare any number of hosts, bounded in practice only by [MAX_BYTES] (a few
+     * hundred real domain names). Kept so `contract.json` can tell plugin authors (sdk/validate.mjs
+     * warns) that a longer list is refused by older apps.
+     */
+    const val LEGACY_MAX_HOSTS = 20
     const val MAX_NAME_CHARS = 40
     const val MAX_DESCRIPTION_CHARS = 300
     const val MAX_AUTHOR_CHARS = 60
@@ -174,8 +180,9 @@ object ManifestParser {
         // Empty is judged once the settings are read (below), and only from NO_HOSTS_API_VERSION:
         // an older manifest gets the refusal it always got, at the point it always got it.
         val emptyHostsAllowedLater = hostsJson.length() == 0 && api >= NO_HOSTS_API_VERSION
-        if (!emptyHostsAllowedLater && (hostsJson.length() < MIN_HOSTS || hostsJson.length() > MAX_HOSTS)) {
-            return invalid("hosts", "El campo \"hosts\" debe tener de $MIN_HOSTS a $MAX_HOSTS dominios")
+        // No upper bound (from 0.9.45): the 16 KB manifest cap above is the practical one.
+        if (!emptyHostsAllowedLater && hostsJson.length() < MIN_HOSTS) {
+            return invalid("hosts", "El campo \"hosts\" debe tener al menos $MIN_HOSTS dominio")
         }
         val hostEntries = ArrayList<HostEntry>(hostsJson.length())
         for (i in 0 until hostsJson.length()) {

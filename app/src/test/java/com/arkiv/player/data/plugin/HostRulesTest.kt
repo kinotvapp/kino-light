@@ -44,4 +44,24 @@ class HostRulesTest {
         listOf("archive.org", "ia8.us.archive.org", "cdn-1.example.co", "1.example.com")
             .forEach { assertFalse(it, HostRules.isLocalAddress(it)) }
     }
+
+    // A manifest's `hosts` has no count limit since 0.9.45 (the 16 KB cap allows several hundred),
+    // and matches() runs on every request and redirect hop: a linear scan of 500 patterns must
+    // stay cheap. The bound is generous (a loaded CI box); the measured cost is printed.
+    @Test fun `matching against 500 hosts is correct and cheap`() {
+        val patterns = (1..500).map { if (it % 2 == 0) "*.cdn$it.example.com" else "h$it.example.com" }
+        assertTrue(HostRules.matches("h499.example.com", patterns))
+        assertTrue(HostRules.matches("a.b.cdn500.example.com", patterns))
+        assertFalse(HostRules.matches("cdn500.example.com", patterns))
+        assertFalse(HostRules.matches("nowhere.example.org", patterns))
+        val calls = 20_000
+        repeat(1_000) { HostRules.matches("nowhere.example.org", patterns) } // warm-up
+        val start = System.nanoTime()
+        var hits = 0
+        repeat(calls) { if (HostRules.matches("nowhere.example.org", patterns)) hits++ }
+        val perCallUs = (System.nanoTime() - start) / 1_000.0 / calls
+        println("HostRules.matches, 500 patterns, full miss: %.1f us per call".format(perCallUs))
+        assertTrue(hits == 0)
+        assertTrue("$perCallUs us per call", perCallUs < 1_000.0)
+    }
 }

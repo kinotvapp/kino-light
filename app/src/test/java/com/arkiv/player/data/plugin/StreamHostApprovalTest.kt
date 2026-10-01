@@ -184,7 +184,7 @@ class StreamHostApprovalTest {
     // No cap on what the person approves: a plugin with its 20 declared hosts plus 4 already
     // approved (24) still gets the single-server choice, and a "yes" adds and persists the 25th.
     @Test fun `past 20 hosts the single server is still offered, and approving adds it`() = runTest {
-        val twenty = (1..ManifestParser.MAX_HOSTS).map { "h$it.example.com" }
+        val twenty = (1..ManifestParser.LEGACY_MAX_HOSTS).map { "h$it.example.com" }
         val approvedBefore = (21..24).map { "h$it.example.com" }
         reinstall(twenty) { copy(hosts = twenty + approvedBefore) }
         val playing = play(source("""{"url":"https://cdn.other.example/v.mp4"}"""))
@@ -199,7 +199,7 @@ class StreamHostApprovalTest {
     }
 
     @Test fun `past 20 hosts a license host is still asked about, and approving plays it`() = runTest {
-        val twenty = (1 until ManifestParser.MAX_HOSTS).map { "h$it.example.com" } + "cdn.other.example"
+        val twenty = (1 until ManifestParser.LEGACY_MAX_HOSTS).map { "h$it.example.com" } + "cdn.other.example"
         reinstall(twenty)
         val playing = play(source("""{"url":"https://cdn.other.example/1.mpd","drm":{"type":"widevine","licenseUrl":"https://lic.other.example/wv"}}"""))
         val req = nextPrompt()
@@ -212,7 +212,7 @@ class StreamHostApprovalTest {
 
     // A fetch-time approval of ANOTHER host landing while this dialog is up takes nothing away from it.
     @Test fun `another host approved while the person decides does not stop this one`() = runTest {
-        val twenty = (1..ManifestParser.MAX_HOSTS).map { "h$it.example.com" }
+        val twenty = (1..ManifestParser.LEGACY_MAX_HOSTS).map { "h$it.example.com" }
         reinstall(twenty)
         val playing = play(source("""{"url":"https://cdn.other.example/v.mp4"}"""))
         val req = nextPrompt()

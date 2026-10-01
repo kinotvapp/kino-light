@@ -99,11 +99,28 @@ class ManifestParserTest {
         assertEquals("hosts", invalidField(base().put("hosts", JSONArray())))
         assertEquals("hosts", invalidField(base().put("hosts", JSONArray(listOf("*")))))
         assertEquals("hosts", invalidField(base().put("hosts", JSONArray(listOf("localhost")))))
-        assertEquals("hosts", invalidField(base().put("hosts", JSONArray((1..21).map { "h$it.example.com" }))))
         assertEquals("hosts", invalidField(base().apply { remove("hosts") }))
     }
 
     private val serverSetting = JSONObject().put("key", "server").put("label", "Servidor").put("type", "url").put("required", true)
+
+    // From 0.9.45 there is no upper bound on `hosts`: only the 16 KB manifest cap limits it.
+    @Test fun `21, 100 and 500 hosts are accepted, in order`() {
+        for (n in listOf(21, 100, 500)) {
+            val hosts = (1..n).map { "h$it.example.com" }
+            val m = (ManifestParser.parse(base().put("hosts", JSONArray(hosts)).toString()) as ManifestResult.Valid).manifest
+            assertEquals(hosts, m.hosts)
+        }
+    }
+
+    @Test fun `the 16 KB manifest cap is what bounds a long host list`() {
+        val hosts = (1..1000).map { "host-number-$it.example.com" }
+        val text = base().put("hosts", JSONArray(hosts)).toString()
+        assertTrue(text.toByteArray(Charsets.UTF_8).size > ManifestParser.MAX_BYTES)
+        val tooBig = ManifestParser.parse(text) as ManifestResult.Invalid
+        assertEquals("kino-plugin.json", tooBig.field)
+        assertEquals("El manifiesto pesa más de 16 KB", tooBig.message)
+    }
 
     /** A plugin whose only reach is the server the person types needs no placeholder host (apiVersion 2). */
     @Test fun `empty hosts are valid on apiVersion 2 with a url setting, and nowhere else`() {
@@ -115,7 +132,7 @@ class ManifestParserTest {
         // apiVersion 1: refused exactly as always, with or without the setting.
         val v1 = ManifestParser.parse(base().put("hosts", JSONArray()).put("settings", JSONArray(listOf(serverSetting))).toString()) as ManifestResult.Invalid
         assertEquals("hosts", v1.field)
-        assertEquals("El campo \"hosts\" debe tener de 1 a 20 dominios", v1.message)
+        assertEquals("El campo \"hosts\" debe tener al menos 1 dominio", v1.message)
 
         // apiVersion 2 with no url setting: it could reach nothing at all.
         val text = JSONObject().put("key", "user").put("label", "Usuario").put("type", "text")
