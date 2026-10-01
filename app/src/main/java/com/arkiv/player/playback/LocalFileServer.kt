@@ -19,7 +19,11 @@ import java.net.Socket
  * unaffected (`ServerSocket.close()` doesn't touch already-accepted sockets), and any new
  * connection forces the client to reconnect from scratch against the correct file.
  */
-class LocalFileServer(private val lanIp: () -> String?) {
+class LocalFileServer(
+    private val lanIp: () -> String?,
+    /** Told of every request and of how the file's answer went (a DLNA cast counts its TV's). */
+    private val lanRequests: LanRequestListener? = null,
+) {
 
     @Volatile private var server: ServerSocket? = null
     @Volatile private var current: File? = null
@@ -122,6 +126,12 @@ class LocalFileServer(private val lanIp: () -> String?) {
         val userAgent = lines.firstOrNull { it.startsWith("User-Agent:", ignoreCase = true) }
             ?.substringAfter(':')?.trim().orEmpty()
         Log.i(TAG, "request from $client · $reqLine · agent=$userAgent")
+        val startedAt = System.currentTimeMillis()
+        lanRequests?.started(
+            client, reqLine,
+            lines.firstOrNull { it.startsWith("Range:", ignoreCase = true) }?.substringAfter(':')?.trim(),
+            userAgent,
+        )
 
         if (reqLine.contains("/hls.m3u8")) {
             val body = playlistFor(file).toByteArray()
@@ -285,6 +295,10 @@ class LocalFileServer(private val lanIp: () -> String?) {
             TAG,
             "<- $client sent $sent/$length bytes" +
                 (outcome.exceptionOrNull()?.let { " · CUT OFF: $it" } ?: " · complete"),
+        )
+        lanRequests?.finished(
+            client, reqLine, sent, System.currentTimeMillis() - startedAt,
+            outcome.exceptionOrNull()?.javaClass?.simpleName,
         )
     }
 

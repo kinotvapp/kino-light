@@ -80,4 +80,37 @@ class CastStrategyTest {
         assertEquals("video/mp2t", CastStrategy.mimeFromSignature(ts))
         assertNull(CastStrategy.mimeFromSignature("<html><body>nope".toByteArray()))
     }
+
+    @Test
+    fun `Google's receiver is the default and its TS still goes to the HLS remux`() {
+        val ts = CastStrategy.formatOf("http://cdn/vod/B9EF_media.ts", "")
+        assertEquals(
+            CastStrategy.choose(ts, true, false, remuxAvailable = true),
+            CastStrategy.choose(ts, true, false, remuxAvailable = true, receiver = CastStrategy.Receiver.CAST),
+        )
+        assertEquals(Route.REMUX, CastStrategy.remuxRoute(CastStrategy.Receiver.CAST))
+    }
+
+    @Test
+    fun `a receiver that plays TS gets it as it is, one without HLS gets the whole remux`() {
+        val playsTs = CastStrategy.Receiver(playsTs = true, playsHls = false)
+        val neither = CastStrategy.Receiver(playsTs = false, playsHls = false)
+        assertEquals(Route.PROXY, CastStrategy.choose(Format.MPEG_TS, true, false, remuxAvailable = true, receiver = playsTs))
+        assertEquals(Route.DIRECT, CastStrategy.choose(Format.MPEG_TS, false, true, remuxAvailable = true, receiver = playsTs))
+        assertEquals(Route.REMUX_FILE, CastStrategy.choose(Format.MPEG_TS, true, false, remuxAvailable = true, receiver = neither))
+        // The other formats do not depend on it.
+        assertEquals(Route.PROXY, CastStrategy.choose(Format.MP4, true, false, remuxAvailable = true, receiver = neither))
+    }
+
+    @Test
+    fun `after a rejection, the next lighter route that is left`() {
+        val both = CastStrategy.Receiver(playsTs = true, playsHls = true)
+        val tsOnly = CastStrategy.Receiver(playsTs = true, playsHls = false)
+        assertEquals(Route.REMUX, CastStrategy.afterRejection(Format.MPEG_TS, Route.PROXY, both, remuxAvailable = true))
+        assertEquals(Route.REMUX_FILE, CastStrategy.afterRejection(Format.MPEG_TS, Route.PROXY, tsOnly, remuxAvailable = true))
+        assertEquals(Route.REMUX_FILE, CastStrategy.afterRejection(Format.MPEG_TS, Route.REMUX, both, remuxAvailable = true))
+        assertEquals(Route.NONE, CastStrategy.afterRejection(Format.MPEG_TS, Route.REMUX_FILE, both, remuxAvailable = true))
+        assertEquals(Route.NONE, CastStrategy.afterRejection(Format.MPEG_TS, Route.PROXY, both, remuxAvailable = false))
+        assertEquals(Route.NONE, CastStrategy.afterRejection(Format.MP4, Route.PROXY, both, remuxAvailable = true))
+    }
 }
