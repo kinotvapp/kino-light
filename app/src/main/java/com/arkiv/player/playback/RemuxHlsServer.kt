@@ -32,16 +32,38 @@ import java.net.Socket
 class RemuxHlsServer(
     private val lanIp: () -> String?,
     private val log: (String) -> Unit = {},
+    /**
+     * The remux of [key] an earlier cast stopped and left on disk, if any (see
+     * `TsRemuxer.leftover`). Served at once, under the same token as the rest, while the new remux
+     * catches up with it -- see [RemuxHls.Splice].
+     */
+    private val leftoverOf: (key: String) -> File? = { null },
 ) {
+
+    /** A finished-for-good prefix of the remux, from an earlier cast. Indexed once: it never grows. */
+    private class Head(val file: File, val index: Fmp4Index)
 
     private class Source(
         val key: String,
         val token: String,
         /** The remux as it stands: the file (`.part` while written) and whether it is complete. */
         val locate: () -> Pair<File, Boolean>?,
+        val head: Head?,
     ) {
         val index = Fmp4Index()
         @Volatile var complete = false
+        @Volatile var splice: RemuxHls.Splice = if (head == null) RemuxHls.Splice.Joined(0, 0) else RemuxHls.Splice.Waiting
+
+        /** What is served right now, fragment by fragment. */
+        fun pieces(): List<RemuxHls.Piece> = RemuxHls.timeline(head?.index?.fragments.orEmpty(), index.fragments, splice)
+
+        /** Finished: the new remux is done AND it is the one being served past the head. */
+        fun timelineComplete(): Boolean = complete && splice != RemuxHls.Splice.Waiting
+
+        /** Where the init segment and the track list come from: the head's while it is served. */
+        fun initIndex(): Fmp4Index = if (head != null && splice != RemuxHls.Splice.Impossible) head.index else index
+
+        fun segments(): List<RemuxHls.Segment> = RemuxHls.segments(pieces().map { it.fragment }, timelineComplete())
     }
 
     @Volatile private var source: Source? = null
@@ -54,7 +76,7 @@ class RemuxHlsServer(
     @Synchronized
     fun serve(key: String, locate: () -> Pair<File, Boolean>?): String? {
         val current = source?.takeIf { it.key == key }
-            ?: Source(key, newToken(), locate).also {
+            ?: Source(key, newToken(), locate, headOf(key)).also {
                 source = it
                 log("serving a new remux as HLS (key #${Integer.toHexString(key.hashCode())})")
             }
@@ -83,11 +105,11 @@ class RemuxHlsServer(
     fun availableSec(key: String): Double {
         val s = source?.takeIf { it.key == key } ?: return 0.0
         refresh(s)
-        return RemuxHls.segments(s.index.fragments, s.complete).sumOf { it.durationSec }
+        return s.segments().sumOf { it.durationSec }
     }
 
     /** Has [key]'s remux finished, as of the last look? */
-    fun isComplete(key: String): Boolean = source?.takeIf { it.key == key }?.complete == true
+    fun isComplete(key: String): Boolean = source?.takeIf { it.key == key }?.timelineComplete() == true
 
     @Synchronized
     fun stop() {
@@ -118,6 +140,7 @@ class RemuxHlsServer(
             // The remux started over (a cancelled run restarts from an empty file).
             log("the remux shrank (${length}B < ${s.index.scannedTo}B): re-indexing")
             s.index.reset()
+            if (s.head != null) s.splice = RemuxHls.Splice.Waiting
         }
         runCatching {
             RandomAccessFile(file, "r").use { raf ->
@@ -125,6 +148,49 @@ class RemuxHlsServer(
             }
         }.onFailure { log("could not index ${file.name}: $it") }
         s.complete = complete
+        joinHead(s)
+    }
+
+    /** Once the new remux reaches the end of the head, decides once where it takes over. */
+    private fun joinHead(s: Source) = synchronized(s) {
+        val head = s.head ?: return
+        if (s.splice != RemuxHls.Splice.Waiting) return
+        val tracks = s.index.tracks
+        val decided = if (tracks.isNotEmpty() && tracks != head.index.tracks) {
+            RemuxHls.Splice.Impossible
+        } else {
+            RemuxHls.splice(head.index.fragments, s.index.fragments, videoTrackOf(head.index))
+        }
+        if (decided == RemuxHls.Splice.Waiting) return
+        s.splice = decided
+        log(
+            if (decided is RemuxHls.Splice.Joined) {
+                "the new remux caught up with the earlier one: handing over after ${decided.headCount} of its fragments"
+            } else {
+                "the earlier remux cannot be continued by the new one (no shared cut): serving the new one alone"
+            },
+        )
+    }
+
+    private fun videoTrackOf(index: Fmp4Index): Int =
+        (index.tracks.firstOrNull { it.handler == "vide" } ?: index.tracks.firstOrNull())?.id ?: 0
+
+    /**
+     * The leftover of [key], indexed, when it is a usable prefix: a header and at least one whole
+     * fragment. Anything else is ignored and the cast simply waits for the new remux, as before.
+     */
+    private fun headOf(key: String): Head? {
+        val file = runCatching { leftoverOf(key) }.getOrNull() ?: return null
+        val index = Fmp4Index()
+        runCatching {
+            RandomAccessFile(file, "r").use { raf -> index.update(raf.length()) { offset, size -> readAt(raf, offset, size) } }
+        }.onFailure { log("could not index the earlier remux: $it") }
+        if (index.initEnd <= 0 || index.tracks.isEmpty() || index.fragments.isEmpty()) return null
+        log(
+            "reusing ${index.fragments.sumOf { it.durationSec }.toInt()}s an earlier cast already remuxed " +
+                "(${index.fragments.size} fragments)",
+        )
+        return Head(file, index)
     }
 
     private fun handle(sock: Socket) {
@@ -155,19 +221,19 @@ class RemuxHlsServer(
         refresh(s)
         val head = method == "HEAD"
         when (val name = route.name) {
-            "master.m3u8" -> sendText(out, RemuxHls.masterPlaylist(s.index.tracks, s.index.fragments), head)
+            "master.m3u8" -> sendText(out, RemuxHls.masterPlaylist(s.initIndex().tracks, s.pieces().map { it.fragment }), head)
             "media.m3u8" -> {
-                val segments = RemuxHls.segments(s.index.fragments, s.complete)
-                if (s.index.initEnd < 0 || segments.isEmpty()) {
+                val segments = s.segments()
+                if (s.initIndex().initEnd < 0 || segments.isEmpty()) {
                     out.write(response("404 Not Found", "text/plain", 0))
                 } else {
-                    sendText(out, RemuxHls.mediaPlaylist(segments, s.complete), head)
+                    sendText(out, RemuxHls.mediaPlaylist(segments, s.timelineComplete()), head)
                 }
             }
             "init.mp4" -> sendInit(out, s, head)
             else -> {
                 val n = RemuxHls.segmentNumber(name)
-                val segment = n?.let { RemuxHls.segments(s.index.fragments, s.complete).getOrNull(it) }
+                val segment = n?.let { s.segments().getOrNull(it) }
                 if (segment == null) {
                     log("-> 404 segment $name")
                     out.write(response("404 Not Found", "text/plain", 0))
@@ -186,8 +252,10 @@ class RemuxHlsServer(
     }
 
     private fun sendInit(out: OutputStream, s: Source, head: Boolean) {
-        val (file, _) = s.locate() ?: return out.write(response("404 Not Found", "text/plain", 0))
-        val end = s.index.initEnd
+        val init = s.initIndex()
+        val file = if (init === s.index) s.locate()?.first else s.head?.file
+        file ?: return out.write(response("404 Not Found", "text/plain", 0))
+        val end = init.initEnd
         if (end <= 0) return out.write(response("404 Not Found", "text/plain", 0))
         out.write(response("200 OK", "video/mp4", end))
         if (head) return
@@ -195,20 +263,34 @@ class RemuxHlsServer(
     }
 
     private fun sendSegment(out: OutputStream, s: Source, segment: RemuxHls.Segment, head: Boolean) {
-        val (file, _) = s.locate() ?: return out.write(response("404 Not Found", "text/plain", 0))
-        RandomAccessFile(file, "r").use { raf ->
-            val fragments = s.index.fragments.subList(segment.first, segment.last + 1)
+        val pieces = s.pieces().subList(segment.first, segment.last + 1)
+        val mainFile = if (pieces.any { !it.fromHead }) {
+            s.locate()?.first ?: return out.write(response("404 Not Found", "text/plain", 0))
+        } else {
+            null
+        }
+        val headRaf = s.head?.takeIf { pieces.any { it.fromHead } }?.let { RandomAccessFile(it.file, "r") }
+        val mainRaf = mainFile?.let { RandomAccessFile(it, "r") }
+        try {
+            fun rafOf(p: RemuxHls.Piece): RandomAccessFile = if (p.fromHead) headRaf!! else mainRaf!!
             // The rewritten moofs first: their sizes are part of the Content-Length.
-            val moofs = fragments.map { f ->
-                Fmp4Index.rewriteMoof(readAt(raf, f.start, f.moofSize), f.start, s.index.baseTimes(f))
+            val moofs = pieces.map { p ->
+                val f = p.fragment
+                Fmp4Index.rewriteMoof(readAt(rafOf(p), f.start, f.moofSize), f.start, s.index.baseTimes(f))
             }
-            val length = fragments.indices.sumOf { i -> moofs[i].size + (fragments[i].end - fragments[i].start - fragments[i].moofSize) }
+            val length = pieces.indices.sumOf { i ->
+                val f = pieces[i].fragment
+                moofs[i].size + (f.end - f.start - f.moofSize)
+            }
             out.write(response("200 OK", "video/mp4", length))
             if (head) return
-            fragments.forEachIndexed { i, f ->
+            pieces.forEachIndexed { i, p ->
                 out.write(moofs[i])
-                copy(raf, f.start + f.moofSize, f.end, out)
+                copy(rafOf(p), p.fragment.start + p.fragment.moofSize, p.fragment.end, out)
             }
+        } finally {
+            runCatching { headRaf?.close() }
+            runCatching { mainRaf?.close() }
         }
     }
 

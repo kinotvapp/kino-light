@@ -145,6 +145,66 @@ class RemuxHlsServerTest {
     }
 
     @Test
+    fun `the remux an earlier cast left is served at once and the new one takes over where it ends`() {
+        val remux = GrowingRemux()
+        val index = Fmp4Fixture.indexOf(remux.source)
+        val full = RemuxHls.segments(index.fragments, complete = true)
+        // The earlier cast stopped after the first segment's fragments.
+        val cut = index.fragments[full[0].last].end.toInt()
+        val leftover = File(tmp.root, "x.mp4.prev").apply { writeBytes(remux.bytes.copyOfRange(0, cut)) }
+        val reusing = RemuxHlsServer(lanIp = { "127.0.0.1" }, leftoverOf = { if (it == "key") leftover else null })
+        try {
+            remux.grow(index.initEnd.toInt()) // the new run has only written its header
+            val master = reusing.serve("key", remux.locate)!!
+            val media = master.replace("master.m3u8", "media.m3u8")
+            assertEquals(full[0].durationSec, reusing.availableSec("key"), 1e-6)
+            val waiting = String(get(media).body)
+            assertEquals(1, Regex("\\.m4s").findAll(waiting).count())
+            assertFalse(waiting.contains("#EXT-X-ENDLIST"))
+            val (init, s0) = Fmp4Fixture.segmentBytes(remux.source, index, full[0])
+            assertArrayEquals(init, get(master.replace("master.m3u8", "init.mp4")).body)
+            assertArrayEquals(s0, get(master.replace("master.m3u8", "s0.m4s")).body)
+
+            remux.finish() // the new run caught up and finished
+            val done = String(get(media).body)
+            assertEquals(full.size, Regex("\\.m4s").findAll(done).count())
+            assertTrue(done.contains("#EXT-X-ENDLIST"))
+            assertTrue(reusing.isComplete("key"))
+            // Segments past the hand-over are the new run's, byte for byte what a single run serves.
+            for (i in full.indices) {
+                val (_, expected) = Fmp4Fixture.segmentBytes(remux.source, index, full[i])
+                assertArrayEquals(expected, get(master.replace("master.m3u8", "s$i.m4s")).body)
+            }
+            // Same token rule as the rest: without it, nothing.
+            assertEquals(404, get(master.replace(Regex("/r/[0-9a-f]+/"), "/r/0123456789abcdef0123456789abcdef/").replace("master.m3u8", "s0.m4s")).code)
+        } finally {
+            reusing.stop()
+        }
+    }
+
+    @Test
+    fun `an earlier remux is only reused for its own key, and only when it holds something playable`() {
+        val remux = GrowingRemux()
+        val index = Fmp4Fixture.indexOf(remux.source)
+        val leftover = File(tmp.root, "x.mp4.prev").apply { writeBytes(remux.bytes.copyOfRange(0, index.fragments[1].end.toInt())) }
+        val junk = File(tmp.root, "junk.prev").apply { writeBytes(remux.bytes.copyOfRange(0, index.initEnd.toInt() + 10)) }
+        val reusing = RemuxHlsServer(
+            lanIp = { "127.0.0.1" },
+            leftoverOf = { when (it) { "key" -> leftover; "junk" -> junk; else -> null } },
+        )
+        try {
+            reusing.serve("other", remux.locate)
+            assertEquals(0.0, reusing.availableSec("other"), 0.0)
+            reusing.serve("junk", remux.locate)
+            assertEquals(0.0, reusing.availableSec("junk"), 0.0)
+            reusing.serve("key", remux.locate)
+            assertTrue(reusing.availableSec("key") > 0.0)
+        } finally {
+            reusing.stop()
+        }
+    }
+
+    @Test
     fun `a remux that started over is re-indexed instead of served from stale offsets`() {
         val remux = GrowingRemux()
         remux.grow(remux.bytes.size)
