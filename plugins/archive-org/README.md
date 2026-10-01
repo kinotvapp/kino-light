@@ -86,7 +86,7 @@ Copy `plugin.js` and `kino-plugin.json`, change them, and publish your repositor
 
 ## License
 
-The code in this repository is licensed under the [MIT License](LICENSE): copy it and change it freely for your own plugins. Copyright (c) 2026 Kino (kinotvapp).
+The code in this repository is licensed under the [Apache License 2.0](LICENSE). Copyright 2026 kinotvapp.
 
 ## License note
 
