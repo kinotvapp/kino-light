@@ -3,6 +3,7 @@ package com.arkiv.player.ui.player
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.arkiv.player.data.plugin.PluginIds
 import com.arkiv.player.playback.SourceKind
 
@@ -229,3 +230,12 @@ internal fun CastCardContent(preparing: Boolean, progress: Int) {
 /** "Preparándolo para la TV…", with the remux's [progress] when it is a percentage. */
 internal fun castPreparingText(progress: Int): String =
     "Preparándolo para la TV…" + if (progress in 0..100) " $progress%" else ""
+
+/** The app's cast session state ([CastSessionManager.casting]), false without one (a TV, no Play services). */
+@androidx.compose.runtime.Composable
+internal fun rememberCastingState(graph: com.arkiv.player.AppGraph): androidx.compose.runtime.State<Boolean> {
+    val flow = androidx.compose.runtime.remember(graph) {
+        graph.castSession?.casting ?: kotlinx.coroutines.flow.MutableStateFlow(false)
+    }
+    return flow.collectAsStateWithLifecycle()
+}

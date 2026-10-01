@@ -3005,8 +3005,9 @@ private fun PlayerContent(
         // Embedded subtitles of a downloaded file (cues from the local player, see the controller
         // listener). Mounted only while the local player is the one playing —the in-screen players
         // draw their own— and confined to the picture: with the video letterboxed, cues belong under
-        // the image, not at the bottom of the screen.
-        if (!isExo) {
+        // the image, not at the bottom of the screen. Not while casting: the local player sits
+        // paused and its last cue stayed frozen on the phone.
+        if (!isExo && !casting) {
             Box(outerModifier, contentAlignment = Alignment.Center) {
                 AndroidView(
                     modifier = if (localVideo.aspect > 0f) Modifier.aspectRatio(localVideo.aspect) else Modifier.fillMaxSize(),

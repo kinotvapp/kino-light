@@ -263,6 +263,9 @@ internal fun StreamExoPlayer(
 ) {
     val context = LocalContext.current
     val graph = rememberGraph()
+    // While casting the TV plays and this player sits paused: its last cue stayed frozen on the
+    // phone (2026-10-01), so the subtitles are not drawn at all until the cast ends.
+    val castingNow by rememberCastingState(graph)
     val subtitleStyle by graph.subtitlePrefs.prefs.collectAsStateWithLifecycle()
 
     val prepared = remember(mediaUrl, subtitleConfigs, requestHeaders, mimeType, http, audioTracks, drm, clearKey) {
@@ -810,8 +813,10 @@ internal fun StreamExoPlayer(
 
         // Overlaid SubtitleView: renders VTT/SRT cues loaded via SubtitleConfiguration. Keyed for
         // the same reason as the TextureView: a rebuilt player's cues go to its own view.
-        key(subtitleView) {
-            AndroidView(modifier = Modifier.matchParentSize(), factory = { subtitleView })
+        if (!castingNow) {
+            key(subtitleView) {
+                AndroidView(modifier = Modifier.matchParentSize(), factory = { subtitleView })
+            }
         }
     }
 }
