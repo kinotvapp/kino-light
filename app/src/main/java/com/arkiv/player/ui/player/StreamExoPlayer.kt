@@ -894,10 +894,19 @@ internal fun StreamExoPlayer(
 
         // Overlaid SubtitleView: renders VTT/SRT cues loaded via SubtitleConfiguration. Keyed for
         // the same reason as the TextureView: a rebuilt player's cues go to its own view.
-        if (!castingNow) {
-            key(subtitleView) {
-                AndroidView(modifier = Modifier.matchParentSize(), factory = { subtitleView })
-            }
+        // ALWAYS mounted, hidden while casting: taking the AndroidView out and back in handed its
+        // factory the same remembered View, still attached to the old holder -- "The specified
+        // child already has a parent" when the cast ended with the player open.
+        key(subtitleView) {
+            AndroidView(
+                modifier = Modifier.matchParentSize(),
+                factory = { subtitleView },
+                update = { view ->
+                    val hidden = castingNow
+                    view.visibility = if (hidden) android.view.View.GONE else android.view.View.VISIBLE
+                    if (hidden) view.setCues(emptyList())
+                },
+            )
         }
     }
 }
