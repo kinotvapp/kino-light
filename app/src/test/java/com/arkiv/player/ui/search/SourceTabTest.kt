@@ -10,6 +10,13 @@ import org.junit.Test
 /** Which rows get drawn in the TV results, in what order, and which ones are skipped. */
 class SourceTabTest {
 
+    // Most of these pin Caracol VISIBLE (as before it was hidden) so they keep guarding that state:
+    // these members shadow the top-level functions. The hidden state is covered at the bottom.
+    private fun tabsFor(sources: List<PlaySource>) = com.arkiv.player.ui.search.tabsFor(sources, caracolVisible = true)
+    private fun countsByTab(sources: List<PlaySource>) = com.arkiv.player.ui.search.countsByTab(sources, caracolVisible = true)
+    private fun visibleRows(sources: List<PlaySource>, tab: SourceTab) =
+        com.arkiv.player.ui.search.visibleRows(sources, tab, caracolVisible = true)
+
     private fun caracol(title: String) = PlaySource.Ditu(
         GatewayResult(source = "ditu", title = title, ref = "ditu1:VOD:$title"),
     )
@@ -30,7 +37,7 @@ class SourceTabTest {
         assertEquals(listOf("all", "ditu", "plugin:xuper"), tabsFor(sources).map { it.key })
         assertEquals(listOf("all", "ditu"), tabsFor(emptyList()).map { it.key })
         assertFalse(countsByTab(sources).keys.any { it.key == "magis" })
-        assertEquals(listOf(SourceTab.ALL, SourceTab.CARACOL), SourceTab.FIXED)
+        assertEquals(listOf(SourceTab.ALL, SourceTab.CARACOL), SourceTab.fixed(caracolVisible = true))
     }
 
     @Test fun `a plugin tab filters and counts its own results`() {
@@ -100,5 +107,22 @@ class SourceTabTest {
         val sources = listOf(caracol("a"), caracol("b"))
         val row = visibleRows(sources, SourceTab.ALL).first { it.first == SourceTab.CARACOL }
         assertEquals(listOf("a", "b"), row.second.map { (it as PlaySource.Ditu).result.title })
+    }
+
+    @Test fun `hidden caracol has no tab, no count and no row`() {
+        val sources = listOf(plugin("a", "p2", "Dos"), plugin("b", "p1", "Uno"))
+        assertEquals(listOf("all", "plugin:p2", "plugin:p1"), com.arkiv.player.ui.search.tabsFor(sources, caracolVisible = false).map { it.key })
+        assertEquals(listOf("all"), com.arkiv.player.ui.search.tabsFor(emptyList(), caracolVisible = false).map { it.key })
+        assertEquals(listOf(SourceTab.ALL), SourceTab.fixed(caracolVisible = false))
+        assertFalse(SourceTab.CARACOL in com.arkiv.player.ui.search.countsByTab(sources, caracolVisible = false))
+        // Even a stray Ditu result draws no row.
+        val rows = com.arkiv.player.ui.search.visibleRows(listOf(caracol("c"), plugin("p")), SourceTab.ALL, caracolVisible = false)
+        assertEquals(listOf(tabOf(plugin("p"))), rows.map { it.first })
+    }
+
+    @Test fun `the app runs with the switch`() {
+        val hidden = com.arkiv.player.data.ditu.CaracolVisibility.HIDDEN
+        assertEquals(!hidden, SourceTab.CARACOL in SourceTab.FIXED)
+        assertEquals(!hidden, SourceTab.CARACOL in com.arkiv.player.ui.search.tabsFor(emptyList()))
     }
 }

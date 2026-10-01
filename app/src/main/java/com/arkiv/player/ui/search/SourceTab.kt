@@ -1,6 +1,7 @@
 package com.arkiv.player.ui.search
 
 import androidx.compose.ui.graphics.Color
+import com.arkiv.player.data.ditu.CaracolVisibility
 import com.arkiv.player.ui.catalog.ArkivCaracolVerde
 import com.arkiv.player.ui.catalog.PlaySource
 import com.arkiv.player.ui.catalog.accent
@@ -23,8 +24,13 @@ class SourceTab private constructor(val key: String, val label: String, val acce
         val ALL = SourceTab("all", "Todo", Color.White)
         val CARACOL = SourceTab("ditu", "Caracol", ArkivCaracolVerde)
 
-        /** The tabs every search shows, in order, even at zero. */
-        val FIXED: List<SourceTab> = listOf(ALL, CARACOL)
+        /** The tabs every search shows, in order, even at zero. Caracol only while it isn't
+         *  hidden ([CaracolVisibility]); the parameter lets tests pin either state. */
+        fun fixed(caracolVisible: Boolean = CaracolVisibility.visible): List<SourceTab> =
+            if (caracolVisible) listOf(ALL, CARACOL) else listOf(ALL)
+
+        /** [fixed] as the app runs it, with the [CaracolVisibility] switch. */
+        val FIXED: List<SourceTab> = fixed()
 
         fun plugin(source: String, label: String, accent: Color): SourceTab = SourceTab(source, label, accent)
     }
@@ -38,17 +44,17 @@ fun tabOf(source: PlaySource): SourceTab = when (source) {
 
 /**
  * "Todo", Caracol, then one tab per plugin present in [sources], in order of first appearance.
+ * While Caracol is hidden ([CaracolVisibility]) its tab isn't there at all.
  */
-fun tabsFor(sources: List<PlaySource>): List<SourceTab> =
-    listOf(SourceTab.ALL) +
-        listOf(SourceTab.CARACOL) +
+fun tabsFor(sources: List<PlaySource>, caracolVisible: Boolean = CaracolVisibility.visible): List<SourceTab> =
+    SourceTab.fixed(caracolVisible) +
         sources.filterIsInstance<PlaySource.Plugin>().map(::tabOf).distinct()
 
 /** How many sources per tab (ALL included), to paint on the chip. Fixed tabs always have a key,
  *  even at zero, so the chips don't jump around as results arrive. */
-fun countsByTab(sources: List<PlaySource>): Map<SourceTab, Int> {
+fun countsByTab(sources: List<PlaySource>, caracolVisible: Boolean = CaracolVisibility.visible): Map<SourceTab, Int> {
     val counts = sources.groupingBy { tabOf(it) }.eachCount()
-    return tabsFor(sources).associateWith { tab -> if (tab == SourceTab.ALL) sources.size else counts[tab] ?: 0 }
+    return tabsFor(sources, caracolVisible).associateWith { tab -> if (tab == SourceTab.ALL) sources.size else counts[tab] ?: 0 }
 }
 
 fun filterByTab(sources: List<PlaySource>, tab: SourceTab): List<PlaySource> =
@@ -63,9 +69,13 @@ fun filterByTab(sources: List<PlaySource>, tab: SourceTab): List<PlaySource> =
  * view -- which was the problem: with 536 torrents and 20 from magis in a single vertical list,
  * magis didn't exist.
  */
-fun visibleRows(sources: List<PlaySource>, tab: SourceTab): List<Pair<SourceTab, List<PlaySource>>> {
+fun visibleRows(
+    sources: List<PlaySource>,
+    tab: SourceTab,
+    caracolVisible: Boolean = CaracolVisibility.visible,
+): List<Pair<SourceTab, List<PlaySource>>> {
     val bySource = sources.groupBy { tabOf(it) }
-    return tabsFor(sources)
+    return tabsFor(sources, caracolVisible)
         .filter { it != SourceTab.ALL && (tab == SourceTab.ALL || it == tab) }
         .mapNotNull { t -> bySource[t]?.takeIf { it.isNotEmpty() }?.let { t to it } }
 }

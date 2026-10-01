@@ -119,13 +119,17 @@ private val TABS = listOf(
  * live module has at least one provider ([liveModule], see `AppGraph.liveModule.available`):
  * Xuper while its plugin is on, plus any installed plugin with `channels`. Pure for the test.
  */
-internal fun visibleTabRoutes(isColombia: Boolean, liveModule: Boolean, categoriesModule: Boolean = true): List<String> =
+internal fun visibleTabRoutes(
+    isColombia: Boolean,
+    liveModule: Boolean,
+    categoriesModule: Boolean = true,
+    caracolVisible: Boolean = com.arkiv.player.data.ditu.CaracolVisibility.visible,
+): List<String> =
     TABS.map { it.route }.filter { route ->
         when (route) {
-            // Hidden for now (2026-09-30): Caracol is getting rebuilt as a plugin, so the built-in
-            // tab is off regardless of country until that lands. Not deleted -- isColombia is kept
-            // as the parameter a re-enable would restore.
-            "caracol" -> false
+            // Off while Caracol is hidden (CaracolVisibility: it's getting rebuilt as a plugin);
+            // flipping the switch back restores the Colombia-only tab.
+            "caracol" -> caracolVisible && isColombia
             "live" -> liveModule
             "categorias_home" -> categoriesModule
             else -> true

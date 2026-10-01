@@ -23,8 +23,10 @@ data class SearchingSources(
     val finished: Set<String> = emptySet(),
     /** Whether the entire search already finished. Defaults to `true`: with no search in progress, nothing spins. */
     val done: Boolean = true,
-    /** Sources that announced themselves (`SourceStart`); Caracol is always expected. */
+    /** Sources that announced themselves (`SourceStart`); Caracol is always expected (unless hidden). */
     val started: Set<String> = emptySet(),
+    /** Sources "Todo" waits on even before they announce themselves: [ALWAYS_EXPECTED] by default. */
+    val expected: Set<String> = ALWAYS_EXPECTED,
 ) {
     fun sourceStarted(source: String) = copy(started = started + source)
 
@@ -34,7 +36,7 @@ data class SearchingSources(
 
     /** Whether [tab] has to show that it's still searching. */
     fun isSearching(tab: SourceTab): Boolean = when (tab) {
-        SourceTab.ALL -> !done && ((ALWAYS_EXPECTED + started) - finished).isNotEmpty()
+        SourceTab.ALL -> !done && ((expected + started) - finished).isNotEmpty()
         else -> !done && tab.key !in finished
     }
 
@@ -47,9 +49,19 @@ data class SearchingSources(
          * Task 13c and nothing emits under that name any more, so waiting on it only kept "Todo"
          * spinning until the whole search's end signal.
          */
-        private val ALWAYS_EXPECTED = setOf(SourceTab.CARACOL.key)
+        internal val ALWAYS_EXPECTED: Set<String>
+            // Hidden Caracol is never searched (CaracolVisibility): waiting on it would keep "Todo"
+            // spinning until the whole search ended.
+            get() = expectedFor(com.arkiv.player.data.ditu.CaracolVisibility.visible)
 
         /** A search that's starting: everything searching. */
         fun starting() = SearchingSources(done = false)
+
+        /** [starting] with Caracol pinned visible or hidden, whatever the switch says (tests). */
+        internal fun starting(caracolVisible: Boolean) =
+            SearchingSources(done = false, expected = expectedFor(caracolVisible))
+
+        internal fun expectedFor(caracolVisible: Boolean): Set<String> =
+            if (caracolVisible) setOf(SourceTab.CARACOL.key) else emptySet()
     }
 }

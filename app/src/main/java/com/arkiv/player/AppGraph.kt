@@ -440,7 +440,15 @@ class AppGraph(context: Context) {
                 pluginRegistry.plugins.value,
                 com.arkiv.player.data.gateway.CompositeSource(pluginSources),
             )
-            listOf(legacyXuper, dituSource) + pluginSources
+            // While Caracol is hidden (CaracolVisibility) it is never searched, but a saved `ditu…`
+            // ref (library, Continuar viendo, history) still resolves and plays through it.
+            val caracol: com.arkiv.player.data.gateway.ContentSource =
+                if (com.arkiv.player.data.ditu.CaracolVisibility.HIDDEN) {
+                    com.arkiv.player.data.gateway.ResolveOnlySource(dituSource)
+                } else {
+                    dituSource
+                }
+            listOf(legacyXuper, caracol) + pluginSources
         }
     }
 

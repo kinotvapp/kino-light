@@ -651,7 +651,8 @@ private fun ResultsContent(
             }
         } else if (tab == SourceTab.ALL) {
             // "Todo": a collapsible section per origin, in [SourceTab]'s order.
-            sourceSection(this, "CARACOL", ArkivCaracolVerde, caracol, searchingSources.isSearching(SourceTab.CARACOL), "CARACOL" in expandedSections, { toggle("CARACOL") }, enabled, onPlay, emptySectionText(SourceTab.CARACOL, sourcesState))
+            // Not while Caracol is hidden (CaracolVisibility): it isn't searched, so no section.
+            if (com.arkiv.player.data.ditu.CaracolVisibility.visible) sourceSection(this, "CARACOL", ArkivCaracolVerde, caracol, searchingSources.isSearching(SourceTab.CARACOL), "CARACOL" in expandedSections, { toggle("CARACOL") }, enabled, onPlay, emptySectionText(SourceTab.CARACOL, sourcesState))
             // Then one section per plugin that brought results, in [tabsFor]'s order.
             tabs.filter { PluginIds.pluginIdOfSource(it.key) != null }.forEach { t ->
                 sourceSection(

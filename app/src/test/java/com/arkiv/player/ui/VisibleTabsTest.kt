@@ -19,8 +19,15 @@ class VisibleTabsTest {
     }
 
     @Test fun `caracol is hidden for now, regardless of country -- a plugin will replace it`() {
+        assertTrue(com.arkiv.player.data.ditu.CaracolVisibility.HIDDEN)
         assertFalse("caracol" in visibleTabRoutes(isColombia = true, liveModule = false))
         assertFalse("caracol" in visibleTabRoutes(isColombia = false, liveModule = true))
+        assertFalse("caracol" in visibleTabRoutes(isColombia = true, liveModule = true, caracolVisible = false))
+    }
+
+    @Test fun `with the switch back on, caracol shows only in Colombia`() {
+        assertTrue("caracol" in visibleTabRoutes(isColombia = true, liveModule = false, caracolVisible = true))
+        assertFalse("caracol" in visibleTabRoutes(isColombia = false, liveModule = true, caracolVisible = true))
     }
 
     @Test fun `the rest of the tabs never move`() {
@@ -30,7 +37,7 @@ class VisibleTabsTest {
         )
         assertEquals(
             listOf("home", "categorias_home", "library", "downloads", "live", "plugins", "settings"),
-            visibleTabRoutes(isColombia = true, liveModule = true),
+            visibleTabRoutes(isColombia = true, liveModule = true, caracolVisible = false),
         )
     }
 
@@ -56,7 +63,7 @@ class VisibleTabsTest {
     @Test fun `hiding Categorias moves no other tab`() {
         assertEquals(
             listOf("home", "library", "downloads", "live", "plugins", "settings"),
-            visibleTabRoutes(isColombia = true, liveModule = true, categoriesModule = false),
+            visibleTabRoutes(isColombia = true, liveModule = true, categoriesModule = false, caracolVisible = false),
         )
     }
 
