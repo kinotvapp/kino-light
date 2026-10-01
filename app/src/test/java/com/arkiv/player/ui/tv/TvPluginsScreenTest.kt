@@ -106,6 +106,30 @@ class TvPluginsScreenTest {
         assertEquals("a", installedFocusReturnTarget(returnId = "b", remainingIds = listOf("a", "c")))
     }
 
+    // The uninstall finishes long after the actions dialog closed (confirmation, then the work itself); the
+    // card that held focus disappears then. Found on the KALLEY TV: focus fell to Ajustes' "Subtítulos" tab.
+    @Test fun `focus waits while the confirmation is open or the uninstall runs`() {
+        val ids = listOf("a", "b", "c")
+        assertEquals(UninstallFocus.Wait, focusAfterUninstall("b", 1, ids, confirmOpen = true, busy = false))
+        assertEquals(UninstallFocus.Wait, focusAfterUninstall("b", 1, ids, confirmOpen = false, busy = true))
+    }
+
+    @Test fun `a cancelled or failed uninstall keeps focus on the same card`() {
+        assertEquals(UninstallFocus.Card("b"), focusAfterUninstall("b", 1, listOf("a", "b", "c"), confirmOpen = false, busy = false))
+    }
+
+    @Test fun `an uninstalled card hands focus to the card that took its place`() {
+        assertEquals(UninstallFocus.Card("c"), focusAfterUninstall("b", 1, listOf("a", "c"), confirmOpen = false, busy = true))
+    }
+
+    @Test fun `uninstalling the last card of the grid focuses the new last card`() {
+        assertEquals(UninstallFocus.Card("b"), focusAfterUninstall("c", 2, listOf("a", "b"), confirmOpen = false, busy = false))
+    }
+
+    @Test fun `uninstalling the only plugin focuses the Instalados tab`() {
+        assertEquals(UninstallFocus.Tab, focusAfterUninstall("a", 0, emptyList(), confirmOpen = false, busy = false))
+    }
+
     @Test fun `uninstalling the last plugin leaves no card to focus`() {
         assertNull(installedFocusReturnTarget(returnId = "b", remainingIds = emptyList()))
     }

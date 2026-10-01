@@ -566,6 +566,35 @@ private fun InstalledTab(
     onBrowseRecommended: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // One requester per plugin, so the dialog's caller (whichever card was OK'd) gets focus back precisely;
+    // rebuilt only when the installed list itself changes (an uninstall, an install), never on every
+    // recomposition, or a request already in flight would chase a requester that just got replaced.
+    val ids = plugins.map { it.id }
+    val cardFocus = remember(ids) { plugins.associate { it.id to FocusRequester() } }
+
+    // An uninstall asked for from a card's actions dialog: that card's id and where it sat. The card goes away
+    // only once the confirmation is accepted and the uninstall has run, long after the dialog closed, and the
+    // focus it held then fell through to Ajustes' first tab ("Subtítulos", found on the KALLEY TV). Kept above
+    // the empty-list branch: uninstalling the last plugin must still place focus (on the Instalados tab).
+    var pendingUninstall by remember { mutableStateOf<Pair<String, Int>?>(null) }
+    val vmState by vm.state.collectAsStateWithLifecycle()
+    LaunchedEffect(ids, pendingUninstall, vmState.confirmUninstall, vmState.busy) {
+        val (id, index) = pendingUninstall ?: return@LaunchedEffect
+        // The view model's current state, not the collected one, which can lag the dialog's own update by a frame.
+        val now = vm.state.value
+        when (val next = focusAfterUninstall(id, index, ids, confirmOpen = now.confirmUninstall?.id == id, busy = now.busy)) {
+            UninstallFocus.Wait -> Unit
+            UninstallFocus.Tab -> {
+                pendingUninstall = null
+                requestFocusWhenReady(selectedTabFocus)
+            }
+            is UninstallFocus.Card -> {
+                pendingUninstall = null
+                cardFocus[next.id]?.let { requestFocusWhenReady(it) }
+            }
+        }
+    }
+
     if (plugins.isEmpty()) {
         Column(modifier.padding(top = 16.dp).noFocusToTheRight(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Todavía no tienes plugins.", style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary)
@@ -578,10 +607,6 @@ private fun InstalledTab(
         return
     }
 
-    // One requester per plugin, so the dialog's caller (whichever card was OK'd) gets focus back precisely;
-    // rebuilt only when the installed list itself changes (an uninstall, an install), never on every
-    // recomposition, or a request already in flight would chase a requester that just got replaced.
-    val cardFocus = remember(plugins.map { it.id }) { plugins.associate { it.id to FocusRequester() } }
     var actionsPluginId by remember { mutableStateOf<String?>(null) }
     var returnFocusTo by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(returnFocusTo) {
@@ -641,7 +666,12 @@ private fun InstalledTab(
             art = artForInstalled(art, dialogPlugin.record.address),
             vm = vm,
             onDismiss = {
-                returnFocusTo = actionsPluginId
+                val id = actionsPluginId
+                // "Desinstalar" asked for the confirmation just before closing the dialog (see TvInstalledActionsDialog).
+                if (id != null && vm.state.value.confirmUninstall?.id == id) {
+                    pendingUninstall = id to plugins.indexOfFirst { it.id == id }
+                }
+                returnFocusTo = id
                 actionsPluginId = null
             },
         )
@@ -691,6 +721,31 @@ internal fun focusReturnsToAdd(wasShown: Boolean, shown: Boolean): Boolean = was
  */
 internal fun installedFocusReturnTarget(returnId: String, remainingIds: List<String>): String? =
     if (returnId in remainingIds) returnId else remainingIds.firstOrNull()
+
+/** Where focus goes after an uninstall asked for from an Instalados card ([focusAfterUninstall]). */
+internal sealed interface UninstallFocus {
+    /** The confirmation is still up, or the uninstall is still running: nothing yet. */
+    data object Wait : UninstallFocus
+
+    /** The Instalados tab: the uninstalled plugin was the last one, the grid is gone. */
+    data object Tab : UninstallFocus
+
+    /** The card of the plugin [id]: the neighbour that took the uninstalled card's place, or the card itself. */
+    data class Card(val id: String) : UninstallFocus
+}
+
+/**
+ * Where focus goes once the person asked to uninstall the plugin [id], whose card sat at [index] of the grid,
+ * with [remainingIds] installed now. While the confirmation is open ([confirmOpen]) or an action is running
+ * ([busy]) with the plugin still there: [UninstallFocus.Wait]. The plugin still there once both are over
+ * (cancelled, or the uninstall failed): its own card. Gone: the card that took its place (the next one), or
+ * the new last card when it was the last, or the Instalados tab when nothing is left.
+ */
+internal fun focusAfterUninstall(id: String, index: Int, remainingIds: List<String>, confirmOpen: Boolean, busy: Boolean): UninstallFocus = when {
+    id in remainingIds -> if (confirmOpen || busy) UninstallFocus.Wait else UninstallFocus.Card(id)
+    remainingIds.isEmpty() -> UninstallFocus.Tab
+    else -> UninstallFocus.Card(remainingIds[index.coerceIn(0, remainingIds.lastIndex)])
+}
 
 /**
  * Puts focus on [requester] as soon as it can take it. The node may not exist yet (a tab that has just been
