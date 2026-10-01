@@ -53,6 +53,52 @@ object TestSealing {
         return "kino-sealed:v1:" + Base64.getUrlEncoder().withoutPadding().encodeToString(ephPub + iv + ct)
     }
 
+    /** A test author key pair (JDK Ed25519): the raw 32-byte public key and the JCA private key. */
+    class AuthorKey(val publicRaw: ByteArray, val private: java.security.PrivateKey)
+
+    fun newAuthorKey(): AuthorKey {
+        val kp = java.security.KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
+        return AuthorKey(kp.public.encoded.copyOfRange(12, 44), kp.private)
+    }
+
+    /**
+     * A `KSC1` sealed entry (SealedCode's format), written from the format table, not from SealedCode.
+     * [declaredLength]/[flags]/[compression] let a test build a validly SEALED but lying file.
+     */
+    fun sealCode(
+        script: String, binding: String, pluginId: String, author: AuthorKey,
+        recipientPublic: ByteArray = TEST_PUBLIC, compression: Int = 1,
+        declaredLength: Int? = null, flags: Int = 1, plainBytes: ByteArray? = null,
+    ): ByteArray {
+        val plain = plainBytes ?: script.toByteArray(Charsets.UTF_8)
+        val body = if (compression == 1) {
+            val d = java.util.zip.Deflater(9, true)
+            d.setInput(plain); d.finish()
+            val out = java.io.ByteArrayOutputStream()
+            val buf = ByteArray(8192)
+            while (!d.finished()) out.write(buf, 0, d.deflate(buf))
+            d.end()
+            out.toByteArray()
+        } else plain
+        val len = declaredLength ?: plain.size
+        val header = byteArrayOf('K'.code.toByte(), 'S'.code.toByte(), 'C'.code.toByte(), '1'.code.toByte(), 1, 1, compression.toByte(), flags.toByte()) +
+            byteArrayOf((len ushr 24).toByte(), (len ushr 16).toByte(), (len ushr 8).toByte(), len.toByte()) + author.publicRaw
+        val ephPriv = ByteArray(32).also { SecureRandom().nextBytes(it) }
+        val ephPub = publicOf(ephPriv)
+        val key = hkdf(x25519(ephPriv, recipientPublic), ephPub + recipientPublic, "kino-sealed-code:v1".toByteArray(), 32)
+        val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
+        val c = Cipher.getInstance("AES/GCM/NoPadding")
+        c.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, iv))
+        c.updateAAD("kino-sealed-code:v1|".toByteArray() + header + "|$binding|$pluginId".toByteArray(Charsets.UTF_8))
+        val unsigned = header + ephPub + iv + c.doFinal(body)
+        return unsigned + signCode(unsigned, author)
+    }
+
+    fun signCode(unsigned: ByteArray, author: AuthorKey): ByteArray =
+        java.security.Signature.getInstance("Ed25519").run {
+            initSign(author.private); update("kino-sealed-code-sig:v1".toByteArray()); update(unsigned); sign()
+        }
+
     private fun hkdf(ikm: ByteArray, salt: ByteArray, info: ByteArray, len: Int): ByteArray {
         val mac = Mac.getInstance("HmacSHA256")
         mac.init(SecretKeySpec(salt, "HmacSHA256"))
