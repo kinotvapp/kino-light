@@ -450,6 +450,7 @@ private fun PlayerContent(
                     hostDecider = graph.streamHostApproval,
                     historyScope = graph.applicationScope,
                     startPluginCastProxy = { graph.pluginCastProxy.start() },
+                    probePluginMime = { url, headers, hosts -> graph.pluginCastProxy.probeMime(url, headers, hosts) },
                 )
             }
         },

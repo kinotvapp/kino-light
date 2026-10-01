@@ -94,6 +94,12 @@ data class PlayerData(
     /** Container MIME the source declared ("" = let ExoPlayer sniff). */
     val mime: String = "",
     /**
+     * PLUGIN only, CAST only: what a probe of the stream's first bytes found when neither its MIME
+     * nor its URL said ("" = not probed, or nothing found). Never given to the phone's player,
+     * which sniffs on its own; read by [pluginCastModeFor].
+     */
+    val probedMime: String = "",
+    /**
      * PLUGIN only: the stream is DRM-protected (a Widevine license or a ClearKey key). It never goes
      * to a TV: the receiver can't reach the license through the plugin's gated client. See
      * [pluginCastModeFor].
@@ -424,6 +430,12 @@ class PlayerViewModel internal constructor(
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO),
     /** Starts `AppGraph.pluginCastProxy` (idempotent), so a plugin title's cast shape has a port. */
     private val startPluginCastProxy: () -> Unit = {},
+    /**
+     * A plugin stream's MIME from its first bytes (`PluginCastProxy.probeMime`: the plugin's gated
+     * client and headers), for a cast decision when neither its MIME nor its URL says. Blocking.
+     */
+    private val probePluginMime: (url: String, headers: Map<String, String>, hosts: com.arkiv.player.data.plugin.EffectiveHosts) -> String? =
+        { _, _, _ -> null },
 ) : ViewModel() {
 
     /** One question per host per playback attempt; see [onPluginHostRefused]. */
@@ -1791,6 +1803,26 @@ class PlayerViewModel internal constructor(
         if (!xuper && play.drmLicenseUrl.isBlank() && play.drmClearKey.isEmpty()) {
             withContext(Dispatchers.IO) { runCatching { startPluginCastProxy() } }
         }
+        // A plugin's hosts, as the gated clients enforce them. A live channel's stream may reach
+        // any public host only when the installed record approved liveStreamHosts "any", decided
+        // from the RESOLVED ref's kind (LIVE, of this plugin), never from the episode id; anything
+        // else stays strict. A direct stream came from this plugin's own live listing, which was
+        // already checked against those same live hosts.
+        val streamHosts = when {
+            hostsReady == null || pluginId == null -> approvedHosts
+            plan is PluginLivePlay.Direct -> hostsReady.liveHosts
+            else -> hostsReady.streamHostsFor(pluginId, ref)
+        }
+        // Only for the cast: a stream nothing describes gets its first bytes looked at, so the TV
+        // buttons know what it is (see pluginCastModeFor). Never Xuper's (its own path), never DRM.
+        val probedMime = if (!xuper && play.drmLicenseUrl.isBlank() && play.drmClearKey.isEmpty() &&
+            pluginStreamFormat(play.url, play.mime).first == PluginStreamFormat.UNKNOWN
+        ) {
+            withContext(Dispatchers.IO) { runCatching { probePluginMime(play.url, play.headers, streamHosts) }.getOrNull() }
+                .orEmpty().also { Log.i(PLAY, "loadPlugin() cast format probe → ${it.ifBlank { "nothing" }}") }
+        } else {
+            ""
+        }
         _magisItem.value = PlayerData(
             episodeId = episodeId,
             itemId = episodeId.substringBefore("::"),
@@ -1804,18 +1836,10 @@ class PlayerViewModel internal constructor(
             openingStartMs = null, openingEndMs = null, endingStartMs = null,
             kind = SourceKind.PLUGIN,
             requestHeaders = play.headers,
-            // A live channel's stream may reach any public host only when the installed record
-            // approved liveStreamHosts "any", decided from the RESOLVED ref's kind (LIVE, of this
-            // plugin), never from the episode id; anything else stays strict.
-            // A direct stream came from this plugin's own live listing, which was already checked
-            // against those same live hosts.
-            pluginHosts = when {
-                hostsReady == null || pluginId == null -> approvedHosts
-                plan is PluginLivePlay.Direct -> hostsReady.liveHosts
-                else -> hostsReady.streamHostsFor(pluginId, ref)
-            },
+            pluginHosts = streamHosts,
             pluginXuper = xuper,
             mime = play.mime,
+            probedMime = probedMime,
             drm = play.drmLicenseUrl.isNotBlank() || play.drmClearKey.isNotEmpty(),
             startPositionMs = startPos,
         )

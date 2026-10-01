@@ -67,10 +67,13 @@ class PlayerCastTest {
     }
 
     @Test fun `any other plugin's file offers cast (through the plugin cast proxy), a protected one does not`() {
-        assertTrue(playerOffersCast(isTv = false, streamItem = pluginFrom("someone-else/kino-plugin-xuper")))
-        assertTrue(playerOffersCast(isTv = false, streamItem = pluginFrom("kinotvapp/kino-plugin-archive")))
-        assertFalse(playerOffersCast(isTv = false, streamItem = pluginFrom("kinotvapp/kino-plugin-archive").copy(drm = true)))
-        assertFalse(playerOffersCast(isTv = true, streamItem = pluginFrom("kinotvapp/kino-plugin-archive")))
+        val mp4 = "https://cdn.example/vod/abc.mp4"
+        assertTrue(playerOffersCast(isTv = false, streamItem = pluginFrom("someone-else/kino-plugin-xuper").copy(mediaUrl = mp4)))
+        assertTrue(playerOffersCast(isTv = false, streamItem = pluginFrom("kinotvapp/kino-plugin-archive").copy(mediaUrl = mp4)))
+        assertFalse(playerOffersCast(isTv = false, streamItem = pluginFrom("kinotvapp/kino-plugin-archive").copy(mediaUrl = mp4, drm = true)))
+        assertFalse(playerOffersCast(isTv = true, streamItem = pluginFrom("kinotvapp/kino-plugin-archive").copy(mediaUrl = mp4)))
+        // A progressive TS from any plugin but Xuper's: the receiver refuses it, so no buttons.
+        assertFalse(playerOffersCast(isTv = false, streamItem = pluginFrom("kinotvapp/kino-plugin-archive")))
     }
 
     @Test fun `a plugin live channel keeps no cast, even Xuper's`() {
@@ -107,16 +110,16 @@ class PlayerCastTest {
     }
 
     @Test fun `another plugin's file is cast through the plugin cast proxy, headers left on the phone`() {
-        val plugin = pluginFrom("kinotvapp/kino-plugin-archive")
+        val plugin = pluginFrom("kinotvapp/kino-plugin-archive").copy(mediaUrl = "https://cdn.example/vod/abc.mp4")
         var asked: Pair<PlayerData, String>? = null
-        val cast = castableStreamItem(plugin, proxy, pluginProxyUrl = { p, mime -> asked = p to mime; "http://127.0.0.1:9/t/tok/media.ts" })!!
-        assertEquals(plugin to "video/mp2t", asked)
+        val cast = castableStreamItem(plugin, proxy, pluginProxyUrl = { p, mime -> asked = p to mime; "http://127.0.0.1:9/t/tok/media.mp4" })!!
+        assertEquals(plugin to "video/mp4", asked)
         assertEquals(SourceKind.PLUGIN, cast.kind)
-        assertEquals("http://127.0.0.1:9/t/tok/media.ts", cast.mediaUrl)
+        assertEquals("http://127.0.0.1:9/t/tok/media.mp4", cast.mediaUrl)
         assertNull(cast.castUrl)
-        assertEquals("video/mp2t", cast.mime)
+        assertEquals("video/mp4", cast.mime)
         assertTrue(cast.requestHeaders.isEmpty())
-        assertEquals("http://192.168.1.5:9/t/tok/media.ts", pluginCastUri(cast, "192.168.1.5"))
+        assertEquals("http://192.168.1.5:9/t/tok/media.mp4", pluginCastUri(cast, "192.168.1.5"))
         assertNull(pluginCastUri(cast, null))
     }
 

@@ -1,5 +1,6 @@
 package com.arkiv.player.ui.player
 
+import com.arkiv.player.cast.CastStrategy
 import com.arkiv.player.data.plugin.PluginHostGate
 import com.arkiv.player.data.plugin.PluginIds
 import com.arkiv.player.playback.SourceKind
@@ -21,8 +22,8 @@ internal sealed interface PluginCastMode {
     data class ViaProxy(val mime: String) : PluginCastMode
 
     /**
-     * The receiver fetches the stream's own URL: an HLS stream that needs no header, on a host the
-     * plugin's rules allow. Nothing goes through the phone.
+     * The receiver fetches the stream's own URL: an HLS, MP4 or WebM stream that needs no header,
+     * on a host the plugin's rules allow. Nothing goes through the phone.
      */
     data class Direct(val mime: String) : PluginCastMode
 
@@ -64,19 +65,22 @@ internal fun directCastAllowed(item: PlayerData): Boolean {
 }
 
 /**
- * The cast decision for one plugin title ([item] is `PlayerData` as `loadPlugin` published it).
+ * The cast decision for one plugin title ([item] is `PlayerData` as `loadPlugin` published it):
+ * the lightest route [com.arkiv.player.cast.CastStrategy] allows, with no remux (plugins have none).
  *
- * | stream                                    | mode                    |
- * |-------------------------------------------|-------------------------|
- * | official Xuper VOD                         | [PluginCastMode.Xuper] (unchanged) |
- * | official Xuper live channel                | None (unchanged)        |
- * | DRM (Widevine or ClearKey)                 | None                    |
- * | progressive file (mp4/webm/mkv/ts…)        | ViaProxy (headers or not) |
- * | HLS, no headers, host allowed for the TV   | Direct                  |
- * | HLS that needs headers (or can't go direct) | ViaProxy, playlists rewritten |
- * | DASH, or a format nothing tells apart      | None                    |
+ * | stream                                          | mode                    |
+ * |-------------------------------------------------|-------------------------|
+ * | official Xuper VOD                               | [PluginCastMode.Xuper] (unchanged) |
+ * | official Xuper live channel                      | None (unchanged)        |
+ * | DRM (Widevine or ClearKey)                       | None                    |
+ * | mp4/webm/HLS (mkv…), no headers, host allowed    | Direct                  |
+ * | mp4/webm/mkv… that need headers (or can't go direct) | ViaProxy           |
+ * | HLS that needs headers (or can't go direct)      | ViaProxy, playlists rewritten |
+ * | progressive MPEG-TS                              | None: the receiver refuses it (LOAD_FAILED) |
+ * | DASH, or a format nothing tells apart            | None                    |
  *
- * [directAllowed] is [directCastAllowed] outside tests.
+ * The format is the declared MIME, else the URL, else what a probe of the first bytes found
+ * ([PlayerData.probedMime]). [directAllowed] is [directCastAllowed] outside tests.
  */
 internal fun pluginCastModeFor(
     item: PlayerData,
@@ -88,11 +92,18 @@ internal fun pluginCastModeFor(
         return if (live) PluginCastMode.None("xuper live channel") else PluginCastMode.Xuper
     }
     if (item.drm) return PluginCastMode.None("drm")
-    val (format, mime) = pluginStreamFormat(item.mediaUrl, item.mime)
+    val (format, mime) = pluginStreamFormat(item.mediaUrl, item.mime.ifBlank { item.probedMime })
+    val needsHeaders = item.requestHeaders.isNotEmpty()
     return when (format) {
-        PluginStreamFormat.FILE -> PluginCastMode.ViaProxy(mime)
+        PluginStreamFormat.FILE -> when (
+            CastStrategy.choose(CastStrategy.formatOf(item.mediaUrl, mime), needsHeaders, !needsHeaders && directAllowed(item), remuxAvailable = false)
+        ) {
+            CastStrategy.Route.DIRECT -> PluginCastMode.Direct(mime)
+            CastStrategy.Route.PROXY -> PluginCastMode.ViaProxy(mime)
+            else -> PluginCastMode.None("progressive mpeg-ts: the receiver refuses it, and plugin titles have no remux")
+        }
         PluginStreamFormat.HLS -> when {
-            item.requestHeaders.isEmpty() && directAllowed(item) -> PluginCastMode.Direct(MIME_HLS)
+            !needsHeaders && directAllowed(item) -> PluginCastMode.Direct(MIME_HLS)
             // Headers (Referer, cookies...) the receiver can't send, or a host the TV must not be
             // pointed at: every playlist, segment, key and map through the proxy's gated client.
             else -> PluginCastMode.ViaProxy(MIME_HLS)

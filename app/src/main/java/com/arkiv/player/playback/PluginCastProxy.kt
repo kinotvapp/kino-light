@@ -402,6 +402,36 @@ class PluginCastProxy(
     }
 
     /** A GET of [url] with the stream's headers (never anything the renderer sent but its Range). */
+    /**
+     * What [url] is, from its first bytes, for a cast decision that has nothing else to go on
+     * ([com.arkiv.player.cast.CastStrategy.mimeFromSignature]): its MIME, or null. Fetched like
+     * everything here, through the plugin's gated client for [hosts] with the plugin's [headers],
+     * one ranged request of [PROBE_BYTES], bounded by [PROBE_TIMEOUT_MS]. Never throws.
+     */
+    fun probeMime(url: String, headers: Map<String, String>, hosts: EffectiveHosts): String? = runCatching {
+        val client = clientFor(hosts).newBuilder()
+            .callTimeout(PROBE_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+            .build()
+        val request = Request.Builder().url(url).apply {
+            headers.forEach { (name, value) -> if (name.lowercase() !in HOP_BY_HOP) header(name, value) }
+        }
+            .header("Range", "bytes=0-${PROBE_BYTES - 1}")
+            .header("Accept-Encoding", "identity")
+            .build()
+        client.newCall(request).execute().use { resp ->
+            if (resp.code !in 200..299) return@runCatching null
+            val body = resp.body?.byteStream() ?: return@runCatching null
+            val head = ByteArray(PROBE_BYTES)
+            var n = 0
+            while (n < head.size) {
+                val r = body.read(head, n, head.size - n)
+                if (r < 0) break
+                n += r
+            }
+            com.arkiv.player.cast.CastStrategy.mimeFromSignature(head.copyOf(n))
+        }
+    }.onFailure { log("probe failed (${hostOf(url)}): ${it.javaClass.simpleName}") }.getOrNull()
+
     private fun upstream(session: Session, url: String): Request.Builder =
         Request.Builder().url(url).apply {
             session.headers.forEach { (name, value) ->
@@ -459,6 +489,12 @@ class PluginCastProxy(
         private const val MAX_HEADER_CHARS = 8192
         private const val SOCKET_TIMEOUT_MS = 60_000
         private const val COPY_CHUNK = 64 * 1024
+
+        /** Bytes a format probe reads: enough for an m2ts signature or a manifest's first line. */
+        const val PROBE_BYTES = 1024
+
+        /** A probe delays the start of playback, so it gets little time. */
+        const val PROBE_TIMEOUT_MS = 2_000L
 
         /**
          * The Default Media Receiver plays HLS (and checks some progressive loads) through

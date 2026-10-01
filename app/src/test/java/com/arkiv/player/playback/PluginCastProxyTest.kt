@@ -296,4 +296,19 @@ class PluginCastProxyTest {
             assertFalse(line, line.contains("seg3.ts") || line.contains("sig=abc") || line.contains("/hls/"))
         }
     }
+
+    @Test fun `a probe names a stream from its first bytes, through the plugin's gate and with its headers`() {
+        origin.enqueue(MockResponse().setResponseCode(206).setBody("#EXTM3U\n#EXT-X-VERSION:3\n"))
+        assertEquals(PluginCastProxy.MIME_HLS, proxy.probeMime(originUrl("/stream/abc"), secretHeaders, localhostHosts))
+        val asked = origin.takeRequest(5, TimeUnit.SECONDS)!!
+        assertEquals("bytes=0-${PluginCastProxy.PROBE_BYTES - 1}", asked.getHeader("Range"))
+        assertEquals("sid=TOPSECRET", asked.getHeader("Cookie"))
+    }
+
+    @Test fun `a probe of a host the plugin may not reach, or of an error, finds nothing and throws nothing`() {
+        assertNull(proxy.probeMime(originUrl("/stream/abc"), emptyMap(), EffectiveHosts(listOf("cdn.example"))))
+        origin.enqueue(MockResponse().setResponseCode(404))
+        assertNull(proxy.probeMime(originUrl("/stream/abc"), emptyMap(), localhostHosts))
+        assertTrue(logs.none { it.contains("TOPSECRET") || it.contains("/stream/abc") })
+    }
 }

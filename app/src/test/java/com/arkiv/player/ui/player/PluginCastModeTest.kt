@@ -41,14 +41,33 @@ class PluginCastModeTest {
         assertTrue(pluginCastModeFor(plugin("https://cdn.example/a.mpd", drm = true)) is PluginCastMode.None)
     }
 
-    @Test fun `a progressive file goes through the proxy, with or without headers`() {
-        // Internet Archive: mp4/webm, no headers.
-        assertEquals(PluginCastMode.ViaProxy("video/mp4"), pluginCastModeFor(plugin("https://ia800.us.archive.org/1/items/x/x.mp4")))
-        assertEquals(PluginCastMode.ViaProxy("video/webm"), pluginCastModeFor(plugin("https://cdn.example/x.webm")))
-        assertEquals(PluginCastMode.ViaProxy("video/x-matroska"), pluginCastModeFor(plugin("https://cdn.example/x.mkv", headers = referer)))
-        assertEquals(PluginCastMode.ViaProxy("video/mp2t"), pluginCastModeFor(plugin("https://cdn.example/x.ts?tok=1", headers = referer)))
+    @Test fun `a header-free mp4 or webm on an allowed host goes straight to the receiver`() {
+        // Internet Archive: mp4/webm, no headers. The phone moves no bytes.
+        assertEquals(PluginCastMode.Direct("video/mp4"), pluginCastModeFor(plugin("https://cdn.example/1/items/x/x.mp4")))
+        assertEquals(PluginCastMode.Direct("video/webm"), pluginCastModeFor(plugin("https://cdn.example/x.webm")))
         // An extension-less URL whose plugin declared the container.
-        assertEquals(PluginCastMode.ViaProxy("video/mp4"), pluginCastModeFor(plugin("https://cdn.example/get?id=7", mime = "video/mp4")))
+        assertEquals(PluginCastMode.Direct("video/mp4"), pluginCastModeFor(plugin("https://cdn.example/get?id=7", mime = "video/mp4")))
+    }
+
+    @Test fun `a progressive file that needs headers or another host goes through the proxy`() {
+        assertEquals(PluginCastMode.ViaProxy("video/mp4"), pluginCastModeFor(plugin("https://cdn.example/x.mp4", headers = referer)))
+        assertEquals(PluginCastMode.ViaProxy("video/mp4"), pluginCastModeFor(plugin("https://ia800.us.archive.org/1/items/x/x.mp4")))
+        assertEquals(PluginCastMode.ViaProxy("video/mp4"), pluginCastModeFor(plugin("http://cdn.example/x.mp4")))
+        assertEquals(PluginCastMode.ViaProxy("video/x-matroska"), pluginCastModeFor(plugin("https://cdn.example/x.mkv", headers = referer)))
+    }
+
+    @Test fun `a progressive TS is never handed to the receiver`() {
+        assertTrue(pluginCastModeFor(plugin("https://cdn.example/x.ts?tok=1", headers = referer)) is PluginCastMode.None)
+        assertTrue(pluginCastModeFor(plugin("https://cdn.example/x.ts")) is PluginCastMode.None)
+    }
+
+    @Test fun `a URL nothing describes casts by what a probe of its first bytes found`() {
+        val unknown = plugin("https://cdn.example/stream/abc")
+        assertTrue(pluginCastModeFor(unknown) is PluginCastMode.None)
+        assertEquals(PluginCastMode.Direct(MIME_HLS), pluginCastModeFor(unknown.copy(probedMime = MIME_HLS)))
+        assertEquals(PluginCastMode.Direct("video/mp4"), pluginCastModeFor(unknown.copy(probedMime = "video/mp4")))
+        // The declared MIME wins over the probe.
+        assertEquals(PluginCastMode.Direct("video/webm"), pluginCastModeFor(unknown.copy(mime = "video/webm", probedMime = "video/mp4")))
     }
 
     @Test fun `a header-free HLS on a host the plugin's rules allow goes straight to the receiver`() {

@@ -213,20 +213,24 @@ private suspend fun sendToRendererNow(
         }
     }
 
-    // A plugin title's HLS (PluginCastProxy's token playlist, or a direct url): the renderer fetches
-    // the playlist itself, like a live channel. A plugin FILE falls to the branch below and goes
-    // through DlnaProxyServer from PluginCastProxy's loopback url, like Magis does from its proxy.
-    SourceKind.PLUGIN -> if (ep.mime == MIME_HLS) sendPluginHls(dlna, device, ep, lanIp) else sendThroughProxy(dlna, device, ep, audio)
+    // A plugin title's HLS (PluginCastProxy's token playlist, or a direct url) and a direct file (an
+    // mp4/webm with no headers on an allowed host, see pluginCastModeFor): the renderer fetches it
+    // itself, like a live channel. A proxied plugin FILE falls to the branch below and goes through
+    // DlnaProxyServer from PluginCastProxy's loopback url, like Magis does from its proxy -- never
+    // a plugin URL fetched by DlnaProxyServer's own, ungated client.
+    SourceKind.PLUGIN ->
+        if (ep.mime == MIME_HLS || !ep.mediaUrl.startsWith("http://127.0.0.1:")) sendPluginHls(dlna, device, ep, lanIp)
+        else sendThroughProxy(dlna, device, ep, audio)
 
     else -> sendThroughProxy(dlna, device, ep, audio)
 }
 
-/** [ep]'s HLS to [device] as a raw url the renderer pulls itself (see [pluginCastUri]). */
+/** [ep]'s HLS, or its direct file, to [device] as a raw url the renderer pulls itself (see [pluginCastUri]). */
 private suspend fun sendPluginHls(dlna: DlnaController, device: DlnaDevice, ep: PlayerData, lanIp: () -> String?): Boolean {
     val ip = lanIp()
     val url = pluginCastUri(ep, ip)
     DlnaLog.i("sendToRenderer: kind=PLUGIN hls title='${ep.title.take(40)}' lanIp=${ip ?: "NONE"} url=${DlnaXml.safeUrl(url)}")
-    if (url != null) return withContext(Dispatchers.IO) { dlna.playRawUrl(device, url, ep.title, MIME_HLS) }
+    if (url != null) return withContext(Dispatchers.IO) { dlna.playRawUrl(device, url, ep.title, ep.mime.ifBlank { MIME_HLS }) }
     withContext(Dispatchers.IO) {
         dlna.failedBeforeSending(
             device, kind = "plugin-hls", stage = "no_lan_url",
