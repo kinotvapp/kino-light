@@ -112,6 +112,19 @@ class CastSessionManager(
     /** When an automatic or asked-for retry was sent and has not played yet, or 0. */
     @Volatile private var retryingSince = 0L
 
+    /** Last receiver state/idle reason written to [CastDiag], so only the changes are. */
+    private var lastDiagStatus = ""
+
+    private fun diagStatus(playerState: Int, idleReason: Int, positionMs: Long) {
+        val key = "$playerState/$idleReason"
+        if (key == lastDiagStatus) return
+        lastDiagStatus = key
+        CastDiag.i(
+            "receiver status state=$playerState (1=idle 2=playing 3=paused 4=buffering 5=loading) " +
+                "idleReason=$idleReason (1=finished 2=cancelled 3=interrupted 4=error) pos=${positionMs}ms active=$receiverActive",
+        )
+    }
+
     private val statusCallback = object : com.google.android.gms.cast.framework.media.RemoteMediaClient.Callback() {
         override fun onStatusUpdated() = onReceiverStatus()
     }
@@ -443,6 +456,7 @@ class CastSessionManager(
         val client = statusClient ?: return
         val status = client.mediaStatus ?: return
         val r = pending
+        diagStatus(status.playerState, status.idleReason, client.approximateStreamPosition)
         when (status.playerState) {
             MediaStatus.PLAYER_STATE_UNKNOWN -> Unit
             MediaStatus.PLAYER_STATE_IDLE -> {

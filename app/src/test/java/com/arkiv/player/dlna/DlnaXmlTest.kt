@@ -122,6 +122,15 @@ class DlnaXmlTest {
     }
 
     @Test
+    fun `the remux server's token is hidden like the proxies' ones`() {
+        assertEquals(
+            "http://192.168.2.11:41983/r/…/master.m3u8",
+            DlnaXml.safeUrl("http://192.168.2.11:41983/r/11d5dc3da36ae1c8fe7f9d09498d07f3/master.m3u8"),
+        )
+        assertEquals("http://h:1/t/…/s", DlnaXml.safeUrl("http://h:1/t/0123456789abcdef0123456789abcdef/s"))
+    }
+
+    @Test
     fun `credentials in a URL are dropped`() {
         assertEquals("https://cdn.example.com/vod/a.mp4", DlnaXml.safeUrl("https://user:pass@cdn.example.com/vod/a.mp4?sig=abc"))
     }
