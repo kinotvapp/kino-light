@@ -346,6 +346,69 @@ object RemuxHls {
         return Route(parts[1], parts[2])
     }
 
+    /**
+     * Where the remux an earlier cast left on disk (the HEAD) hands over to the one being written
+     * now. A cast that ends stops its remux and keeps what it wrote; the next cast of the title used
+     * to throw that away and start from zero -- 216-507 MB and 30-40 s per reconnect, measured
+     * 2026-10-01. Instead the head is served at once and the new remux takes over where it ends.
+     *
+     * Two runs of the same title cut their VIDEO at the same instants (on keyframes, from the same
+     * start) while the audio split between fragments may differ, so the hand-over is at a fragment
+     * boundary both runs share, compared on the video track's decode time.
+     */
+    sealed interface Splice {
+        /** The new remux has not reached the end of the head: the head alone is served. */
+        data object Waiting : Splice
+
+        /** The head's first [headCount] fragments, then the new remux's from [mainFrom] on. */
+        data class Joined(val headCount: Int, val mainFrom: Int) : Splice
+
+        /** No shared cut where one is needed: the head is dropped, the new remux served alone. */
+        data object Impossible : Splice
+    }
+
+    /**
+     * Decides [Splice] for [head] (fixed) and [main] (growing), cut-compared on [videoTrack].
+     *
+     * The head fragments already in a published segment can never be taken back (the receiver may
+     * hold them), so the hand-over is at the end of the head or, failing that, at any cut of the
+     * unpublished tail; with neither, it is [Splice.Impossible].
+     */
+    fun splice(head: List<Fmp4Index.Fragment>, main: List<Fmp4Index.Fragment>, videoTrack: Int): Splice {
+        if (head.isEmpty()) return Splice.Joined(0, 0)
+        val headEnd = endOf(head.last(), videoTrack) ?: return Splice.Impossible
+        val mainEnd = main.lastOrNull()?.let { endOf(it, videoTrack) } ?: return Splice.Waiting
+        if (mainEnd < headEnd) return Splice.Waiting
+        val published = segments(head, complete = false).lastOrNull()?.let { it.last + 1 } ?: 0
+        val mainStarts = HashMap<Long, Int>()
+        main.forEachIndexed { i, f -> startOf(f, videoTrack)?.let { mainStarts.putIfAbsent(it, i) } }
+        for (k in head.size downTo published) {
+            val at = if (k == head.size) headEnd else startOf(head[k], videoTrack) ?: continue
+            val j = mainStarts[at] ?: main.size.takeIf { at == mainEnd } ?: continue
+            return Splice.Joined(k, j)
+        }
+        return Splice.Impossible
+    }
+
+    /** One fragment of what is served, and whether it is read from the head or the new remux. */
+    data class Piece(val fragment: Fmp4Index.Fragment, val fromHead: Boolean)
+
+    /** What is served for [splice]: see [Splice]. */
+    fun timeline(head: List<Fmp4Index.Fragment>, main: List<Fmp4Index.Fragment>, splice: Splice): List<Piece> =
+        when (splice) {
+            Splice.Waiting -> head.map { Piece(it, true) }
+            Splice.Impossible -> main.map { Piece(it, false) }
+            is Splice.Joined ->
+                head.subList(0, splice.headCount).map { Piece(it, true) } +
+                    main.drop(splice.mainFrom).map { Piece(it, false) }
+        }
+
+    private fun startOf(f: Fmp4Index.Fragment, track: Int): Long? =
+        f.trafs.firstOrNull { it.trackId == track }?.baseDecodeTime
+
+    private fun endOf(f: Fmp4Index.Fragment, track: Int): Long? =
+        f.trafs.firstOrNull { it.trackId == track }?.let { it.baseDecodeTime + it.durationTicks }
+
     /** The shape of the token [RemuxHlsServer] mints: 16 random bytes, lowercase hex. */
     fun isToken(s: String): Boolean = s.length == 32 && s.all { it in '0'..'9' || it in 'a'..'f' }
 
