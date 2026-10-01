@@ -148,6 +148,18 @@ class PluginCastProxyTest {
         assertNotEquals(first, register(key = "plugin:p:m2::0"))
     }
 
+    @Test fun `a forgotten token is known as revoked, a live one and other servers' urls are not`() {
+        val url = register()
+        val lan = url.replace("127.0.0.1", "192.168.2.11")
+        assertFalse(proxy.revoked(lan))
+        proxy.forget("plugin:p:m1::0")
+        assertTrue(proxy.revoked(lan))
+        assertTrue(proxy.revoked(url))
+        // Same /t/ shape on another port (the Magis proxy): not this proxy's to judge.
+        assertFalse(proxy.revoked("http://192.168.2.11:1/t/0123456789abcdef0123456789abcdef/s"))
+        assertFalse(proxy.revoked("::"))
+    }
+
     @Test fun `forget and stop end the token`() {
         val url = register()
         proxy.forget("plugin:p:m1::0")

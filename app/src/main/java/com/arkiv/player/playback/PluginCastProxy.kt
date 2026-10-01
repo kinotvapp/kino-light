@@ -182,6 +182,19 @@ class PluginCastProxy(
         tokenByKey[key]?.let(::revoke)
     }
 
+    /**
+     * Is [url] one of this proxy's stream URLs whose token no longer answers (forgotten, expired)?
+     * False for a URL on any other port: the same `/t/` shape is used by other proxies, not ours
+     * to judge. A cast reconnect uses it never to hand the receiver a dead URL again. Not a use.
+     */
+    fun revoked(url: String): Boolean {
+        val uri = runCatching { java.net.URI(url) }.getOrNull() ?: return false
+        val p = port
+        if (p <= 0 || uri.port != p) return false
+        val token = ArchiveCacheProxy.tokenIn(uri.rawPath ?: return false) ?: return true
+        return live(token, clock()) == null
+    }
+
     /** How many streams are registered (tests, diagnostics). */
     val size: Int get() = sessions.size
 

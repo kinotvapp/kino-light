@@ -129,6 +129,22 @@ class RemuxHlsServerTest {
     }
 
     @Test
+    fun `a url whose token or port is gone is known as revoked, anything else is not this server's call`() {
+        val remux = GrowingRemux()
+        remux.finish()
+        val first = server.serve("key", remux.locate)!!
+        assertFalse(server.revoked(first))
+        val other = server.serve("other", remux.locate)!!
+        assertTrue(server.revoked(first)) // another title took the token
+        assertFalse(server.revoked(other))
+        server.stop()
+        assertTrue(server.revoked(other)) // the session ended: socket and token gone
+        // Not a remux url at all (a plugin or Magis proxy token): not this server's to judge.
+        assertFalse(server.revoked("http://192.168.2.11:43471/t/0123456789abcdef0123456789abcdef/media.mp4"))
+        assertFalse(server.revoked("not a url"))
+    }
+
+    @Test
     fun `a remux that started over is re-indexed instead of served from stale offsets`() {
         val remux = GrowingRemux()
         remux.grow(remux.bytes.size)

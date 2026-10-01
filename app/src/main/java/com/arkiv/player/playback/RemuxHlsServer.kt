@@ -63,6 +63,19 @@ class RemuxHlsServer(
         return "http://$ip:${socket.localPort}/r/${current.token}/master.m3u8"
     }
 
+    /**
+     * Is [url] one of this server's remux URLs that no longer answers (its socket closed, or its
+     * token handed to another title)? False for anything that is not a remux URL: not ours to judge.
+     * A session reconnect uses it never to hand the receiver a dead URL again.
+     */
+    fun revoked(url: String): Boolean {
+        val uri = runCatching { java.net.URI(url) }.getOrNull() ?: return false
+        val route = RemuxHls.route(uri.path ?: return false) ?: return false
+        if (!RemuxHls.isToken(route.token)) return false
+        val socket = server
+        return socket == null || socket.isClosed || uri.port != socket.localPort || source?.token != route.token
+    }
+
     /** Is [key] the remux this server hands out? */
     fun isServing(key: String): Boolean = source?.key == key
 
@@ -332,6 +345,9 @@ object RemuxHls {
         if (parts.size != 3 || parts[0] != "r" || parts[1].isEmpty() || parts[2].isEmpty()) return null
         return Route(parts[1], parts[2])
     }
+
+    /** The shape of the token [RemuxHlsServer] mints: 16 random bytes, lowercase hex. */
+    fun isToken(s: String): Boolean = s.length == 32 && s.all { it in '0'..'9' || it in 'a'..'f' }
 
     /** `s12.m4s` → 12. */
     fun segmentNumber(name: String): Int? =
