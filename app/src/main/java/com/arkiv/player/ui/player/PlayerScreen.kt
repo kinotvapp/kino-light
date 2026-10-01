@@ -1510,10 +1510,16 @@ private fun PlayerContent(
      * waits at all.
      */
     val remuxProgress by graph.tsRemuxer.progress.collectAsStateWithLifecycle()
-    val preparingForTv = casting &&
-        castMagis?.let { mg ->
-            magisIsTs(mg) && magisRemuxKey(mg)?.let { key -> key !in remuxFailed && graph.tsRemuxer.alreadyDone(key) == null } == true
-        } == true
+    // Only until the TV has it: the remux now runs a bounded lead ahead of the TV (RemuxPacing),
+    // so it is "not done" for the whole film, and the cover must not sit over the cast controls.
+    fun preparingForTvNow(): Boolean {
+        if (!casting) return false
+        val mg = castMagis ?: return false
+        if (!magisIsTs(mg)) return false
+        val key = magisRemuxKey(mg) ?: return false
+        return key !in remuxFailed && castAsRemux != key && graph.tsRemuxer.alreadyDone(key) == null
+    }
+    val preparingForTv = preparingForTvNow()
     if (preparingForTv) {
         Box(
             Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.75f)),
