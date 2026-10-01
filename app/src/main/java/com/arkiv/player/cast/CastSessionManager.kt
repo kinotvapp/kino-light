@@ -233,7 +233,7 @@ class CastSessionManager(
         android.util.Log.i(
             TAG,
             "cast requested · ep=${request.episodeId} · mime=${request.mimeType} · from=${request.startPositionMs}ms " +
-                "· session=${_casting.value} · ${request.uri}",
+                "· session=${_casting.value} · ${com.arkiv.player.dlna.DlnaXml.safeUrl(request.uri)}",
         )
         if (_casting.value) scope.launch { load(request) } else {
             android.util.Log.i(TAG, "no session yet: it stays pending until one shows up")
@@ -316,7 +316,7 @@ class CastSessionManager(
     private suspend fun load(r: CastRequest) = withContext(Dispatchers.Main) {
         android.util.Log.i(
             TAG,
-            "loading on the receiver · mime=${r.mimeType} · from=${r.startPositionMs}ms · ${r.uri}",
+            "loading on the receiver · mime=${r.mimeType} · from=${r.startPositionMs}ms · ${com.arkiv.player.dlna.DlnaXml.safeUrl(r.uri)}",
         )
         val loadOutcome = runCatching { player.setMediaItem(
             MediaItem.Builder()

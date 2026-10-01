@@ -76,7 +76,7 @@ class AbsoluteRangeTailTest {
                     .setBodyDelay(0, TimeUnit.MILLISECONDS)
             }
         }
-        proxy = ArchiveCacheProxy(temp.newFolder("cache"))
+        proxy = ArchiveCacheProxy(temp.newFolder("cache"), ProxyOriginGuard(allowLoopback = true))
     }
 
     @After

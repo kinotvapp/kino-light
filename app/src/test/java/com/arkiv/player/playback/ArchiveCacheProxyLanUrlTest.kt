@@ -97,6 +97,19 @@ class ArchiveCacheProxyLanUrlTest {
      * with exactly that query.
      */
     @Test
+    fun `the playlist url of a tokenized proxy url keeps the token`() {
+        val local = "http://127.0.0.1:41234/t/0123456789abcdef0123456789abcdef/s"
+        assertEquals(
+            "http://192.168.3.20:41234/t/0123456789abcdef0123456789abcdef/hls.m3u8",
+            ArchiveCacheProxy.lanPlaylistUrl(local, "192.168.3.20"),
+        )
+        assertEquals(
+            "http://192.168.3.20:41234/t/0123456789abcdef0123456789abcdef/s",
+            ArchiveCacheProxy.lanUrl(local, "192.168.3.20"),
+        )
+    }
+
+    @Test
     fun `the playlist url keeps everything but the path`() {
         val local = "http://127.0.0.1:41234/s?h=QUJD&d=1&u=https%3A%2F%2Fcdn%2Fx.ts"
         assertEquals(

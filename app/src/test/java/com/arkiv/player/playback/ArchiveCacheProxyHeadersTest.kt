@@ -29,7 +29,7 @@ class ArchiveCacheProxyHeadersTest {
     @Before
     fun setUp() {
         origin = MockWebServer().also { it.start() }
-        proxy = ArchiveCacheProxy(temp.newFolder("cache"))
+        proxy = ArchiveCacheProxy(temp.newFolder("cache"), ProxyOriginGuard(allowLoopback = true))
         proxy.start()
     }
 
@@ -52,10 +52,11 @@ class ArchiveCacheProxyHeadersTest {
     }
 
     @Test
-    fun `with no headers the proxy url's shape does not change`() {
-        val u = proxy.proxyUrl("https://ejemplo/video.mp4")
-        assertTrue(u.startsWith("http://127.0.0.1:${proxy.port}/s?u="))
-        assertTrue("should not add the h parameter", !u.contains("h="))
+    fun `the proxy url carries a token, never the origin or the headers`() {
+        val u = proxy.proxyUrl("https://ejemplo/video.mp4", mapOf("Content-Auth" to "SECRET"))
+        assertTrue(u, Regex("""http://127\.0\.0\.1:${proxy.port}/t/[0-9a-f]{32}/s""").matches(u))
+        assertTrue("no origin in the url", !u.contains("ejemplo"))
+        assertTrue("no headers in the url", !u.contains("SECRET") && !u.contains("Content-Auth"))
     }
 
     @Test
@@ -78,7 +79,7 @@ class ArchiveCacheProxyHeadersTest {
     }
 
     @Test
-    fun `the origin decodes fine even with headers in the url`() {
+    fun `an origin with an escaped path reaches the origin byte for byte`() {
         val data = body(2048)
         origin.enqueue(
             MockResponse().setBody(okio.Buffer().write(data))
@@ -87,7 +88,7 @@ class ArchiveCacheProxyHeadersTest {
         val url = proxy.proxyUrl(origin.url("/con%20espacio.ts").toString(), mapOf("X-Uno" to "1"))
         val (code, _) = request(url)
         assertEquals(200, code)
-        // What's verified is that the origin survives the extra URL parameter. The body's SIZE is
+        // What's verified is that the registered origin is fetched untouched. The body's SIZE is
         // NOT asserted: the proxy serves the file WHILE downloading it, so how much it managed to
         // write depends on timing and would make the test flaky.
         assertEquals("/con%20espacio.ts", origin.takeRequest().path)

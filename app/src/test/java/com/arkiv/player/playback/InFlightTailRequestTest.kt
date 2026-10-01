@@ -88,7 +88,7 @@ class InFlightTailRequestTest {
                     .apply { if (isSuffix || (closed && from > TOTAL / 2)) setHeadersDelay(TAIL_MS, TimeUnit.MILLISECONDS) }
             }
         }
-        proxy = ArchiveCacheProxy(temp.newFolder("cache"))
+        proxy = ArchiveCacheProxy(temp.newFolder("cache"), ProxyOriginGuard(allowLoopback = true))
     }
 
     @After

@@ -177,27 +177,33 @@ class PluginDns(
 
     private fun isDevice(a: InetAddress): Boolean = a.isLoopbackAddress || a.isLinkLocalAddress || a.isAnyLocalAddress
 
-    private fun isLocal(a: InetAddress): Boolean {
-        if (a.isLoopbackAddress || a.isSiteLocalAddress || a.isLinkLocalAddress || a.isAnyLocalAddress || a.isMulticastAddress) {
-            return true
-        }
-        val b = a.address.map { it.toInt() and 0xFF }
-        return if (a is Inet6Address) {
-            (b[0] and 0xFE) == 0xFC || b.take(12) == NAT64_PREFIX || b.take(6) == NAT64_LOCAL_PREFIX ||
-                // 6to4 2002::/16 and Teredo 2001::/32 embed an IPv4 address, private ones included.
-                (b[0] == 0x20 && b[1] == 0x02) || (b[0] == 0x20 && b[1] == 0x01 && b[2] == 0 && b[3] == 0)
-        } else {
-            // 240.0.0.0/4 is reserved (and holds the 255.255.255.255 broadcast). The IETF-protocol,
-            // documentation and benchmarking ranges are refused exactly like HostRules.isPublicIpv4Literal does.
-            b[0] == 0 || (b[0] == 100 && (b[1] and 0xC0) == 64) || b[0] >= 240 ||
-                (b[0] == 192 && b[1] == 0 && (b[2] == 0 || b[2] == 2)) || (b[0] == 198 && (b[1] and 0xFE) == 18)
-        }
-    }
+    private fun isLocal(a: InetAddress): Boolean = isLocalAddress(a)
 
-    private companion object {
-        val NAT64_PREFIX = listOf(0x00, 0x64, 0xFF, 0x9B, 0, 0, 0, 0, 0, 0, 0, 0)
+    companion object {
+        private val NAT64_PREFIX = listOf(0x00, 0x64, 0xFF, 0x9B, 0, 0, 0, 0, 0, 0, 0, 0)
         /** RFC 8215's local-use NAT64 prefix 64:ff9b:1::/48: a local translator may map it onto private IPv4. */
-        val NAT64_LOCAL_PREFIX = listOf(0x00, 0x64, 0xFF, 0x9B, 0x00, 0x01)
+        private val NAT64_LOCAL_PREFIX = listOf(0x00, 0x64, 0xFF, 0x9B, 0x00, 0x01)
+
+        /**
+         * Whether [a] is anything but a public internet address: the ranges this resolver refuses. Shared with
+         * [com.arkiv.player.playback.ProxyOriginGuard], so the cast proxy blocks exactly the same ones.
+         */
+        fun isLocalAddress(a: InetAddress): Boolean {
+            if (a.isLoopbackAddress || a.isSiteLocalAddress || a.isLinkLocalAddress || a.isAnyLocalAddress || a.isMulticastAddress) {
+                return true
+            }
+            val b = a.address.map { it.toInt() and 0xFF }
+            return if (a is Inet6Address) {
+                (b[0] and 0xFE) == 0xFC || b.take(12) == NAT64_PREFIX || b.take(6) == NAT64_LOCAL_PREFIX ||
+                    // 6to4 2002::/16 and Teredo 2001::/32 embed an IPv4 address, private ones included.
+                    (b[0] == 0x20 && b[1] == 0x02) || (b[0] == 0x20 && b[1] == 0x01 && b[2] == 0 && b[3] == 0)
+            } else {
+                // 240.0.0.0/4 is reserved (and holds the 255.255.255.255 broadcast). The IETF-protocol,
+                // documentation and benchmarking ranges are refused exactly like HostRules.isPublicIpv4Literal does.
+                b[0] == 0 || (b[0] == 100 && (b[1] and 0xC0) == 64) || b[0] >= 240 ||
+                    (b[0] == 192 && b[1] == 0 && (b[2] == 0 || b[2] == 2)) || (b[0] == 198 && (b[1] and 0xFE) == 18)
+            }
+        }
     }
 }
 
