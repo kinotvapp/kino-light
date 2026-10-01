@@ -137,7 +137,7 @@ class SourcePickerTest {
     @Test fun `the first-run mini guide copy is the spec's`() {
         assertEquals("¿Qué son los plugins?", SOURCE_PICKER_INTRO_WHAT_TITLE)
         assertEquals("Cada plugin conecta Kino con una fuente de contenido distinta.", SOURCE_PICKER_INTRO_WHAT_BODY)
-        assertEquals("Así los agregás", SOURCE_PICKER_INTRO_HOW_TITLE)
+        assertEquals("Así los agregas", SOURCE_PICKER_INTRO_HOW_TITLE)
         assertEquals("Toca una tarjeta para instalarla. Puedes agregar o quitar plugins cuando quieras.", SOURCE_PICKER_INTRO_HOW_BODY)
     }
 }

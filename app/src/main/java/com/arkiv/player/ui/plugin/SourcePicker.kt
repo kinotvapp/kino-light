@@ -57,7 +57,7 @@ internal const val RECOMMENDED_TITLE = "Recomendados"
 internal const val SOURCE_PICKER_INTRO_WHAT_TITLE = "¿Qué son los plugins?"
 internal const val SOURCE_PICKER_INTRO_WHAT_BODY = "Cada plugin conecta Kino con una fuente de contenido distinta."
 /** Same guide: how to install one. */
-internal const val SOURCE_PICKER_INTRO_HOW_TITLE = "Así los agregás"
+internal const val SOURCE_PICKER_INTRO_HOW_TITLE = "Así los agregas"
 internal const val SOURCE_PICKER_INTRO_HOW_BODY = "Toca una tarjeta para instalarla. Puedes agregar o quitar plugins cuando quieras."
 
 /**
