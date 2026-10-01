@@ -113,6 +113,15 @@ class TsRemuxer(
     }
 
     /**
+     * What an earlier, stopped remux of [key] left on disk, while [key] is unfinished: served at
+     * once by the cast while a new run catches up with it. See [RemuxLeftover].
+     */
+    fun leftover(key: String): File? {
+        val done = File(folder, RemuxPolicy.fileName(key))
+        return RemuxLeftover.usable(done, RemuxLeftover.fileFor(done))
+    }
+
+    /**
      * Remuxes [inputUri] into the cache and returns the finished file.
      *
      * Idempotent: a remux already on disk is returned without redoing the work. Suspends until the
@@ -161,7 +170,9 @@ class TsRemuxer(
         makeRoom()
         val destination = File(folder, RemuxPolicy.fileName(key))
         val partial = File(folder, "${destination.name}.part")
-        runCatching { partial.delete() }
+        // What a stopped run wrote is not thrown away: it becomes the leftover the next cast starts
+        // on while this run catches up (see RemuxLeftover). This run always writes from zero.
+        RemuxLeftover.rotate(partial, RemuxLeftover.fileFor(destination))
 
         val t0 = System.currentTimeMillis()
         Log.w(TAG, "remux starts → ${destination.name} · audio=${audio?.let { "#${it.ordinal} ${it.id}/${it.language}" } ?: "default"}")

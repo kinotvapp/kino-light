@@ -202,6 +202,7 @@ class PlaybackService : MediaSessionService() {
         runCatching {
             val graph = (application as com.arkiv.player.ArkivApp).graph
             runCatching { graph.archiveCacheProxy.stop() }
+            runCatching { graph.pluginCastProxy.stop() }
             // Task 14 (live channel) created liveHlsProxy/liveController in the graph but never
             // closed them: the ServerSocket on 127.0.0.1 and its accept() thread stayed alive for
             // the rest of the process after leaving a channel. Same sibling as archiveCacheProxy:

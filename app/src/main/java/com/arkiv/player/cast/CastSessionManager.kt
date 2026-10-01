@@ -9,6 +9,7 @@ import androidx.media3.common.Player
 import com.arkiv.player.crash.Crash
 import com.arkiv.player.crash.CastFailure
 import com.arkiv.player.data.ArkivRepository
+import com.google.android.gms.cast.MediaStatus
 import com.google.android.gms.cast.framework.CastContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -43,6 +44,12 @@ class CastSessionManager(
      * the receiver stopped once the file stopped growing. A foreground service is exempt.
      */
     private val keepAlive: (on: Boolean, receiver: String) -> Unit = { _, _ -> },
+    /**
+     * Is this URL still answered by whatever on this device served it? False only for a URL into one
+     * of our LAN servers whose port or token is gone (they are torn down with the session that used
+     * them): such a request is never replayed on a reconnect -- see [CastReconnect].
+     */
+    private val stillServed: (uri: String) -> Boolean = { true },
 ) {
     // Fails fast and with an explicit cause if something builds this off the main thread, instead
     // of an obscure crash inside the Cast SDK (CastPlayer/CastContext require it, see class doc).
@@ -83,6 +90,31 @@ class CastSessionManager(
     @Volatile private var sessionReported = false
 
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /** The receiver dropping its media on its own, and what to do about it. See [CastIdleWatch]. */
+    private val idleWatch = CastIdleWatch()
+
+    /**
+     * Something the phone has to tell about the cast: the receiver stopped by itself and is being
+     * retried, or it stopped again and the person has to choose. Null when all is well.
+     */
+    data class Trouble(val title: String, val retrying: Boolean)
+
+    private val _trouble = MutableStateFlow<Trouble?>(null)
+    val trouble: StateFlow<Trouble?> = _trouble.asStateFlow()
+
+    /** The receiver's status client this manager listens to, for the session in course. */
+    private var statusClient: com.google.android.gms.cast.framework.media.RemoteMediaClient? = null
+
+    /** Was the receiver loading/buffering/playing/paused since the last idle handled? Main thread. */
+    private var receiverActive = false
+
+    /** When an automatic or asked-for retry was sent and has not played yet, or 0. */
+    @Volatile private var retryingSince = 0L
+
+    private val statusCallback = object : com.google.android.gms.cast.framework.media.RemoteMediaClient.Callback() {
+        override fun onStatusUpdated() = onReceiverStatus()
+    }
 
     /**
      * Sends ONE [CastFailure] for the current session, with whatever the receiver's own diagnostics
@@ -205,14 +237,16 @@ class CastSessionManager(
                 }.getOrNull()
                 android.util.Log.i(TAG, "session available · receiver=${device ?: "?"} · pending=${pending?.episodeId}")
                 keepAlive(true, device ?: "el Chromecast")
-                pending?.let { scope.launch { load(it) } }
-                    ?: android.util.Log.w(TAG, "session available but nothing pending: nothing will be loaded")
+                watchReceiverStatus()
+                replayOnConnect()
             }
 
             override fun onCastSessionUnavailable() {
                 android.util.Log.i(TAG, "session gone")
                 _casting.value = false
                 keepAlive(false, "")
+                unwatchReceiverStatus()
+                _trouble.value = null
             }
         })
         // The one case the listener does NOT cover: starting the app with a session already alive
@@ -220,6 +254,7 @@ class CastSessionManager(
         // adopted by hand.
         if (runCatching { castContext.sessionManager.currentCastSession?.isConnected }.getOrNull() == true) {
             _casting.value = true
+            watchReceiverStatus()
         }
         startProgressLoop()
     }
@@ -228,6 +263,9 @@ class CastSessionManager(
     fun setMedia(request: CastRequest) {
         generation++
         pending = request
+        idleWatch.onNewMedia(request.episodeId)
+        retryingSince = 0L
+        _trouble.value = null
         // Without this line "nothing was ever asked of the receiver" and "it was asked and refused"
         // look identical from a log: both end up as a session with an idle player.
         android.util.Log.i(
@@ -251,6 +289,8 @@ class CastSessionManager(
 
     fun stopIntentionally() {
         intentionalStopAtMs = System.currentTimeMillis()
+        idleWatch.onIntentionalStop()
+        _trouble.value = null
         pending = null
         // The state turns off here instead of waiting for the listener: if onCastSessionUnavailable
         // somehow didn't arrive, the phone's bar would be left hanging, showing a dead cast.
@@ -314,6 +354,7 @@ class CastSessionManager(
     }
 
     private suspend fun load(r: CastRequest) = withContext(Dispatchers.Main) {
+        idleWatch.onOwnLoad()
         android.util.Log.i(
             TAG,
             "loading on the receiver · mime=${r.mimeType} · from=${r.startPositionMs}ms · ${com.arkiv.player.dlna.DlnaXml.safeUrl(r.uri)}",
@@ -329,6 +370,7 @@ class CastSessionManager(
                             android.os.Bundle().apply {
                                 putLong(DurationAwareMediaItemConverter.KEY_DURATION_MS, r.durationMs)
                                 putBoolean(DurationAwareMediaItemConverter.KEY_LIVE, r.asLive)
+                                putBoolean(DurationAwareMediaItemConverter.KEY_HLS_FMP4, r.hlsFmp4)
                             },
                         )
                         .build(),
@@ -354,6 +396,139 @@ class CastSessionManager(
     }
 
     /**
+     * What a (re)connect loads: the pending request only while its URL is still served, resumed
+     * where the receiver last was. A request whose server or token is gone is dropped instead --
+     * replaying it gave the receiver a dead token or a closed port, and the right load only came
+     * 30-40 s later. Whoever owns the title (the player screen) sends a fresh one on its own.
+     */
+    private fun replayOnConnect() {
+        val r = pending
+        if (r == null) {
+            android.util.Log.w(TAG, "session available but nothing pending: nothing will be loaded")
+            return
+        }
+        val replay = CastReconnect.replay(r, stillServed, idleWatch.lastKnownMs(r.episodeId))
+        if (replay == null) {
+            android.util.Log.w(
+                TAG,
+                "session available · the pending load's server/token is gone, NOT replaying it " +
+                    "(${com.arkiv.player.dlna.DlnaXml.safeUrl(r.uri)}): waiting for a fresh one",
+            )
+            pending = null
+            return
+        }
+        scope.launch { load(replay) }
+    }
+
+    private fun watchReceiverStatus() {
+        val client = runCatching { castContext.sessionManager.currentCastSession?.remoteMediaClient }.getOrNull()
+        if (client === statusClient) return
+        unwatchReceiverStatus()
+        statusClient = client
+        runCatching { client?.registerCallback(statusCallback) }
+    }
+
+    private fun unwatchReceiverStatus() {
+        runCatching { statusClient?.unregisterCallback(statusCallback) }
+        statusClient = null
+        receiverActive = false
+        retryingSince = 0L
+    }
+
+    /**
+     * The receiver's own status, straight from the Cast SDK: the only place a receiver that went
+     * IDLE by itself shows up (see [CastIdleWatch]). Main thread, like every RemoteMediaClient call.
+     */
+    private fun onReceiverStatus() {
+        val client = statusClient ?: return
+        val status = client.mediaStatus ?: return
+        val r = pending
+        when (status.playerState) {
+            MediaStatus.PLAYER_STATE_UNKNOWN -> Unit
+            MediaStatus.PLAYER_STATE_IDLE -> {
+                // Only an idle that FOLLOWS activity: the SDK repeats the same idle status, and a
+                // status still describing the media before our load must not count against it.
+                if (!receiverActive) return
+                receiverActive = false
+                onReceiverIdle(CastIdleWatch.Idle.fromCast(status.idleReason), r)
+            }
+            else -> {
+                // Playing, paused, buffering or loading.
+                receiverActive = true
+                val playing = status.playerState == MediaStatus.PLAYER_STATE_PLAYING
+                if (r != null && player.currentMediaItem?.mediaId == r.episodeId) {
+                    idleWatch.onPosition(r.episodeId, client.approximateStreamPosition, playing)
+                }
+                if (playing && _trouble.value != null) {
+                    _trouble.value = null
+                    retryingSince = 0L
+                }
+            }
+        }
+    }
+
+    private fun onReceiverIdle(reason: CastIdleWatch.Idle, r: CastRequest?) {
+        val decision = idleWatch.onIdle(reason, r?.episodeId, r?.durationMs ?: 0L)
+        android.util.Log.w(TAG, "receiver went IDLE by itself · reason=$reason · ep=${r?.episodeId} → $decision")
+        if (r == null) return
+        when (decision) {
+            CastIdleWatch.Decision.Ignore -> Unit
+            is CastIdleWatch.Decision.Retry -> {
+                reportFailure("receiver_idle_${reason.name.lowercase()}")
+                _trouble.value = Trouble(r.title, retrying = true)
+                reload(r, decision.fromMs)
+            }
+            is CastIdleWatch.Decision.Ask -> _trouble.value = Trouble(r.title, retrying = false)
+        }
+    }
+
+    /** Loads [r] again from [fromMs] (null: its own start). A live stream always from its start. */
+    private fun reload(r: CastRequest, fromMs: Long?) {
+        if (!stillServed(r.uri)) {
+            android.util.Log.w(TAG, "retry skipped: the request's server/token is gone")
+            _trouble.value = Trouble(r.title, retrying = false)
+            return
+        }
+        val from = if (r.asLive || r.durationMs <= 0L) r.startPositionMs else fromMs ?: r.startPositionMs
+        android.util.Log.w(TAG, "retrying the receiver from ${from}ms")
+        retryingSince = System.currentTimeMillis()
+        scope.launch { load(r.copy(startPositionMs = from)) }
+    }
+
+    /** A retry the receiver never got to play: ask instead of waiting on it forever. Main thread. */
+    private fun onRetryStalled() {
+        retryingSince = 0L
+        val r = pending ?: return
+        if (player.isPlaying) return
+        val decision = idleWatch.onRetryStalled()
+        android.util.Log.w(TAG, "the retry never played · ${RETRY_STALL_MS}ms → $decision")
+        if (decision is CastIdleWatch.Decision.Ask) _trouble.value = Trouble(r.title, retrying = false)
+    }
+
+    /** "Reintentar": one more load from where the receiver last was. */
+    fun retryAfterTrouble() {
+        val r = pending ?: run { _trouble.value = null; return }
+        idleWatch.onUserRetry()
+        _trouble.value = Trouble(r.title, retrying = true)
+        reload(r, idleWatch.lastKnownMs(r.episodeId))
+    }
+
+    /**
+     * "Ver en el celular": ends the session like the cast button does, so the player resumes on the
+     * phone. The receiver no longer reports a position, so the phone picks up where its own player
+     * was left; the progress saved while casting (up to the drop) is kept as it is.
+     */
+    fun watchOnPhone() {
+        _trouble.value = null
+        scope.launch(Dispatchers.Main) { runCatching { castContext.sessionManager.endCurrentSession(true) } }
+    }
+
+    /** The message was dismissed without choosing: the session is left as it is. */
+    fun dismissTrouble() {
+        _trouble.value = null
+    }
+
+    /**
      * Persists progress while casting, EVEN WITH the player closed. Without this, watching a whole
      * episode from the home screen would only save the position up to the moment the screen was
      * left: the same silent loss the rest of this feature exists to avoid.
@@ -368,6 +543,10 @@ class CastSessionManager(
             while (true) {
                 delay(PROGRESS_MS)
                 if (!_casting.value) { stuckTicks = 0; continue }
+                val since = retryingSince
+                if (since > 0L && System.currentTimeMillis() - since > RETRY_STALL_MS) {
+                    withContext(Dispatchers.Main) { onRetryStalled() }
+                }
                 val request = pending
                 if (request == null) {
                     // A session with nothing pending is one of the two ways a cast "does nothing",
@@ -385,7 +564,11 @@ class CastSessionManager(
                 var notReady = false
                 val (mediaId, pos, dur) = withContext(Dispatchers.Main) {
                     notReady = player.playbackState != Player.STATE_READY && player.playbackState != Player.STATE_ENDED
-                    Triple(player.currentMediaItem?.mediaId, player.currentPosition, player.duration)
+                    val id = player.currentMediaItem?.mediaId
+                    // The last position the receiver reported for it: what a retry or a reconnect
+                    // resumes from once the receiver has dropped its media and reports nothing.
+                    if (id == epId && !notReady) idleWatch.onPosition(epId, player.currentPosition, player.isPlaying)
+                    Triple(id, player.currentPosition, player.duration)
                 }
                 if (mediaId != epId) { stuckTicks = 0; continue }
                 stuckTicks = if (notReady) stuckTicks + 1 else 0
@@ -427,5 +610,7 @@ class CastSessionManager(
         const val STOP_WINDOW_MS = 15_000L
         /** Ticks of [PROGRESS_MS] (30s) a loaded episode may sit short of READY before it counts as stuck. */
         const val STUCK_TICKS = 6
+        /** How long a retry may go without playing before the person is asked. */
+        const val RETRY_STALL_MS = 60_000L
     }
 }

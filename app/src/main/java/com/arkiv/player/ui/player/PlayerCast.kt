@@ -9,17 +9,32 @@ import com.arkiv.player.playback.SourceKind
  * [streamItem] is the ViewModel's `magisItem` slot (a native Magis title or a plugin title), or
  * null when something else plays (playlist, live module channel, Caracol) -- those always cast.
  *
- * A plugin title casts only when it is the OFFICIAL Xuper plugin's ([castsAsXuper]). Since Xuper's
- * Home rows moved to the plugin path every Xuper title plays as [SourceKind.PLUGIN], and the old
- * blanket "no cast for plugin titles" rule took the buttons away from all of them (0.9.41). Any
- * other plugin still has no cast: its stream is only reachable with the plugin's own gated HTTP
- * stack, which a receiver on the LAN never goes through.
+ * A plugin title casts unless [pluginCastModeFor] says [PluginCastMode.None]: the official Xuper
+ * plugin's VOD exactly as before ([castsAsXuper]), any other plugin's progressive file through
+ * `PluginCastProxy` (the plugin's gated client, never a plain fetch), its HLS that needs headers there too
+ * (playlists rewritten) and a header-free HLS straight to the receiver. DRM, DASH and formats nothing
+ * tells apart stay without the buttons.
  *
  * Orientation is deliberately not an input: the buttons live in the controls overlay, so they show
  * (portrait and landscape alike) only while the controls are up and hide with them.
  */
 internal fun playerOffersCast(isTv: Boolean, streamItem: PlayerData?): Boolean =
-    !isTv && (streamItem == null || streamItem.kind != SourceKind.PLUGIN || castsAsXuper(streamItem))
+    playerOffersCast(isTv, streamItem, ::directCastAllowed)
+
+/**
+ * [playerOffersCast] with the host rule for a direct cast as an input (tests). A separate overload,
+ * not a default argument: `PlayerContent` calls the two-argument one, and a `$default` call would
+ * grow that method, which is at ART's verifier limit.
+ */
+internal fun playerOffersCast(
+    isTv: Boolean,
+    streamItem: PlayerData?,
+    directAllowed: (PlayerData) -> Boolean,
+): Boolean =
+    !isTv && (
+        streamItem == null || streamItem.kind != SourceKind.PLUGIN ||
+            pluginCastModeFor(streamItem, directAllowed) !is PluginCastMode.None
+        )
 
 /**
  * An official-Xuper plugin VOD title: [PlayerData.pluginXuper] is `PluginAccess.Ready.xuper`, i.e.
@@ -45,18 +60,80 @@ internal fun castsAsXuper(item: PlayerData): Boolean =
  *   `direct = true`, like `loadMagis`' `localUrl`): the proxy puts the headers on every request;
  * - `castUrl` = the raw CDN url, the only place the true container (`_media.ts`/`_media.mp4`)
  *   survives, and the key the remux is filed under.
+ *
+ * Any other castable plugin title stays `kind = PLUGIN` (see [pluginCastUri]):
+ * - [PluginCastMode.ViaProxy]: `mediaUrl` = [pluginProxyUrl] (the loopback token URL of
+ *   `PluginCastProxy.register`; null while the proxy isn't up, and then there is no cast), headers
+ *   dropped (they stay in the proxy), `mime` = what the receiver is told;
+ * - [PluginCastMode.Direct]: the stream's own url, `mime` = HLS.
+ * `castUrl` is null for both, so nothing Magis-specific (remux, byte-range HLS) ever applies.
  * The phone keeps playing the plugin item itself (its own gated HTTP stack); only what is sent to
  * the TV changes.
  */
 internal fun castableStreamItem(
     item: PlayerData,
     proxyUrl: (url: String, headers: Map<String, String>) -> String,
-): PlayerData? = when {
-    item.kind != SourceKind.PLUGIN -> item
-    castsAsXuper(item) -> item.copy(
-        kind = SourceKind.MAGIS,
-        mediaUrl = proxyUrl(item.mediaUrl, item.requestHeaders),
-        castUrl = item.mediaUrl,
-    )
-    else -> null
+    pluginProxyUrl: (item: PlayerData, mime: String) -> String? = { _, _ -> null },
+    directAllowed: (PlayerData) -> Boolean = ::directCastAllowed,
+): PlayerData? {
+    if (item.kind != SourceKind.PLUGIN) return item
+    return when (val mode = pluginCastModeFor(item, directAllowed)) {
+        PluginCastMode.Xuper -> item.copy(
+            kind = SourceKind.MAGIS,
+            mediaUrl = proxyUrl(item.mediaUrl, item.requestHeaders),
+            castUrl = item.mediaUrl,
+        )
+        is PluginCastMode.ViaProxy -> pluginProxyUrl(item, mode.mime)?.let { local ->
+            item.copy(mediaUrl = local, castUrl = null, mime = mode.mime, requestHeaders = emptyMap())
+        }
+        is PluginCastMode.Direct -> item.copy(castUrl = null, mime = mode.mime)
+        is PluginCastMode.None -> null
+    }
 }
+
+/**
+ * `PlayerScreen`'s `castMagis`: [item] (its `magisItem`) in its cast shape, wired to the app's two
+ * cast proxies. Out of `PlayerContent` on purpose (`remember`'s block is inlined, and that function
+ * is at ART's verifier limit).
+ */
+internal fun castShapeFor(item: PlayerData?, graph: com.arkiv.player.AppGraph): PlayerData? =
+    item?.let {
+        castableStreamItem(
+            it,
+            proxyUrl = { url, headers -> graph.archiveCacheProxy.proxyUrl(url, headers, direct = true) },
+            pluginProxyUrl = { plugin, mime ->
+                graph.pluginCastProxy.register(
+                    key = plugin.episodeId,
+                    origin = plugin.mediaUrl,
+                    headers = plugin.requestHeaders,
+                    hosts = plugin.pluginHosts,
+                    shape = com.arkiv.player.playback.PluginCastProxy.shapeFor(mime),
+                    mime = mime,
+                )
+            },
+        )
+    }
+
+/** [castShapeFor], remembered per item. A call of its own so `PlayerContent` carries no inlined `remember`. */
+@androidx.compose.runtime.Composable
+internal fun rememberCastShape(item: PlayerData?, graph: com.arkiv.player.AppGraph): PlayerData? =
+    androidx.compose.runtime.remember(item) { castShapeFor(item, graph) }
+
+/** Loopback authority `PluginCastProxy` writes; [pluginCastUri] respells only these. */
+private const val LOOPBACK = "http://127.0.0.1:"
+
+/**
+ * The URL a TV is handed for a castable plugin item ([castableStreamItem]'s PLUGIN shape): the
+ * proxy's token URL with the phone's LAN [lanIp] instead of loopback (null without one), or the
+ * stream's own URL for a direct cast.
+ */
+internal fun pluginCastUri(item: PlayerData, lanIp: String?): String? =
+    if (item.mediaUrl.startsWith(LOOPBACK)) {
+        lanIp?.let { com.arkiv.player.playback.ArchiveCacheProxy.lanUrl(item.mediaUrl, it) }
+    } else {
+        item.mediaUrl.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+    }
+
+/** A castable plugin item is a live channel: the receiver starts at the live edge, not a saved position. */
+internal fun isPluginLiveCast(item: PlayerData): Boolean =
+    item.kind == SourceKind.PLUGIN && PluginIds.isLiveEpisode(item.episodeId)

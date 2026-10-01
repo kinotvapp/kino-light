@@ -449,6 +449,7 @@ private fun PlayerContent(
                     liveModule = graph.liveModule,
                     hostDecider = graph.streamHostApproval,
                     historyScope = graph.applicationScope,
+                    startPluginCastProxy = { graph.pluginCastProxy.start() },
                 )
             }
         },
@@ -456,14 +457,12 @@ private fun PlayerContent(
     val playlist by vm.playlist.collectAsStateWithLifecycle()
     val magisItem by vm.magisItem.collectAsStateWithLifecycle()
     // What of `magisItem` goes to a TV: a native Magis title as it is, an official-Xuper plugin
-    // title re-spelled as that same native item (proxy url + CDN container), and null for any other
-    // plugin title, which has no cast. EVERY cast path (Chromecast, remux, DLNA) reads this, never
+    // title re-spelled as that same native item (proxy url + CDN container), any other plugin title
+    // through `PluginCastProxy` or straight to the receiver, and null when it can't be cast (DRM,
+    // DASH, an unknown format). EVERY cast path (Chromecast, remux, DLNA) reads this, never
     // `magisItem`, so the plugin carve-out is decided in one place: `castableStreamItem`.
-    val castMagis: PlayerData? = remember(magisItem) {
-        magisItem?.let { item ->
-            castableStreamItem(item) { url, headers -> graph.archiveCacheProxy.proxyUrl(url, headers, direct = true) }
-        }
-    }
+    // Out of line (`rememberCastShape`): `remember`'s block is inlined, and PlayerContent is at ART's verifier limit.
+    val castMagis: PlayerData? = rememberCastShape(magisItem, graph)
     var magisPlayer by remember { mutableStateOf<Player?>(null) }
     var magisTextureView by remember { mutableStateOf<android.view.TextureView?>(null) }
     // Task 1 (light-magis pruning): live channel, same pattern as magisItem/magisPlayer.
@@ -1006,37 +1005,30 @@ private fun PlayerContent(
         // widened to do this -- `ArchiveCacheProxy.start()` already listens on every interface; it
         // is the same loopback url the phone is playing from, respelled. See its `lanUrl` KDoc.
         val lanIp = graph.lanIp()
-        // Finished OR still being written: a fragmented MP4 is playable before it is complete,
-        // which is what turns "wait minutes, then cast" into "cast now, it fills in behind you".
-        var magisRemuxGrowing = false
+        // Finished OR still being written, the remux goes out as an HLS playlist of its own
+        // fragments (`RemuxHlsServer`): an EVENT playlist that grows with the file and is closed
+        // with ENDLIST when the remux finishes.
+        //
+        // History, because every alternative was measured on the KALLEY and failed differently:
+        // the growing mp4 announced as BUFFERED made the receiver recompute the duration from the
+        // fragments it had (`kDurationChanged 75.25 … 80.25`) and stall against that moving end;
+        // the complete mp4 with ranges sent it hunting for an index a fragmented MP4 does not
+        // carry and it never played; the growing mp4 chunked and announced as LIVE (2026-10-01,
+        // Xuper "Deadpool & Wolverine") played ~5 s, buffered 5-12 s, over and over -- 0.57x
+        // realtime with the remux 12x ahead -- took 54 s to the first frame, and the end of the
+        // remux was a reload that restarted the film from 0:00. A playlist of finished segments
+        // is what an HLS player is built for: each segment has a length, a seek is just another
+        // segment, and the remux finishing changes nothing on the TV.
         val remuxMagis = if (item.kind == SourceKind.MAGIS) {
             item.castUrl?.let { cdn ->
-                // COMPLETE only. Serving one while it grew was the plan, and the receiver
-                // settled it: it recomputes the duration from the fragments it has and reports a
-                // new one every second or two (`kDurationChanged 75.25 … 80.25`, read off its own
-                // log), ignoring the duration we send it. So playback chases an end that keeps
-                // moving just ahead of it, reaches it, stalls, gets more, resumes -- the "loading"
-                // that came back no matter how large the head start was, 64 s of cushion included.
-                // A finished file has one duration and stays still.
-                // The same key the remux was filed under: the one that says where it begins.
-                // The SAME key the remux was filed under: the keyframe-aligned point, not the
-                // raw position, which drifts as the local player keeps its own time.
-                graph.tsRemuxer.inProgress(magisRemuxKey(item) ?: cdn)?.let { (file, complete) ->
-                    // ALWAYS chunked, finished or not. Measured 2026-09-12, and it is the
-                    // difference between playing and not: served while it grew -- chunked, no
-                    // Content-Length, no ranges -- the receiver had nothing to do but play from
-                    // the start, and it played. Served complete, with a length and range support,
-                    // it went hunting through 1.4 GB for an index a fragmented MP4 does not carry
-                    // (`range=bytes=308510720-`, 4 MB, broken pipe, a slightly later range, over
-                    // and over) and never produced a frame. Withholding the ability to seek is
-                    // what makes it work, which is backwards but it is what the device does.
-                    graph.localFileServer.growing = true
-                    magisRemuxGrowing = !complete
+                // The SAME key the remux was filed under (title, start point, audio track).
+                val key = magisRemuxKey(item) ?: cdn
+                graph.tsRemuxer.inProgress(key)?.let { (file, complete) ->
                     android.util.Log.w(
                         "ArkivCast",
-                        "magis → remuxed mp4 (${if (complete) "complete" else "still growing, ${file.length()}B"})",
+                        "magis → remuxed mp4 as HLS fMP4 (${if (complete) "complete" else "still growing, ${file.length()}B"})",
                     )
-                    graph.localFileServer.serve(file)
+                    graph.remuxHlsServer.serve(key) { graph.tsRemuxer.inProgress(key) }
                 }
             }
         } else {
@@ -1056,6 +1048,10 @@ private fun PlayerContent(
                     com.arkiv.player.playback.ArchiveCacheProxy.lanUrl(item.mediaUrl, it)
                 }
             }
+            // A plugin title in its cast shape (`castableStreamItem`): PluginCastProxy's token url
+            // on the LAN ip, or the stream's own url for a direct cast. Never the raw stream behind
+            // a proxied one: its headers stay on the phone.
+            SourceKind.PLUGIN -> pluginCastUri(item, lanIp)
             else -> null
         }
         if (item.kind == SourceKind.MAGIS) {
@@ -1123,7 +1119,7 @@ private fun PlayerContent(
         // (`MagisResolve` picks `_media.ts` vs `_media.mp4` from the portal's `videoFormat`).
         val mimeMagis = if (item.kind == SourceKind.MAGIS) {
             when {
-                remuxMagis != null -> "video/mp4"
+                remuxMagis != null -> "application/vnd.apple.mpegurl"
                 magisIsTs(item) -> "application/vnd.apple.mpegurl"
                 else -> com.arkiv.player.cast.CastRequestBuilder.mimeForUrl(item.castUrl.orEmpty())
             }
@@ -1146,19 +1142,34 @@ private fun PlayerContent(
             castUrl = remuxLocal ?: hlsLocal ?: item.castUrl,
             lanUrl = lanUrl,
             // HLS segments keep the resume position -- every segment boundary is a real entry
-            // point since TsSegmenter cuts them on keyframes. A REMUX does not: a fragmented MP4
-            // carries no seek index, that being the price of playing while it is written. Asking
-            // the receiver to start at minute 4:52 of one sent it hunting through the file blind
-            // -- `range=bytes=308510720-`, 4 MB, broken pipe, a slightly later range, again,
-            // without ever playing a frame (measured 2026-09-12). Starting at zero is what makes
-            // it play. Losing "where you were" is the cost, and getting it back means writing a
-            // real index.
-            startPositionMs = if (remuxLocal != null || remuxMagis != null) 0L else startPositionMs,
+            // point since TsSegmenter cuts them on keyframes, and the Magis remux is served as
+            // HLS too, cut on its own fragments, so it keeps it as well: held inside the part
+            // already written while it grows, so the receiver is never sent past the end.
+            // Forcing 0 here is what restarted the film from 0:00 when the remux finished
+            // (`re-casting as mp4 from 269014ms` went out as `from=0ms`, measured 2026-10-01).
+            // A LOCAL remux is still one progressive mp4 with no seek index: asking the receiver to
+            // start at minute 4:52 of one sent it hunting through the file blind (`range=bytes=
+            // 308510720-`, broken pipe, again, never a frame -- measured 2026-09-12), so it starts
+            // at zero.
+            startPositionMs = when {
+                remuxMagis != null -> {
+                    val key = magisRemuxKey(item) ?: item.castUrl.orEmpty()
+                    com.arkiv.player.playback.RemuxHls.clampSeek(
+                        startPositionMs,
+                        graph.remuxHlsServer.availableSec(key),
+                        graph.remuxHlsServer.isComplete(key),
+                    )
+                }
+                remuxLocal != null || isPluginLiveCast(item) -> 0L
+                else -> startPositionMs
+            },
             isLive = isLiveItem,
             mimeOverride = when {
                 remuxLocal != null -> "video/mp4"
                 hlsLocal != null -> "application/vnd.apple.mpegurl"
                 mimeMagis != null -> mimeMagis
+                // What `pluginCastModeFor` decided the receiver is told (HLS, or the file's container).
+                item.kind == SourceKind.PLUGIN -> item.mime.ifBlank { null }
                 else -> mimeLocal
             },
             // Magis has no usable fallback: `castUrl` is the CDN, which answers 401 without headers
@@ -1167,10 +1178,12 @@ private fun PlayerContent(
             // holds in that case. Letting this go false when there was a remux sent the receiver
             // the raw CDN url instead (measured 2026-09-12: `uri=http://…_media.ts mime=video/mp4`),
             // since the builder falls back to `castUrl` whenever it is not required to use the LAN.
-            requiresLanUrl = item.kind == SourceKind.MAGIS,
-            // While the remux is still being written it IS a live stream, and saying so is what
-            // keeps the receiver from inventing an end and stalling against it.
-            asLive = magisRemuxGrowing,
+            requiresLanUrl = item.kind == SourceKind.MAGIS || item.kind == SourceKind.PLUGIN,
+            // A remux is NOT announced as live any more: it is a title with a known length, served
+            // as HLS whose playlist simply grows (see `remuxMagis`).
+            asLive = isPluginLiveCast(item),
+            // The remux's segments are fMP4: the receiver has to be told, or it reads them as TS.
+            hlsFmp4 = remuxMagis != null,
             // Where the remux begins, so a saved position lands on the right minute of the title.
             offsetMs = if (item.kind == SourceKind.MAGIS) {
                 com.arkiv.player.playback.RemuxPolicy.fromInKey(
@@ -1288,6 +1301,9 @@ private fun PlayerContent(
         // loopback proxy (which puts the CDN's auth headers on), while the key is the CDN url,
         // stable across resolves -- keying by the proxy url would remux the same title again every
         // time its tokens were refreshed.
+        // Where the phone was when the cast began (Magis): the cast starts there once the remux
+        // has reached it, see the wait below.
+        var resumeMs = 0L
         val (input, key, mime) = when (item.kind) {
             SourceKind.LOCAL -> {
                 val file = java.io.File(item.mediaUrl.removePrefix("file://"))
@@ -1329,12 +1345,10 @@ private fun PlayerContent(
                 // receiver that can seek would need.
                 val aligned = 0L
                 remuxStartPoint[item.episodeId] = 0L
-                if (requestedPosition > 0L) {
-                    android.util.Log.w(
-                        "ArkivCast",
-                        "starting the cast from zero, not from ${requestedPosition}ms: clipping desynchronises the audio",
-                    )
-                }
+                // The remux still starts at zero; the CAST does not have to. Served as HLS, the
+                // receiver can start at any segment, so it starts where the phone was as soon as
+                // the remux has reached that point -- no clipping, so nothing to desynchronise.
+                resumeMs = requestedPosition
                 Triple(
                     item.mediaUrl,
                     com.arkiv.player.playback.RemuxPolicy.keyFrom(cdn, aligned, audio?.ordinal),
@@ -1390,41 +1404,35 @@ private fun PlayerContent(
             return@LaunchedEffect
         }
 
-        // One growing fragmented mp4, announced as LIVE.
+        // The remux, still being written, cast as a growing HLS playlist (see `remuxMagis` in
+        // castRequestFor for why, and for everything that was measured before it).
         //
-        // The chase that broke every earlier attempt was ours to cause: a file still being written
-        // was announced as "buffered", which tells the receiver the media has a definite end. It
-        // then works one out from the fragments that have arrived and reports a new one every
-        // second or two (`kDurationChanged 75.25 … 80.25`, off its own log), plays toward it, and
-        // stalls each time it catches up. No head start fixed that -- 64 s of cushion stalled the
-        // same as 6 MB -- because the end moves with the file.
-        //
-        // A live stream has no end to reach. That is both the truth about a file being written and
-        // the thing that stops the chase. Cutting the title into a queue of finished chunks also
-        // worked around it, but the receiver announces every queue entry with a countdown
-        // ("Your video will play in N"), twice a minute.
+        // It goes out as soon as the remux holds [RemuxHls.START_LEAD_SEC] past where the phone
+        // was -- seconds, not the minute the old 40 MB head start cost -- and starts THERE.
+        // A resume point the remux is slow to reach is waited for up to
+        // [RemuxHls.RESUME_WAIT_SEC]; past that the cast starts from the top rather than keep the
+        // person staring at "Preparándolo para la TV".
         if (item.kind == SourceKind.MAGIS) {
+            val resumeAt = resumeMs
             graph.applicationScope.launch(Dispatchers.Main) {
-                repeat(600) {
+                repeat(600) { tick ->
                     delay(1000)
                     if (!casting || castSession == null) return@launch
                     if (castAsRemux == key) return@launch
                     // The person picked another audio meanwhile: this remux is no longer wanted,
                     // and casting it would put the audio they moved away from on the TV.
                     if (remuxInFlight != key) return@launch
-                    val partial = graph.tsRemuxer.inProgress(key) ?: return@repeat
-                    // 40 MB, not 12. Measured 2026-09-12: casting at 14 MB stalled seven times
-                    // in the first forty-five seconds and then never again -- the remux is still
-                    // getting up to speed at that point, so playback catches it repeatedly, and
-                    // once it is running (about 22x faster than playback consumes) it pulls away
-                    // and the problem disappears on its own. Waiting for a bigger head start
-                    // spends a few more seconds once and skips that whole stretch.
-                    if (partial.first.length() < 40_000_000L) return@repeat
-                    val retryPl = PlaylistData(listOf(item), 0, 0L, requested = item.episodeId)
-                    val retryReq = castRequestFor(retryPl, 0, 0L) ?: return@repeat
+                    graph.tsRemuxer.inProgress(key) ?: return@repeat
+                    graph.remuxHlsServer.serve(key) { graph.tsRemuxer.inProgress(key) }
+                    val ready = graph.remuxHlsServer.availableSec(key)
+                    val lead = com.arkiv.player.playback.RemuxHls.START_LEAD_SEC
+                    val from = com.arkiv.player.playback.RemuxHls.startIfCovered(resumeAt, ready, lead)
+                        ?: if (tick + 1 >= com.arkiv.player.playback.RemuxHls.RESUME_WAIT_SEC && ready >= lead) 0L else return@repeat
+                    val retryPl = PlaylistData(listOf(item), 0, from, requested = item.episodeId)
+                    val retryReq = castRequestFor(retryPl, 0, from) ?: return@repeat
                     android.util.Log.w(
                         "ArkivCast",
-                        "remux has ${partial.first.length() / 1_000_000}MB → casting it as a live stream",
+                        "remux has ${ready.toInt()}s ready → casting it as HLS from ${from}ms (the phone was at ${resumeAt}ms)",
                     )
                     castSession.setMedia(retryReq)
                     castToReceiver = item.episodeId
@@ -1454,6 +1462,16 @@ private fun PlayerContent(
         if (!casting || castSession == null) return@LaunchedEffect
         // Or picked another audio, whose own run of this effect casts that one.
         if (remuxInFlight != key) return@LaunchedEffect
+        // Already on the TV as the growing HLS playlist: finishing only closes the playlist
+        // (#EXT-X-ENDLIST) the receiver re-reads on its own. Nothing to reload -- the reload that
+        // used to happen here restarted the film from 0:00 and drew `Invalid Request.` from the
+        // receiver (measured 2026-10-01).
+        if (item.kind == SourceKind.MAGIS && castAsRemux == key && graph.remuxHlsServer.isServing(key)) {
+            android.util.Log.w("ArkivCast", "remux done → the receiver's playlist just gets its end, no reload")
+            return@LaunchedEffect
+        }
+        // Anything else on the receiver (the TS segments a failed wait fell back to, another
+        // audio) is replaced by the remux FROM WHERE THE RECEIVER IS, not from the top.
         val from = runCatching { contentPositionMs() }.getOrDefault(0L).coerceAtLeast(0L)
         // Magis has no playlist -- same synthetic one-item PlaylistData the rest of this screen
         // uses for it, so castRequestFor stays the single place that decides what goes to the TV.
@@ -1991,13 +2009,18 @@ private fun PlayerContent(
         // fire onEndOfChapter (the ExoPlayer handles its own end).
         val exoActiveOnMount = isExo
         android.util.Log.w("ArkivPlay", "DisposableEffect mounted · activePlayer=${activePlayer::class.simpleName} isExo=$exoActiveOnMount ep=$episodeId")
+        // While the Chromecast is in charge the in-screen players underneath may not write the
+        // bar: see `PlayerMirror.remoteActive`. Everything this screen writes below reads the
+        // active player, so it goes through as authoritative.
+        mirror.remoteActive = activePlayer is androidx.media3.cast.CastPlayer
         mirror.syncTransport(
             buffering = activePlayer.playbackState == Player.STATE_BUFFERING,
             playing = activePlayer.isPlaying,
             wantsToPlay = activePlayer.playWhenReady,
+            authoritative = true,
         )
         if (activePlayer.playbackState == Player.STATE_READY && positionBelongsToThisScreen()) {
-            mirror.readClock(contentPositionMs(), contentDurationMs())
+            mirror.readClock(contentPositionMs(), contentDurationMs(), authoritative = true)
         }
         currentIndex = controller.currentMediaItemIndex.coerceAtLeast(0)
         val listener = object : Player.Listener {
@@ -2010,7 +2033,7 @@ private fun PlayerContent(
             }
 
             override fun onPlaybackStateChanged(state: Int) {
-                mirror.updateBuffering(state == Player.STATE_BUFFERING)
+                mirror.updateBuffering(state == Player.STATE_BUFFERING, authoritative = true)
                 if (state == Player.STATE_ENDED) {
                     android.util.Log.w("ArkivPlay", "STATE_ENDED · activePlayer=${activePlayer::class.simpleName} exoActiveOnMount=$exoActiveOnMount pos=${mirror.positionMs} dur=${mirror.durationMs} ep=$episodeId")
                     // Don't fire auto-advance if an ExoPlayer was active when this listener was
@@ -2020,11 +2043,11 @@ private fun PlayerContent(
             }
 
             override fun onIsPlayingChanged(playing: Boolean) {
-                mirror.updatePlaying(playing)
+                mirror.updatePlaying(playing, authoritative = true)
             }
 
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
-                mirror.updateWantsToPlay(playWhenReady)
+                mirror.updateWantsToPlay(playWhenReady, authoritative = true)
             }
 
             // Without this, a playback failure went NOWHERE: the local player publishes it as a
@@ -2067,7 +2090,7 @@ private fun PlayerContent(
             )
             val ready = activePlayer.playbackState == Player.STATE_READY && positionBelongsToThisScreen()
             if (ready) {
-                mirror.readClock(contentPositionMs(), contentDurationMs())
+                mirror.readClock(contentPositionMs(), contentDurationMs(), authoritative = true)
                 // The reopen budget is replenished by POSITION, not by `mirror.playing`.
                 // Measured on the Fire TV on 2026-08-14: `mirror.playing` used to turn true as soon
                 // as VLC opened, before the first frame, so a channel that reopened and died at pos=0ms
@@ -2256,13 +2279,14 @@ private fun PlayerContent(
     // sources that job belongs to LaunchedEffect(playlist), which Magis never reaches.
     LaunchedEffect(casting, magisItem?.episodeId) {
         if (casting) {
-            // Plugin titles can't be cast (spec non-goal), except the official Xuper plugin's VOD
-            // titles, which `castMagis` re-spells as the native Magis item they cast as before.
-            // A session that was already open when any other one started is ended, so the title
-            // keeps playing here instead of the TV going idle with no explanation.
-            if (magisItem != null && castMagis == null) {
+            // A plugin title `castableStreamItem` has no cast shape for (DRM, DASH, a format nothing
+            // tells apart; see `pluginCastModeFor`). A session that was already open when it started
+            // is ended, so the title keeps playing here instead of the TV going idle with no
+            // explanation. Xuper's VOD and every other castable plugin title have a shape.
+            val noCast = magisItem
+            if (noCast != null && castMagis == null) {
                 android.util.Log.w("ArkivCast", "plugin title: cast not available, ending the session")
-                android.widget.Toast.makeText(context, "No disponible para contenido de plugins", android.widget.Toast.LENGTH_SHORT).show()
+                android.widget.Toast.makeText(context, pluginNoCastMessage(noCast), android.widget.Toast.LENGTH_SHORT).show()
                 runCatching { castContext?.sessionManager?.endCurrentSession(true) }
                 // Ending the session flips `casting` to false and relaunches this effect; with
                 // `wasCasting` still true the resume branch below would `play()` the plugin's
@@ -2380,6 +2404,8 @@ private fun PlayerContent(
             castMagis?.let { magisRemuxKey(it) }?.let { graph.tsRemuxer.stop(it) }
             remuxInFlight?.let { graph.tsRemuxer.stop(it) }
             remuxInFlight = null
+            // And stop handing the remux out on the LAN: nobody is casting it any more.
+            runCatching { graph.remuxHlsServer.stop() }
             // If the session ended because the user pressed "stop" (the bar's button), it must NOT
             // resume here: they asked for silence, and the local one was already left paused since
             // casting started (branch above) — resuming it would be exactly the opposite of what
@@ -2677,8 +2703,28 @@ private fun PlayerContent(
      */
     fun castIsLive(): Boolean =
         casting && castMagis?.let { mg ->
-            magisIsTs(mg) && magisRemuxKey(mg)?.let { graph.tsRemuxer.alreadyDone(it) == null } == true
+            magisIsTs(mg) && magisRemuxKey(mg)?.let {
+                // Served as HLS the growing remux CAN be seeked, within what is written (seekTo).
+                graph.tsRemuxer.alreadyDone(it) == null && !graph.remuxHlsServer.isServing(it)
+            } == true
         } == true
+
+    /**
+     * [wantedMs] held inside the part of the remux already written, while the receiver plays it
+     * as a growing HLS playlist -- past that end there is no segment to send it to. Anything else
+     * passes through unchanged.
+     */
+    fun remuxSeekLimit(wantedMs: Long): Long {
+        val key = castMagis?.takeIf { casting }?.let { magisRemuxKey(it) }
+            ?.takeIf { graph.remuxHlsServer.isServing(it) } ?: return wantedMs
+        val held = com.arkiv.player.playback.RemuxHls.clampSeek(
+            wantedMs,
+            graph.remuxHlsServer.availableSec(key),
+            graph.remuxHlsServer.isComplete(key),
+        )
+        if (held != wantedMs) android.util.Log.w("ArkivCast", "seek to ${wantedMs}ms held at ${held}ms: the remux has not got there yet")
+        return held
+    }
 
     /**
      * How what is being cast gets its audio, and so whether the phone's audio menu reaches the TV
@@ -2746,7 +2792,7 @@ private fun PlayerContent(
             return
         }
         val dur = contentDurationMs()
-        val target = targetMs.coerceIn(0L, if (dur > 0) dur else Long.MAX_VALUE)
+        val target = remuxSeekLimit(targetMs.coerceIn(0L, if (dur > 0) dur else Long.MAX_VALUE))
         activePlayer.seekTo(target)
         mirror.jumpTo(target)
         bump()
@@ -4407,8 +4453,9 @@ private fun PlayerContent(
         // so for a Magis title `ep` was null and DLNA never even started ("nothing is playing"), found from
         // the DLNA log on a real TV.
         // `castMagis`, not `magisItem`: an official-Xuper plugin title goes in its native Magis shape
-        // (DLNA then pulls from the proxy, which adds the CDN headers); any other plugin is null.
-        val ep = castMagis?.takeIf { it.kind == SourceKind.MAGIS }
+        // (DLNA then pulls from the proxy, which adds the CDN headers); any other castable plugin
+        // title in its PLUGIN cast shape (PluginCastProxy's token url, or a direct HLS url).
+        val ep = castMagis?.takeIf { it.kind == SourceKind.MAGIS || it.kind == SourceKind.PLUGIN }
             ?: playlistRef.value?.items?.getOrNull(currentIndex)
             ?: liveItem
         controller.pause()

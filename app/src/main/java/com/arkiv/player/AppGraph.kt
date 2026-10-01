@@ -1572,6 +1572,20 @@ class AppGraph(context: Context) {
         )
     }
 
+    /**
+     * Serves the Chromecast remux -- usually still being written -- as an HLS playlist of its own
+     * fMP4 fragments, so the receiver gets finished segments it can buffer and seek instead of one
+     * endless chunked response. See [com.arkiv.player.playback.RemuxHlsServer].
+     */
+    val remuxHlsServer: com.arkiv.player.playback.RemuxHlsServer by lazy {
+        com.arkiv.player.playback.RemuxHlsServer(
+            lanIp = { lanIp() },
+            log = { android.util.Log.i("ArkivRemuxHls", it) },
+            // A remux an earlier cast stopped is served at once instead of waiting for a new run.
+            leftoverOf = { key -> tsRemuxer.leftover(key) },
+        )
+    }
+
     val tsRemuxer: com.arkiv.player.playback.TsRemuxer by lazy {
         com.arkiv.player.playback.TsRemuxer(appContext, appContext.cacheDir, applicationScope)
     }
@@ -1718,6 +1732,14 @@ class AppGraph(context: Context) {
      * it someday if needed. See [com.arkiv.player.playback.NetworkChange].
      */
     private var networkWatchdog: com.arkiv.player.playback.NetworkWatchdog? = null
+
+    /**
+     * Casts a plugin title (not Xuper's) to a TV: every upstream request goes through that plugin's
+     * gated client ([pluginStreamClient], asking nobody), the TV gets a token URL. See its KDoc.
+     */
+    val pluginCastProxy: com.arkiv.player.playback.PluginCastProxy by lazy {
+        com.arkiv.player.playback.PluginCastProxy(clientFor = { hosts -> pluginStreamClient(hosts) })
+    }
 
     val archiveCacheProxy: com.arkiv.player.playback.ArchiveCacheProxy by lazy {
         com.arkiv.player.playback.ArchiveCacheProxy(
@@ -1889,6 +1911,9 @@ class AppGraph(context: Context) {
                         if (on) com.arkiv.player.dlna.DlnaCastService.start(appContext, receiver, chromecast = true)
                         else com.arkiv.player.dlna.DlnaCastService.stop(appContext)
                     },
+                    // A request into one of our LAN servers is only replayed while its port and token
+                    // still answer; the rest (remote URLs, other proxies) is not ours to judge.
+                    stillServed = { uri -> !remuxHlsServer.revoked(uri) && !pluginCastProxy.revoked(uri) },
                 ).also { _castSession = it }
             }
         }

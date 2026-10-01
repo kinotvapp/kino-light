@@ -94,6 +94,12 @@ data class PlayerData(
     /** Container MIME the source declared ("" = let ExoPlayer sniff). */
     val mime: String = "",
     /**
+     * PLUGIN only: the stream is DRM-protected (a Widevine license or a ClearKey key). It never goes
+     * to a TV: the receiver can't reach the license through the plugin's gated client. See
+     * [pluginCastModeFor].
+     */
+    val drm: Boolean = false,
+    /**
      * Start position to resume (ExoPlayer, e.g. magisItem). The local player uses
      * PlaylistData.startPositionMs instead.
      */
@@ -416,6 +422,8 @@ class PlayerViewModel internal constructor(
      */
     private val historyScope: kotlinx.coroutines.CoroutineScope =
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO),
+    /** Starts `AppGraph.pluginCastProxy` (idempotent), so a plugin title's cast shape has a port. */
+    private val startPluginCastProxy: () -> Unit = {},
 ) : ViewModel() {
 
     /** One question per host per playback attempt; see [onPluginHostRefused]. */
@@ -1778,6 +1786,11 @@ class PlayerViewModel internal constructor(
         // `castableStreamItem`). The phone itself doesn't play through it, so it's only started
         // here, before publishing, so the cast shape PlayerScreen builds from this item has a port.
         if (xuper && !live) withContext(Dispatchers.IO) { runCatching { archiveCacheProxy.start() } }
+        // Any other plugin's title casts through `PluginCastProxy` (see `pluginCastModeFor`), which
+        // also needs its port before the cast shape is built; a protected stream never casts.
+        if (!xuper && play.drmLicenseUrl.isBlank() && play.drmClearKey.isEmpty()) {
+            withContext(Dispatchers.IO) { runCatching { startPluginCastProxy() } }
+        }
         _magisItem.value = PlayerData(
             episodeId = episodeId,
             itemId = episodeId.substringBefore("::"),
@@ -1803,6 +1816,7 @@ class PlayerViewModel internal constructor(
             },
             pluginXuper = xuper,
             mime = play.mime,
+            drm = play.drmLicenseUrl.isNotBlank() || play.drmClearKey.isNotEmpty(),
             startPositionMs = startPos,
         )
         Log.w(PLAY, "loadPlugin() published · mime=${play.mime.ifBlank { "sniff" }} subs=${play.subtitles.size} drm=${play.drmLicenseUrl.isNotBlank()} startPos=$startPos")
