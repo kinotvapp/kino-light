@@ -228,6 +228,12 @@ object M3uParser {
         }
     }
 
+    /** [rawName] -> [value] into [into] when the header is one this parser keeps, by the same rules as a list line (W3U stations use it). */
+    internal fun keepHeader(into: MutableMap<String, String>, rawName: String, value: String) {
+        val name = KEPT_HEADERS[rawName.trim().lowercase()] ?: return
+        if (value.isNotEmpty()) put(into, name, value)
+    }
+
     /** A header value with a control character (a smuggled CR/LF) or past [MAX_HEADER_VALUE] is dropped, never sent. */
     private fun put(into: MutableMap<String, String>, name: String, value: String) {
         if (value.length <= MAX_HEADER_VALUE && value.none { Character.isISOControl(it) }) into[name] = value
