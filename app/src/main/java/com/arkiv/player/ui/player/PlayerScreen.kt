@@ -1986,13 +1986,18 @@ private fun PlayerContent(
         // fire onEndOfChapter (the ExoPlayer handles its own end).
         val exoActiveOnMount = isExo
         android.util.Log.w("ArkivPlay", "DisposableEffect mounted · activePlayer=${activePlayer::class.simpleName} isExo=$exoActiveOnMount ep=$episodeId")
+        // While the Chromecast is in charge the in-screen players underneath may not write the
+        // bar: see `PlayerMirror.remoteActive`. Everything this screen writes below reads the
+        // active player, so it goes through as authoritative.
+        mirror.remoteActive = activePlayer is androidx.media3.cast.CastPlayer
         mirror.syncTransport(
             buffering = activePlayer.playbackState == Player.STATE_BUFFERING,
             playing = activePlayer.isPlaying,
             wantsToPlay = activePlayer.playWhenReady,
+            authoritative = true,
         )
         if (activePlayer.playbackState == Player.STATE_READY && positionBelongsToThisScreen()) {
-            mirror.readClock(contentPositionMs(), contentDurationMs())
+            mirror.readClock(contentPositionMs(), contentDurationMs(), authoritative = true)
         }
         currentIndex = controller.currentMediaItemIndex.coerceAtLeast(0)
         val listener = object : Player.Listener {
@@ -2005,7 +2010,7 @@ private fun PlayerContent(
             }
 
             override fun onPlaybackStateChanged(state: Int) {
-                mirror.updateBuffering(state == Player.STATE_BUFFERING)
+                mirror.updateBuffering(state == Player.STATE_BUFFERING, authoritative = true)
                 if (state == Player.STATE_ENDED) {
                     android.util.Log.w("ArkivPlay", "STATE_ENDED · activePlayer=${activePlayer::class.simpleName} exoActiveOnMount=$exoActiveOnMount pos=${mirror.positionMs} dur=${mirror.durationMs} ep=$episodeId")
                     // Don't fire auto-advance if an ExoPlayer was active when this listener was
@@ -2015,11 +2020,11 @@ private fun PlayerContent(
             }
 
             override fun onIsPlayingChanged(playing: Boolean) {
-                mirror.updatePlaying(playing)
+                mirror.updatePlaying(playing, authoritative = true)
             }
 
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
-                mirror.updateWantsToPlay(playWhenReady)
+                mirror.updateWantsToPlay(playWhenReady, authoritative = true)
             }
 
             // Without this, a playback failure went NOWHERE: the local player publishes it as a
@@ -2062,7 +2067,7 @@ private fun PlayerContent(
             )
             val ready = activePlayer.playbackState == Player.STATE_READY && positionBelongsToThisScreen()
             if (ready) {
-                mirror.readClock(contentPositionMs(), contentDurationMs())
+                mirror.readClock(contentPositionMs(), contentDurationMs(), authoritative = true)
                 // The reopen budget is replenished by POSITION, not by `mirror.playing`.
                 // Measured on the Fire TV on 2026-08-14: `mirror.playing` used to turn true as soon
                 // as VLC opened, before the first frame, so a channel that reopened and died at pos=0ms

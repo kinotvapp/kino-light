@@ -55,30 +55,47 @@ internal class PlayerMirror {
     var bufferedFraction by mutableFloatStateOf(0f)
         private set
 
+    /**
+     * True while the Chromecast is the player in charge (set by the screen from its active player).
+     *
+     * The in-screen players (Magis/plugin, live, Caracol) keep running underneath a cast -- the
+     * Magis one paused at the minute the cast began -- and each of them writes into this mirror
+     * from its own listener and its own polling loop. Measured 2026-10-01 casting Xuper to the
+     * KALLEY: the receiver was at 2:56 (the screen's own log said so) while the bar sat at 1:47 for
+     * the whole cast, because the paused local player's watchdog loop rewrote 1:47 every tick
+     * right after the screen wrote the receiver's position. So while this is on, only writes made
+     * with `authoritative = true` -- the screen's, which read the active player -- get through.
+     */
+    var remoteActive: Boolean = false
+
+    private fun accepts(authoritative: Boolean): Boolean = authoritative || !remoteActive
+
     /** The three values the player's listener publishes together. */
-    fun syncTransport(buffering: Boolean, playing: Boolean, wantsToPlay: Boolean) {
+    fun syncTransport(buffering: Boolean, playing: Boolean, wantsToPlay: Boolean, authoritative: Boolean = false) {
+        if (!accepts(authoritative)) return
         this.buffering = buffering
         this.playing = playing
         this.wantsToPlay = wantsToPlay
     }
 
-    fun updateBuffering(value: Boolean) {
-        buffering = value
+    fun updateBuffering(value: Boolean, authoritative: Boolean = false) {
+        if (accepts(authoritative)) buffering = value
     }
 
-    fun updatePlaying(value: Boolean) {
-        playing = value
+    fun updatePlaying(value: Boolean, authoritative: Boolean = false) {
+        if (accepts(authoritative)) playing = value
     }
 
-    fun updateWantsToPlay(value: Boolean) {
-        wantsToPlay = value
+    fun updateWantsToPlay(value: Boolean, authoritative: Boolean = false) {
+        if (accepts(authoritative)) wantsToPlay = value
     }
 
     /**
      * New clock reading. Duration is only overwritten when known: a transient 0 from the player
      * would wipe the bar's total mid-playback.
      */
-    fun readClock(positionMs: Long, durationMs: Long) {
+    fun readClock(positionMs: Long, durationMs: Long, authoritative: Boolean = false) {
+        if (!accepts(authoritative)) return
         this.positionMs = positionMs
         if (durationMs > 0) this.durationMs = durationMs
         // Diagnostics only on a CHANGE of "does the bar have a duration", never per tick.
@@ -98,7 +115,8 @@ internal class PlayerMirror {
     }
 
     /** On loading a new item: the previous clock describes nothing. */
-    fun resetClock() {
+    fun resetClock(authoritative: Boolean = false) {
+        if (!accepts(authoritative)) return
         positionMs = 0L
         durationMs = 0L
         durationMissing = false
