@@ -480,7 +480,7 @@ fun TvLiveGuideScreen(onWatchChannel: (LiveChannel) -> Unit, onBack: () -> Unit)
                         baseChannels.isEmpty() && state.activeCategory == CATEGORY_FAVORITES ->
                             TvGuideMessage("Aún no tienes favoritos", "Mantén OK sobre un canal para agregarlo.")
                         baseChannels.isEmpty() && state.activeProvider == OwnLive.PROVIDER && state.categories.isEmpty() ->
-                            TvGuideMessage(OwnSourcesCopy.EMPTY_TITLE, "Elige «${OwnSourcesCopy.MY_SOURCES}» a la izquierda para agregar un canal .m3u8 o una lista M3U. Si tienes un celular o una TV vinculados, se copiarán solos.")
+                            TvGuideMessage(OwnSourcesCopy.EMPTY_TITLE, "Elige «${OwnSourcesCopy.MY_SOURCES}» a la izquierda para agregar un canal .m3u8 o una lista M3U o W3U (Wiseplay). Si tienes un celular o una TV vinculados, se copiarán solos.")
                         baseChannels.isEmpty() ->
                             TvGuideMessage("Sin canales", "No encontramos canales en esta categoría.")
                         else -> LazyColumn(

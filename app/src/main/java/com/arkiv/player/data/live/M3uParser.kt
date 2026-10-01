@@ -23,8 +23,9 @@ data class M3uEntry(
     val language: String = "",
     val country: String = "",
     val headers: Map<String, String> = emptyMap(),
-    /** A `#KODIPROP:inputstream.adaptive.license_key` ClearKey pair (hex), or "" for no DRM. Any
-     *  other license type (Widevine, etc.) is unsupported here and left out entirely. */
+    /** A `#KODIPROP:inputstream.adaptive.license_key` ClearKey pair (32 lower-case hex each), or ""
+     *  for no DRM. `kid:key` hex and the `{"keys":[{"kid","k"}]}` JSON (base64url) are both read.
+     *  Any other license type (Widevine, etc.) is unsupported here and left out entirely. */
     val drmKeyId: String = "",
     val drmKey: String = "",
 )
@@ -37,6 +38,10 @@ data class M3uEntry(
 data class M3uResult(
     val entries: List<M3uEntry>, val total: Int, val skipped: Int, val stoppedEarly: Boolean = false,
     val hidden: Int = 0, val refused: Int = 0,
+    /** The list's own guides, from the `#EXTM3U` header's `url-tvg` / `x-tvg-url` (comma-separated):
+     *  http(s) only, deduplicated, at most [M3uParser.MAX_LIST_EPGS]. Unchecked addresses from the
+     *  list itself: whoever downloads them applies its own host rules. */
+    val epgUrls: List<String> = emptyList(),
 )
 
 /**
@@ -49,6 +54,10 @@ data class M3uResult(
  */
 object M3uParser {
     private val ATTR = Regex("""([A-Za-z0-9_-]+)=(?:"([^"]*)"|(\S+))""")
+    /** How many guides a list's header may name. */
+    const val MAX_LIST_EPGS = 3
+    private const val MAX_HEADER_VALUE = 1024
+    private val HEX_16 = Regex("[0-9a-fA-F]{32}")
     private val KEPT_HEADERS = mapOf("user-agent" to "User-Agent", "referer" to "Referer", "referrer" to "Referer", "origin" to "Origin", "cookie" to "Cookie")
 
     /** A UTF-8 BOM is dropped. Strict UTF-8 is tried; on malformed input the whole file is read as ISO-8859-1. */
@@ -118,22 +127,28 @@ object M3uParser {
         val headers = LinkedHashMap<String, String>()
         var licenseType = ""
         var licenseKey = ""
+        var epgUrls = emptyList<String>()
         var n = 0
+        var seenContent = false
         for (raw in lines) {
-            if (++n % 1000 == 0 && deadline()) return M3uResult(out, total, skipped + (if (info != null) 1 else 0), stoppedEarly = true, hidden, refused)
+            if (++n % 1000 == 0 && deadline()) return M3uResult(out, total, skipped + (if (info != null) 1 else 0), stoppedEarly = true, hidden, refused, epgUrls)
             val line = raw.trim()
             when {
                 line.isEmpty() -> Unit
+                line.startsWith("#EXTM3U", ignoreCase = true) -> if (!seenContent) epgUrls = headerEpgs(line)
                 line.startsWith("#EXTINF", ignoreCase = true) -> {
+                    seenContent = true
                     if (info != null) skipped++
                     info = extinf(line)
                 }
                 line.startsWith("#EXTGRP:", ignoreCase = true) -> extgrp = line.substringAfter(':').trim()
                 line.startsWith("#EXTVLCOPT:", ignoreCase = true) -> vlcOpt(line.substringAfter(':'), headers)
+                line.startsWith("#EXTHTTP:", ignoreCase = true) -> extHttp(line.substringAfter(':'), headers)
                 line.startsWith("#KODIPROP:", ignoreCase = true) -> kodiProp(line.substringAfter(':'), headers)
                     ?.let { (k, v) -> if (k == "type") licenseType = v else licenseKey = v }
                 line.startsWith("#") -> Unit
                 else -> {
+                    seenContent = true
                     val entry = info?.let { entryOf(it, line, extgrp, headers, licenseType, licenseKey) }
                     info = null
                     extgrp = ""
@@ -150,7 +165,7 @@ object M3uParser {
             }
         }
         if (info != null) skipped++
-        return M3uResult(out, total, skipped, hidden = hidden, refused = refused)
+        return M3uResult(out, total, skipped, hidden = hidden, refused = refused, epgUrls = epgUrls)
     }
 
     private fun extinf(line: String): Info {
@@ -182,8 +197,7 @@ object M3uParser {
         if (pipe >= 0) pairs(urlLine.substring(pipe + 1), headers)
         // Only ClearKey is supported: any other license type (Widevine, PlayReady...) is left out
         // entirely rather than half-carried as an unusable DRM hint.
-        val clearKey = (licenseType == "clearkey").let { if (it) licenseKey.split(':', limit = 2) else null }
-            ?.takeIf { it.size == 2 }
+        val clearKey = if (licenseType == "clearkey" || licenseType == "org.w3.clearkey") clearKeyPair(licenseKey) else null
         return M3uEntry(
             name = name, url = url, tvgId = info.attrs["tvg-id"].orEmpty(), tvgName = tvgName,
             logo = info.attrs["tvg-logo"].orEmpty(),
@@ -191,7 +205,7 @@ object M3uParser {
             group = info.attrs["group-title"].orEmpty().ifBlank { extgrp },
             language = info.attrs["tvg-language"].orEmpty(), country = info.attrs["tvg-country"].orEmpty(),
             headers = headers,
-            drmKeyId = clearKey?.get(0).orEmpty(), drmKey = clearKey?.get(1).orEmpty(),
+            drmKeyId = clearKey?.first.orEmpty(), drmKey = clearKey?.second.orEmpty(),
         )
     }
 
@@ -202,7 +216,57 @@ object M3uParser {
             "http-origin" -> "Origin"
             else -> return
         }
-        v.substringAfter('=', "").trim().takeIf { it.isNotEmpty() }?.let { into[name] = it }
+        v.substringAfter('=', "").trim().takeIf { it.isNotEmpty() }?.let { put(into, name, it) }
+    }
+
+    /** `#EXTHTTP:{"User-Agent":"…","Referer":"…"}` (OTT Navigator, TiviMate): string values of the kept headers only. */
+    private fun extHttp(v: String, into: MutableMap<String, String>) {
+        val json = runCatching { org.json.JSONObject(v.trim()) }.getOrNull() ?: return
+        json.keys().forEach { key ->
+            val name = KEPT_HEADERS[key.trim().lowercase()] ?: return@forEach
+            (json.opt(key) as? String)?.trim()?.takeIf { it.isNotEmpty() }?.let { put(into, name, it) }
+        }
+    }
+
+    /** [rawName] -> [value] into [into] when the header is one this parser keeps, by the same rules as a list line (W3U stations use it). */
+    internal fun keepHeader(into: MutableMap<String, String>, rawName: String, value: String) {
+        val name = KEPT_HEADERS[rawName.trim().lowercase()] ?: return
+        if (value.isNotEmpty()) put(into, name, value)
+    }
+
+    /** A header value with a control character (a smuggled CR/LF) or past [MAX_HEADER_VALUE] is dropped, never sent. */
+    private fun put(into: MutableMap<String, String>, name: String, value: String) {
+        if (value.length <= MAX_HEADER_VALUE && value.none { Character.isISOControl(it) }) into[name] = value
+    }
+
+    private fun headerEpgs(line: String): List<String> {
+        val attrs = HashMap<String, String>()
+        ATTR.findAll(line.substringAfter(' ', "")).forEach { m -> attrs[m.groupValues[1].lowercase()] = m.groups[2]?.value ?: m.groups[3]?.value.orEmpty() }
+        return listOf("url-tvg", "x-tvg-url").flatMap { attrs[it].orEmpty().split(',') }
+            .map { it.trim() }
+            .filter { val scheme = it.substringBefore("://", "").lowercase(); scheme == "http" || scheme == "https" }
+            .distinct()
+            .take(MAX_LIST_EPGS)
+    }
+
+    /** `kid:key` in hex, or the ClearKey JSON `{"keys":[{"kid":"<b64url>","k":"<b64url>"}]}` (its first key). Null unless both are 16 bytes. */
+    private fun clearKeyPair(raw: String): Pair<String, String>? {
+        val text = raw.trim()
+        if (text.startsWith("{")) {
+            val key = runCatching { org.json.JSONObject(text).getJSONArray("keys").getJSONObject(0) }.getOrNull() ?: return null
+            val kid = b64urlHex(key.optString("kid")) ?: return null
+            val k = b64urlHex(key.optString("k")) ?: return null
+            return kid to k
+        }
+        val parts = text.split(':', limit = 2)
+        if (parts.size != 2 || !HEX_16.matches(parts[0].trim()) || !HEX_16.matches(parts[1].trim())) return null
+        return parts[0].trim().lowercase() to parts[1].trim().lowercase()
+    }
+
+    private fun b64urlHex(s: String): String? {
+        val bytes = runCatching { java.util.Base64.getUrlDecoder().decode(s.trim().trimEnd('=')) }.getOrNull() ?: return null
+        if (bytes.size != 16) return null
+        return bytes.joinToString("") { "%02x".format(it) }
     }
 
     /** Headers are written straight into [into]; a license type/key line is returned instead (the
@@ -224,7 +288,7 @@ object M3uParser {
         s.split('&').forEach { pair ->
             val name = KEPT_HEADERS[pair.substringBefore('=').trim().lowercase()] ?: return@forEach
             val value = runCatching { java.net.URLDecoder.decode(pair.substringAfter('=', "").trim().replace("+", "%2B"), "UTF-8") }.getOrNull()
-            if (!value.isNullOrEmpty()) into[name] = value
+            if (!value.isNullOrEmpty()) put(into, name, value)
         }
     }
 }

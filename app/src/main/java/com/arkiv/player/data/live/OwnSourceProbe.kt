@@ -22,18 +22,39 @@ object OwnSourceProbe {
         val text = M3uParser.decode(bytes)
         val head = text.trimStart().take(64).lowercase()
         val isWebPage = head.startsWith("<!doctype") || head.startsWith("<html") || head.startsWith("<?xml")
+        // The format is told by the content, never by the extension: a .m3u may answer W3U JSON and the other way round.
+        val json = LenientJson.looksLikeJson(text)
         return when (kind) {
             OwnKind.CHANNEL -> when {
                 isWebPage -> OwnProbe.Failed("La dirección devuelve una página web, no un video")
+                json && bytes.size <= W3uPlaylistFetcher.MAX_W3U_BYTES && W3uParser.parse(text) != null ->
+                    OwnProbe.Failed("Esto es una lista Wiseplay (W3U), no un canal: agrégala como lista")
+                text.trimStart().startsWith("#EXTM3U") && !text.contains("#EXT-X-") && M3uParser.parse(text, maxEntries = 1).total > 0 ->
+                    OwnProbe.Failed("Esto es una lista M3U de canales, no un canal: agrégala como lista")
                 text.trimStart().startsWith("#EXTM3U") -> OwnProbe.Ok("Se ve bien: es una lista de reproducción HLS")
                 else -> OwnProbe.Ok("La dirección responde (parece un stream directo)")
             }
-            OwnKind.PLAYLIST -> {
+            OwnKind.PLAYLIST -> if (json) w3u(text, bytes.size) else {
                 val n = if (isWebPage) 0 else M3uParser.parse(text, maxEntries = PluginLiveContract.MAX_CHANNELS_PER_PROVIDER).entries.size
-                if (n == 0) OwnProbe.Failed("No parece una lista M3U: no encontré canales")
+                if (n == 0) OwnProbe.Failed("No parece una lista M3U ni W3U: no encontré canales")
                 else OwnProbe.Ok("Encontré $n ${if (n == 1) "canal" else "canales"}")
             }
         }
+    }
+
+    private fun w3u(text: String, size: Int): OwnProbe {
+        if (size > W3uPlaylistFetcher.MAX_W3U_BYTES) return OwnProbe.Failed("La lista es demasiado grande")
+        val list = W3uParser.parse(text) ?: return OwnProbe.Failed("Es un archivo JSON, pero no una lista Wiseplay (W3U) que se pueda leer")
+        val n = list.entries.size
+        val links = list.links.size
+        if (n == 0 && links == 0) return OwnProbe.Failed("La lista Wiseplay (W3U) no tiene canales que se puedan reproducir")
+        val channels = "encontré $n ${if (n == 1) "canal" else "canales"}"
+        val linked = when (links) {
+            0 -> ""
+            1 -> " y 1 lista enlazada, que se carga al guardar"
+            else -> " y $links listas enlazadas, que se cargan al guardar"
+        }
+        return OwnProbe.Ok("Lista Wiseplay (W3U): $channels$linked")
     }
 
     suspend fun run(kind: OwnKind, url: String, headers: Map<String, String>, fetcher: LivePlaylistFetcher): OwnProbe {

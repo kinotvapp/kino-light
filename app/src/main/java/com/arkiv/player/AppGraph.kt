@@ -1195,8 +1195,12 @@ class AppGraph(context: Context) {
                     sources = { database.ownLiveSourceDao().all() },
                     // The gated stream client with the own-hosts policy: public hosts only, http or https,
                     // every redirect hop checked, a name that resolves into the LAN refused (PluginDns).
-                    fetcher = com.arkiv.player.data.live.PluginPlaylistFetcher(
-                        com.arkiv.player.data.plugin.PluginStreamHttp.client(pluginBaseHttp, com.arkiv.player.data.live.OwnLive.hosts),
+                    // A W3U (Wiseplay) list is expanded and saved as M3U; the lists it links to must be public too.
+                    fetcher = com.arkiv.player.data.live.W3uPlaylistFetcher(
+                        com.arkiv.player.data.live.PluginPlaylistFetcher(
+                            com.arkiv.player.data.plugin.PluginStreamHttp.client(pluginBaseHttp, com.arkiv.player.data.live.OwnLive.hosts),
+                        ),
+                        urlAllowed = { com.arkiv.player.data.live.OwnSourceValidator.checkUrl(it) is com.arkiv.player.data.live.OwnUrlCheck.Ok },
                     ),
                     cacheDir = java.io.File(root, "own"),
                     allCachesRoot = root,

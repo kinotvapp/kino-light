@@ -51,13 +51,19 @@ function urlDecode(s) {
   return out;
 }
 
+// A header value with a control character (a smuggled CR/LF) or past 1024 chars is dropped, never sent.
+// Character.isISOControl: U+0000-U+001F and U+007F-U+009F.
+function put(into, name, value) {
+  if (value.length <= 1024 && !/[\u0000-\u001f\u007f-\u009f]/.test(value)) into[name] = value;
+}
+
 function pairs(s, into) {
   for (const pair of s.split("&")) {
     const name = KEPT_HEADERS[ktTrim(before(pair, "=")).toLowerCase()];
     if (!name) continue;
     let value = null;
     try { value = urlDecode(ktTrim(after(pair, "=", "")).replaceAll("+", "%2B")); } catch { value = null; }
-    if (value) into[name] = value;
+    if (value) put(into, name, value);
   }
 }
 
@@ -66,7 +72,20 @@ function vlcOpt(v, into) {
   const name = key === "http-user-agent" ? "User-Agent" : key === "http-referrer" || key === "http-referer" ? "Referer" : key === "http-origin" ? "Origin" : null;
   if (!name) return;
   const value = ktTrim(after(v, "=", ""));
-  if (value) into[name] = value;
+  if (value) put(into, name, value);
+}
+
+// #EXTHTTP:{"User-Agent":"…","Referer":"…"} (OTT Navigator, TiviMate): string values of the kept headers only.
+function extHttp(v, into) {
+  let json;
+  try { json = JSON.parse(ktTrim(v)); } catch { return; }
+  if (!json || typeof json !== "object" || Array.isArray(json)) return;
+  for (const [key, raw] of Object.entries(json)) {
+    const name = KEPT_HEADERS[ktTrim(key).toLowerCase()];
+    if (!name || typeof raw !== "string") continue;
+    const value = ktTrim(raw);
+    if (value) put(into, name, value);
+  }
 }
 
 function kodiProp(v, into) {
@@ -135,6 +154,7 @@ export function parseM3u(input, { maxEntries = live().maxChannelsPerProvider, hi
       info = extinf(line);
     } else if (startsWithIgnoreCase(line, "#EXTGRP:")) extgrp = ktTrim(after(line, ":"));
     else if (startsWithIgnoreCase(line, "#EXTVLCOPT:")) vlcOpt(after(line, ":"), headers);
+    else if (startsWithIgnoreCase(line, "#EXTHTTP:")) extHttp(after(line, ":"), headers);
     else if (startsWithIgnoreCase(line, "#KODIPROP:")) kodiProp(after(line, ":"), headers);
     else if (line.startsWith("#")) continue;
     else {

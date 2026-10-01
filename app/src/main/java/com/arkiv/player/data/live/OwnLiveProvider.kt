@@ -139,7 +139,7 @@ internal class OwnLiveProvider(
             guides[sourceId]?.takeIf { clock() < it.first }?.let { return it.second }
             playlistSources[sourceId]
         }
-        if (source == null || source.playlist.epgUrl.isBlank()) return null
+        if (source == null || !source.hasGuide()) return null
         val now = clock()
         val ids = entries.mapNotNullTo(HashSet()) { it.tvgId.takeIf { id -> id.isNotBlank() } }
         val names = entries.mapNotNullTo(HashSet()) { XmltvParser.normaliseName(it.name).takeIf { n -> n.isNotEmpty() } }
@@ -198,6 +198,8 @@ internal class OwnLiveProvider(
             // source (and no guide of the old one), not the old one under a new declaration.
             val source = playlistSources[src.id]?.takeIf { it.adopt(declared) } ?: PlaylistSource(
                 declared, fetcher, cacheDir, clock, safeLog, entryAllowed = ::entryAllowed, allCachesRoot = allCachesRoot,
+                // The person's own list may name its guide in its header (url-tvg); filtered like its channels.
+                listGuides = true,
             ).also {
                 playlistSources[src.id] = it
                 guides.remove(src.id)
@@ -225,7 +227,7 @@ internal class OwnLiveProvider(
             entries.putAll(g.entries)
             g.entries.keys.forEach { playlistOf[it] = src }
         }
-        guideAvailable = lists.any { !it.epgUrl.isNullOrBlank() }
+        guideAvailable = lists.any { src -> !src.epgUrl.isNullOrBlank() || playlistSources[src.id]?.hasGuide() == true }
         _notice.value = trimNotice(built)
         val snap = Snapshot(clock(), signature, categories, byCategory, singles.associateBy { it.id }, entries, playlistOf)
         snapshot = snap

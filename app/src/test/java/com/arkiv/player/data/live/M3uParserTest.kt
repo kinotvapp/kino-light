@@ -44,6 +44,7 @@ class M3uParserTest {
     @Test fun `VLC, Kodi and pipe headers`() = check("headers")
     @Test fun `an unterminated quote swallows the title, never the next entry`() = check("unterminated-quote")
     @Test fun `one huge line with no line breaks is a single skipped entry`() = check("huge-line")
+    @Test fun `EXTHTTP JSON headers, the pipe winning over them, and no control characters in any header`() = check("exthttp")
 
     @Test fun `a huge list keeps the cap and counts every valid entry`() {
         val text = buildString {
@@ -70,7 +71,7 @@ class M3uParserTest {
     }
 
     @Test fun `a file parses exactly like its decoded text, without loading it whole`() {
-        listOf("basic", "bom-crlf", "latin1", "broken", "headers", "unterminated-quote", "huge-line").forEach { name ->
+        listOf("basic", "bom-crlf", "latin1", "broken", "headers", "unterminated-quote", "huge-line", "exthttp").forEach { name ->
             val f = File(dir, "$name.m3u")
             assertEquals(name, M3uParser.parse(M3uParser.decode(f.readBytes())), M3uParser.parse(f))
         }
@@ -117,5 +118,58 @@ class M3uParserTest {
         assertEquals(5, r.total)
         assertEquals(10, r.hidden)
         assertEquals(4, r.refused)
+    }
+
+    @Test fun `the header's url-tvg and x-tvg-url give the list's guides, http(s) only, deduplicated and capped`() {
+        val text = "#EXTM3U url-tvg=\"https://epg.example.com/a.xml.gz, https://epg.example.com/b.xml,file:///sdcard/x.xml\" " +
+            "x-tvg-url=\"https://epg.example.com/b.xml,http://epg.example.org/c.xml,https://epg.example.org/d.xml\"\n" +
+            "#EXTINF:-1,Canal\nhttps://live.example.com/1.m3u8\n"
+        assertEquals(
+            listOf("https://epg.example.com/a.xml.gz", "https://epg.example.com/b.xml", "http://epg.example.org/c.xml"),
+            M3uParser.parse(text).epgUrls,
+        )
+    }
+
+    @Test fun `a list with no header guide has none, and a header later in the file is ignored`() {
+        assertEquals(emptyList<String>(), M3uParser.parse("#EXTM3U\n#EXTINF:-1,A\nhttps://x.example.com/a\n").epgUrls)
+        val late = "#EXTM3U\n#EXTINF:-1,A\nhttps://x.example.com/a\n#EXTM3U url-tvg=\"https://epg.example.com/late.xml\"\n"
+        assertEquals(emptyList<String>(), M3uParser.parse(late).epgUrls)
+    }
+
+    @Test fun `the file parse reads the header guides too`() {
+        val f = File.createTempFile("tvg", ".m3u").apply { deleteOnExit() }
+        f.writeText("\uFEFF#EXTM3U x-tvg-url=\"https://epg.example.com/g.xml\"\n#EXTINF:-1,A\nhttps://x.example.com/a\n")
+        assertEquals(listOf("https://epg.example.com/g.xml"), M3uParser.parse(f).epgUrls)
+    }
+
+    @Test fun `org w3 clearkey is ClearKey too`() {
+        val text = "#EXTM3U\n#EXTINF:-1,C\n" +
+            "#KODIPROP:inputstream.adaptive.license_type=org.w3.clearkey\n" +
+            "#KODIPROP:inputstream.adaptive.license_key=0123456789ABCDEF0123456789abcdef:fedcba9876543210fedcba9876543210\n" +
+            "https://live.example.com/p.mpd\n"
+        val e = M3uParser.parse(text).entries.single()
+        assertEquals("0123456789abcdef0123456789abcdef", e.drmKeyId)
+        assertEquals("fedcba9876543210fedcba9876543210", e.drmKey)
+    }
+
+    @Test fun `a ClearKey license in its JSON form (base64url keys) becomes the hex pair`() {
+        // kid 0123456789abcdef0123456789abcdef, k fedcba9876543210fedcba9876543210, base64url without padding.
+        val text = "#EXTM3U\n#EXTINF:-1,C\n" +
+            "#KODIPROP:inputstream.adaptive.license_type=clearkey\n" +
+            "#KODIPROP:inputstream.adaptive.license_key={\"keys\":[{\"kty\":\"oct\",\"kid\":\"ASNFZ4mrze8BI0VniavN7w\",\"k\":\"_ty6mHZUMhD-3LqYdlQyEA\"}],\"type\":\"temporary\"}\n" +
+            "https://live.example.com/p.mpd\n"
+        val e = M3uParser.parse(text).entries.single()
+        assertEquals("0123456789abcdef0123456789abcdef", e.drmKeyId)
+        assertEquals("fedcba9876543210fedcba9876543210", e.drmKey)
+    }
+
+    @Test fun `a ClearKey pair that is not 16-byte hex is dropped, the channel kept`() {
+        listOf("zz:yy", "0123:4567", "{\"keys\":[{\"kid\":\"bad\",\"k\":\"bad\"}]}", "{\"keys\":").forEach { key ->
+            val text = "#EXTM3U\n#EXTINF:-1,C\n#KODIPROP:inputstream.adaptive.license_type=clearkey\n" +
+                "#KODIPROP:inputstream.adaptive.license_key=$key\nhttps://live.example.com/p.mpd\n"
+            val e = M3uParser.parse(text).entries.single()
+            assertEquals(key, "", e.drmKeyId)
+            assertEquals(key, "", e.drmKey)
+        }
     }
 }

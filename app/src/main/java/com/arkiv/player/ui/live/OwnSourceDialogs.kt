@@ -60,7 +60,7 @@ private fun OwnSourceFormDialog(ui: OwnFormUi, vm: OwnSourcesViewModel) {
                 if (ui.editingId == null) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(selected = !playlist, onClick = { vm.change(f.copy(kind = OwnKind.CHANNEL)) }, label = { Text("Canal") })
-                        FilterChip(selected = playlist, onClick = { vm.change(f.copy(kind = OwnKind.PLAYLIST)) }, label = { Text("Lista M3U") })
+                        FilterChip(selected = playlist, onClick = { vm.change(f.copy(kind = OwnKind.PLAYLIST)) }, label = { Text(OwnSourcesCopy.KIND_PLAYLIST) })
                     }
                 }
                 OwnTextField(OwnSourcesCopy.NAME, f.name, ui.errors[OwnField.NAME]) { vm.change(f.copy(name = it)) }

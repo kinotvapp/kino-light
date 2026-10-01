@@ -171,6 +171,36 @@ class OwnLiveProviderTest {
         assertEquals(setOf("Uno", "Dos"), channelsOf(p).map { it.name }.toSet())
     }
 
+    @Test fun `a list naming its guide in the header gets it, with no guide typed by the person`() = runTest {
+        val body = "#EXTM3U url-tvg=\"https://epg.example.com/g.xml.gz,http://10.0.0.1/lan.xml\"\n" +
+            "#EXTINF:-1 tvg-id=\"c1\",Canal Uno\nhttps://stream.example.com/uno.m3u8\n"
+        val guide = "<?xml version=\"1.0\"?><tv><channel id=\"c1\"><display-name>Canal Uno</display-name></channel>" +
+            "<programme start=\"19700101000000 +0000\" stop=\"19700101010000 +0000\" channel=\"c1\"><title>Noticiero</title></programme></tv>"
+        val asked = mutableListOf<String>()
+        val p = provider(listOf(playlist("p1", "Mi lista", "https://tv.example.com/l.m3u")), fetcher = LivePlaylistFetcher { url, _, _ ->
+            asked += url
+            (if (url.startsWith("https://epg.")) guide else body).toByteArray()
+        })
+        val channels = channelsOf(p)
+        assertTrue(p.hasGuide())
+        val programmes = p.guide(channels).first.values.single()
+        assertEquals(listOf("Noticiero"), programmes.map { it.title })
+        assertFalse(asked.any { "10.0.0.1" in it })   // a LAN address found inside a downloaded list is never fetched
+    }
+
+    @Test fun `a Wiseplay W3U list plays through the same pipeline, with its station headers`() = runTest {
+        val w3u = """{"name":"Mi lista","groups":[{"name":"Noticias","stations":[
+            {"name":"Canal W","url":"https://w.example.com/w.m3u8","referer":"https://w.example.com/"},
+            {"name":"Casero","url":"http://192.168.1.5/c.m3u8"}]}]}"""
+        val inner = LivePlaylistFetcher { _, _, _ -> w3u.toByteArray() }
+        val p = provider(listOf(playlist("p1", "Mi lista", "https://tv.example.com/lista.w3u")),
+            fetcher = W3uPlaylistFetcher(inner, { OwnSourceValidator.checkUrl(it) is OwnUrlCheck.Ok }))
+        val channels = channelsOf(p)
+        assertEquals(listOf("Canal W"), channels.map { it.name })
+        val opening = p.open(channels.single()) as LiveOpening.Plugin
+        assertEquals("https://w.example.com/", opening.channel.direct!!.headers["Referer"])
+    }
+
     @Test fun `what reaches the log never carries an address, so a list's credentials stay out of it`() {
         val line = "playlist http://tv.example.com/get.php?username=ana&password=secreto&type=m3u not downloaded (Unable to resolve host \"tv.example.com\"); no saved copy"
         val redacted = redactUrls(line)
