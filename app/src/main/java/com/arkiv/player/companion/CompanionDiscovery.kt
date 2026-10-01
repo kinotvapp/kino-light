@@ -16,6 +16,17 @@ private const val TAG = "CompanionDiscovery"
 private const val MAX_RETRIES = 3
 private const val RETRY_DELAY_MS = 1000L
 
+/**
+ * How long to wait before resolving a found service again after try number [attempt] failed, or null
+ * to give up. Android (before 14) resolves one service at a time: with two Kino TVs on the network the
+ * second resolve fails with FAILURE_ALREADY_ACTIVE, and without a retry that TV is never listed, so a
+ * paired phone never reconnects to it on its own (found on the Redmi + Fire TV with a KALLEY around).
+ */
+internal fun resolveRetryDelayMs(attempt: Int): Long? = if (attempt in 1..MAX_RESOLVE_RETRIES) RESOLVE_RETRY_STEP_MS * attempt else null
+
+private const val MAX_RESOLVE_RETRIES = 5
+private const val RESOLVE_RETRY_STEP_MS = 700L
+
 data class DiscoveredHost(val name: String, val deviceId: String, val ip: String, val port: Int, val serviceName: String)
 
 class CompanionDiscovery(context: Context, private val identity: CompanionIdentity) {
@@ -109,7 +120,7 @@ class CompanionDiscovery(context: Context, private val identity: CompanionIdenti
                 }
             }
             override fun onStopDiscoveryFailed(t: String, e: Int) {}
-            override fun onServiceFound(s: NsdServiceInfo) { resolve(s) }
+            override fun onServiceFound(s: NsdServiceInfo) { resolve(s, attempt = 0, listener = this) }
             override fun onServiceLost(s: NsdServiceInfo) {
                 _hosts.value = _hosts.value.filterNot { it.serviceName == s.serviceName }
             }
@@ -124,9 +135,14 @@ class CompanionDiscovery(context: Context, private val identity: CompanionIdenti
         runCatching { if (lock.isHeld) lock.release() }
     }
 
-    private fun resolve(service: NsdServiceInfo) {
+    private fun resolve(service: NsdServiceInfo, attempt: Int, listener: NsdManager.DiscoveryListener) {
         val rl = object : NsdManager.ResolveListener {
-            override fun onResolveFailed(s: NsdServiceInfo, e: Int) { Log.w(TAG, "resolve failed $e") }
+            override fun onResolveFailed(s: NsdServiceInfo, e: Int) {
+                val delay = resolveRetryDelayMs(attempt + 1)
+                Log.w(TAG, "resolve failed $e${if (delay == null) ", giving up" else ", retrying"}")
+                // Only while this browse is still the current one.
+                if (delay != null) handler.postDelayed({ if (discListener === listener) resolve(service, attempt + 1, listener) }, delay)
+            }
             override fun onServiceResolved(s: NsdServiceInfo) {
                 val host: InetAddress = s.host ?: return
                 val id = s.attributes["id"]?.let { String(it, Charsets.UTF_8) } ?: s.serviceName

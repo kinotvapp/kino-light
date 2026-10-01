@@ -47,6 +47,8 @@ object SyncTriggers {
         "live_favorites" to listOf("provider", "code"),
         "live_recents" to listOf("provider", "code"),
         "own_live_sources" to listOf("id"),
+        "plugin_installs" to listOf("id"),
+        "nuvio_repos" to listOf("address"),
     )
 
     /** The trigger's `WHERE`: every column of the (possibly composite) primary key. */

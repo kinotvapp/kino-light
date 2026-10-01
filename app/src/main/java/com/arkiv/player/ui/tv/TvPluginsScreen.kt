@@ -57,7 +57,13 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.arkiv.player.data.plugin.InstalledPlugin
 import com.arkiv.player.data.plugin.catalog.CatalogArt
+import com.arkiv.player.data.plugin.sync.PeerPluginOffer
 import com.arkiv.player.ui.plugin.CatalogAction
+import com.arkiv.player.ui.plugin.NUVIO_REPOS_TITLE
+import com.arkiv.player.ui.plugin.PEER_PLUGINS_TITLE
+import com.arkiv.player.ui.plugin.nuvioRepoOpenLabel
+import com.arkiv.player.ui.plugin.peerOfferInstallEnabled
+import com.arkiv.player.ui.plugin.peerOfferStatusText
 import com.arkiv.player.ui.plugin.CatalogRow
 import com.arkiv.player.ui.plugin.CatalogUiState
 import com.arkiv.player.ui.plugin.CommunityUiState
@@ -149,6 +155,8 @@ internal fun TvPluginsContent(
     upFocus: FocusRequester? = null,
 ) {
     val plugins by vm.plugins.collectAsStateWithLifecycle()
+    val peerOffers by vm.peerOffers.collectAsStateWithLifecycle()
+    val nuvioRepos by vm.nuvioRepos.collectAsStateWithLifecycle()
     val state by vm.state.collectAsStateWithLifecycle()
     val catalog by vm.catalog.collectAsStateWithLifecycle()
     val community by vm.community.collectAsStateWithLifecycle()
@@ -252,6 +260,9 @@ internal fun TvPluginsContent(
                 PluginsTab.INSTALLED -> InstalledTab(
                     vm = vm,
                     plugins = plugins,
+                    offers = peerOffers,
+                    nuvioRepos = nuvioRepos,
+                    busy = state.busy,
                     art = art,
                     message = state.message,
                     rowMessageId = rowMessageId,
@@ -360,6 +371,8 @@ private fun rememberPluginsViewModel(): PluginsViewModel {
                     artProvider = graph.catalogArt,
                     discovery = graph.pluginDiscovery,
                     nuvioPluginInstaller = graph.nuvioPluginInstaller,
+                    peerOffers = graph.peerPluginOffers,
+                    nuvioRepoList = graph.nuvioRepoList,
                 )
             }
         },
@@ -558,6 +571,9 @@ private fun RecommendedTab(
 private fun InstalledTab(
     vm: PluginsViewModel,
     plugins: List<InstalledPlugin>,
+    offers: List<PeerPluginOffer>,
+    nuvioRepos: List<String>,
+    busy: Boolean,
     art: Map<String, CatalogArt>,
     message: String?,
     rowMessageId: String?,
@@ -595,12 +611,19 @@ private fun InstalledTab(
         }
     }
 
+    // "Plugins de tus otros aparatos" comes first, so Down from the header lands on its first "Instalar".
+    val onInstallOffer: (PeerPluginOffer) -> Unit = { offer -> if (peerOfferInstallEnabled(offer.status, busy)) vm.installFromPeer(offer) }
+    // Then "Tus repositorios de Nuvio": the first of its buttons takes the entry focus when there are no offers.
+    val onOpenRepo: (String) -> Unit = { address -> if (!busy) vm.openNuvioRepo(address) }
+    val topSection = offers.isNotEmpty() || nuvioRepos.isNotEmpty()
     if (plugins.isEmpty()) {
         Column(modifier.padding(top = 16.dp).noFocusToTheRight(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            TvPeerOffers(offers, entryFocus, selectedTabFocus, onInstallOffer)
+            TvNuvioRepos(nuvioRepos, entryFocus.takeIf { offers.isEmpty() }, selectedTabFocus, onOpenRepo)
             Text("Todavía no tienes plugins.", style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary)
             TvActionOption(
                 label = "Ver recomendados",
-                modifier = Modifier.focusRequester(entryFocus).focusProperties { up = selectedTabFocus },
+                modifier = (if (!topSection) Modifier.focusRequester(entryFocus).focusProperties { up = selectedTabFocus } else Modifier),
                 onClick = onBrowseRecommended,
             )
         }
@@ -642,6 +665,14 @@ private fun InstalledTab(
         horizontalArrangement = Arrangement.spacedBy(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        if (topSection) {
+            item(key = "peer-offers", span = FULL_WIDTH) {
+                Column(Modifier.noFocusToTheRight(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    TvPeerOffers(offers, entryFocus, selectedTabFocus, onInstallOffer)
+                    TvNuvioRepos(nuvioRepos, entryFocus.takeIf { offers.isEmpty() }, selectedTabFocus, onOpenRepo)
+                }
+            }
+        }
         itemsIndexed(plugins, key = { _, p -> "installed-${p.id}" }) { index, p ->
             TvInstalledPluginCard(
                 plugin = p,
@@ -652,7 +683,7 @@ private fun InstalledTab(
                 reserveNoticeLines = noticeLines.getOrElse(index) { false },
                 modifier = Modifier
                     .focusRequester(cardFocus.getValue(p.id))
-                    .then(if (index == 0) Modifier.focusRequester(entryFocus).focusProperties { up = selectedTabFocus } else Modifier)
+                    .then(if (index == 0 && !topSection) Modifier.focusRequester(entryFocus).focusProperties { up = selectedTabFocus } else Modifier)
                     .then(if (cardHasNothingToTheRight(index, plugins.lastIndex, TV_INSTALLED_COLUMNS)) Modifier.noFocusToTheRight() else Modifier),
                 onClick = { actionsPluginId = p.id },
             )
@@ -674,6 +705,57 @@ private fun InstalledTab(
                 returnFocusTo = id
                 actionsPluginId = null
             },
+        )
+    }
+}
+
+/**
+ * "Plugins de tus otros aparatos" on the TV: one "Instalar <nombre>" per plugin the person has on another
+ * device that did not install here by itself, with what happened under it. The first button carries
+ * [entryFocus] (Down from the header row) and Up from it returns to the selected tab. OK while an action
+ * runs, or while that plugin is installing by itself, does nothing (never disabled: focus stays put).
+ */
+@Composable
+private fun TvPeerOffers(
+    offers: List<PeerPluginOffer>,
+    entryFocus: FocusRequester,
+    selectedTabFocus: FocusRequester,
+    onInstall: (PeerPluginOffer) -> Unit,
+) {
+    if (offers.isEmpty()) return
+    Text(PEER_PLUGINS_TITLE, style = MaterialTheme.typography.titleMedium, color = Color.White)
+    offers.forEachIndexed { index, offer ->
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            TvActionOption(
+                label = "Instalar ${offer.name}",
+                modifier = if (index == 0) Modifier.focusRequester(entryFocus).focusProperties { up = selectedTabFocus } else Modifier,
+                onClick = { onInstall(offer) },
+            )
+            Text(peerOfferStatusText(offer.status), style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary)
+        }
+    }
+}
+
+/**
+ * "Tus repositorios de Nuvio" on the TV: one "Ver scrapers de <repo>" per Nuvio repo the person opened
+ * here or on another device, which opens its scraper picker without typing on the remote. The first
+ * button carries [entryFocus] when given (no "Plugins de tus otros aparatos" above it). Removing a repo
+ * from the list is done on the phone.
+ */
+@Composable
+private fun TvNuvioRepos(
+    repos: List<String>,
+    entryFocus: FocusRequester?,
+    selectedTabFocus: FocusRequester,
+    onOpen: (String) -> Unit,
+) {
+    if (repos.isEmpty()) return
+    Text(NUVIO_REPOS_TITLE, style = MaterialTheme.typography.titleMedium, color = Color.White)
+    repos.forEachIndexed { index, address ->
+        TvActionOption(
+            label = nuvioRepoOpenLabel(address),
+            modifier = if (index == 0 && entryFocus != null) Modifier.focusRequester(entryFocus).focusProperties { up = selectedTabFocus } else Modifier,
+            onClick = { onOpen(address) },
         )
     }
 }

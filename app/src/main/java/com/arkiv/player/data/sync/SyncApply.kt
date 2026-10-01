@@ -6,6 +6,7 @@ import com.arkiv.player.data.db.LiveFavoriteDao
 import com.arkiv.player.data.db.LiveRecentDao
 import com.arkiv.player.data.db.OwnLiveSourceDao
 import com.arkiv.player.data.db.PlaybackDao
+import com.arkiv.player.data.db.PluginInstallDao
 import com.arkiv.player.data.db.SkipMarkerDao
 import org.json.JSONObject
 
@@ -38,15 +39,25 @@ class SyncApply(
     private val liveFavoriteDao: LiveFavoriteDao,
     private val liveRecentDao: LiveRecentDao,
     private val ownLiveSourceDao: OwnLiveSourceDao? = null,
+    private val pluginInstallDao: PluginInstallDao? = null,
+    private val nuvioRepoDao: com.arkiv.player.data.db.NuvioRepoDao? = null,
+    /**
+     * Told the id of every `plugin_installs` row a peer's newer copy just replaced here: the plugin
+     * sync reconciler installs, enables or removes the plugin itself (rows never touch `plugins/`).
+     */
+    private val onPluginInstallApplied: (String) -> Unit = {},
 ) {
     /** Production convenience: pulls the DAOs out of the Room database. */
-    constructor(db: ArkivDatabase) : this(
+    constructor(db: ArkivDatabase, onPluginInstallApplied: (String) -> Unit = {}) : this(
         db.itemDao(),
         db.playbackDao(),
         db.skipMarkerDao(),
         db.liveFavoriteDao(),
         db.liveRecentDao(),
         db.ownLiveSourceDao(),
+        db.pluginInstallDao(),
+        db.nuvioRepoDao(),
+        onPluginInstallApplied,
     )
 
     suspend fun apply(table: String, row: JSONObject) {
@@ -58,6 +69,8 @@ class SyncApply(
             "live_favorites" -> applyLiveFavorite(row)
             "live_recents" -> applyLiveRecent(row)
             "own_live_sources" -> applyOwnLiveSource(row)
+            "plugin_installs" -> applyPluginInstall(row)
+            "nuvio_repos" -> applyNuvioRepo(row)
             else -> throw IllegalArgumentException("SyncApply: unknown table \"$table\"")
         }
     }
@@ -124,6 +137,25 @@ class SyncApply(
         val local = dao.get(incoming.id)
         if (!LwwMerge.pickWinner(local?.updatedAt ?: Long.MIN_VALUE, incoming.updatedAt)) return
         dao.save(incoming)
+    }
+
+    private suspend fun applyNuvioRepo(row: JSONObject) {
+        val dao = nuvioRepoDao ?: return
+        // Not a canonical public repo (hostile or garbled): skipped.
+        val incoming = jsonToNuvioRepo(row) ?: return
+        val local = dao.get(incoming.address)
+        if (!LwwMerge.pickWinner(local?.updatedAt ?: Long.MIN_VALUE, incoming.updatedAt)) return
+        dao.save(incoming)
+    }
+
+    private suspend fun applyPluginInstall(row: JSONObject) {
+        val dao = pluginInstallDao ?: return
+        // A row this build can't accept (hostile or garbled: a reserved id, a non-GitHub address...) is skipped.
+        val incoming = jsonToPluginInstall(row) ?: return
+        val local = dao.get(incoming.id)
+        if (!LwwMerge.pickWinner(local?.updatedAt ?: Long.MIN_VALUE, incoming.updatedAt)) return
+        dao.save(incoming)
+        onPluginInstallApplied(incoming.id)
     }
 
     private suspend fun applyLiveRecent(row: JSONObject) {

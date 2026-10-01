@@ -109,11 +109,15 @@ internal fun PluginsContent(bottomInset: Dp, modifier: Modifier = Modifier) {
                     artProvider = graph.catalogArt,
                     discovery = graph.pluginDiscovery,
                     nuvioPluginInstaller = graph.nuvioPluginInstaller,
+                    peerOffers = graph.peerPluginOffers,
+                    nuvioRepoList = graph.nuvioRepoList,
                 )
             }
         },
     )
     val plugins by vm.plugins.collectAsStateWithLifecycle()
+    val peerOffers by vm.peerOffers.collectAsStateWithLifecycle()
+    val nuvioRepos by vm.nuvioRepos.collectAsStateWithLifecycle()
     val state by vm.state.collectAsStateWithLifecycle()
     val catalog by vm.catalog.collectAsStateWithLifecycle()
     val community by vm.community.collectAsStateWithLifecycle()
@@ -164,6 +168,8 @@ internal fun PluginsContent(bottomInset: Dp, modifier: Modifier = Modifier) {
                     )
                 }
             }
+            PeerPluginsSection(peerOffers, busy = state.busy, onInstall = vm::installFromPeer)
+            NuvioReposSection(nuvioRepos, busy = state.busy, onOpen = vm::openNuvioRepo, onForget = vm::forgetNuvioRepo)
             PluginsTabRow(
                 selected = tab,
                 installedCount = plugins.size,

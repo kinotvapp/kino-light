@@ -261,8 +261,24 @@ class PluginsViewModel(
      * installer existed.
      */
     private val nuvioPluginInstaller: NuvioPluginInstaller? = null,
+    /**
+     * "Plugins de tus otros aparatos" (plugin sync): what the person has on another device and not here.
+     * Null -- Configurar's view model, every test that doesn't care -- shows none.
+     */
+    peerOffers: StateFlow<List<com.arkiv.player.data.plugin.sync.PeerPluginOffer>>? = null,
+    /**
+     * "Tus repositorios de Nuvio" (synced with the person's other devices): a repo whose scraper picker
+     * opens is listed, and [openNuvioRepo] opens one again without typing. Null shows none, records none.
+     */
+    private val nuvioRepoList: com.arkiv.player.data.plugin.sync.NuvioRepoList? = null,
 ) : ViewModel() {
     val plugins: StateFlow<List<InstalledPlugin>> = admin.plugins
+
+    val peerOffers: StateFlow<List<com.arkiv.player.data.plugin.sync.PeerPluginOffer>> = peerOffers ?: MutableStateFlow(emptyList())
+
+    /** "Tus repositorios de Nuvio": the repo addresses, from this device and the person's others. */
+    val nuvioRepos: StateFlow<List<String>> =
+        nuvioRepoList?.addresses?.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList()) ?: MutableStateFlow(emptyList())
 
     private val _state = MutableStateFlow(PluginsUiState())
     val state: StateFlow<PluginsUiState> = _state.asStateFlow()
@@ -502,6 +518,26 @@ class PluginsViewModel(
     }
 
     /**
+     * "Instalar" on a plugin from another of the person's devices that did not install by itself here
+     * (it asks for more than was approved there, or the silent try failed): the normal consent sheet,
+     * for exactly what that device has -- a Nuvio scraper re-converted from its repo, any other plugin
+     * previewed from its address. Installing it records it like any install by hand.
+     */
+    fun installFromPeer(offer: com.arkiv.player.data.plugin.sync.PeerPluginOffer) {
+        busy(pluginId = null) {
+            val repo = offer.nuvioRepo
+            val scraperId = offer.nuvioScraperId
+            val preview = if (repo != null && scraperId != null) {
+                val installer = nuvioPluginInstaller ?: throw InstallException("Agrega este plugin de Nuvio desde Ajustes ▸ Plugins")
+                withContext(io) { installer.previewScraper(repo, scraperId) }
+            } else {
+                admin.preview(offer.address)
+            }
+            _state.update { it.copy(consent = preview) }
+        }
+    }
+
+    /**
      * The custom address the person is typing. It also drops the message of an earlier action and the row it
      * was about: what a previous try said is not news about a new address, so the Plugins screens change it
      * to "" both when their "Agregar" dialog opens and when it is dismissed.
@@ -523,17 +559,32 @@ class PluginsViewModel(
         busy(pluginId = null) {
             val preview = nuvioPluginInstaller?.let { withContext(io) { it.previewRepo(input) } }
             when {
-                preview != null && preview.scrapers.any(NuvioManifestParser::isInstallable) ->
+                preview != null && preview.scrapers.any(NuvioManifestParser::isInstallable) -> {
                     // preview.address, not the raw typed `input`: when the default branch wasn't
                     // Nuvio-shaped and NuvioPluginInstaller fell back to `@main`/`@master`, this is
                     // the address that actually worked -- pickNuvioScraper must re-resolve from THAT
                     // one, not retry the same failing default branch.
                     _state.update { it.copy(nuvioPicker = NuvioPickerState(repoInput = preview.address, scrapers = preview.scrapers)) }
+                    // Listed for the person's other devices (and this one): never a reason to fail the picker.
+                    nuvioRepoList?.let { list -> runCatching { withContext(io) { list.add(preview.address) } } }
+                }
                 preview != null ->
                     _state.update { it.copy(message = "Este repositorio de Nuvio no tiene scrapers instalables en Android") }
                 else -> _state.update { it.copy(consent = admin.preview(input)) }
             }
         }
+    }
+
+    /** A repo from "Tus repositorios de Nuvio": its scraper picker, exactly as if its address had been typed. */
+    fun openNuvioRepo(address: String) {
+        onAddressChange(address)
+        add()
+    }
+
+    /** "Quitar" on a repo of "Tus repositorios de Nuvio": off the list here and on the person's other devices. Its installed scrapers stay. */
+    fun forgetNuvioRepo(address: String) {
+        val list = nuvioRepoList ?: return
+        viewModelScope.launch { runCatching { withContext(io) { list.remove(address) } } }
     }
 
     /**

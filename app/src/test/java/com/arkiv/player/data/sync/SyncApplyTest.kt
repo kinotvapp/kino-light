@@ -320,6 +320,45 @@ class SyncApplyTest {
         sync.apply("own_live_sources", ownRow("a:b", "X", 10))
         assertTrue(own.rows.isEmpty())
     }
+
+    private fun pluginRow(id: String, updatedAt: Long, deleted: Boolean = false, address: String = "kinotvapp/kino-plugin-archive") =
+        JSONObject().put("id", id).put("address", address).put("name", "Archive").put("version", "1.0.0")
+            .put("enabled", true).put("updatedAt", updatedAt).put("deleted", deleted)
+
+    @Test fun `plugin installs merge last-write-wins and tell the reconciler what changed`() = runTest {
+        val dao = com.arkiv.player.data.plugin.sync.FakePluginInstallDao()
+        val told = mutableListOf<String>()
+        val sync = SyncApply(FakeItemDao(), FakePlaybackDao(), FakeSkipMarkerDao(), FakeLiveFavoriteDao(), FakeLiveRecentDao(), null, dao) { told += it }
+        sync.apply("plugin_installs", pluginRow("archive", 10))
+        sync.apply("plugin_installs", pluginRow("archive", 5, deleted = true)) // older: dropped, not told
+        sync.apply("plugin_installs", pluginRow("archive", 20, deleted = true))
+        assertTrue(dao.rows.getValue("archive").deleted)
+        assertEquals(listOf("archive", "archive"), told)
+    }
+
+    @Test fun `a plugin row this build must not trust is never stored`() = runTest {
+        val dao = com.arkiv.player.data.plugin.sync.FakePluginInstallDao()
+        val told = mutableListOf<String>()
+        val sync = SyncApply(FakeItemDao(), FakePlaybackDao(), FakeSkipMarkerDao(), FakeLiveFavoriteDao(), FakeLiveRecentDao(), null, dao) { told += it }
+        sync.apply("plugin_installs", pluginRow("own", 10))
+        sync.apply("plugin_installs", pluginRow("xuper", 10))
+        sync.apply("plugin_installs", pluginRow("archive", 10, address = "https://evil.example.com/a"))
+        assertTrue(dao.rows.isEmpty())
+        assertTrue(told.isEmpty())
+    }
+
+    @Test fun `nuvio repos merge last-write-wins and a hostile address is never stored`() = runTest {
+        val dao = com.arkiv.player.data.plugin.sync.FakeNuvioRepoDao()
+        val sync = SyncApply(FakeItemDao(), FakePlaybackDao(), FakeSkipMarkerDao(), FakeLiveFavoriteDao(), FakeLiveRecentDao(), null, null, dao)
+        fun r(address: String, at: Long, deleted: Boolean = false) = JSONObject().put("address", address).put("updatedAt", at).put("deleted", deleted)
+        sync.apply("nuvio_repos", r("a/b", 10))
+        sync.apply("nuvio_repos", r("a/b", 5, deleted = true)) // older: dropped
+        assertTrue(!dao.rows.getValue("a/b").deleted)
+        sync.apply("nuvio_repos", r("a/b", 20, deleted = true))
+        assertTrue(dao.rows.getValue("a/b").deleted)
+        sync.apply("nuvio_repos", r("https://evil.example.com/x", 30))
+        assertEquals(setOf("a/b"), dao.rows.keys)
+    }
 }
 
 private class FakeOwnLiveSourceDao : com.arkiv.player.data.db.OwnLiveSourceDao {

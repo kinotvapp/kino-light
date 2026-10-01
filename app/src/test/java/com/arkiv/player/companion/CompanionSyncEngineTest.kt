@@ -270,6 +270,29 @@ class CompanionSyncEngineTest {
         testScheduler.advanceUntilIdle()
     }
 
+    @Test fun `plugin installs go only to a peer that announced them, not to one that knows only own sources`() = runTest {
+        val incoming = MutableSharedFlow<Envelope>(extraBufferCapacity = 8)
+        val sent = mutableListOf<Envelope>()
+        val source = FakeSyncSource()
+        source.addRow("plugin_installs", JSONObject().put("id", "archive").put("updatedAt", 10L))
+        val (apply, _) = fakeSyncApply()
+        val engine = CompanionSyncEngine(this, incoming, { sent += it }, source, apply, SyncCursorStore(FakeContext()), MutableSharedFlow(extraBufferCapacity = 8))
+        engine.start(MutableStateFlow<String?>(null))
+        testScheduler.advanceUntilIdle()
+        fun tablesSent(): List<String> = sent.filter { it.type == TYPE_SYNC_ROWS }.map { SyncRows.fromPayload(it.payload).table }
+
+        incoming.emit(newEnvelope(TYPE_SYNC_HELLO, SyncHello(mapOf("playback" to 0L, "own_live_sources" to 0L)).toPayload()))
+        testScheduler.advanceUntilIdle()
+        assertTrue("plugin_installs" !in tablesSent())
+
+        incoming.emit(newEnvelope(TYPE_SYNC_HELLO, SyncHello(mapOf("playback" to 0L, "plugin_installs" to 0L)).toPayload()))
+        testScheduler.advanceUntilIdle()
+        assertTrue("plugin_installs" in tablesSent())
+
+        engine.stop()
+        testScheduler.advanceUntilIdle()
+    }
+
     @Test fun `our hello lists every table, the new one included`() = runTest {
         val incoming = MutableSharedFlow<Envelope>(extraBufferCapacity = 8)
         val sent = mutableListOf<Envelope>()
@@ -282,6 +305,7 @@ class CompanionSyncEngineTest {
         testScheduler.advanceUntilIdle()
         val hello = SyncHello.fromPayload(sent.first { it.type == TYPE_SYNC_HELLO }.payload)
         assertTrue("own_live_sources" in hello.since.keys)
+        assertTrue("plugin_installs" in hello.since.keys)
         engine.stop()
         testScheduler.advanceUntilIdle()
     }
@@ -314,6 +338,111 @@ class CompanionSyncEngineTest {
         testScheduler.advanceUntilIdle()
         assertTrue("not before phoneB says it knows the table", "own_live_sources" !in tablesSent())
 
+        engine.stop()
+        testScheduler.advanceUntilIdle()
+    }
+    private class FakeScoped(var readyFor: Set<String>, var applyOk: Boolean = true) : PeerScopedTable {
+        override val table = "plugin_secrets"
+        val applied = mutableListOf<Pair<String, String>>()
+        val askedSince = mutableListOf<Pair<Long, String>>()
+        override fun ready(peerId: String) = peerId in readyFor
+        override suspend fun changedSince(cursor: Long, peerId: String): List<JSONObject> {
+            askedSince += cursor to peerId
+            return listOf(JSONObject().put("id", "srv").put("updatedAt", 7L).put("values", JSONObject()))
+        }
+        override suspend fun apply(row: JSONObject, peerId: String): Boolean { applied += row.getString("id") to peerId; return applyOk }
+    }
+
+    @Test fun `plugin passwords are announced and pushed only with a key for that peer, and only to a peer that announced them`() = runTest {
+        val incoming = MutableSharedFlow<Envelope>(extraBufferCapacity = 8)
+        val sent = mutableListOf<Envelope>()
+        val (apply, _) = fakeSyncApply()
+        val scoped = FakeScoped(readyFor = emptySet())
+        val peer = MutableStateFlow<String?>("tv")
+        val engine = CompanionSyncEngine(this, incoming, { sent += it }, FakeSyncSource(), apply, SyncCursorStore(FakeContext()), MutableSharedFlow(extraBufferCapacity = 8), scoped)
+        engine.start(peer)
+        testScheduler.advanceUntilIdle()
+        fun hello() = SyncHello.fromPayload(sent.last { it.type == TYPE_SYNC_HELLO }.payload)
+        fun tablesSent(): List<String> = sent.filter { it.type == TYPE_SYNC_ROWS }.map { SyncRows.fromPayload(it.payload).table }
+        assertTrue("plugin_secrets" !in hello().since.keys) // no key for "tv": not announced
+
+        // An older peer (never lists plugin_secrets) gets nothing, even with a key.
+        scoped.readyFor = setOf("tv")
+        incoming.emit(newEnvelope(TYPE_SYNC_HELLO, SyncHello(mapOf("playback" to 0L, "plugin_installs" to 0L)).toPayload()))
+        testScheduler.advanceUntilIdle()
+        assertTrue("plugin_secrets" !in tablesSent())
+
+        // A peer that lists it, with a key: sealed for that peer.
+        incoming.emit(newEnvelope(TYPE_SYNC_HELLO, SyncHello(mapOf("plugin_secrets" to 3L)).toPayload()))
+        testScheduler.advanceUntilIdle()
+        assertTrue("plugin_secrets" in tablesSent())
+        assertEquals(3L to "tv", scoped.askedSince.last())
+
+        // The key is gone (forgotten pairing): nothing more is pushed even if the peer asks.
+        sent.clear()
+        scoped.readyFor = emptySet()
+        incoming.emit(newEnvelope(TYPE_SYNC_HELLO, SyncHello(mapOf("plugin_secrets" to 0L)).toPayload()))
+        testScheduler.advanceUntilIdle()
+        assertTrue("plugin_secrets" !in tablesSent())
+
+        engine.stop()
+        testScheduler.advanceUntilIdle()
+    }
+
+    @Test fun `received passwords go to the peer-scoped table, and a row it could not open keeps the cursor`() = runTest {
+        val incoming = MutableSharedFlow<Envelope>(extraBufferCapacity = 8)
+        val (apply, _) = fakeSyncApply()
+        val scoped = FakeScoped(readyFor = setOf("tv"), applyOk = false)
+        val cursors = SyncCursorStore(FakeContext())
+        val engine = CompanionSyncEngine(this, incoming, {}, FakeSyncSource(), apply, cursors, MutableSharedFlow(extraBufferCapacity = 8), scoped)
+        engine.start(MutableStateFlow<String?>("tv"))
+        testScheduler.advanceUntilIdle()
+        val page = SyncRows("plugin_secrets", listOf(JSONObject().put("id", "srv").put("updatedAt", 9L)), 9L, more = false)
+        incoming.emit(newEnvelope(TYPE_SYNC_ROWS, page.toPayload()))
+        testScheduler.advanceUntilIdle()
+        assertEquals(listOf("srv" to "tv"), scoped.applied)
+        assertEquals(0L, cursors.pulled("tv", "plugin_secrets"))
+        scoped.applyOk = true
+        incoming.emit(newEnvelope(TYPE_SYNC_ROWS, page.toPayload()))
+        testScheduler.advanceUntilIdle()
+        assertEquals(9L, cursors.pulled("tv", "plugin_secrets"))
+        engine.stop()
+        testScheduler.advanceUntilIdle()
+    }
+
+    @Test fun `without a peer-scoped table (or no key) a peer's password rows are ignored, never handed to SyncApply`() = runTest {
+        val incoming = MutableSharedFlow<Envelope>(extraBufferCapacity = 8)
+        val (apply, _) = fakeSyncApply()
+        val engine = CompanionSyncEngine(this, incoming, {}, FakeSyncSource(), apply, SyncCursorStore(FakeContext()), MutableSharedFlow(extraBufferCapacity = 8))
+        engine.start(MutableStateFlow<String?>("tv"))
+        testScheduler.advanceUntilIdle()
+        // SyncApply throws on an unknown table: this must not reach it.
+        incoming.emit(newEnvelope(TYPE_SYNC_ROWS, SyncRows("plugin_secrets", listOf(JSONObject().put("id", "srv")), 1L, more = false).toPayload()))
+        testScheduler.advanceUntilIdle()
+        engine.stop()
+        testScheduler.advanceUntilIdle()
+    }
+
+    @Test fun `a peer's hello that arrives before its id is known still lets optional tables be pushed to it`() = runTest {
+        // The link's peer id is derived asynchronously (stateIn): the peer's hello can be handled while it is still null.
+        val incoming = MutableSharedFlow<Envelope>(extraBufferCapacity = 8)
+        val changes = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
+        val sent = mutableListOf<Envelope>()
+        val source = FakeSyncSource()
+        val (apply, _) = fakeSyncApply()
+        val peer = MutableStateFlow<String?>(null)
+        val engine = CompanionSyncEngine(this, incoming, { sent += it }, source, apply, SyncCursorStore(FakeContext()), changes, log = {})
+        engine.start(peer)
+        testScheduler.advanceUntilIdle()
+        incoming.emit(newEnvelope(TYPE_SYNC_HELLO, SyncHello(mapOf("plugin_installs" to 0L)).toPayload()))
+        testScheduler.runCurrent()
+        peer.value = "tv"
+        testScheduler.advanceUntilIdle()
+        // A local change afterwards goes out incrementally.
+        source.addRow("plugin_installs", JSONObject().put("id", "archive").put("updatedAt", 10L))
+        changes.emit(Unit)
+        testScheduler.advanceUntilIdle()
+        assertTrue(sent.filter { it.type == TYPE_SYNC_ROWS }.any { SyncRows.fromPayload(it.payload).table == "plugin_installs" })
         engine.stop()
         testScheduler.advanceUntilIdle()
     }

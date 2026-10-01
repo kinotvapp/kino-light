@@ -8,6 +8,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -21,6 +24,21 @@ import org.json.JSONObject
  */
 interface SyncSource {
     suspend fun changedSince(table: String, cursor: Long): List<JSONObject>
+}
+
+/**
+ * A synced table whose rows depend on WHICH peer they go to or come from (plugin passwords, sealed
+ * with the key agreed with that peer: `PluginSecretSync`). It is announced in our hello, and pushed,
+ * only while [ready] for the connected peer, and only to a peer whose own hello listed it -- an older
+ * build never does, so it never gets one of these rows.
+ */
+interface PeerScopedTable {
+    val table: String
+    fun ready(peerId: String): Boolean
+    suspend fun changedSince(cursor: Long, peerId: String): List<JSONObject>
+
+    /** False when the row could not be applied yet: the pull cursor then stays, and it comes again. */
+    suspend fun apply(row: JSONObject, peerId: String): Boolean
 }
 
 /**
@@ -52,6 +70,9 @@ class CompanionSyncEngine(
     private val apply: SyncApply,
     private val cursors: SyncCursorStore,
     private val changes: Flow<Unit>,
+    private val peerScoped: PeerScopedTable? = null,
+    /** Counts only (tables, row numbers): never a row's content. */
+    private val log: (String) -> Unit = { runCatching { android.util.Log.i("CompanionSync", it) } },
 ) {
     private var incomingJob: Job? = null
     private var changesJob: Job? = null
@@ -125,7 +146,7 @@ class CompanionSyncEngine(
         peerJob = scope.launch {
             peer.collect { pid ->
                 if (pid == null) return@collect
-                val since = TABLES.associateWith { table -> cursors.pulled(pid, table) }
+                val since = TABLES.filter { table -> tableHere(table, pid) }.associateWith { table -> cursors.pulled(pid, table) }
                 send(newEnvelope(TYPE_SYNC_HELLO, SyncHello(since).toPayload()))
             }
         }
@@ -150,14 +171,29 @@ class CompanionSyncEngine(
     @Volatile private var peerTables: Pair<String?, Set<String>>? = null
 
     private fun peerKnows(table: String): Boolean {
+        val pid = peer.value
+        if (!tableHere(table, pid)) return false
         if (table !in OPTIONAL_TABLES) return true
         val known = peerTables ?: return false
-        return known.first == peer.value && table in known.second
+        return known.first == pid && table in known.second
+    }
+
+    /** Whether THIS side syncs [table] with [peerId] at all: a peer-scoped one only with its own one, and while ready. */
+    private fun tableHere(table: String, peerId: String?): Boolean {
+        if (table != PEER_SCOPED_TABLE) return true
+        val scoped = peerScoped ?: return false
+        return peerId != null && scoped.table == table && scoped.ready(peerId)
     }
 
     private suspend fun handleHello(env: Envelope) {
         val hello = SyncHello.fromPayload(env.payload)
-        peerTables = peer.value to hello.since.keys.toSet()
+        // The link's peer id is derived asynchronously: right after connecting, the peer's hello can
+        // arrive while it is still null. Keyed to null, the announced tables never counted for the
+        // real peer, so nothing optional (plugins, Nuvio repos, own sources) was pushed to it until
+        // the next connection. Wait briefly for the id instead.
+        val pid = peer.value ?: withTimeoutOrNull(PEER_ID_WAIT_MS) { peer.filterNotNull().first() }
+        peerTables = pid to hello.since.keys.toSet()
+        log("hello from the peer: ${hello.since.size} tables")
         var overallHwm = 0L
         for (table in TABLES) {
             if (!peerKnows(table)) continue
@@ -169,6 +205,16 @@ class CompanionSyncEngine(
 
     private suspend fun handleRows(env: Envelope) {
         val syncRows = SyncRows.fromPayload(env.payload)
+        log("received ${syncRows.rows.size} ${syncRows.table}")
+        if (syncRows.table == PEER_SCOPED_TABLE) {
+            val pid = peer.value ?: return
+            if (!tableHere(syncRows.table, pid)) return
+            val scoped = peerScoped ?: return
+            var all = true
+            syncRows.rows.forEach { row -> if (!scoped.apply(row, pid)) all = false }
+            if (!syncRows.more && all) cursors.setPulled(pid, syncRows.table, syncRows.hwm)
+            return
+        }
         syncRows.rows.forEach { row -> apply.apply(syncRows.table, row) }
         if (!syncRows.more) {
             // R2: the pull cursor advances per-table from THAT table's final page hwm, not from
@@ -179,6 +225,7 @@ class CompanionSyncEngine(
     }
 
     private suspend fun pushIncremental() {
+        log("local change: pushing to ${if (peer.value == null) "no peer" else "the peer"}")
         for (table in TABLES) {
             if (peerKnows(table)) pushIncrementalTable(table)
         }
@@ -210,8 +257,14 @@ class CompanionSyncEngine(
      * MUST only be called while holding [pushMutex] -- see [pushTable]/[pushIncrementalTable].
      */
     private suspend fun sendAndAdvance(table: String, cursor: Long): Long {
-        val rows = source.changedSince(table, cursor)
+        val rows = if (table == PEER_SCOPED_TABLE) {
+            val pid = peer.value ?: return 0L
+            peerScoped?.changedSince(cursor, pid).orEmpty()
+        } else {
+            source.changedSince(table, cursor)
+        }
         if (rows.isEmpty()) return 0L
+        log("sending ${rows.size} $table")
 
         val pages = chunkRows(rows)
         for ((index, page) in pages.withIndex()) {
@@ -231,14 +284,20 @@ class CompanionSyncEngine(
          * `when(table)` cases. Mirrors (doesn't share: that one is `private`)
          * `com.arkiv.player.data.db.SyncTriggers.TABLES`.
          */
-        val TABLES = listOf("items", "episodes", "playback", "skip_markers", "live_favorites", "live_recents", "own_live_sources")
+        val TABLES = listOf("items", "episodes", "playback", "skip_markers", "live_favorites", "live_recents", "own_live_sources", "plugin_installs", "nuvio_repos", PEER_SCOPED_TABLE)
 
         /**
          * Tables added after the first six. An older peer's SyncApply throws on a table it does not
          * know, so these are pushed only to a peer whose hello lists them (see [peerKnows]).
          */
-        val OPTIONAL_TABLES = setOf("own_live_sources")
+        val OPTIONAL_TABLES = setOf("own_live_sources", "plugin_installs", "nuvio_repos", PEER_SCOPED_TABLE)
+
+        /** Plugin passwords, sealed per peer ([PeerScopedTable]); after `plugin_installs`, whose rows it needs. */
+        const val PEER_SCOPED_TABLE = "plugin_secrets"
 
         const val PUSH_DEBOUNCE_MS = 3000L
+
+        /** How long a peer's hello waits for the link to say who that peer is. */
+        const val PEER_ID_WAIT_MS = 5000L
     }
 }
