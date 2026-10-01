@@ -36,4 +36,10 @@ biblioteca, descargas) en `.../data`. El emparejamiento celular↔TV por LAN est
 
 ## Licencia
 
-El código de este repositorio se publica bajo la [licencia Apache 2.0](LICENSE). Copyright 2026 kinotvapp. Kino no incluye ni concede derechos sobre los contenidos de terceros a los que se conecta.
+El código de Kino es visible, pero de uso restringido: lo puedes leer, aprender de él, compilarlo y usarlo en tus propios dispositivos sin fines comerciales, y proponer cambios con un pull request. No puedes copiarlo en otra app, redistribuirlo (modificado o no) ni usarlo comercialmente. Las condiciones exactas están en [LICENSE](LICENSE): la [PolyForm Strict 1.0.0](https://polyformproject.org/licenses/strict/1.0.0) más unos permisos adicionales. Copyright 2026 Kino (kinotvapp).
+
+- El kit de plugins (`plugins/sdk/`), el plugin de ejemplo (`plugins/archive-org/`) y la guía de plugins (`docs/plugins/`) son **MIT**: úsalos libremente para hacer tus propios plugins.
+- El código de terceros conserva su licencia; la lista está en [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+- Las versiones publicadas antes con licencia Apache 2.0 siguen bajo esa licencia.
+
+Kino no incluye ni concede derechos sobre los contenidos de terceros a los que se conecta.
