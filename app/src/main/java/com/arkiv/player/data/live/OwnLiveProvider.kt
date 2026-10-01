@@ -65,6 +65,8 @@ internal class OwnLiveProvider(
     private val lock = Mutex()
     private val playlistSources = HashMap<String, PlaylistSource>()
     private val guides = HashMap<String, Pair<Long, XmltvGuide?>>()
+    /** Pasted lists: the text digest their saved copy was last read for (source id -> digest). */
+    private val pastedLoaded = HashMap<String, String?>()
     @Volatile private var snapshot: Snapshot? = null
     @Volatile private var guideAvailable = false
     private val _notice = MutableStateFlow<String?>(null)
@@ -182,6 +184,7 @@ internal class OwnLiveProvider(
         val listIds = lists.map { it.id }.toSet()
         playlistSources.keys.retainAll(listIds)
         guides.keys.retainAll(listIds)
+        pastedLoaded.keys.retainAll(listIds)
         var categoriesLeft = PluginLiveContract.MAX_CATEGORIES_PER_PROVIDER - categories.size
         var channelsLeft = PluginLiveContract.MAX_CHANNELS_PER_PROVIDER - singles.size
         val built = ArrayList<PlaylistGroups>()
@@ -205,8 +208,11 @@ internal class OwnLiveProvider(
                 guides.remove(src.id)
             }
             if (categoriesLeft <= 0 || channelsLeft <= 0) break
+            // A pasted list keeps its url (and so its key and channel codes) when its text changes: the saved
+            // copy is still "fresh", so new text is read at once instead of after the refresh hours.
+            val newText = OwnPastedList.isPasted(src.url) && pastedLoaded[src.id] != src.contentDigest
             val result = try {
-                source.entries(force, maxEntries = channelsLeft)
+                source.entries(force || newText, maxEntries = channelsLeft).also { pastedLoaded[src.id] = src.contentDigest }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
