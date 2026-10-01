@@ -183,6 +183,60 @@ class RemuxHlsServerTest {
     }
 
     @Test
+    fun `an earlier remux is held back until the new run's header shows it is the same stream`() {
+        val remux = GrowingRemux()
+        val index = Fmp4Fixture.indexOf(remux.source)
+        val full = RemuxHls.segments(index.fragments, complete = true)
+        val leftover = File(tmp.root, "x.mp4.prev").apply { writeBytes(remux.bytes.copyOfRange(0, index.fragments[full[0].last].end.toInt())) }
+        val reusing = RemuxHlsServer(lanIp = { "127.0.0.1" }, leftoverOf = { if (it == "key") leftover else null })
+        try {
+            reusing.serve("key", remux.locate)
+            // The new run has written nothing yet: nothing is served, not even the head.
+            assertEquals(0.0, reusing.availableSec("key"), 0.0)
+            remux.grow(index.initEnd.toInt())
+            assertEquals(full[0].durationSec, reusing.availableSec("key"), 1e-6)
+        } finally {
+            reusing.stop()
+        }
+    }
+
+    @Test
+    fun `an earlier remux whose codec setup differs from the new run's is dropped`() {
+        val remux = GrowingRemux()
+        val index = Fmp4Fixture.indexOf(remux.source)
+        val full = RemuxHls.segments(index.fragments, complete = true)
+        val prev = remux.bytes.copyOfRange(0, index.fragments[full[0].last].end.toInt())
+        // One byte of the earlier remux's avcC changed: another decoder setup, another stream.
+        val avcc = String(prev, Charsets.ISO_8859_1).indexOf("avcC")
+        assertTrue(avcc > 0)
+        prev[avcc + 6] = (prev[avcc + 6] + 1).toByte()
+        val leftover = File(tmp.root, "x.mp4.prev").apply { writeBytes(prev) }
+        val reusing = RemuxHlsServer(lanIp = { "127.0.0.1" }, leftoverOf = { if (it == "key") leftover else null })
+        try {
+            remux.grow(index.initEnd.toInt())
+            reusing.serve("key", remux.locate)
+            // Only the new run is served, and it has no whole segment yet.
+            assertEquals(0.0, reusing.availableSec("key"), 0.0)
+            remux.grow(remux.bytes.size)
+            assertTrue(reusing.availableSec("key") > 0.0)
+        } finally {
+            reusing.stop()
+        }
+    }
+
+    @Test
+    fun `a remux nobody has planned a cast of is never paced`() {
+        val remux = GrowingRemux()
+        remux.grow(remux.bytes.size)
+        server.serve("key", remux.locate)
+        assertFalse(server.remuxShouldWait("key"))
+        assertFalse(server.remuxShouldWait("another"))
+        // Planned at 0:00 with an 8 s remux: nowhere near the lead, keeps going.
+        server.planStart("key", 0L)
+        assertFalse(server.remuxShouldWait("key"))
+    }
+
+    @Test
     fun `an earlier remux is only reused for its own key, and only when it holds something playable`() {
         val remux = GrowingRemux()
         val index = Fmp4Fixture.indexOf(remux.source)
@@ -197,6 +251,7 @@ class RemuxHlsServerTest {
             assertEquals(0.0, reusing.availableSec("other"), 0.0)
             reusing.serve("junk", remux.locate)
             assertEquals(0.0, reusing.availableSec("junk"), 0.0)
+            remux.grow(index.initEnd.toInt())
             reusing.serve("key", remux.locate)
             assertTrue(reusing.availableSec("key") > 0.0)
         } finally {

@@ -38,10 +38,14 @@ class RemuxHlsServer(
      * catches up with it -- see [RemuxHls.Splice].
      */
     private val leftoverOf: (key: String) -> File? = { null },
+    private val clock: () -> Long = System::currentTimeMillis,
 ) {
 
     /** A finished-for-good prefix of the remux, from an earlier cast. Indexed once: it never grows. */
-    private class Head(val file: File, val index: Fmp4Index)
+    private class Head(val file: File, val index: Fmp4Index) {
+        /** Where the head ends in the title: it never grows. */
+        val endSec: Double = index.fragments.sumOf { it.durationSec }
+    }
 
     private class Source(
         val key: String,
@@ -54,8 +58,31 @@ class RemuxHlsServer(
         @Volatile var complete = false
         @Volatile var splice: RemuxHls.Splice = if (head == null) RemuxHls.Splice.Joined(0, 0) else RemuxHls.Splice.Waiting
 
-        /** What is served right now, fragment by fragment. */
-        fun pieces(): List<RemuxHls.Piece> = RemuxHls.timeline(head?.index?.fragments.orEmpty(), index.fragments, splice)
+        /**
+         * Whether the head may be served: null until the new run has written its own header,
+         * then true (a head whose tracks differ is dropped instead, see [trustHead]).
+         */
+        @Volatile var headTrusted: Boolean? = if (head == null) true else null
+
+        /** Where the cast was told to start, in seconds of the title; null until it is. */
+        @Volatile var plannedStartSec: Double? = null
+
+        /** Start of the last segment the TV asked for, in seconds of the title. */
+        @Volatile var lastRequestedSec: Double? = null
+
+        /** Seconds this run of the remux has written (it always starts at 0:00). */
+        @Volatile var mainSec: Double = 0.0
+
+        @Volatile var pacingPaused = false
+        @Volatile var lastPaceCheckAt = Long.MIN_VALUE / 2
+
+        /** The first playlist the TV asks for after a (re)load is logged, not every refresh of it. */
+        @Volatile var playlistLogged = false
+
+        /** What is served right now, fragment by fragment. Nothing while an unchecked head waits. */
+        fun pieces(): List<RemuxHls.Piece> =
+            if (headTrusted == null) emptyList()
+            else RemuxHls.timeline(head?.index?.fragments.orEmpty(), index.fragments, splice)
 
         /** Finished: the new remux is done AND it is the one being served past the head. */
         fun timelineComplete(): Boolean = complete && splice != RemuxHls.Splice.Waiting
@@ -108,6 +135,45 @@ class RemuxHlsServer(
         return s.segments().sumOf { it.durationSec }
     }
 
+    /**
+     * The cast of [key] is about to be loaded from [startMs]: the TV will ask from there (see
+     * [RemuxHls.mediaPlaylist]'s start), and the remux is paced against it until the TV asks for a
+     * segment of its own (see [remuxShouldWait]).
+     */
+    fun planStart(key: String, startMs: Long) {
+        val s = source?.takeIf { it.key == key } ?: return
+        s.plannedStartSec = startMs.coerceAtLeast(0L) / 1000.0
+        s.lastRequestedSec = null
+        s.playlistLogged = false
+    }
+
+    /**
+     * Should the remux of [key] hold off for now? Asked by its input ([PacedDataSource]) while it
+     * reads: yes once it is [RemuxPacing.MAX_LEAD_SEC] ahead of the TV. Never for a remux this
+     * server is not casting. Re-indexes at most once a second.
+     */
+    fun remuxShouldWait(key: String): Boolean {
+        val s = source?.takeIf { it.key == key } ?: return false
+        val now = clock()
+        if (now - s.lastPaceCheckAt < PACE_CHECK_MS) return s.pacingPaused
+        s.lastPaceCheckAt = now
+        refresh(s)
+        val anchor = s.lastRequestedSec ?: s.plannedStartSec
+        val playable = s.segments().sumOf { it.durationSec }
+        val headEnd = s.head?.takeIf { s.splice == RemuxHls.Splice.Waiting }?.endSec ?: 0.0
+        val pause = RemuxPacing.shouldPause(anchor, s.mainSec, playable, headEnd, s.pacingPaused)
+        if (pause != s.pacingPaused) {
+            s.pacingPaused = pause
+            com.arkiv.player.cast.CastDiag.i(
+                "remux ${if (pause) "PAUSED" else "resumed"} · TV at ${fmt(anchor)}s, remux at ${fmt(s.mainSec)}s, " +
+                    "playable to ${fmt(playable)}s" + (if (headEnd > 0) ", earlier remux to ${fmt(headEnd)}s" else ""),
+            )
+        }
+        return pause
+    }
+
+    private fun fmt(sec: Double?): String = sec?.let { String.format(java.util.Locale.US, "%.0f", it) } ?: "?"
+
     /** Has [key]'s remux finished, as of the last look? */
     fun isComplete(key: String): Boolean = source?.takeIf { it.key == key }?.timelineComplete() == true
 
@@ -148,7 +214,29 @@ class RemuxHlsServer(
             }
         }.onFailure { log("could not index ${file.name}: $it") }
         s.complete = complete
+        s.mainSec = s.index.fragments.sumOf { it.durationSec }
+        trustHead(s)
         joinHead(s)
+    }
+
+    /**
+     * Decides, once the new run has written its header, whether the head may be served with it.
+     *
+     * A reconnect that reused an earlier remux showed NO picture and the receiver gave up at 63 s
+     * (2026-10-01, cause not isolated). One thing that must hold for the head and the new run to
+     * be one stream is the init segment: the head's is served for both, so the new run's tracks
+     * have to match it, codec configuration (the whole sample entry) included. Until the new run's
+     * header is on disk nothing is served (a second or two); a mismatch drops the head.
+     */
+    private fun trustHead(s: Source) {
+        val head = s.head ?: return
+        if (s.headTrusted != null || s.index.tracks.isEmpty()) return
+        val same = s.index.tracks == head.index.tracks
+        s.headTrusted = true
+        if (!same) {
+            s.splice = RemuxHls.Splice.Impossible
+            log("the earlier remux's tracks differ from the new one's: serving the new one alone")
+        }
     }
 
     /** Once the new remux reaches the end of the head, decides once where it takes over. */
@@ -220,6 +308,7 @@ class RemuxHlsServer(
         }
         refresh(s)
         val head = method == "HEAD"
+        val t0 = clock()
         when (val name = route.name) {
             "master.m3u8" -> sendText(out, RemuxHls.masterPlaylist(s.initIndex().tracks, s.pieces().map { it.fragment }), head)
             "media.m3u8" -> {
@@ -227,18 +316,35 @@ class RemuxHlsServer(
                 if (s.initIndex().initEnd < 0 || segments.isEmpty()) {
                     out.write(response("404 Not Found", "text/plain", 0))
                 } else {
+                    if (!s.playlistLogged) {
+                        s.playlistLogged = true
+                        com.arkiv.player.cast.CastDiag.i(
+                            "TV read the playlist · ${segments.size} segments, ${fmt(segments.sumOf { it.durationSec })}s, " +
+                                "start ${fmt(s.plannedStartSec)}s, ended=${s.timelineComplete()}",
+                        )
+                    }
                     sendText(out, RemuxHls.mediaPlaylist(segments, s.timelineComplete()), head)
                 }
             }
             "init.mp4" -> sendInit(out, s, head)
             else -> {
                 val n = RemuxHls.segmentNumber(name)
-                val segment = n?.let { s.segments().getOrNull(it) }
-                if (segment == null) {
+                val segments = s.segments()
+                val segment = n?.let { segments.getOrNull(it) }
+                if (n == null || segment == null) {
                     log("-> 404 segment $name")
+                    com.arkiv.player.cast.CastDiag.w("TV asked for $name: not there (${segments.size} segments) → 404")
                     out.write(response("404 Not Found", "text/plain", 0))
                 } else {
-                    sendSegment(out, s, segment, head)
+                    val at = RemuxHls.startOf(segments, n)
+                    if (!head) s.lastRequestedSec = at
+                    val sent = runCatching { sendSegment(out, s, segment, head) }
+                    com.arkiv.player.cast.CastDiag.i(
+                        "TV $method $name at ${fmt(at)}s (${String.format(java.util.Locale.US, "%.1f", segment.durationSec)}s) " +
+                            "in ${clock() - t0}ms" + (sent.exceptionOrNull()?.let { " FAILED: ${it.javaClass.simpleName}" } ?: "") +
+                            " · remux at ${fmt(s.mainSec)}s",
+                    )
+                    sent.getOrThrow()
                 }
             }
         }
@@ -292,6 +398,11 @@ class RemuxHlsServer(
             runCatching { headRaf?.close() }
             runCatching { mainRaf?.close() }
         }
+    }
+
+    private companion object {
+        /** How often the pacing re-indexes the remux to decide (see [remuxShouldWait]). */
+        const val PACE_CHECK_MS = 1_000L
     }
 
     private fun response(status: String, type: String, length: Long, extra: String = ""): ByteArray =
@@ -377,6 +488,13 @@ object RemuxHls {
         }
         if (complete && first < fragments.size) out += Segment(first, fragments.size - 1, acc)
         return out
+    }
+
+    /** Seconds into the title where segment [n] of [segments] begins. */
+    fun startOf(segments: List<Segment>, n: Int): Double {
+        var at = 0.0
+        for (i in 0 until n.coerceAtMost(segments.size)) at += segments[i].durationSec
+        return at
     }
 
     fun mediaPlaylist(segments: List<Segment>, complete: Boolean): String = buildString {

@@ -2,7 +2,13 @@ package com.arkiv.player.playback
 
 import android.content.Context
 import android.util.Log
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.extractor.DefaultExtractorsFactory
+import androidx.media3.extractor.amr.AmrExtractor
+import androidx.media3.extractor.ts.AdtsExtractor
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.common.util.Clock
 import androidx.media3.datasource.DataSourceBitmapLoader
@@ -64,6 +70,13 @@ class TsRemuxer(
      * completed once (`remux cancelled, partial file removed` at 44 s, then `remux starts` again).
      */
     private val scope: CoroutineScope,
+    /**
+     * Whether the remux filed under a key should hold off reading its input for now: how a cast
+     * keeps the phone from downloading the title far ahead of the TV over the radio the TV needs
+     * (see [RemuxPacing]). Wired to `RemuxHlsServer.remuxShouldWait`; never true for a remux that
+     * is not being cast.
+     */
+    private val pace: (key: String) -> Boolean = { false },
 ) {
 
     private val folder = File(cacheDir, RemuxPolicy.FOLDER)
@@ -145,21 +158,25 @@ class TsRemuxer(
     }
 
     /**
-     * Where Transformer reads the input from: its default, except that with an [audio] choice the
-     * audio track is picked by [AudioPinnedTrackSelector] instead of by Transformer's own selector.
-     * Null keeps the default factory untouched.
+     * Where Transformer reads the input from. Its own media source setup (the same extractor flags
+     * `ExoPlayerAssetLoader.Factory` uses), with two changes: the input is read through
+     * [PacedDataSource], which holds the reads while [pace] says the cast is far enough ahead, and
+     * with an [audio] choice the audio track is picked by [AudioPinnedTrackSelector] instead of
+     * Transformer's own selector.
      */
-    private fun assetLoaderFactory(audio: CastAudioChoice?): AssetLoader.Factory? {
-        audio ?: return null
-        return DefaultAssetLoaderFactory(
-            context,
-            DefaultDecoderFactory.Builder(context).build(),
-            Clock.DEFAULT,
-            // Null = the media source Transformer builds by itself (ExoPlayerAssetLoader.Factory).
-            null,
-            DataSourceBitmapLoader.Builder(context).build(),
-            { ctx -> AudioPinnedTrackSelector(ctx, audio) },
-        )
+    private fun assetLoaderFactory(audio: CastAudioChoice?, key: String): AssetLoader.Factory {
+        val input = PacedDataSource.Factory(DefaultDataSource.Factory(context)) { pace(key) }
+        val extractors = DefaultExtractorsFactory()
+            .setAdtsExtractorFlags(AdtsExtractor.FLAG_ENABLE_CONSTANT_BITRATE_SEEKING)
+            .setAmrExtractorFlags(AmrExtractor.FLAG_ENABLE_CONSTANT_BITRATE_SEEKING)
+        val sources = DefaultMediaSourceFactory(input, extractors).setEnableClippingInMediaPeriod(true)
+        val decoders = DefaultDecoderFactory.Builder(context).build()
+        val bitmaps = DataSourceBitmapLoader.Builder(context).build()
+        return if (audio == null) {
+            DefaultAssetLoaderFactory(context, decoders, Clock.DEFAULT, sources, bitmaps)
+        } else {
+            DefaultAssetLoaderFactory(context, decoders, Clock.DEFAULT, sources, bitmaps) { ctx -> AudioPinnedTrackSelector(ctx, audio) }
+        }
     }
 
     /** The export itself. One per key at a time; see [remux]. */
@@ -196,7 +213,13 @@ class TsRemuxer(
                         // receiver can start on the first while the rest is still arriving.
                         InAppFragmentedMp4Muxer.Factory(FRAGMENT_MS),
                     )
-                    .apply { assetLoaderFactory(audio)?.let { setAssetLoaderFactory(it) } }
+                    .setAssetLoaderFactory(assetLoaderFactory(audio, key))
+                    // No "no output sample in 10 s" abort. Transformer's watchdog killed remuxes
+                    // whose CDN took 7 s to open (`Muxer error`, `Abort: no output sample written
+                    // in the last 10000 milliseconds`, 2026-10-01), and pacing (above) holds the
+                    // input on purpose for minutes. A dead input still fails: its reads time out
+                    // and the loader gives up after its retries.
+                    .setMaxDelayBetweenMuxerSamplesMs(C.TIME_UNSET)
                     .addListener(object : Transformer.Listener {
                         override fun onCompleted(composition: Composition, result: ExportResult) {
                             val ok = runCatching { partial.renameTo(destination) }.getOrDefault(false)

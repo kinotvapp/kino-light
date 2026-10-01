@@ -33,6 +33,12 @@ class Fmp4Index {
         val height: Int = 0,
         /** `trex.default_sample_duration`, the last fallback for a run that states none. */
         val defaultSampleDuration: Long = 0,
+        /**
+         * Hash of the whole first sample entry (codec configuration included: `avcC`/`hvcC`,
+         * `esds`), so two remuxes are only taken for the same stream when their decoders would be
+         * set up identically.
+         */
+        val sampleEntryHash: Int = 0,
     )
 
     /** One track's share of a fragment: how long it lasts and when it starts, in its timescale. */
@@ -250,6 +256,7 @@ class Fmp4Index {
         var codec: String? = null
         var width = 0
         var height = 0
+        var entryHash = 0
         children(b, from, to) { type, s, e ->
             when (type) {
                 "tkhd" -> id = s32(b, s + if ((b[s].toInt() and 0xFF) == 1) 20 else 12)
@@ -264,6 +271,7 @@ class Fmp4Index {
                                     val entryStart = ss + 8
                                     entry = fourcc(b, entryStart + 4)
                                     val entryEnd = minOf(entryStart + u32(b, entryStart).toInt(), se)
+                                    entryHash = b.copyOfRange(entryStart, entryEnd.coerceAtLeast(entryStart)).contentHashCode()
                                     val body = entryStart + 8
                                     if (handler == "vide" || entry in VIDEO_ENTRIES) {
                                         // VisualSampleEntry: 6 reserved + 2 index + 16 pre-defined, then width/height,
@@ -285,7 +293,7 @@ class Fmp4Index {
             }
         }
         if (id == 0) return null
-        return Track(id, handler, timescale, entry, codec, width, height)
+        return Track(id, handler, timescale, entry, codec, width, height, sampleEntryHash = entryHash)
     }
 
     private fun videoCodec(b: ByteArray, entry: String, from: Int, to: Int): String? {

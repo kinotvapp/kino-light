@@ -1158,7 +1158,7 @@ private fun PlayerContent(
                         startPositionMs,
                         graph.remuxHlsServer.availableSec(key),
                         graph.remuxHlsServer.isComplete(key),
-                    )
+                    ).also { graph.remuxHlsServer.planStart(key, it) }
                 }
                 remuxLocal != null || isPluginLiveCast(item) -> 0L
                 else -> startPositionMs
@@ -1424,6 +1424,8 @@ private fun PlayerContent(
                     if (remuxInFlight != key) return@launch
                     graph.tsRemuxer.inProgress(key) ?: return@repeat
                     graph.remuxHlsServer.serve(key) { graph.tsRemuxer.inProgress(key) }
+                    // Paced against where the TV will start, until the TV asks on its own.
+                    graph.remuxHlsServer.planStart(key, resumeAt)
                     val ready = graph.remuxHlsServer.availableSec(key)
                     val lead = com.arkiv.player.playback.RemuxHls.START_LEAD_SEC
                     val from = com.arkiv.player.playback.RemuxHls.startIfCovered(resumeAt, ready, lead)

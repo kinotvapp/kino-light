@@ -1591,7 +1591,13 @@ class AppGraph(context: Context) {
     }
 
     val tsRemuxer: com.arkiv.player.playback.TsRemuxer by lazy {
-        com.arkiv.player.playback.TsRemuxer(appContext, appContext.cacheDir, applicationScope)
+        com.arkiv.player.playback.TsRemuxer(
+            appContext,
+            appContext.cacheDir,
+            applicationScope,
+            // A remux being cast only runs a bounded lead ahead of the TV (RemuxPacing).
+            pace = { key -> remuxHlsServer.remuxShouldWait(key) },
+        )
     }
 
     /** The device's LAN IP (see [com.arkiv.player.playback.LanIp]): needed by the live channel
