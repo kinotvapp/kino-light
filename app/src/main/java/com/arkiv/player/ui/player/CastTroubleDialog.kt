@@ -16,6 +16,29 @@ import com.arkiv.player.cast.CastSessionManager
 import kotlinx.coroutines.delay
 
 /**
+ * Whether the automatic "Nueva versión" prompt has to wait: while a cast session is up or the
+ * cast trouble dialog is showing. The OTA dialog once covered "Se cortó en el Chromecast" (2026-10-01),
+ * leaving the person unable to answer it; the cast wins, the update is offered once it is over.
+ */
+internal fun updatePromptWaitsForCast(casting: Boolean, troubleShown: Boolean): Boolean = casting || troubleShown
+
+/** [updatePromptWaitsForCast] for the app's cast session, as state. False without one (a TV, no Play services). */
+@Composable
+fun rememberUpdatePromptWaitsForCast(graph: AppGraph): Boolean {
+    var session by remember { mutableStateOf<CastSessionManager?>(graph.castSession) }
+    LaunchedEffect(session == null) {
+        while (session == null) {
+            delay(3_000)
+            session = graph.castSession
+        }
+    }
+    val s = session ?: return false
+    val casting by s.casting.collectAsStateWithLifecycle()
+    val trouble by s.trouble.collectAsStateWithLifecycle()
+    return updatePromptWaitsForCast(casting, trouble?.retrying == false)
+}
+
+/**
  * What the phone says when the Chromecast stops playing by itself (see `CastIdleWatch`).
  *
  * Mounted once at the app root, not inside the player: a cast keeps going with the player closed,

@@ -319,8 +319,10 @@ class MainActivity : AppCompatActivity() {
                     androidx.compose.runtime.LaunchedEffect(Unit) { graph.promoteDueUpdate() }
                     val updateAvailable by graph.updateInfo.collectAsState()
                     var dismissed by remember { mutableStateOf(false) }
+                    // Never over a cast or its "Se cortó en el Chromecast" dialog: offered after.
+                    val waitForCast = com.arkiv.player.ui.player.rememberUpdatePromptWaitsForCast(graph)
                     updateAvailable?.let { info ->
-                        if (!dismissed) {
+                        if (!dismissed && !waitForCast) {
                             com.arkiv.player.ui.update.UpdateDialog(
                                 info = info,
                                 graph = graph,
