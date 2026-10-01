@@ -236,6 +236,7 @@ class LiveHlsProxy(
             val myHost = s.localAddress.hostAddress ?: "127.0.0.1"
             val reader = s.getInputStream().bufferedReader()
             val line = reader.readLine() ?: return@runCatching
+            val method = line.substringBefore(' ')
             val path = line.split(" ").getOrNull(1) ?: return@runCatching
             val output = s.getOutputStream()
             // For the DLNA debugging log only: who is asking, and how. The headers are read just to log them
@@ -254,6 +255,13 @@ class LiveHlsProxy(
             val fromRenderer = com.arkiv.player.dlna.DlnaLog.lanHit("live-proxy", s.inetAddress?.hostAddress, line, range, userAgent)
             rendererRequest = fromRenderer
             val startedAt = android.os.SystemClock.elapsedRealtime()
+            // The Cast web receiver (origin https://www.gstatic.com) fetches the playlist and segments through
+            // Chromium, which may preflight them. A preflight carries no credentials and gets no content, only the
+            // CORS answer, so it is answered before the token check -- same as RemuxHlsServer and ArchiveCacheProxy.
+            if (method == "OPTIONS") {
+                output.write("HTTP/1.1 204 No Content\r\n${CORS_HEADERS}Content-Length: 0\r\n\r\n".toByteArray())
+                return@runCatching
+            }
             // Access control: since start() started listening on the whole LAN (see its KDoc), ANY
             // route -playlist or segment- must carry this session's token before anything gets
             // resolved. Clean, generic rejection (403, no body): whoever is scanning the port
@@ -267,7 +275,7 @@ class LiveHlsProxy(
                             "(the TV probably dropped the query string from a playlist URL)",
                     )
                 }
-                output.write("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n".toByteArray())
+                output.write("HTTP/1.1 403 Forbidden\r\n${CORS_HEADERS}Content-Length: 0\r\n\r\n".toByteArray())
                 return@runCatching
             }
             when {
@@ -275,7 +283,7 @@ class LiveHlsProxy(
                 path.startsWith("/seg?") -> serveSegment(path, output)
                 else -> {
                     if (fromRenderer) com.arkiv.player.dlna.DlnaLog.w("live-proxy: 404 for unknown route ${com.arkiv.player.dlna.DlnaXml.safeUrl(path)}")
-                    output.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n".toByteArray())
+                    output.write("HTTP/1.1 404 Not Found\r\n${CORS_HEADERS}Content-Length: 0\r\n\r\n".toByteArray())
                 }
             }
             if (fromRenderer) {
@@ -447,7 +455,8 @@ class LiveHlsProxy(
         // has to stay on the proxy's side or it's lost. It's the same problem ArchiveCacheProxy
         // solved by recording the last HTTP code per origin.
         if (reason.isNotEmpty()) LiveLog.w("502 to the player: $reason")
-        output.write("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n".toByteArray())
+        // With the CORS headers, so the Cast receiver sees the 502 (and retries) instead of an opaque ERR_FAILED.
+        output.write("HTTP/1.1 502 Bad Gateway\r\n${CORS_HEADERS}Content-Length: 0\r\n\r\n".toByteArray())
     }
 
     private fun servePlaylist(output: java.io.OutputStream, myHost: String) {
@@ -577,7 +586,7 @@ class LiveHlsProxy(
             LiveLog.i(h.summary())
         }
         output.write(
-            ("HTTP/1.1 200 OK\r\nContent-Type: application/vnd.apple.mpegurl\r\n" +
+            ("HTTP/1.1 200 OK\r\nContent-Type: application/vnd.apple.mpegurl\r\n" + CORS_HEADERS +
                 "Content-Length: ${bytes.size}\r\n\r\n").toByteArray()
         )
         output.write(bytes)
@@ -604,7 +613,7 @@ class LiveHlsProxy(
         val u = URLDecoder.decode(path.substringAfter("u=").substringBefore("&"), "UTF-8")
         if (issuedSegments[u] == null) {
             LiveLog.w("segment refused: not a URL this proxy put in a playlist (${com.arkiv.player.dlna.DlnaXml.safeUrl(u)})")
-            output.write("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray())
+            output.write("HTTP/1.1 403 Forbidden\r\n${CORS_HEADERS}Content-Length: 0\r\nConnection: close\r\n\r\n".toByteArray())
             output.flush()
             return
         }
@@ -614,7 +623,7 @@ class LiveHlsProxy(
         val gotFirstByteAt = System.currentTimeMillis()
         // The header is written ONLY HERE, with a 200 in hand. Once written it can't be turned
         // into an error: that's why this can't happen before knowing there's a body.
-        output.write("HTTP/1.1 200 OK\r\nContent-Type: video/mp2t\r\n\r\n".toByteArray())
+        output.write("HTTP/1.1 200 OK\r\nContent-Type: video/mp2t\r\n$CORS_HEADERS\r\n".toByteArray())
         // Bytes are counted while copying, not from Content-Length: the CDN can cut off partway
         // and that looks like a short segment, which is exactly what leaves the player starved.
         // OkHttp only frees the connection once the body is read to the end; a cut copy would otherwise leak it.
@@ -797,6 +806,18 @@ class LiveHlsProxy(
         const val UA = "Ranger/4.9.4-17294ac0"
         private const val APP = "com.android.msandroid"
         private const val APP_VERSION = "49902"
+
+        /**
+         * Every answer carries these. The Default Media Receiver (a web page served from https://www.gstatic.com)
+         * loads HLS through Chromium's fetch, which needs CORS: without them the TV got the playlist's 200 but
+         * Chromium reported ERR_FAILED and never asked for a segment, so a live channel could never be cast.
+         * The local player and DLNA renderers ignore them. Same set as [PluginCastProxy] and [ArchiveCacheProxy].
+         */
+        private const val CORS_HEADERS =
+            "Access-Control-Allow-Origin: *\r\n" +
+                "Access-Control-Allow-Headers: *, range, content-type\r\n" +
+                "Access-Control-Allow-Methods: GET, HEAD, OPTIONS\r\n" +
+                "Access-Control-Expose-Headers: Content-Length, Content-Range, Accept-Ranges\r\n"
 
         /** How many playlist URLs [issuedSegments] remembers: hundreds of playlists' worth of segments. */
         private const val ISSUED_SEGMENTS_MAX = 4096

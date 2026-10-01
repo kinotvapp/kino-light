@@ -962,4 +962,56 @@ class LiveHlsProxyTest {
         assertTrue(body.contains("#EXT-X-MEDIA-SEQUENCE:7"))
         proxy.stop(); bad.shutdown(); good.shutdown()
     }
+
+    /**
+     * The Cast web receiver (origin https://www.gstatic.com) fetches HLS through Chromium: without CORS on
+     * every answer it got the playlist's 200, reported ERR_FAILED and never asked for a segment. Checks the
+     * playlist, the segment and a refusal all carry Access-Control-Allow-Origin, that a preflight is answered,
+     * and that the segment URLs in the playlist are absolute proxy URLs carrying the token.
+     */
+    @Test
+    fun `every answer carries CORS and the preflight is answered, for the Cast web receiver`() = runBlocking {
+        val upstream = MockWebServer()
+        upstream.start()
+        upstream.enqueue(MockResponse().setBody("#EXTM3U\n#EXTINF:6,\nc_1.ts\n"))
+        upstream.enqueue(MockResponse().setBody("segment-content"))
+        val proxy = LiveHlsProxy(FakeSignatures(), dns = okhttp3.Dns.SYSTEM)
+        val session = LiveSession("${upstream.hostName}:${upstream.port}",
+            "http://x/?a=1&token=${"A".repeat(32)}", "LIC", "c", 0)
+        val playlistUrl = proxy.urlFor(session)
+        val token = playlistUrl.substringAfter("t=")
+
+        val pc = URL(playlistUrl).openConnection() as HttpURLConnection
+        pc.setRequestProperty("Origin", "https://www.gstatic.com")
+        val body = pc.inputStream.bufferedReader().readText()
+        assertEquals(200, pc.responseCode)
+        assertEquals("*", pc.getHeaderField("Access-Control-Allow-Origin"))
+
+        val segment = body.lineSequence().first { !it.startsWith("#") && it.isNotBlank() }
+        assertTrue("a relative segment comes out absolute, toward the proxy", segment.startsWith("http://127.0.0.1:${proxy.port}/seg?u="))
+        assertTrue("the segment URL carries the session token", segment.endsWith("&t=$token"))
+
+        val sc = URL(segment).openConnection() as HttpURLConnection
+        assertEquals("segment-content", sc.inputStream.bufferedReader().readText())
+        assertEquals("*", sc.getHeaderField("Access-Control-Allow-Origin"))
+
+        // The preflight: answered without content, and naming the methods the receiver needs.
+        val raw = Socket("127.0.0.1", proxy.port).use { s ->
+            s.getOutputStream().write(
+                ("OPTIONS /live.m3u8?t=$token HTTP/1.1\r\nHost: x\r\nOrigin: https://www.gstatic.com\r\n" +
+                    "Access-Control-Request-Method: GET\r\nAccess-Control-Request-Headers: range\r\n\r\n").toByteArray(),
+            )
+            s.getInputStream().bufferedReader().readText()
+        }
+        assertTrue(raw, raw.startsWith("HTTP/1.1 204"))
+        assertTrue(raw, raw.contains("Access-Control-Allow-Origin: *"))
+        assertTrue(raw, raw.contains("Access-Control-Allow-Methods: GET, HEAD, OPTIONS"))
+        assertEquals("the preflight never reaches the origin", 2, upstream.requestCount)
+
+        // A refusal still says CORS, so the receiver sees a 403 instead of an opaque network failure.
+        val bad = URL("http://127.0.0.1:${proxy.port}/live.m3u8?t=wrong").openConnection() as HttpURLConnection
+        assertEquals(403, bad.responseCode)
+        assertEquals("*", bad.getHeaderField("Access-Control-Allow-Origin"))
+        proxy.stop(); upstream.shutdown()
+    }
 }
