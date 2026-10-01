@@ -1,6 +1,10 @@
 package com.arkiv.player.data
 
-/** The person's choice for the app's DECORATIVE motion (Ajustes): the drifting/zooming hero backdrop, its crossfade and the cards' focus zoom. */
+/**
+ * The person's choice for the app's DECORATIVE motion (Ajustes → App → "Efectos visuales"): the
+ * drifting/zooming hero backdrop, the crossfades, the cards' focus zoom and the TV UI's transitions
+ * (the side rail). [AUTO] until the person first flips the switch.
+ */
 enum class EffectsMode(val key: String) {
     /** Full effects unless the device proves too slow for them (see [EffectsPolicy]). */
     AUTO("auto"),
@@ -13,6 +17,13 @@ enum class EffectsMode(val key: String) {
 
     companion object {
         fun fromKey(key: String?): EffectsMode = entries.firstOrNull { it.key == key } ?: AUTO
+
+        /**
+         * The Ajustes switch is a plain on/off over what the app applies NOW ([reducedNow]): pressing it
+         * flips the effective state and pins it as the person's explicit choice, so from then on no
+         * automatic signal overrides it. Until it is first pressed the mode stays [AUTO].
+         */
+        fun toggledFrom(reducedNow: Boolean): EffectsMode = if (reducedNow) FULL else REDUCED
     }
 }
 
@@ -69,11 +80,22 @@ object EffectsPolicy {
     const val SEVERE_SHARE = 0.50f
 
     /**
-     * Whether the specs alone say "low-end". [totalRamMb] <= 0 or absurdly large means the device
-     * doesn't report it honestly: no hint either way, and the frame measurement decides.
+     * Below this Android version (8.0) the effects start reduced as well. Android 7 boxes are the oldest
+     * the app supports (minSdk 24); every one of them is a cheap, old box by now, whatever RAM it claims.
      */
-    fun staticHint(totalRamMb: Long, isLowRamDevice: Boolean): Boolean {
+    const val MIN_SMOOTH_SDK = 26
+
+    /**
+     * Whether the specs alone say "low-end": the rule behind the setting's default. Low-end when
+     *  - Android itself flags the device as low-RAM ([isLowRamDevice]: Android Go, ~1 GB devices), or
+     *  - it runs Android older than 8.0 ([sdkInt] < [MIN_SMOOTH_SDK]), or
+     *  - it reports [LOW_RAM_HINT_MB] (2 GB) of RAM or less.
+     * [totalRamMb] <= 0 or absurdly large means the device doesn't report it honestly: no RAM hint
+     * either way, and the frame measurement decides.
+     */
+    fun staticHint(totalRamMb: Long, isLowRamDevice: Boolean, sdkInt: Int = MIN_SMOOTH_SDK): Boolean {
         if (isLowRamDevice) return true
+        if (sdkInt < MIN_SMOOTH_SDK) return true
         if (totalRamMb <= 0L || totalRamMb > IMPLAUSIBLE_RAM_MB) return false
         return totalRamMb <= LOW_RAM_HINT_MB
     }

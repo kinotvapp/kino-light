@@ -11,6 +11,8 @@ import android.provider.Settings
 import android.view.FrameMetrics
 import android.view.Window
 import android.view.WindowManager
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -45,7 +47,8 @@ import kotlin.coroutines.resume
  * it. The decision is [EffectsPolicy]'s; this file is the Android side: reading the device, holding the
  * effects behind one switch, and measuring real frame times.
  *
- * Only decorative motion is covered: the hero backdrop, its crossfade and the cards' focus zoom. What
+ * Only decorative motion is covered: the hero backdrop, the backdrop crossfades, the cards' focus zoom
+ * and the TV UI's transitions (the side rail opening and closing, buttons revealing their label). What
  * stays is what a remote-control user needs to see where they are (the white focus border on every
  * card) and the player's own zoom, which is a functional control and a cheap texture transform.
  */
@@ -102,10 +105,32 @@ val LocalReducedEffects = compositionLocalOf { false }
  * D-pad press, which is what makes a slow box feel sluggish.
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
-fun cardFocusScale(reduced: Boolean): CardScale = CardDefaults.scale(focusedScale = if (reduced) 1f else TV_CARD_FOCUS_SCALE)
+fun cardFocusScale(reduced: Boolean): CardScale = CardDefaults.scale(focusedScale = cardFocusZoom(reduced))
+
+/** The focused card's scale factor behind [cardFocusScale]: [TV_CARD_FOCUS_SCALE] with the effects on, 1 (none) off. */
+fun cardFocusZoom(reduced: Boolean): Float = if (reduced) 1f else TV_CARD_FOCUS_SCALE
 
 /** The TV cards' full focus zoom (see [cardFocusScale]); layouts that must leave room for it read it here. */
 const val TV_CARD_FOCUS_SCALE = 1.08f
+
+/*
+ * The TV UI's own transitions (the side rail opening, a button revealing its label, a backdrop
+ * crossfade) go through these, so "Efectos visuales" off turns every one into an instant change in
+ * one place. Layout and end states are identical either way: only the in-between frames go.
+ */
+
+/** [full] with the effects on, an instant [snap] with them off. */
+fun <T> effectSpec(reduced: Boolean, full: FiniteAnimationSpec<T>): FiniteAnimationSpec<T> = if (reduced) snap() else full
+
+/** [full] with the effects on, an instant [snap] with them off; the switch is read from [LocalReducedEffects]. */
+@Composable
+fun <T> effectSpec(full: FiniteAnimationSpec<T>): FiniteAnimationSpec<T> = effectSpec(LocalReducedEffects.current, full)
+
+/** An `AnimatedVisibility` enter: [full] with the effects on, an instant appearance with them off. */
+fun effectEnter(reduced: Boolean, full: EnterTransition): EnterTransition = if (reduced) EnterTransition.None else full
+
+/** An `AnimatedVisibility` exit: [full] with the effects on, an instant disappearance with them off. */
+fun effectExit(reduced: Boolean, full: ExitTransition): ExitTransition = if (reduced) ExitTransition.None else full
 
 /**
  * Judges the device while the effects run, and turns them off for good if it's slow. TV Home only.
@@ -164,7 +189,7 @@ internal object DeviceEffects {
 
     fun staticHint(context: Context): Boolean {
         val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
-        return EffectsPolicy.staticHint(totalRamMb(context), am?.isLowRamDevice == true)
+        return EffectsPolicy.staticHint(totalRamMb(context), am?.isLowRamDevice == true, Build.VERSION.SDK_INT)
     }
 
     /** The accessibility "remove animations" setting (animator duration scale 0): whoever set it doesn't want motion. */

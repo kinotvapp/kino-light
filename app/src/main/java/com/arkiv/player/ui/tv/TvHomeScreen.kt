@@ -127,6 +127,8 @@ import com.arkiv.player.ui.EffectsAutoTune
 import com.arkiv.player.ui.KinoWordmark
 import com.arkiv.player.ui.LocalReducedEffects
 import com.arkiv.player.ui.backdropFadeSpec
+import com.arkiv.player.ui.effectEnter
+import com.arkiv.player.ui.effectExit
 import com.arkiv.player.ui.TV_CARD_FOCUS_SCALE
 import com.arkiv.player.ui.cardFocusScale
 import com.arkiv.player.ui.heroFallback
@@ -1673,8 +1675,8 @@ private fun TvNavButton(
             Icon(icon, contentDescription = if (isFocused) null else label)
             AnimatedVisibility(
                 visible = isFocused,
-                enter = expandHorizontally() + fadeIn(),
-                exit = shrinkHorizontally() + fadeOut(),
+                enter = effectEnter(LocalReducedEffects.current, expandHorizontally() + fadeIn()),
+                exit = effectExit(LocalReducedEffects.current, shrinkHorizontally() + fadeOut()),
             ) {
                 // The inner Row keeps the spacer and the text together: if the Spacer were
                 // outside, collapsing would leave an 8.dp gap next to the icon.

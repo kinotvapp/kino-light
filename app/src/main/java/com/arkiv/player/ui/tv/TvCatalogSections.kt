@@ -2,7 +2,6 @@ package com.arkiv.player.ui.tv
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.BringIntoViewSpec
@@ -50,6 +49,8 @@ import androidx.tv.material3.Text
 import coil.compose.AsyncImage
 import com.arkiv.player.data.gateway.CatalogItem
 import com.arkiv.player.data.gateway.CatalogSection
+import com.arkiv.player.ui.LocalReducedEffects
+import com.arkiv.player.ui.backdropFadeSpec
 import com.arkiv.player.ui.rememberGraph
 import com.arkiv.player.ui.theme.ArkivBlack
 import com.arkiv.player.ui.theme.ArkivRed
@@ -308,7 +309,7 @@ fun TvCatalogSections(
 /** Immersive background for the focused item, with the same gradients as the home. */
 @Composable
 private fun HeroBackground(imageUrl: String?) {
-    Crossfade(targetState = imageUrl, animationSpec = tween(450), label = "fondoCatalogo") { url ->
+    Crossfade(targetState = imageUrl, animationSpec = backdropFadeSpec(LocalReducedEffects.current), label = "fondoCatalogo") { url ->
         Box(Modifier.fillMaxSize()) {
             if (!url.isNullOrBlank()) {
                 AsyncImage(

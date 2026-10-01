@@ -43,6 +43,8 @@ import coil.compose.AsyncImage
 import com.arkiv.player.data.model.Episode
 import com.arkiv.player.thumbnails.ThumbnailChoice
 import com.arkiv.player.ui.detail.DetailViewModel
+import androidx.compose.animation.core.tween
+import com.arkiv.player.ui.effectSpec
 import com.arkiv.player.ui.rememberGraph
 import com.arkiv.player.ui.theme.ArkivBlack
 import com.arkiv.player.ui.theme.ArkivRed
@@ -183,7 +185,7 @@ fun TvDetailScreen(
         } ?: data.thumbnailUrl
         // Crossfade: without this, scrolling the carousel with the D-pad makes the whole
         // background flicker on every chip. With the fade the change reads as continuous.
-        Crossfade(targetState = heroImage, label = "hero") { img ->
+        Crossfade(targetState = heroImage, animationSpec = effectSpec(tween()), label = "hero") { img ->
             AsyncImage(
                 model = img,
                 contentDescription = data.title,

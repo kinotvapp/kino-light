@@ -258,21 +258,20 @@ internal fun TvSettingsApp() {
         },
     )
 
-    // Decorative motion (the zooming/drifting backdrop and its crossfade): automatic by default, judged
-    // from how this device actually performs (see EffectsPolicy). This is the manual override for when
-    // that judgment is wrong in either direction, and it shows what the app is applying right now.
+    // Decorative motion (cards' focus zoom, the side rail's slide, crossfades, the drifting backdrop): one
+    // on/off switch. Until it's first pressed it follows the device (off on low-end boxes, see
+    // EffectsPolicy.staticHint) and says so; pressing it pins the person's choice for good.
     val effectsMode by graph.settings.effectsMode.collectAsState()
     val reducedNow = rememberReducedEffects()
     TvActionOption(
-        when (effectsMode) {
-            EffectsMode.AUTO -> "Efectos visuales: automático (ahora ${if (reducedNow) "reducidos" else "completos"})"
-            EffectsMode.FULL -> "Efectos visuales: completos"
-            EffectsMode.REDUCED -> "Efectos visuales: reducidos"
+        buildString {
+            append(if (reducedNow) "Efectos visuales: desactivados" else "Efectos visuales: activados")
+            if (effectsMode == EffectsMode.AUTO) append(" (según tu dispositivo)")
         },
-        onClick = { graph.settings.setEffectsMode(effectsMode.next()) },
+        onClick = { graph.settings.setEffectsMode(EffectsMode.toggledFrom(reducedNow)) },
     )
     Text(
-        "Reducidos quita el zoom del fondo y de las tarjetas, y las transiciones: más fluido en TV lentas.",
+        "Animaciones y zoom en las tarjetas. Desactívalo si tu TV va lenta.",
         style = MaterialTheme.typography.bodySmall,
         color = ArkivTextSecondary,
     )

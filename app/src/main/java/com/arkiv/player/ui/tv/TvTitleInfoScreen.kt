@@ -47,6 +47,8 @@ import androidx.tv.material3.Text
 import coil.compose.AsyncImage
 import com.arkiv.player.data.gateway.CatalogItem
 import com.arkiv.player.data.gateway.GatewayEpisode
+import androidx.compose.animation.core.tween
+import com.arkiv.player.ui.effectSpec
 import com.arkiv.player.ui.rememberGraph
 import com.arkiv.player.ui.theme.ArkivBlack
 import com.arkiv.player.ui.theme.ArkivTextSecondary
@@ -156,7 +158,7 @@ fun TvTitleInfoScreen(
 
     Box(Modifier.fillMaxSize().background(ArkivBlack)) {
         // Crossfade: without it, scrolling the carousel makes the whole background flicker.
-        Crossfade(targetState = heroImage, label = "title-hero") { image ->
+        Crossfade(targetState = heroImage, animationSpec = effectSpec(tween()), label = "title-hero") { image ->
             AsyncImage(
                 model = image,
                 contentDescription = info.title,

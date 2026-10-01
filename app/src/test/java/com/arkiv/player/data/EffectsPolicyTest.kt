@@ -43,6 +43,22 @@ class EffectsPolicyTest {
     }
 
     @Test
+    fun `Android older than 8 is always a hint, whatever RAM it claims`() {
+        assertTrue(EffectsPolicy.staticHint(totalRamMb = 4096, isLowRamDevice = false, sdkInt = 24))
+        assertTrue(EffectsPolicy.staticHint(totalRamMb = 132_725, isLowRamDevice = false, sdkInt = 25))
+        assertFalse(EffectsPolicy.staticHint(totalRamMb = 4096, isLowRamDevice = false, sdkInt = 26))
+    }
+
+    @Test
+    fun `the on-off switch flips what is applied now and pins it as an explicit choice`() {
+        assertEquals(EffectsMode.FULL, EffectsMode.toggledFrom(reducedNow = true))
+        assertEquals(EffectsMode.REDUCED, EffectsMode.toggledFrom(reducedNow = false))
+        // Once pinned, no automatic signal can undo it.
+        assertFalse(EffectsPolicy.resolve(EffectsMode.toggledFrom(true), autoReduced = true, staticHint = true, systemAnimationsOff = true))
+        assertTrue(EffectsPolicy.resolve(EffectsMode.toggledFrom(false), autoReduced = false, staticHint = false, systemAnimationsOff = false))
+    }
+
+    @Test
     fun `a device that reports nonsense RAM gets no hint, the measurement decides`() {
         assertFalse(EffectsPolicy.staticHint(totalRamMb = 132_725, isLowRamDevice = false)) // a "TVBOX" that claims 129 GB
         assertFalse(EffectsPolicy.staticHint(totalRamMb = 0, isLowRamDevice = false))       // a "PROJECTOR" that claims none
