@@ -1629,6 +1629,14 @@ class AppGraph(context: Context) {
      */
     private var networkWatchdog: com.arkiv.player.playback.NetworkWatchdog? = null
 
+    /**
+     * Casts a plugin title (not Xuper's) to a TV: every upstream request goes through that plugin's
+     * gated client ([pluginStreamClient], asking nobody), the TV gets a token URL. See its KDoc.
+     */
+    val pluginCastProxy: com.arkiv.player.playback.PluginCastProxy by lazy {
+        com.arkiv.player.playback.PluginCastProxy(clientFor = { hosts -> pluginStreamClient(hosts) })
+    }
+
     val archiveCacheProxy: com.arkiv.player.playback.ArchiveCacheProxy by lazy {
         com.arkiv.player.playback.ArchiveCacheProxy(
             java.io.File(appContext.cacheDir, com.arkiv.player.data.local.AppStorage.ARCHIVE_CACHE_DIR),

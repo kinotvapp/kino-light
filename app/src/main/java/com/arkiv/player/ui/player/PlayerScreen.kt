@@ -440,6 +440,7 @@ private fun PlayerContent(
                     liveModule = graph.liveModule,
                     hostDecider = graph.streamHostApproval,
                     historyScope = graph.applicationScope,
+                    startPluginCastProxy = { graph.pluginCastProxy.start() },
                 )
             }
         },
@@ -447,14 +448,12 @@ private fun PlayerContent(
     val playlist by vm.playlist.collectAsStateWithLifecycle()
     val magisItem by vm.magisItem.collectAsStateWithLifecycle()
     // What of `magisItem` goes to a TV: a native Magis title as it is, an official-Xuper plugin
-    // title re-spelled as that same native item (proxy url + CDN container), and null for any other
-    // plugin title, which has no cast. EVERY cast path (Chromecast, remux, DLNA) reads this, never
+    // title re-spelled as that same native item (proxy url + CDN container), any other plugin title
+    // through `PluginCastProxy` or straight to the receiver, and null when it can't be cast (DRM,
+    // DASH, an unknown format). EVERY cast path (Chromecast, remux, DLNA) reads this, never
     // `magisItem`, so the plugin carve-out is decided in one place: `castableStreamItem`.
-    val castMagis: PlayerData? = remember(magisItem) {
-        magisItem?.let { item ->
-            castableStreamItem(item) { url, headers -> graph.archiveCacheProxy.proxyUrl(url, headers, direct = true) }
-        }
-    }
+    // Out of line (`castShapeFor`): `remember`'s block is inlined, and PlayerContent is at ART's verifier limit.
+    val castMagis: PlayerData? = remember(magisItem) { castShapeFor(magisItem, graph) }
     var magisPlayer by remember { mutableStateOf<Player?>(null) }
     var magisTextureView by remember { mutableStateOf<android.view.TextureView?>(null) }
     // Task 1 (light-magis pruning): live channel, same pattern as magisItem/magisPlayer.
@@ -1046,6 +1045,10 @@ private fun PlayerContent(
                     com.arkiv.player.playback.ArchiveCacheProxy.lanUrl(item.mediaUrl, it)
                 }
             }
+            // A plugin title in its cast shape (`castableStreamItem`): PluginCastProxy's token url
+            // on the LAN ip, or the stream's own url for a direct cast. Never the raw stream behind
+            // a proxied one: its headers stay on the phone.
+            SourceKind.PLUGIN -> pluginCastUri(item, lanIp)
             else -> null
         }
         if (item.kind == SourceKind.MAGIS) {
@@ -1143,12 +1146,14 @@ private fun PlayerContent(
             // without ever playing a frame (measured 2026-09-12). Starting at zero is what makes
             // it play. Losing "where you were" is the cost, and getting it back means writing a
             // real index.
-            startPositionMs = if (remuxLocal != null || remuxMagis != null) 0L else startPositionMs,
+            startPositionMs = if (remuxLocal != null || remuxMagis != null || isPluginLiveCast(item)) 0L else startPositionMs,
             isLive = isLiveItem,
             mimeOverride = when {
                 remuxLocal != null -> "video/mp4"
                 hlsLocal != null -> "application/vnd.apple.mpegurl"
                 mimeMagis != null -> mimeMagis
+                // What `pluginCastModeFor` decided the receiver is told (HLS, or the file's container).
+                item.kind == SourceKind.PLUGIN -> item.mime.ifBlank { null }
                 else -> mimeLocal
             },
             // Magis has no usable fallback: `castUrl` is the CDN, which answers 401 without headers
@@ -1157,10 +1162,10 @@ private fun PlayerContent(
             // holds in that case. Letting this go false when there was a remux sent the receiver
             // the raw CDN url instead (measured 2026-09-12: `uri=http://…_media.ts mime=video/mp4`),
             // since the builder falls back to `castUrl` whenever it is not required to use the LAN.
-            requiresLanUrl = item.kind == SourceKind.MAGIS,
+            requiresLanUrl = item.kind == SourceKind.MAGIS || item.kind == SourceKind.PLUGIN,
             // While the remux is still being written it IS a live stream, and saying so is what
             // keeps the receiver from inventing an end and stalling against it.
-            asLive = magisRemuxGrowing,
+            asLive = magisRemuxGrowing || isPluginLiveCast(item),
             // Where the remux begins, so a saved position lands on the right minute of the title.
             offsetMs = if (item.kind == SourceKind.MAGIS) {
                 com.arkiv.player.playback.RemuxPolicy.fromInKey(
@@ -2246,13 +2251,14 @@ private fun PlayerContent(
     // sources that job belongs to LaunchedEffect(playlist), which Magis never reaches.
     LaunchedEffect(casting, magisItem?.episodeId) {
         if (casting) {
-            // Plugin titles can't be cast (spec non-goal), except the official Xuper plugin's VOD
-            // titles, which `castMagis` re-spells as the native Magis item they cast as before.
-            // A session that was already open when any other one started is ended, so the title
-            // keeps playing here instead of the TV going idle with no explanation.
-            if (magisItem != null && castMagis == null) {
+            // A plugin title `castableStreamItem` has no cast shape for (DRM, DASH, a format nothing
+            // tells apart; see `pluginCastModeFor`). A session that was already open when it started
+            // is ended, so the title keeps playing here instead of the TV going idle with no
+            // explanation. Xuper's VOD and every other castable plugin title have a shape.
+            val noCast = magisItem
+            if (noCast != null && castMagis == null) {
                 android.util.Log.w("ArkivCast", "plugin title: cast not available, ending the session")
-                android.widget.Toast.makeText(context, "No disponible para contenido de plugins", android.widget.Toast.LENGTH_SHORT).show()
+                android.widget.Toast.makeText(context, pluginNoCastMessage(noCast), android.widget.Toast.LENGTH_SHORT).show()
                 runCatching { castContext?.sessionManager?.endCurrentSession(true) }
                 // Ending the session flips `casting` to false and relaunches this effect; with
                 // `wasCasting` still true the resume branch below would `play()` the plugin's
@@ -4397,8 +4403,9 @@ private fun PlayerContent(
         // so for a Magis title `ep` was null and DLNA never even started ("nothing is playing"), found from
         // the DLNA log on a real TV.
         // `castMagis`, not `magisItem`: an official-Xuper plugin title goes in its native Magis shape
-        // (DLNA then pulls from the proxy, which adds the CDN headers); any other plugin is null.
-        val ep = castMagis?.takeIf { it.kind == SourceKind.MAGIS }
+        // (DLNA then pulls from the proxy, which adds the CDN headers); any other castable plugin
+        // title in its PLUGIN cast shape (PluginCastProxy's token url, or a direct HLS url).
+        val ep = castMagis?.takeIf { it.kind == SourceKind.MAGIS || it.kind == SourceKind.PLUGIN }
             ?: playlistRef.value?.items?.getOrNull(currentIndex)
             ?: liveItem
         controller.pause()
