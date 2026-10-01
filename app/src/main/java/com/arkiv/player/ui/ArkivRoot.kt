@@ -788,5 +788,7 @@ fun ArkivRoot(
     } // end ModalNavigationDrawer
     } // end IntroShowcase (Home mini guide)
     if (com.arkiv.player.ui.plugin.startCoverShows(startGate, currentRoute)) com.arkiv.player.ui.plugin.SourceDecisionCover()
+    // A Chromecast that stopped by itself is announced wherever the person is, player open or not.
+    com.arkiv.player.ui.player.CastTroubleDialog(graph)
     } // end Box
 }

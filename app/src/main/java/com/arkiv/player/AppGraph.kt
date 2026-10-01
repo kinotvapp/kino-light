@@ -1819,6 +1819,9 @@ class AppGraph(context: Context) {
                         if (on) com.arkiv.player.dlna.DlnaCastService.start(appContext, receiver, chromecast = true)
                         else com.arkiv.player.dlna.DlnaCastService.stop(appContext)
                     },
+                    // A request into one of our LAN servers is only replayed while its port and token
+                    // still answer; the rest (remote URLs, other proxies) is not ours to judge.
+                    stillServed = { uri -> !remuxHlsServer.revoked(uri) && !pluginCastProxy.revoked(uri) },
                 ).also { _castSession = it }
             }
         }

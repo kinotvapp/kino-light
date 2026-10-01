@@ -2426,9 +2426,9 @@ private fun PlayerContent(
                 // there is nothing to reload.
                 val mg = magisItem
                 if (mg != null) {
-                    val castMediaId = runCatching { castPlayer?.currentMediaItem?.mediaId }.getOrNull()
+                    val castMediaId = runCatching { castSession?.receiverMediaId() }.getOrNull()
                     val castPos = if (castMediaId == mg.episodeId) {
-                        runCatching { CastProgress.contentPosition(castPlayer?.currentPosition ?: 0L) }
+                        runCatching { CastProgress.contentPosition(castSession?.receiverPositionMs() ?: 0L) }
                             .getOrDefault(0L)
                     } else {
                         android.util.Log.w(
@@ -2453,13 +2453,15 @@ private fun PlayerContent(
                 // nothing in media3), so `currentPosition` keeps returning the last reported
                 // position forever: casting A up to 45:00, disconnecting outside the player,
                 // opening B, and connecting/disconnecting would leave B jumping to 45:00 — and
-                // polling would persist it.
-                val castMediaId = runCatching { castPlayer?.currentMediaItem?.mediaId }.getOrNull()
+                // polling would persist it. Once the receiver dropped its media on its own it
+                // reports nothing, so the session manager answers with the last position it gave
+                // for the title it was asked to play ("Ver en el celular" after a cast that died).
+                val castMediaId = runCatching { castSession?.receiverMediaId() }.getOrNull()
                 val castPos = if (epId != null && castMediaId == epId) {
                     // With no transcoder the receiver counts from the same point as the file:
                     // only a TIME_UNSET needs clamping to "don't know" (0).
                     runCatching {
-                        CastProgress.contentPosition(castPlayer?.currentPosition ?: 0L)
+                        CastProgress.contentPosition(castSession?.receiverPositionMs() ?: 0L)
                     }.getOrDefault(0L)
                 } else {
                     android.util.Log.w("ArkivCast", "receiver position discarded: it's for '$castMediaId', we're resuming '$epId'")
