@@ -10,3 +10,13 @@ object OwnLiveSourcesMigration {
             "deleted INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(id))",
     )
 }
+
+/** v36 -> v37: lists pasted or opened from a file ("Mis canales"): their digest and their text in parts. Idempotent. */
+object OwnListPartsMigration {
+    const val ADD_DIGEST = "ALTER TABLE own_live_sources ADD COLUMN contentDigest TEXT"
+    val STATEMENTS = listOf(
+        "CREATE TABLE IF NOT EXISTS own_live_list_parts (" +
+            "sourceId TEXT NOT NULL, part INTEGER NOT NULL, parts INTEGER NOT NULL, digest TEXT NOT NULL, " +
+            "data TEXT NOT NULL, updatedAt INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(sourceId, part))",
+    )
+}

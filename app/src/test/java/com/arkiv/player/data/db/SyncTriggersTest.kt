@@ -52,6 +52,8 @@ class SyncTriggersTest {
             PluginInstallsMigration.STATEMENTS.forEach { stmt -> it.executeUpdate(stmt) }
             // The Nuvio repos the person opened: the ninth synced table (v36).
             NuvioReposMigration.STATEMENTS.forEach { stmt -> it.executeUpdate(stmt) }
+            // The text of pasted "Mis canales" lists: the tenth synced table (v37).
+            OwnListPartsMigration.STATEMENTS.forEach { stmt -> it.executeUpdate(stmt) }
         }
     }
 

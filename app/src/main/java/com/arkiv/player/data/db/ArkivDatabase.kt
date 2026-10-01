@@ -27,10 +27,11 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         VodSearchCacheEntity::class,
         KinobotMessageEntity::class,
         OwnLiveSourceEntity::class,
+        OwnListPartEntity::class,
         PluginInstallEntity::class,
         NuvioRepoEntity::class,
     ],
-    version = 36,
+    version = 37,
     exportSchema = false,
 )
 abstract class ArkivDatabase : RoomDatabase() {
@@ -618,6 +619,15 @@ abstract class ArkivDatabase : RoomDatabase() {
             }
         }
 
+        /** v36 -> v37: pasted / file lists of "Mis canales". See [OwnListPartsMigration]. */
+        private val MIGRATION_36_37 = object : Migration(36, 37) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // A column added twice (a half-run migration) must not stop the database from opening.
+                runCatching { db.execSQL(OwnListPartsMigration.ADD_DIGEST) }
+                OwnListPartsMigration.STATEMENTS.forEach { db.execSQL(it) }
+            }
+        }
+
         private val SEAL_UPDATED_AT = object : RoomDatabase.Callback() {
             override fun onOpen(db: SupportSQLiteDatabase) {
                 // Triggers first: sealing afterward doesn't fire them (the row changes from 0 to
@@ -633,7 +643,7 @@ abstract class ArkivDatabase : RoomDatabase() {
                     context.applicationContext,
                     ArkivDatabase::class.java,
                     "arkiv.db",
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36)
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37)
                     .addCallback(SEAL_UPDATED_AT)
                     .fallbackToDestructiveMigration()
                     .build().also { instance = it }

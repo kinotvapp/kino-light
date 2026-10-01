@@ -250,6 +250,11 @@ data class LiveRecentEntity(
  * A live source the person typed: one stream ([kind] `CHANNEL`) or a whole M3U list (`PLAYLIST`).
  * Synced between linked devices (last-write-wins by [updatedAt], [deleted] is the tombstone); a
  * playlist's CHANNELS are never stored here, each device downloads its own copy.
+ *
+ * A list the person PASTED or opened from a file has no address: its [url] is
+ * `kino-list:<id>` (`OwnPastedList.urlFor`), [contentDigest] is the sha256 of its text and the text
+ * itself lives in [OwnListPartEntity] rows, small enough to travel over companion sync. An older
+ * build refuses such a row (not an http address), so it never stores nor echoes it.
  */
 @Entity(tableName = "own_live_sources")
 data class OwnLiveSourceEntity(
@@ -265,6 +270,25 @@ data class OwnLiveSourceEntity(
     val refreshHours: Int = 0,
     val updatedAt: Long = 0,
     val deleted: Boolean = false,
+    /** Pasted/file lists only: sha256 hex of the normalised text held by its [OwnListPartEntity] rows. */
+    val contentDigest: String? = null,
+)
+
+/**
+ * One slice of a pasted list's text (`OwnPastedList.split`: gzip, base64url, [OwnPastedList.PART_CHARS]
+ * characters), so one row fits a 64 KB companion message. Part [part] of [parts] of the text whose
+ * sha256 is [digest]; it is only used once every part of that digest is here and the whole checks
+ * out. Synced like any row (last-write-wins by [updatedAt]); stale parts are dropped locally when
+ * their source changes digest or is deleted, so they need no tombstone.
+ */
+@Entity(tableName = "own_live_list_parts", primaryKeys = ["sourceId", "part"])
+data class OwnListPartEntity(
+    val sourceId: String,
+    val part: Int,
+    val parts: Int,
+    val digest: String,
+    val data: String,
+    val updatedAt: Long = 0,
 )
 
 /**

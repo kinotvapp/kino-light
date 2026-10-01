@@ -33,6 +33,15 @@ class OwnSourcesViewModelTest {
         override suspend fun delete(id: String) { rows[id]?.let { rows[id] = it.copy(deleted = true) } }
         override suspend fun count() = rows.values.count { !it.deleted }
         override suspend fun getSince(cursor: Long) = rows.values.toList()
+        val partRows = LinkedHashMap<Pair<String, Int>, com.arkiv.player.data.db.OwnListPartEntity>()
+        override suspend fun parts(sourceId: String) = partRows.values.filter { it.sourceId == sourceId }.sortedBy { it.part }
+        override suspend fun part(sourceId: String, part: Int) = partRows[sourceId to part]
+        override suspend fun saveParts(parts: List<com.arkiv.player.data.db.OwnListPartEntity>) { parts.forEach { partRows[it.sourceId to it.part] = it } }
+        override suspend fun deleteParts(sourceId: String) { partRows.keys.removeAll { it.first == sourceId } }
+        override suspend fun deleteStaleParts(sourceId: String, digest: String, parts: Int) {
+            partRows.values.removeAll { it.sourceId == sourceId && (it.digest != digest || it.part >= parts) }
+        }
+        override suspend fun partsSince(cursor: Long) = partRows.values.filter { it.updatedAt > cursor }.sortedBy { it.updatedAt }
     }
 
     @Before fun setUp() = Dispatchers.setMain(UnconfinedTestDispatcher())

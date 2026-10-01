@@ -959,7 +959,48 @@ interface OwnLiveSourceDao {
     /** Sync push: rows touched after [cursor], oldest first. */
     @Query(QUERY_OWN_LIVE_SOURCES_SINCE)
     suspend fun getSince(cursor: Long): List<OwnLiveSourceEntity>
+
+    // ---- The text of pasted / file lists ([OwnListPartEntity]) ----
+
+    @Query("SELECT * FROM own_live_list_parts WHERE sourceId = :sourceId ORDER BY part")
+    suspend fun parts(sourceId: String): List<OwnListPartEntity>
+
+    @Query("SELECT * FROM own_live_list_parts WHERE sourceId = :sourceId AND part = :part")
+    suspend fun part(sourceId: String, part: Int): OwnListPartEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun saveParts(parts: List<OwnListPartEntity>)
+
+    @Query("DELETE FROM own_live_list_parts WHERE sourceId = :sourceId")
+    suspend fun deleteParts(sourceId: String)
+
+    /** The parts of an older text of [sourceId] (or of a longer one: indexes past the new count). */
+    @Query("DELETE FROM own_live_list_parts WHERE sourceId = :sourceId AND (digest != :digest OR part >= :parts)")
+    suspend fun deleteStaleParts(sourceId: String, digest: String, parts: Int)
+
+    /** Sync push: parts touched after [cursor], oldest first. */
+    @Query(QUERY_OWN_LIST_PARTS_SINCE)
+    suspend fun partsSince(cursor: Long): List<OwnListPartEntity>
+
+    /** A pasted list and its text, together: the text is replaced whole. */
+    @Transaction
+    suspend fun saveWithParts(s: OwnLiveSourceEntity, parts: List<OwnListPartEntity>) {
+        deleteParts(s.id)
+        saveParts(parts)
+        save(s)
+    }
+
+    /** The tombstone, and the text it no longer needs (each device drops its own copy). */
+    @Transaction
+    suspend fun deleteWithParts(id: String) {
+        delete(id)
+        deleteParts(id)
+    }
 }
+
+internal const val QUERY_OWN_LIST_PARTS_SINCE =
+    "SELECT * FROM own_live_list_parts WHERE updatedAt > :cursor ORDER BY updatedAt ASC, sourceId ASC, part ASC"
+
 
 internal const val QUERY_PLUGIN_INSTALLS_SINCE =
     "SELECT * FROM plugin_installs WHERE updatedAt > :cursor ORDER BY updatedAt ASC"
