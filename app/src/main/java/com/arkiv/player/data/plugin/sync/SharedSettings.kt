@@ -6,16 +6,17 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * The plugin settings that travel to the person's other devices, and the ones that never do.
+ * The plugin settings that travel to the person's other devices in the `plugin_installs` row, and
+ * the ones that never do there.
  *
- * Travel: `text`, `select`, `toggle`, and a `list` whose fields are all text.
- * Never:
- * - `password`: the companion link is plain `ws://` on the LAN, and passwords live in the Keystore;
- *   the person types them again on the other device.
- * - `url` (and a `list` with any url field): a typed server becomes a host the plugin may reach
- *   (`PluginSettings` "typed servers"), so copying it would widen what the plugin reaches on the
- *   other device without the person there approving it -- and it is very often a LAN address
- *   (`http://192.168.x.x:8096`) that only makes sense on one network or device.
+ * Travel: `text`, `select`, `toggle`, `url`, and a `list` without password fields. A typed server
+ * (`url`) is a host the plugin may reach ("typed servers"): the person typed it on their other
+ * device, and it is validated here exactly like a save by hand (`PluginSettings.validateValue`:
+ * a loopback or malformed address is skipped) before it becomes one. A LAN address is fine: it is
+ * the person's own server.
+ * Never here: `password` (and a `list` with a password field). The companion link is plain `ws://`;
+ * passwords travel only end-to-end encrypted with the key the two devices agreed at pairing
+ * (see `PluginSecretSync`), never inside this row.
  */
 object SharedSettings {
     const val MAX_KEYS = 50
@@ -24,8 +25,8 @@ object SharedSettings {
     const val MAX_LIST_ENTRIES = 100
 
     fun isShared(s: PluginSetting): Boolean = when (s.type) {
-        SettingType.TEXT, SettingType.SELECT, SettingType.TOGGLE -> true
-        SettingType.LIST -> s.fields.none { it.type == SettingType.URL || it.type == SettingType.PASSWORD }
+        SettingType.TEXT, SettingType.SELECT, SettingType.TOGGLE, SettingType.URL -> true
+        SettingType.LIST -> s.fields.none { it.type == SettingType.PASSWORD }
         else -> false
     }
 

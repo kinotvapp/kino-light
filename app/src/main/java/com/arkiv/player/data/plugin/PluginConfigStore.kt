@@ -176,7 +176,7 @@ class PluginConfigStore(private val dataDir: (pluginId: String) -> File, private
     /**
      * The person's own answers to the settings that travel to their other devices
      * ([com.arkiv.player.data.plugin.sync.SharedSettings.isShared]): only what they set, never a
-     * default, never a password or a typed server.
+     * default, never a password.
      */
     fun sharedValues(pluginId: String, settings: List<PluginSetting>): Map<String, Any> {
         val stored = readFile(pluginId)
@@ -193,7 +193,7 @@ class PluginConfigStore(private val dataDir: (pluginId: String) -> File, private
      * Writes the shared answers another of the person's devices sent ([incoming]) over this device's:
      * each shared setting the other device has a value for takes it when it fits this manifest; one it
      * has no value for keeps this device's (a device that never configured the plugin must not wipe
-     * the answers given here). Passwords, typed servers and anything this manifest does not declare as
+     * the answers given here). A typed server is validated like a save by hand. Passwords and anything this manifest does not declare as
      * shared are left exactly as they are. Returns whether anything changed (and the revision moved);
      * a value that does not fit is skipped, never stored.
      */
