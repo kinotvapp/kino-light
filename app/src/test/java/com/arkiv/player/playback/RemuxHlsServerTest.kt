@@ -280,4 +280,30 @@ class RemuxHlsServerTest {
         remux.grow(remux.bytes.size)
         assertEquals(1, Regex("\\.m4s").findAll(String(get(media).body)).count())
     }
+
+    @Test
+    fun `an earlier remux that covers the planned start is served before the new run writes anything`() {
+        val remux = GrowingRemux()
+        val index = Fmp4Fixture.indexOf(remux.source)
+        val full = RemuxHls.segments(index.fragments, complete = true)
+        val leftover = File(tmp.root, "x.mp4.prev").apply { writeBytes(remux.bytes.copyOfRange(0, index.fragments[full[0].last].end.toInt())) }
+        // A lead the fixture's few seconds can cover.
+        val reusing = RemuxHlsServer(lanIp = { "127.0.0.1" }, leftoverOf = { if (it == "key") leftover else null }, headLeadSec = 1.0)
+        try {
+            val master = reusing.serve("key", remux.locate)!!
+            // Nothing planned yet: held back, as before.
+            assertEquals(0.0, reusing.availableSec("key"), 0.0)
+            // Planned inside the head, lead included: served at once, no header from the new run needed.
+            reusing.planStart("key", 0L)
+            assertEquals(full[0].durationSec, reusing.availableSec("key"), 1e-6)
+            val (init, s0) = Fmp4Fixture.segmentBytes(remux.source, index, full[0])
+            assertArrayEquals(init, get(master.replace("master.m3u8", "init.mp4")).body)
+            assertArrayEquals(s0, get(master.replace("master.m3u8", "s0.m4s")).body)
+            // Planned past what the head holds: waits for the new run again.
+            reusing.planStart("key", (full[0].durationSec * 1000).toLong())
+            assertEquals(0.0, reusing.availableSec("key"), 0.0)
+        } finally {
+            reusing.stop()
+        }
+    }
 }

@@ -39,6 +39,12 @@ class RemuxHlsServer(
      */
     private val leftoverOf: (key: String) -> File? = { null },
     private val clock: () -> Long = System::currentTimeMillis,
+    /**
+     * How far past the planned start an earlier remux has to reach to be served before the new
+     * run has written its header (see [Source.headServable]). [RemuxHls.START_LEAD_SEC]: the same
+     * lead a fresh remux must have before the receiver is loaded.
+     */
+    private val headLeadSec: Double = RemuxHls.START_LEAD_SEC,
 ) {
 
     /** A finished-for-good prefix of the remux, from an earlier cast. Indexed once: it never grows. */
@@ -53,6 +59,7 @@ class RemuxHlsServer(
         /** The remux as it stands: the file (`.part` while written) and whether it is complete. */
         val locate: () -> Pair<File, Boolean>?,
         val head: Head?,
+        val headLeadSec: Double,
     ) {
         val index = Fmp4Index()
         @Volatile var complete = false
@@ -82,9 +89,21 @@ class RemuxHlsServer(
         /** The first playlist the TV asks for after a (re)load is logged, not every refresh of it. */
         @Volatile var playlistLogged = false
 
+        /**
+         * May the head be served now? Once the new run's header vouched for it ([trustHead]), or
+         * -- before that -- when the head alone already holds the planned start plus the usual
+         * lead: then the cast does not wait on the new run at all. Waiting for its header cost
+         * ~13 s on every re-cast (`remux audio pinned` arrives once the export has read the CDN far
+         * enough to know its tracks, 2026-10-01) while the earlier remux had the position covered.
+         * The header check still runs as soon as it can and drops a head that differs.
+         */
+        fun headServable(): Boolean = headTrusted ?: (
+            head != null && plannedStartSec?.let { head.endSec >= it + headLeadSec } == true
+            )
+
         /** What is served right now, fragment by fragment. Nothing while an unchecked head waits. */
         fun pieces(): List<RemuxHls.Piece> =
-            if (headTrusted == null) emptyList()
+            if (!headServable()) emptyList()
             else RemuxHls.timeline(head?.index?.fragments.orEmpty(), index.fragments, splice)
 
         /** Finished: the new remux is done AND it is the one being served past the head. */
@@ -106,7 +125,7 @@ class RemuxHlsServer(
     @Synchronized
     fun serve(key: String, locate: () -> Pair<File, Boolean>?): String? {
         val current = source?.takeIf { it.key == key }
-            ?: Source(key, newToken(), locate, headOf(key)).also {
+            ?: Source(key, newToken(), locate, headOf(key), headLeadSec).also {
                 source = it
                 log("serving a new remux as HLS (key #${Integer.toHexString(key.hashCode())})")
             }

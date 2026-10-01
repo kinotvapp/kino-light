@@ -1420,7 +1420,9 @@ private fun PlayerContent(
                     // The person picked another audio meanwhile: this remux is no longer wanted,
                     // and casting it would put the audio they moved away from on the TV.
                     if (remuxInFlight != key) return@launch
-                    graph.tsRemuxer.inProgress(key) ?: return@repeat
+                    // An earlier cast's leftover is enough to start: when it already covers where the
+                    // phone is, the server serves it before the new run has written anything.
+                    if (graph.tsRemuxer.inProgress(key) == null && graph.tsRemuxer.leftover(key) == null) return@repeat
                     graph.remuxHlsServer.serve(key) { graph.tsRemuxer.inProgress(key) }
                     // Paced against where the TV will start, until the TV asks on its own.
                     graph.remuxHlsServer.planStart(key, resumeAt)
