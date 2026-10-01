@@ -39,13 +39,21 @@ class CastAudioChoiceTest {
 
     @Test
     fun `the menu explains what an audio change does on the TV only while casting`() {
-        assertNull(castTracksNote(casting = false, route = CastAudioRoute.REMUX))
-        val remux = castTracksNote(casting = true, route = CastAudioRoute.REMUX)
-        val fixed = castTracksNote(casting = true, route = CastAudioRoute.FIXED)
+        assertNull(castTracksNote(casting = false, route = CastAudioRoute.REMUX, externalSubtitles = null))
+        val remux = castTracksNote(casting = true, route = CastAudioRoute.REMUX, externalSubtitles = null)
+        val fixed = castTracksNote(casting = true, route = CastAudioRoute.FIXED, externalSubtitles = null)
         assertNotNull(remux)
         assertNotNull(fixed)
         assertTrue(remux!!.contains("desde donde ibas"))
         assertTrue(!remux.contains("desde el inicio"))
         assertTrue(fixed!!.contains("no permite cambiar el audio"))
+        assertTrue(remux.contains("solo se ven en el teléfono"))
+    }
+
+    @Test
+    fun `with the source's own subtitle files the menu says the TV follows the choice`() {
+        val note = castTracksNote(true, CastAudioRoute.REMUX, listOf(ResolvedSub("es", "https://x/es.srt")))!!
+        assertTrue(note.contains("también cambian en la TV"))
+        assertTrue(!note.contains("solo se ven en el teléfono"))
     }
 }

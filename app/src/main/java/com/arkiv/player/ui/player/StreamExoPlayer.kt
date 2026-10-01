@@ -1018,12 +1018,17 @@ internal fun subtitleMimeType(sub: ResolvedSub): String = when {
     else -> MimeTypes.TEXT_VTT
 }
 
-/** Converts the portal's subtitle list to ExoPlayer's SubtitleConfiguration. */
+/**
+ * Converts the portal's subtitle list to ExoPlayer's SubtitleConfiguration. Each gets the id of its
+ * place in the list (`CastTextTracks.phoneIdOf`), which its track's `Format.id` carries: that is how
+ * the cast maps the menu's choice back to the subtitle to turn on on the TV.
+ */
 internal fun List<ResolvedSub>.toExoSubtitleConfigs(): List<MediaItem.SubtitleConfiguration> =
-    map { sub ->
+    mapIndexed { i, sub ->
         MediaItem.SubtitleConfiguration.Builder(Uri.parse(sub.url))
             .setMimeType(subtitleMimeType(sub))
             .setLanguage(sub.lang)
+            .setId(com.arkiv.player.cast.CastTextTracks.phoneIdOf(i))
             .build()
     }
 

@@ -761,6 +761,8 @@ private fun PlayerContent(
     // local (service) player through `controller`. The whole block lives in `PlayerTracks.kt`; from
     // here only `hasSubtitle` is checked, for the CC icon.
     val tracksState = rememberTracksState(controller, graph, episodeId)
+    // The title's external subtitles and the menu's choice, for the TV (Chromecast and DLNA).
+    CastSubtitlesSync(graph, magisItem, episodeId, webExtras, tracksState)
 
     /**
      * The key the remux of a Magis item is filed under: its CDN url, where it starts, and the audio
@@ -4505,7 +4507,7 @@ private fun PlayerContent(
         isMagis = PlayerSource.kindFor(episodeId) == SourceKind.MAGIS,
         declaredLanguages = webExtras?.subtitles?.map { it.lang }.orEmpty(),
         // Only while the menu is open and casting: the route may read a downloaded file's header.
-        castNote = if (casting && tracksState.pickerOpen) castTracksNote(true, castAudioRoute()) else null,
+        castNote = if (casting && tracksState.pickerOpen) castTracksNote(true, castAudioRoute(), webExtras?.subtitles) else null,
     )
 }
 

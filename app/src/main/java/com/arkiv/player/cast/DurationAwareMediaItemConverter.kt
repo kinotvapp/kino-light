@@ -39,38 +39,49 @@ class DurationAwareMediaItemConverter : MediaItemConverter {
             durationMs = extras?.getLong(KEY_DURATION_MS, C.TIME_UNSET) ?: C.TIME_UNSET,
             isLive = extras?.getBoolean(KEY_LIVE, false) ?: false,
             hlsFmp4 = extras?.getBoolean(KEY_HLS_FMP4, false) ?: false,
-        ) ?: return item
+        )
+        // Sidecar subtitles (see CastSubtitles): their MediaTracks, and the one to start with.
+        val textTracks = CastTextMedia.tracks(extras)
+        if (shape == null && textTracks == null) return item
 
         val info = item.media ?: return item
         val withDuration = MediaInfo.Builder(info.contentId)
             // LIVE for a live channel: it has no end, and calling it "buffered" makes the receiver
             // invent one and stall against it. The duration goes to -1, which is what the API asks
             // for on a live stream.
-            .setStreamType(if (shape.live) MediaInfo.STREAM_TYPE_LIVE else info.streamType)
+            .setStreamType(if (shape?.live == true) MediaInfo.STREAM_TYPE_LIVE else info.streamType)
             .setContentType(info.contentType)
             .setContentUrl(info.contentUrl ?: info.contentId)
             .setMetadata(info.metadata)
-            .setStreamDuration(shape.streamDurationMs)
+            .setStreamDuration(shape?.streamDurationMs ?: info.streamDuration)
             .setCustomData(info.customData)
             .apply {
                 // fMP4 segments: without this the receiver's HLS player takes them for MPEG-TS.
-                if (shape.fmp4Segments) {
+                if (shape?.fmp4Segments == true) {
                     setHlsSegmentFormat(HlsSegmentFormat.FMP4)
                     setHlsVideoSegmentFormat(HlsVideoSegmentFormat.FMP4)
                 }
+                if (textTracks != null) {
+                    setMediaTracks(textTracks)
+                    setTextTrackStyle(CastTextMedia.style())
+                }
             }
             .build()
-        android.util.Log.i(
-            TAG,
-            if (shape.live) "announcing it as LIVE (no end to chase)" else
-                "telling the receiver the title runs ${shape.streamDurationMs}ms" + if (shape.fmp4Segments) " · HLS of fMP4 segments" else "",
-        )
+        if (shape != null) {
+            android.util.Log.i(
+                TAG,
+                if (shape.live) "announcing it as LIVE (no end to chase)" else
+                    "telling the receiver the title runs ${shape.streamDurationMs}ms" + if (shape.fmp4Segments) " · HLS of fMP4 segments" else "",
+            )
+        }
+        if (textTracks != null) android.util.Log.i(TAG, "with ${textTracks.size} sidecar subtitle track(s)")
         return MediaQueueItem.Builder(withDuration)
             // Chain straight into the next item. Without these the Default Media Receiver puts its
             // own interstitial between queue entries -- "Your video will play in N" -- which on a
             // title cut into thirty-second chunks means a countdown twice a minute.
             .setAutoplay(true)
             .setPreloadTime(PRELOAD_SECONDS)
+            .apply { CastTextMedia.active(extras)?.let { setActiveTrackIds(it) } }
             .build()
     }
 

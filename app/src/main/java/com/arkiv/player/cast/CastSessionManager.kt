@@ -50,6 +50,8 @@ class CastSessionManager(
      * them): such a request is never replayed on a reconnect -- see [CastReconnect].
      */
     private val stillServed: (uri: String) -> Boolean = { true },
+    /** The title's external subtitles and the phone's choice among them (see [CastSubtitles]); null = none. */
+    private val subtitles: CastSubtitles? = null,
 ) {
     // Fails fast and with an explicit cause if something builds this off the main thread, instead
     // of an obscure crash inside the Cast SDK (CastPlayer/CastContext require it, see class doc).
@@ -256,7 +258,42 @@ class CastSessionManager(
         }
     }
 
+    /** The last text-track change asked of the receiver, so a receiver that refuses it isn't asked forever. */
+    private var textSyncKey = ""
+
+    /**
+     * Keeps the receiver's text track on the phone's choice ([CastSubtitles.wanted]): the subtitle on,
+     * or none, every other active track (the audio) left as it is. Runs on every receiver status, so
+     * it also catches the load's first status (an in-manifest rendition only gets its id from the
+     * receiver then) and a receiver that ignored the queue item's active ids. One request per queue item
+     * (a new one per load) and choice. Main thread.
+     */
+    private fun syncTextTracks() {
+        val subs = subtitles ?: return
+        val r = pending ?: return
+        if (!subs.hasTracks(r.episodeId)) return
+        val client = statusClient ?: return
+        val status = client.mediaStatus ?: return
+        if (player.currentMediaItem?.mediaId != r.episodeId) return
+        val tracks = CastTextMedia.receiverTracks(status.mediaInfo?.mediaTracks)
+        if (tracks.none { it.isText }) return
+        val wanted = subs.wanted(r.episodeId)
+        val textId = wanted?.let { CastTextTracks.receiverIdOf(tracks, it.index, it.name, it.language) }
+        if (wanted != null && textId == null) return
+        val next = CastTextTracks.activeIdsFor(status.activeTrackIds ?: LongArray(0), tracks, textId) ?: return
+        val key = "${status.currentItemId}/${wanted?.index}/${next.joinToString(",")}"
+        if (key == textSyncKey) return
+        textSyncKey = key
+        CastDiag.i("receiver text track → ${wanted?.let { "${it.name} (id $textId)" } ?: "none"}")
+        runCatching {
+            client.setActiveMediaTracks(next)
+            // A rendition from the manifest has no style from the load; a sidecar one already does.
+            if (textId != null && subs.inManifest(r.episodeId)) client.setTextTrackStyle(CastTextMedia.style())
+        }.onFailure { android.util.Log.w(TAG, "setActiveMediaTracks failed: $it") }
+    }
+
     init {
+        subtitles?.onChoiceChanged = { mainHandler.post { syncTextTracks() } }
         player.addListener(diagnostics)
         player.setSessionAvailabilityListener(object : SessionAvailabilityListener {
             override fun onCastSessionAvailable() {
@@ -403,6 +440,7 @@ class CastSessionManager(
                                 putLong(DurationAwareMediaItemConverter.KEY_DURATION_MS, r.durationMs)
                                 putBoolean(DurationAwareMediaItemConverter.KEY_LIVE, r.asLive)
                                 putBoolean(DurationAwareMediaItemConverter.KEY_HLS_FMP4, r.hlsFmp4)
+                                CastTextMedia.put(this, subtitles?.forLoad(r))
                             },
                         )
                         .build(),
@@ -506,6 +544,7 @@ class CastSessionManager(
                     _trouble.value = null
                     retryingSince = 0L
                 }
+                if (playing || status.playerState == MediaStatus.PLAYER_STATE_PAUSED) syncTextTracks()
             }
         }
     }

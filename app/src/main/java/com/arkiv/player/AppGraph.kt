@@ -1587,6 +1587,19 @@ class AppGraph(context: Context) {
             log = { android.util.Log.i("ArkivRemuxHls", it) },
             // A remux an earlier cast stopped is served at once instead of waiting for a new run.
             leftoverOf = { key -> tsRemuxer.leftover(key) },
+            // The title's subtitles, when the load in course carries them in the manifest.
+            subtitles = { castSubtitles.manifestRenditions() },
+        )
+    }
+
+    /**
+     * The title's external subtitles for a TV (Chromecast and DLNA): served converted on the LAN, the
+     * phone's choice kept app-wide. See [com.arkiv.player.cast.CastSubtitles].
+     */
+    val castSubtitles: com.arkiv.player.cast.CastSubtitles by lazy {
+        com.arkiv.player.cast.CastSubtitles(
+            com.arkiv.player.cast.CastSubtitleServer(lanIp = { lanIp() }, log = { android.util.Log.i("KinoCastSubs", it) }),
+            deliveryOverride = { com.arkiv.player.cast.CastTextMedia.systemProperty("debug.kino.cast_subs") },
         )
     }
 
@@ -1924,6 +1937,7 @@ class AppGraph(context: Context) {
                     // A request into one of our LAN servers is only replayed while its port and token
                     // still answer; the rest (remote URLs, other proxies) is not ours to judge.
                     stillServed = { uri -> !remuxHlsServer.revoked(uri) && !pluginCastProxy.revoked(uri) },
+                    subtitles = castSubtitles,
                 ).also { _castSession = it }
             }
         }

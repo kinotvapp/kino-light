@@ -114,6 +114,17 @@ internal class TracksState(
                 ?.let { AudioTrackRef(it.id, it.language, it.label) }
         }
 
+    /**
+     * The subtitle on the phone, for the cast to mirror on the TV (see `CastSubtitles`): unknown
+     * until the player has reported its text tracks, so a fresh screen does not switch the TV's
+     * subtitle off before it knows. Snapshot reads ([curSpu], [spuTracks]): a composable reading
+     * this recomposes when the person picks another one.
+     */
+    val castTextSelection: com.arkiv.player.cast.CastTextSelection
+        get() = castTextSelectionOf(curSpu, spuTracks.size) { i ->
+            exoSubGroups.getOrNull(i)?.takeIf { it.length > 0 }?.getFormat(0)?.let { it.id to it.language }
+        }
+
     /** An embedded subtitle is on. Read by the controls' CC icon. */
     var subsOn by mutableStateOf(false)
         private set
@@ -451,6 +462,21 @@ internal fun castAudioChoiceOf(
 }
 
 /**
+ * [TracksState.castTextSelection], pure: [selected] of [menuSize] text tracks, [formatOf] giving a
+ * track's `Format.id` and language. No tracks reported yet is [CastTextSelection.Unknown].
+ */
+internal fun castTextSelectionOf(
+    selected: Int,
+    menuSize: Int,
+    formatOf: (Int) -> Pair<String?, String?>?,
+): com.arkiv.player.cast.CastTextSelection {
+    if (menuSize == 0) return com.arkiv.player.cast.CastTextSelection.Unknown
+    if (selected < 0 || selected >= menuSize) return com.arkiv.player.cast.CastTextSelection.Off
+    val (id, language) = formatOf(selected) ?: return com.arkiv.player.cast.CastTextSelection.Off
+    return com.arkiv.player.cast.CastTextSelection.On(id, language)
+}
+
+/**
  * Whether the local player's tracks describe the episode this screen opened.
  *
  * The service player keeps playing the previous download while a new screen resolves its own item
@@ -658,15 +684,18 @@ private fun SectionTitle(text: String, first: Boolean = false) {
  * The line the audio and subtitles menu shows while casting, so the person knows what a choice does
  * on the TV and not only on the phone. Null when not casting.
  *
- * The TV never gets subtitles: the cast carries no text tracks (a remux writes none, and the
- * request sent to the receiver lists none).
+ * The TV gets the source's own subtitle files ([externalSubtitles]: a Xuper title's, a plugin's),
+ * switched without reloading the video (see `CastSubtitles`); a subtitle embedded in the file never
+ * reaches it (a remux writes none).
  */
-internal fun castTracksNote(casting: Boolean, route: com.arkiv.player.cast.CastAudioRoute): String? = when {
-    !casting -> null
-    route == com.arkiv.player.cast.CastAudioRoute.REMUX ->
-        "En la TV: si cambias el audio, se prepara de nuevo y sigue desde donde ibas (puede tardar un poco). " +
-            "Los subtítulos solo se ven en el teléfono."
-    else ->
-        "En la TV: este video no permite cambiar el audio, suena el que trae por defecto. " +
-            "Los subtítulos solo se ven en el teléfono."
+internal fun castTracksNote(casting: Boolean, route: com.arkiv.player.cast.CastAudioRoute, externalSubtitles: List<ResolvedSub>?): String? {
+    if (!casting) return null
+    val audio = if (route == com.arkiv.player.cast.CastAudioRoute.REMUX) {
+        "En la TV: si cambias el audio, se prepara de nuevo y sigue desde donde ibas (puede tardar un poco). "
+    } else {
+        "En la TV: este video no permite cambiar el audio, suena el que trae por defecto. "
+    }
+    val subtitles = if (externalSubtitles.isNullOrEmpty()) "Los subtítulos solo se ven en el teléfono."
+    else "Los subtítulos que elijas aquí también cambian en la TV."
+    return audio + subtitles
 }
