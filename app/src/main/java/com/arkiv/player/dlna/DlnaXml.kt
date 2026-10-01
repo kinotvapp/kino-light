@@ -21,9 +21,10 @@ internal data class PositionInfo(val relTimeMs: Long?, val durationMs: Long?, va
 internal object DlnaXml {
     /**
      * A token path segment, for [safeUrl] to hide: `/t/<token>` (ArchiveCacheProxy, DlnaProxyServer,
-     * PluginCastProxy) and `/r/<token>` (RemuxHlsServer -- whose tokens were still reaching the log).
+     * PluginCastProxy), `/r/<token>` (RemuxHlsServer -- whose tokens were still reaching the log) and
+     * `/s/<token>` (the cast's subtitle server).
      */
-    private val PATH_TOKEN = Regex("/([tr])/[^/?#]+")
+    private val PATH_TOKEN = Regex("/([trs])/[^/?#]+")
 
     /** The text of the first `<name>…</name>` (any namespace prefix), unescaped, or null if absent/empty. */
     fun tag(xml: String?, name: String): String? {
