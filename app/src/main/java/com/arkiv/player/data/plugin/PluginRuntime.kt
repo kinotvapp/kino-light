@@ -207,6 +207,9 @@ class PluginRuntime private constructor(
      */
     private class EngineFailure(val error: Throwable) : Exception(null, null, false, false)
 
+    /** The script itself could not be produced (a sealed entry that does not open): rethrown as-is, never as a script error. */
+    private class SourceFailure(val error: Throwable) : Exception(null, null, false, false)
+
     private suspend fun isHealthy(): Boolean =
         runCatching { withTimeout(1_000) { scope.async { js.evaluate<Long>("1") }.await() } == 1L }.getOrDefault(false)
 
@@ -304,8 +307,21 @@ class PluginRuntime private constructor(
                 throw e
             }
 
+        /**
+         * [open] for a script that is still being produced -- a sealed entry being opened
+         * ([loadEntryScript]): the engine and its prelude are set up while [script] runs elsewhere,
+         * and only the module itself waits for it, so opening the seal costs (almost) no extra load
+         * time. A [PluginException] [script] throws (a damaged sealed file, ...) comes out unchanged.
+         */
+        suspend fun openPending(label: String, script: suspend () -> String, host: PluginHost, env: PluginEnv, calls: PluginCallTracker = PluginCallTracker()): PluginRuntime =
+            try {
+                openWith(label, script, host, env, prelude(env), calls)
+            } catch (e: PluginException) {
+                e.atLoad = true
+                throw e
+            }
+
         /** [open] with the prelude source given: tests use it to load a prelude that aborts. */
-        @OptIn(ExperimentalCoroutinesApi::class) // Deferred.getCompleted(), read only after completion is confirmed
         internal suspend fun open(
             label: String,
             script: String,
@@ -313,6 +329,16 @@ class PluginRuntime private constructor(
             env: PluginEnv,
             preludeCode: String,
             calls: PluginCallTracker = PluginCallTracker(),
+        ): PluginRuntime = openWith(label, { script }, host, env, preludeCode, calls)
+
+        @OptIn(ExperimentalCoroutinesApi::class) // Deferred.getCompleted(), read only after completion is confirmed
+        private suspend fun openWith(
+            label: String,
+            script: suspend () -> String,
+            host: PluginHost,
+            env: PluginEnv,
+            preludeCode: String,
+            calls: PluginCallTracker,
         ): PluginRuntime {
             val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "plugin-$label").apply { isDaemon = true } }
             val dispatcher = executor.asCoroutineDispatcher()
@@ -330,7 +356,8 @@ class PluginRuntime private constructor(
                     if (js.evaluate<Any?>("typeof __kinoCall === 'function'") != true) {
                         throw PluginScriptException(PRELUDE_INCOMPLETE)
                     }
-                    js.addModule("plugin.js", script)
+                    val source = try { script() } catch (e: Throwable) { throw SourceFailure(e) }
+                    js.addModule("plugin.js", source)
                     js.evaluate<Any?>(
                         code = "import * as p from 'plugin.js'; " +
                             "Object.defineProperty(globalThis, '__kinoExports', { value: p, writable: false, configurable: false });",
@@ -368,6 +395,11 @@ class PluginRuntime private constructor(
             } catch (failure: EngineFailure) {
                 executor.shutdown()
                 val e = failure.error
+                if (e is SourceFailure) {
+                    val cause = e.error
+                    if (cause is PluginException || cause is CancellationException) throw cause
+                    throw PluginScriptException(errorText(cause.message, cause.javaClass.simpleName), boundedCause(cause))
+                }
                 if (e is QuickJsException) throw PluginThrownException(errorText(e.message, "El plugin no carga"), boundedCause(e))
                 throw PluginThrownException(errorText(e.message, e.javaClass.simpleName), boundedCause(e))
             } catch (e: Exception) {

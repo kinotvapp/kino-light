@@ -746,14 +746,19 @@ class AppGraph(context: Context) {
         val plugin = pluginRegistry.find(id) ?: throw PluginScriptException("El plugin no está instalado")
         val openStarted = System.nanoTime()
         var sealedOpenMs = -1L
-        // Off Main, lazily (only when this runtime is first needed, never from the startup warm-up):
-        // a plain entry is read exactly as before; a sealed one is opened in memory (SealedCode),
-        // never written decrypted anywhere.
-        val script = try {
+        var sealedChars = 0
+        // Sealed code (apiVersion 5) only: opened in memory (SealedCode) off Main, lazily -- only when
+        // this runtime is first needed, never from the startup warm-up -- in the background while the
+        // engine and its prelude start (PluginRuntime.openPending), and never written decrypted anywhere.
+        val pendingSealed = if (!plugin.manifest.entrySealed) null else applicationScope.async(kotlinx.coroutines.Dispatchers.IO) {
             com.arkiv.player.data.plugin.loadEntryScript(
                 pluginStore, plugin, sealAgreement,
-                onSealedOpened = { ms, _ -> sealedOpenMs = ms },
+                onSealedOpened = { ms, chars -> sealedOpenMs = ms; sealedChars = chars },
             )
+        }
+        // A plain entry is read exactly as it always was.
+        val script = if (pendingSealed != null) null else try {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { pluginStore.readVerifiedScript(id) }
         } catch (e: PluginDamagedException) {
             pluginRegistry.markDamaged(id)
             throw e
@@ -807,10 +812,18 @@ class AppGraph(context: Context) {
         // A plugin converted from Nuvio gets Kino's TMDB key the same way, toward TMDB only.
         val secrets = pluginSecretsFor(plugin, sealAgreement, tmdbApiKey = { credentialsStore.read()?.tmdbApiKey })
         val host = pluginHostFor(plugin, http, storage, config, cookies, magisPluginBridge, secrets)
-        val runtime = PluginRuntime.open(id, script, host, PluginEnv(appVersion = BuildConfig.VERSION_NAME), calls)
-        if (BuildConfig.DEBUG && plugin.manifest.entrySealed) {
-            // Debug diagnostics only: durations and size, never a byte of the script.
-            android.util.Log.i("KinoSealedCode", "[$id] runtime ready in ${(System.nanoTime() - openStarted) / 1_000_000} ms; sealed open $sealedOpenMs ms; ${script.length} chars")
+        val runtime = if (pendingSealed == null) {
+            PluginRuntime.open(id, script!!, host, PluginEnv(appVersion = BuildConfig.VERSION_NAME), calls)
+        } else {
+            try {
+                PluginRuntime.openPending(id, { pendingSealed.await() }, host, PluginEnv(appVersion = BuildConfig.VERSION_NAME), calls)
+            } catch (e: PluginDamagedException) {
+                pluginRegistry.markDamaged(id)
+                throw e
+            }.also {
+                // Debug diagnostics only: durations and size, never a byte of the script.
+                if (BuildConfig.DEBUG) android.util.Log.i("KinoSealedCode", "[$id] runtime ready in ${(System.nanoTime() - openStarted) / 1_000_000} ms; sealed open $sealedOpenMs ms (overlapped with the engine start); $sealedChars chars")
+            }
         }
         // F5: drop this plugin's PluginHttp the moment its runtime is closed -- idle timeout, or an
         // explicit pool.close() from DefaultPluginAdmin's disable/update/uninstall -- so pluginHttps
