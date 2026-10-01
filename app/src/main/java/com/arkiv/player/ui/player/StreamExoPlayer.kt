@@ -50,7 +50,6 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MergingMediaSource
-import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.ui.SubtitleView
 import com.arkiv.player.playback.withAudioFocus
 import com.arkiv.player.playback.LiveErrorKind
@@ -311,9 +310,11 @@ internal fun StreamExoPlayer(
         // Built once and reused for the video AND every audio track below: the same [httpFactory]
         // backs all of them, so the stream's headers reach the audio requests too, exactly as they
         // reach the video's and the subtitles'.
+        // VOD: a `.ts` whose last PCR lies before that window still gets its duration and seeking
+        // (see TsTailPcrExtractor), searched through this same httpFactory -- same gate, same headers.
         val mediaSourceFactory = DefaultMediaSourceFactory(
             httpFactory,
-            DefaultExtractorsFactory().setTsExtractorTimestampSearchBytes(STREAM_TS_SEARCH_BYTES),
+            com.arkiv.player.playback.streamExtractorsFactory(live = onLiveError != null, tsSearchBytes = STREAM_TS_SEARCH_BYTES),
         )
         // Only with a license to fetch: the factory's default provider would request it through its
         // own plain DefaultHttpDataSource, outside the host gate. With [PluginHttpFactories.license]
