@@ -43,6 +43,25 @@ object LocalExoPlayer {
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_LOCAL)
             .build()
+            .also { it.addListener(progressDiagnostics(it)) }
+    }
+
+    /**
+     * Logs what a downloaded file reports once it is ready (see [com.arkiv.player.ui.ProgressDiagnostics]):
+     * a joined HLS `.ts` whose PCRs jump at a splice is exactly where the duration can come out unknown.
+     */
+    private fun progressDiagnostics(player: ExoPlayer) = object : androidx.media3.common.Player.Listener {
+        private var lastDuration = Long.MIN_VALUE
+
+        override fun onPlaybackStateChanged(playbackState: Int) {
+            if (playbackState != androidx.media3.common.Player.STATE_READY || player.duration == lastDuration) return
+            lastDuration = player.duration
+            com.arkiv.player.ui.ProgressDiagnostics.playerReady(
+                "local",
+                player.currentMediaItem?.localConfiguration?.uri?.toString(),
+                player,
+            )
+        }
     }
 
     /**

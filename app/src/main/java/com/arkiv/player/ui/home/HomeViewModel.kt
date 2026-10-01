@@ -54,6 +54,13 @@ class HomeViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val continueWatching: StateFlow<List<ContinueRow>> = repo.observeContinueWatching()
+        // What every "Continuar viendo" card (phone, TV, library) will draw: one log line per emission.
+        .onEach { rows ->
+            com.arkiv.player.ui.ProgressDiagnostics.cards(
+                "continue cards",
+                rows.map { Triple(com.arkiv.player.ui.ProgressDiagnostics.episodeKind(it.episodeId), it.positionMs, it.durationMs) },
+            )
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** itemId -> TMDB art (backdrops) to paint on the home. */

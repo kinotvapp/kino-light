@@ -438,6 +438,7 @@ internal fun StreamExoPlayer(
             ).also { exoPlayer.addAnalyticsListener(it) }
         } else null
 
+        var lastReadyDuration = Long.MIN_VALUE
         val listener = object : Player.Listener {
 
             override fun onVideoSizeChanged(videoSize: VideoSize) {
@@ -485,6 +486,11 @@ internal fun StreamExoPlayer(
                 }
                 Log.i(TAG, "onPlaybackStateChanged → $name · isPlaying=${exoPlayer.isPlaying} pos=${exoPlayer.currentPosition}ms dur=${exoPlayer.duration}ms")
                 mirror.updateBuffering(state == Player.STATE_BUFFERING)
+                // Progress diagnostics: once per READY with a new duration (not on every rebuffer).
+                if (state == Player.STATE_READY && exoPlayer.duration != lastReadyDuration) {
+                    lastReadyDuration = exoPlayer.duration
+                    com.arkiv.player.ui.ProgressDiagnostics.playerReady(crashTag, mediaUrl, exoPlayer)
+                }
                 if (state == Player.STATE_ENDED) {
                     Log.w(TAG, "episode ended at ${exoPlayer.currentPosition}ms of ${exoPlayer.duration}ms")
                     onChapterEnd()

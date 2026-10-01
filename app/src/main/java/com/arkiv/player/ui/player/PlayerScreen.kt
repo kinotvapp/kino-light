@@ -3661,7 +3661,8 @@ private fun PlayerContent(
                                 color = Color.White, style = MaterialTheme.typography.labelMedium,
                             )
                             Slider(
-                                value = seek.barValue(mirror.positionMs),
+                                // No duration yet: thumb at the start (see ProgressFraction.sliderValue).
+                                value = com.arkiv.player.ui.ProgressFraction.sliderValue(seek.barValue(mirror.positionMs), mirror.durationMs),
                                 // Grabbing the bar discards any pending incremental jump: otherwise
                                 // `seekBy`'s debounce would fire AFTER releasing and would snap you
                                 // back to the arrow-key destination, stomping on the drag.
@@ -3680,9 +3681,8 @@ private fun PlayerContent(
                                 // buffer (light gray) + played (red). This way the buffer shows
                                 // ahead of the playhead.
                                 track = { _ ->
-                                    val dur = if (mirror.durationMs > 0) mirror.durationMs.toFloat() else 1f
-                                    val posFrac = (seek.barValue(mirror.positionMs) / dur)
-                                        .coerceIn(0f, 1f)
+                                    // Unknown duration = empty bar, never a full one (see ProgressFraction).
+                                    val posFrac = com.arkiv.player.ui.ProgressFraction.of(seek.barValue(mirror.positionMs), mirror.durationMs)
                                     val bufFrac = mirror.bufferedFraction.coerceIn(0f, 1f)
                                     // The track's thickness IS the focus indicator (the stroke is
                                     // derived from the Canvas's height, so thickening the height

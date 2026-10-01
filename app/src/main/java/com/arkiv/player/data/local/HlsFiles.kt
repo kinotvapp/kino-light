@@ -356,3 +356,31 @@ object HlsFailureText {
 
     private const val NO_SPACE = "No hay espacio suficiente en el dispositivo. Libera espacio y toca Reintentar."
 }
+
+/**
+ * Does a joined `.ts` report the duration its playlist promised?
+ *
+ * MPEG-TS has no duration header: ExoPlayer's TS extractor (like [com.arkiv.player.playback.TsDurationProbe])
+ * takes the first PCR near the start of the file and the last one near its end and subtracts. The
+ * segments are joined as they come, discontinuities included, so after a splice whose clock jumps
+ * (an ad, a re-encode) that span is no longer the movie's length: shorter, longer, or negative --
+ * which the extractor turns into "no duration" and an unseekable file. The sum of EXTINF is the
+ * truth this is checked against; the check only reports (KinoProgress log at the end of a download)
+ * so the cases that need the timestamps rewritten at join time can be found first.
+ */
+object JoinedTsDuration {
+
+    /** End-to-end PCR span of a file, from its [head] and [tail] bytes; 0 = the player would find none. */
+    fun pcrSpanMs(head: ByteArray, tail: ByteArray): Long = com.arkiv.player.playback.TsDurationProbe.durationMs(head, tail)
+
+    /** Within 5% (and at least 30 s) of the playlist: the player's own duration can be trusted. */
+    fun agrees(pcrSpanMs: Long, playlistMs: Long): Boolean {
+        if (pcrSpanMs <= 0L || playlistMs <= 0L) return false
+        return kotlin.math.abs(pcrSpanMs - playlistMs) <= maxOf(TOLERANCE_MIN_MS, playlistMs / 20)
+    }
+
+    /** How many bytes of each end are read: the same window the stream player searches for a PCR. */
+    const val WINDOW_BYTES = 256 * 1024
+
+    private const val TOLERANCE_MIN_MS = 30_000L
+}

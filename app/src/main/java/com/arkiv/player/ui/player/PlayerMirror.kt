@@ -81,7 +81,16 @@ internal class PlayerMirror {
     fun readClock(positionMs: Long, durationMs: Long) {
         this.positionMs = positionMs
         if (durationMs > 0) this.durationMs = durationMs
+        // Diagnostics only on a CHANGE of "does the bar have a duration", never per tick.
+        val missing = this.durationMs <= 0 && positionMs > 0
+        if (missing != durationMissing) {
+            durationMissing = missing
+            com.arkiv.player.ui.ProgressDiagnostics.barDuration(!missing, positionMs, this.durationMs)
+        }
     }
+
+    /** Last state reported by [readClock]'s diagnostics; a plain field, never drawn. */
+    private var durationMissing = false
 
     /** After requesting a seek: advances the position without waiting for the player, so the bar doesn't jump. */
     fun jumpTo(positionMs: Long) {
@@ -92,6 +101,7 @@ internal class PlayerMirror {
     fun resetClock() {
         positionMs = 0L
         durationMs = 0L
+        durationMissing = false
     }
 
     fun readBuffer(fraction: Float) {

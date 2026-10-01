@@ -1902,8 +1902,19 @@ class PlayerViewModel internal constructor(
         } else {
             if (!_playlist.value.shouldLogHistory(episodeId)) return
         }
+        if (saveLog.shouldLog(episodeId, durationMs, System.currentTimeMillis())) {
+            com.arkiv.player.ui.ProgressDiagnostics.saved(
+                com.arkiv.player.ui.ProgressDiagnostics.episodeKind(episodeId),
+                positionMs,
+                durationMs,
+                com.arkiv.player.data.WatchedThreshold.isWatched(positionMs, durationMs),
+            )
+        }
         viewModelScope.launch { repo.savePlayback(episodeId, positionMs, durationMs) }
     }
+
+    /** Throttles the progress-save diagnostic (first save, a changed duration, then once a minute). */
+    private val saveLog = com.arkiv.player.ui.ProgressSaveLog()
 
     /**
      * Captures the frame currently being watched. Best-effort and off the critical path: if there's

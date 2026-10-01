@@ -195,7 +195,30 @@ class HlsDownloader(
         if (target.exists()) target.delete()
         if (!part.renameTo(target)) throw IOException("no se pudo renombrar el parcial")
         runCatching { stateFile.delete() }
+        if (!fmp4) runCatching { logJoinedDuration(target, segments) }
         return target
+    }
+
+    /**
+     * Diagnostics (tag KinoProgress): the playlist's duration against the PCR span the player will
+     * read off the joined file, with the discontinuity count. No names, no URLs.
+     */
+    private fun logJoinedDuration(file: File, segments: List<HlsSegment>) {
+        val window = JoinedTsDuration.WINDOW_BYTES
+        val (head, tail) = RandomAccessFile(file, "r").use { raf ->
+            val len = raf.length()
+            val h = ByteArray(minOf(len, window.toLong()).toInt()).also { raf.readFully(it) }
+            val tailLen = minOf(len, window.toLong()).toInt()
+            raf.seek(len - tailLen)
+            h to ByteArray(tailLen).also { raf.readFully(it) }
+        }
+        val playlistMs = (segments.sumOf { it.durationSec } * 1000).toLong()
+        val pcrMs = JoinedTsDuration.pcrSpanMs(head, tail)
+        android.util.Log.i(
+            "KinoProgress",
+            "joined ts · segments=${segments.size} discontinuities=${segments.count { it.discontinuity }} " +
+                "playlist=${playlistMs}ms pcrSpan=${pcrMs}ms agrees=${JoinedTsDuration.agrees(pcrMs, playlistMs)}",
+        )
     }
 
     private fun report(onProgress: (Long, Long) -> Unit, state: HlsResumeState, total: Int) {
