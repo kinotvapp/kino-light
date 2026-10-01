@@ -282,6 +282,27 @@ class RemuxHlsServerTest {
     }
 
     @Test
+    fun `the preparing figure measures the way to the planned start, not the whole title`() {
+        val remux = GrowingRemux()
+        remux.grow(remux.bytes.size)
+        val local = RemuxHlsServer(lanIp = { "127.0.0.1" }, headLeadSec = 0.0)
+        try {
+            assertEquals(-1, local.startProgressPercent())
+            local.serve("key", remux.locate)
+            assertEquals("nothing planned", -1, local.startProgressPercent())
+            val ready = local.availableSec("key")
+            local.planStart("key", (ready * 2 * 1000).toLong())
+            assertEquals(50, local.startProgressPercent())
+            local.planStart("key", 0L)
+            assertEquals(-1, local.startProgressPercent())
+            local.planStart("key", (ready * 1000 / 2).toLong())
+            assertEquals(100, local.startProgressPercent())
+        } finally {
+            local.stop()
+        }
+    }
+
+    @Test
     fun `an earlier remux that covers the planned start is served before the new run writes anything`() {
         val remux = GrowingRemux()
         val index = Fmp4Fixture.indexOf(remux.source)

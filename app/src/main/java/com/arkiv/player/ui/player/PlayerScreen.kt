@@ -3452,7 +3452,9 @@ private fun PlayerContent(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                CastCardContent(preparingForTv, remuxProgress)
+                // remuxProgress is read for the recomposition it brings every half second while the
+                // remux runs; the figure is how close it is to where the TV starts, not the title's.
+                CastCardContent(preparingForTv, if (remuxProgress >= 0) graph.remuxHlsServer.startProgressPercent() else -1)
             }
         }
 

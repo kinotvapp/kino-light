@@ -195,6 +195,23 @@ class RemuxHlsServer(
         return pause
     }
 
+    /**
+     * How close the served remux is to where the cast was planned to start (plus the start lead
+     * the cast waits for), as 0..100, or -1 with nothing planned. For "Preparándolo para la TV…
+     * NN%": the remux's own progress is over the WHOLE title, so it read 30% when the cast was a
+     * few seconds from starting at minute 36. No re-indexing here (it is read while composing);
+     * the cast's wait loop and the pacing refresh it every second.
+     */
+    fun startProgressPercent(): Int {
+        val s = source ?: return -1
+        val planned = s.plannedStartSec ?: return -1
+        val target = planned + headLeadSec
+        if (target <= 0.0) return -1
+        // The index grows on another thread meanwhile; a read that races it just shows no figure.
+        val ready = runCatching { s.segments().sumOf { it.durationSec } }.getOrNull() ?: return -1
+        return (ready / target * 100.0).toInt().coerceIn(0, 100)
+    }
+
     private fun fmt(sec: Double?): String = sec?.let { String.format(java.util.Locale.US, "%.0f", it) } ?: "?"
 
     /** Has [key]'s remux finished, as of the last look? */
