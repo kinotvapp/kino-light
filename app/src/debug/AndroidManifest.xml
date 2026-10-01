@@ -28,10 +28,6 @@
         <receiver
             android:name="com.arkiv.player.debug.SealSelfTestProbe"
             android:exported="true" />
-        <!-- Times opening an installed sealed plugin's entry (durations only); see SealedCodeBenchProbe. -->
-        <receiver
-            android:name="com.arkiv.player.debug.SealedCodeBenchProbe"
-            android:exported="true" />
         <!-- Plays one URL with the plugin player's ExoPlayer setup and logs the decoder's view; see StreamProbeActivity. -->
         <activity
             android:name="com.arkiv.player.debug.StreamProbeActivity"

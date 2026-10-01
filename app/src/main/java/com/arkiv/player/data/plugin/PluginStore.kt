@@ -76,10 +76,10 @@ data class InstalledRecord(
      */
     val anyVideoHost: Boolean = false,
     /**
-     * Sealed code only (apiVersion 5's `sealedEntry`): the author's Ed25519 public key (hex) the
-     * person accepted at the first install of the sealed entry -- pinned trust-on-first-use. An update
-     * signed by any other key, or one that drops the sealed entry, is refused; only uninstalling and
-     * installing again accepts a new key. Null for every plain plugin (and absent from its JSON).
+     * Author-signed plugins only (apiVersion 5's `signature`): the author's Ed25519 public key (hex)
+     * the person accepted at the first signed install -- pinned trust-on-first-use. An update signed
+     * by any other key, or no longer signed, is refused; only uninstalling and installing again
+     * accepts a new key. Null for every unsigned plugin (and absent from its JSON).
      */
     val authorKey: String? = null,
 ) {
@@ -127,7 +127,7 @@ data class InstalledRecord(
         .put("nuvioRepo", nuvioRepo ?: JSONObject.NULL)
         .put("nuvioScraperId", nuvioScraperId ?: JSONObject.NULL)
         .put("anyVideoHost", anyVideoHost)
-        // Written only when set: a plain plugin's installed.json stays exactly what it always was.
+        // Written only when set: an unsigned plugin's installed.json stays exactly what it always was.
         .apply { if (authorKey != null) put("authorKey", authorKey) }
         .toString()
 
@@ -256,18 +256,11 @@ class PluginStore(private val root: File, private val dataRoot: File) {
     }
 
     /** The entry script, only if its sha256 still matches `installed.json`. */
-    fun readVerifiedScript(id: String): String = readVerifiedEntry(id).toString(Charsets.UTF_8)
-
-    /**
-     * The entry file's bytes, only if their sha256 still matches `installed.json`: the plain script,
-     * or for sealed code the sealed `.kjs` exactly as downloaded (never anything decrypted -- see
-     * [openEntryScript]).
-     */
-    fun readVerifiedEntry(id: String): ByteArray {
+    fun readVerifiedScript(id: String): String {
         val p = get(id) ?: throw PluginScriptException("El plugin no está instalado")
         val bytes = runCatching { File(p.dir, p.manifest.entry).readBytes() }.getOrNull() ?: throw PluginDamagedException()
         if (sha256Hex(bytes) != p.record.sha256) throw PluginDamagedException()
-        return bytes
+        return bytes.toString(Charsets.UTF_8)
     }
 
     fun dataDir(id: String): File = File(dataRoot, id)

@@ -1,0 +1,11 @@
+{
+  "binding": "owner/repo/sub",
+  "id": "demo",
+  "version": "1.2.3",
+  "script": "// signed by seal.mjs for the cross-language test\nexport async function search(q) { return [{ id: \"x\", title: \"Ñandú \" + q.q }] }\nexport async function resolve(ref) { return { url: \"https://a.example.com/\" + ref + \".m3u8\" } }\n",
+  "signature": {
+    "authorKey": "5a1656ccad67bbfea9bac966c5360dcba38ad8e05762949b84bc6e1c958271b9",
+    "value": "db050ddd8a187513d737752d7403f43eb6d5a138fa9ac55648a67c4d6c94d6b83df380a107fbf5f5e1e53c32e276479b4927162aa88da94ecfe2f8ab190a9a0a"
+  },
+  "fingerprint": "E977-9D5B-EDF0-B9AC"
+}

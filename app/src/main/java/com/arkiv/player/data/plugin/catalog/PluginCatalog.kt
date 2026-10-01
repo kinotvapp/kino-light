@@ -20,8 +20,8 @@ data class CatalogEntry(
     val bundled: Boolean = false,
     /** Capabilities this build must have for the entry to be shown (for example `xuper-bridge`). */
     val requires: List<String> = emptyList(),
-    /** Its entry is sealed code (apiVersion 5): listed like any other, with a "Código cerrado" pill. */
-    val sealed: Boolean = false,
+    /** Signed by its author (apiVersion 5's `signature`): listed like any other, with a "Firmado" pill. */
+    val signed: Boolean = false,
 )
 
 data class PluginCatalog(val entries: List<CatalogEntry>)
@@ -85,7 +85,7 @@ object PluginCatalogParser {
             legacyDefault = o.optBoolean("legacyDefault", false),
             bundled = o.optBoolean("bundled", false),
             requires = strings(o.optJSONArray("requires")),
-            sealed = o.optBoolean("sealed", false),
+            signed = o.optBoolean("signed", false),
         )
     }
 

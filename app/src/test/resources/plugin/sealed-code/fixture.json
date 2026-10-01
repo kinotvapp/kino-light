@@ -1,8 +1,0 @@
-{
-  "binding": "owner/repo/sub",
-  "id": "demo",
-  "script": "// sealed by seal.mjs for the cross-language test\nexport async function search(q) { return [{ id: \"x\", title: \"Ñandú \" + q.q }] }\nexport async function resolve(ref) { return { url: \"https://a.example.com/\" + ref + \".m3u8\" } }\n// sealed by seal.mjs for the cross-language test\nexport async function search(q) { return [{ id: \"x\", title: \"Ñandú \" + q.q }] }\nexport async function resolve(ref) { return { url: \"https://a.example.com/\" + ref + \".m3u8\" } }\n// sealed by seal.mjs for the cross-language test\nexport async function search(q) { return [{ id: \"x\", title: \"Ñandú \" + q.q }] }\nexport async function resolve(ref) { return { url: \"https://a.example.com/\" + ref + \".m3u8\" } }\n",
-  "authorKey": "36915416a83f677518d6ad112c3b8fdf80181e79b4e19247bcaf7fcab6adf100",
-  "fingerprint": "FDF5-D606-16D5-2D85",
-  "blob": "S1NDMQEBAQEAAAKsNpFUFqg/Z3UY1q0RLDuP34AYHnm04ZJHvK9/yrat8QAVdVjP8p5/eIrEFL8nkML2obHURvb/8T6Q0SshmFyGBA5PRicQoSF/UxIRmAOFZv3Yp7fpuhdO9FEHkYukLH6JFKHklSLOwrLU7zS4CMfoxDSTDqujalS3I3gNnNIp0FaYByQpqQdpXi7vIBHVKydkW6JpmhtpmsL/e3TcnUfOyPxe8Ny4jJeoYNL6IxU6htS+1PbNxQueNQx5yszCC0mGyNrRZOWuwEdx+N5ZpomwqY2FFPlQvMM++64cm59GeNygjBj3pOtpllbbdbovEMqPsvcDvky9v7aOPMhxga59z7wn9R2o6698j0el8VFH3vOHrfQo6jTlz8zqB7BkwRT3qNgEr4sH7Z4VCD/eN22Xh5w4j/dWTUnw153fBIPALlyNURe8vWvvCoJHBw=="
-}

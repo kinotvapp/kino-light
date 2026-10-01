@@ -83,8 +83,7 @@ object SealedSecrets {
         return raw
     }
 
-    /** HKDF-SHA256 (RFC 5869), one 32-byte block: shared with [SealedCode], which only changes the `info`. */
-    internal fun hkdf(ikm: ByteArray, salt: ByteArray, info: ByteArray): ByteArray {
+    private fun hkdf(ikm: ByteArray, salt: ByteArray, info: ByteArray): ByteArray {
         val mac = Mac.getInstance("HmacSHA256")
         mac.init(SecretKeySpec(salt, "HmacSHA256"))
         val prk = mac.doFinal(ikm)

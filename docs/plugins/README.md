@@ -156,9 +156,9 @@ names the field.
 | `id` | Required. `^[a-z0-9][a-z0-9-]{1,39}$` (2 to 40 lowercase letters, digits or hyphens, not starting with a hyphen). Not one of `magis`, `ditu`, `live`, `local`, `unknown`, `plugin`. It is the plugin's identity: never change it once people have installed it. |
 | `name` | Required. 1 to 40 characters. |
 | `version` | Required. `MAJOR.MINOR.PATCH` and nothing else (no `-beta`, no `+build`), each number up to 6 digits and without leading zeros. |
-| `apiVersion` | Required. `1`, `2`, `3`, `4` or `5` (5 only for [sealed code](#sealed-code-apiversion-5-kino-0946)). A higher number than Kino supports is refused with "Este plugin necesita una versión más nueva de Kino". Declare the lowest number that has what you use, so your plugin also runs on older Kino builds. |
+| `apiVersion` | Required. `1`, `2`, `3`, `4` or `5` (5 only for a [signed plugin](#signed-plugins-apiversion-5-kino-0946)). A higher number than Kino supports is refused with "Este plugin necesita una versión más nueva de Kino". Declare the lowest number that has what you use, so your plugin also runs on older Kino builds. |
 | `entry` | Required. Relative path of the JavaScript file: letters, digits, `.`, `_`, `-` and `/` only, no `..`, at most 200 characters, ends in `.js`. The file is at most 1 MB. |
-| `sealedEntry` | apiVersion 5 only, instead of `entry`: the entry script sealed with `sdk/seal.mjs --code`, a relative path ending in `.kjs`. See [Sealed code](#sealed-code-apiversion-5-kino-0946). |
+| `signature` | Optional, apiVersion 5 only: `{ "authorKey": …, "value": … }`, written by `sdk/seal.mjs --sign` — your signature over the entry file. See [Signed plugins](#signed-plugins-apiversion-5-kino-0946). |
 | `hosts` | Required. At least 1 entry, with no upper limit from Kino 0.9.45 (only the manifest's 16 KB bounds it); Kino 0.9.44 and older refuse more than 20, and `sdk/validate.mjs` warns "Más de 20 hosts: Kino 0.9.44 o anterior rechaza este plugin; necesita Kino 0.9.45 o superior". From apiVersion 2 it may be empty, `[]`, when the plugin has a `url` setting: see [The person's own servers](#the-persons-own-servers). Each a lowercase DNS name (`archive.org`), `*.` plus a DNS name (`*.archive.org`), or (apiVersion 2 only) an object `{ "host": "…", "insecureHttp": true }` (below). Host names only: no scheme, port or path. No bare `*`, no IP addresses, no `localhost`, nothing ending in `.local`, `.lan`, `.internal`, `.localhost` or `.home.arpa`, and at least one dot. **`*.x` covers subdomains only, not `x` itself**: if you need both, list both. |
 | `capabilities` | Required. A subset of `search`, `home`, `browse`, `episodes`, `resolve`, `download`, `drm`, `channels`. Must include `resolve` and at least one of `search` or `home`. `search`, `home`, `browse`, `episodes` and `resolve` must each be an exported function of the entry file, or the install fails with "El plugin no carga: le falta ...". `download` and `drm` need `apiVersion: 2` and are declarative flags instead — the app acts on them, not your code, so nothing extra to export; declaring one shows its consent line ("Puede descargar videos para verlos sin conexión" / "Reproduce video protegido (DRM)") and needs approval again on an update that adds it. `download` gives your titles offline downloads (see [Downloads](#downloads-apiversion-2)); `drm` lets a `Stream` carry a Widevine license (see [A Widevine-protected stream](#a-widevine-protected-stream-apiversion-2)). `channels` needs `apiVersion: 3` and the exports `liveCategories` and `liveChannels` (see [Channels in the En vivo tab](#channels-in-the-en-vivo-tab-apiversion-3)). |
 | `settings` | Optional. What the person fills in on your plugin's "Configurar" screen: see below. |
@@ -565,72 +565,61 @@ host-and-https check, the `kino.crypto` restrictions and redaction. `--record` n
 value to a fixtures file either — a canonical placeholder stands in for it, so a committed recording
 never carries a secret however it is replayed later. See [section 7](#7-test-it-locally).
 
-### Sealed code (apiVersion 5, Kino 0.9.46+)
+### Signed plugins (apiVersion 5, Kino 0.9.46+)
 
-Strictly optional: a plugin may ship its entry script **sealed** instead of as readable JavaScript.
-Nothing changes for any other plugin — `entry` keeps working exactly as before, at every apiVersion.
+Strictly optional: you may **sign** your plugin with your own author key, so the people who install
+it know every update comes from you. Your code stays plain, readable JavaScript — signing hides
+nothing. Nothing changes for any unsigned plugin, at any apiVersion.
 
 ```json
 "apiVersion": 5,
-"sealedEntry": "plugin.kjs"
+"entry": "plugin.js",
+"signature": { "authorKey": "<64 hex>", "value": "<128 hex>" }
 ```
 
-`sealedEntry` replaces `entry` (a manifest with both is refused): a relative path ending in `.kjs`,
-same path rules as `entry`. Kino 0.9.45 and older refuse an apiVersion 5 manifest with "Este plugin
-necesita una versión más nueva de Kino"; `sdk/validate.mjs` reminds you.
+Kino 0.9.45 and older refuse an apiVersion 5 manifest with "Este plugin necesita una versión más
+nueva de Kino"; `sdk/validate.mjs` reminds you. Below apiVersion 5 a `signature` is ignored.
 
-**What it is.** The `.kjs` is your script compressed (DEFLATE), encrypted to Kino's public key
-(X25519 + AES-256-GCM, the same key pair as [sealed secrets](#sealed-secrets-apiversion-4)) and
-**signed with your own author key** (Ed25519). The encryption is bound to `owner/repo[/path]` and
-the manifest's `id`: copied to another repo, folder or plugin it doesn't open. Kino checks the
-signature at install and **pins your key** (trust on first use): the consent sheet shows "El código
-de este plugin está cifrado" and "Firmado por su autor con la clave ABCD-EF01-2345-6789 (primera
-vez)", and every card of the plugin carries a "Código cerrado" pill.
-
-**Updates.** Every update must be sealed again and signed with the **same** key. An update signed
-by another key — or one that goes back to a plain `entry` — is refused with "Esta versión está
-firmada con otra clave de autor…" / "…ya no trae el código firmado por su autor…"; only uninstalling
-and installing again accepts it. So keep your key safe and backed up: losing it means everyone has
-to reinstall. A plain plugin that becomes sealed asks the person again before updating.
-
-**Only from the default branch.** Like sealed secrets, sealed code opens only when the plugin is
-installed as `owner/repo` (or `owner/repo/path`) with **no `@ref`**: any explicit branch, tag or
-commit is refused ("El código sellado solo funciona si instalas el plugin desde su rama principal,
-sin @rama"), because `owner/repo@<ref>` can resolve to a fork's commit.
-
-**The workflow.** Keep developing on the plain `plugin.js` — the kit runs it — and seal before
-publishing:
+**What is signed.** `value` is an Ed25519 signature, by the key in `authorKey`, over the UTF-8 text
 
 ```
-node sdk/seal.mjs --keygen                     # once: writes kino-author-key.pem (never commit it)
-node sdk/seal.mjs --code --repo owner/repo     # reads kino-plugin.json, seals plugin.js -> plugin.kjs
-node sdk/validate.mjs .                        # structure, signature, exports (on plugin.js), git leaks
-node sdk/run.mjs . search "metropolis"         # runs plugin.js ("ejecutando el código sin sellar")
+kino-signed-entry:v1\n<owner/repo[/path], lowercase>\n<id>\n<version>\n<sha256 hex of the entry file>
 ```
 
-`--code` takes `--manifest`, `--in` (default: the `.kjs` path with `.js`), `--out` and `--key`
-(default `kino-author-key.pem`), refuses a script that doesn't parse as an ES module (nobody can
-debug it once sealed), and prints the sizes. `run.mjs` and `validate.mjs` take `--source <file>` for
-an unsealed script elsewhere. **Never commit `plugin.js` or the key**: put both in `.gitignore`
-(and remember git history — seal from the start). `validate.mjs` fails when either is tracked next to
-the sealed file, and notes when the `.kjs` no longer matches `plugin.js` ("¿olvidaste volver a
-sellarlo?"). The kit can't check which repo and id you sealed for: Kino does at install.
+So it covers your exact `plugin.js` and is bound to the repo (and folder), the plugin `id` and the
+`version`: it can't be replayed onto another repo, plugin or version, and a single changed byte of
+the script breaks it. The ref is not part of it: a signed plugin installs from any branch or tag.
 
-**Limits.** The `.kjs` must fit the 1 MB entry limit; the script inside may be up to 4 MB, but keep it
-under about **2 MB**: compiling 2 MB of JavaScript takes about a second on the slowest TV boxes.
-Opening the seal itself is cheap (measured ~15 ms per MB on a Fire TV Stick), done in the background
-the first time the plugin is used — never at app start — and the script never touches the disk
-decrypted.
+**What Kino does.** At install and at every update — never when the plugin runs, so it costs
+nothing at runtime — Kino downloads the script, checks the signature (refused with "La firma del
+autor no es válida…" before anyone is asked) and **pins your key** the first time (trust on first
+use). The consent sheet shows "Firmado por su autor con la clave ABCD-EF01-2345-6789 (primera vez)"
+(the first 8 bytes of the key's SHA-256), and the plugin's cards carry a "Firmado" pill.
 
-**What it does and doesn't protect** (the same honesty as sealed secrets: obfuscation, not secrecy).
-It stops reading your code on GitHub or in the repo history (after sealing), copying the file into
-another repo, folder, plugin or app, and running it in the Node kit or any other JavaScript host.
-It does **not** stop someone who extracts Kino's private key from the APK (one extraction opens every
-sealed plugin and secret), someone hooking a running Kino on a rooted device or an emulator (the
-script exists as text in memory while it runs), or your own leaks (`plugin.js` committed before
-sealing, a release zip). Errors keep their `plugin.js:<line>` positions, but nobody but you can read
-those lines: reproduce problems with the kit. Sealing the code does not make a plain-text key inside it
-acceptable — keep using `secrets` for keys.
+**Updates.** Every update must be signed with the **same** key. An update signed by another key, or
+no longer signed, is refused ("Esta versión está firmada con otra clave de autor…" / "Esta versión
+ya no está firmada por su autor…"); only uninstalling and installing again accepts it. So keep your
+key safe and backed up: losing it means everyone has to reinstall. An unsigned plugin that becomes
+signed asks the person again before updating.
+
+**The workflow.**
+
+```
+node sdk/seal.mjs --keygen                       # once: writes kino-author-key.pem (never commit it)
+node sdk/seal.mjs --sign --repo owner/repo       # signs plugin.js, writes "signature" into kino-plugin.json
+node sdk/validate.mjs . --repo owner/repo        # checks the signature, exports, and that no *.pem is tracked
+```
+
+Sign again after **any** change to the entry file or the `version` — `validate.mjs` fails until you
+do. `--sign` takes `--manifest` and `--key` (default `kino-author-key.pem`); `validate.mjs` reads the
+repo from the folder's GitHub `origin` when you omit `--repo`. **Never commit the key**: put
+`*.pem` in `.gitignore`; `validate.mjs` fails when one is tracked.
+
+**What it does and doesn't protect.** It proves each update was signed by whoever held the key at
+the first install: someone who gets push access to your repo (or a compromised account) can't ship
+an update people accept without your key. It does not make the first install trustworthy (that is
+what the first-time line says), it does not protect a leaked key, and it does not hide your code.
+Keep using `secrets` for keys and tokens.
 
 ## 4. The contract (apiVersion 1 to 5)
 

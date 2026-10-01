@@ -7,8 +7,7 @@ import java.security.MessageDigest
  * Ed25519 signature VERIFICATION only (RFC 8032 §5.1.7), in plain Kotlin: the platform has Ed25519
  * only from API 33 (minSdk is 24) and the native mbedTLS has none. Everything it touches is public
  * (key, message, signature), so it needs no constant-time arithmetic. It is used at install/update
- * time only (sealed plugin code, [SealedCode]), never on a plugin runtime's load path: a few tens of
- * milliseconds on an old TV box there would not matter, but it never has to run there.
+ * time only (author-signed plugins, [SignedEntry]), never on a plugin runtime's load path.
  *
  * Strict where it matters: a signature whose `S` is not below the group order is refused (no
  * malleability), and so is a key or `R` that is not a valid point encoding. The check is

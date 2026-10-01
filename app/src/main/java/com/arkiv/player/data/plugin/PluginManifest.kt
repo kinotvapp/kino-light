@@ -58,11 +58,11 @@ data class PluginManifest(
      */
     val secrets: Map<String, String> = emptyMap(),
     /**
-     * apiVersion 5's `sealedEntry`: [entry] names a `.kjs` file (the entry script sealed to Kino and
-     * signed by its author, see [SealedCode]) instead of a plain `.js`. False for every plugin
-     * written before it existed, so nothing about them changes.
+     * apiVersion 5's `signature`: the author's Ed25519 key and signature over [entry] (still a plain,
+     * readable `.js`), checked at install/update and pinned (see [SignedEntry]). Null for every
+     * plugin written before it existed, so nothing about them changes.
      */
-    val entrySealed: Boolean = false,
+    val signature: EntrySignature? = null,
 )
 
 sealed interface ManifestResult {
@@ -85,10 +85,10 @@ object ManifestParser {
      * not move an older gate.
      */
     const val SUPPORTED_API = 5
-    /** `sealedEntry` (the entry script sealed to Kino and signed by its author, [SealedCode]) arrived with apiVersion 5. */
-    const val SEALED_CODE_API_VERSION = 5
-    const val BOTH_ENTRIES = "Usa \"entry\" o \"sealedEntry\", no los dos"
-    const val SEALED_ENTRY_PATH = "El campo \"sealedEntry\" debe ser una ruta relativa a un archivo .kjs"
+    /** `signature` (the entry signed by its author, [SignedEntry]) arrived with apiVersion 5. */
+    const val SIGNATURE_API_VERSION = 5
+    const val BAD_SIGNATURE_FIELD =
+        "El campo \"signature\" debe ser { \"authorKey\": 64 caracteres hex, \"value\": 128 caracteres hex } (node sdk/seal.mjs --sign)"
     /** The `{ "host", "insecureHttp": true }` host object arrived with apiVersion 2. */
     const val INSECURE_HOST_API_VERSION = 2
     /** The `secrets` field (sealed values a plugin may ask for with `kino.secret(name)`) arrived with apiVersion 4. */
@@ -181,21 +181,14 @@ object ManifestParser {
         if (api > SUPPORTED_API) return invalid("apiVersion", "Este plugin necesita una versión más nueva de Kino")
         if (api < 1) return invalid("apiVersion", "El campo \"apiVersion\" debe ser 1 o mayor")
 
-        // Below apiVersion 5 `sealedEntry` is unknown and ignored like any other field: an older
-        // manifest reaches the `entry` rule exactly as it always did.
-        val entrySealed = api >= SEALED_CODE_API_VERSION && o.has("sealedEntry")
-        val entry = if (entrySealed) {
-            if (o.has("entry")) return invalid("entry", BOTH_ENTRIES)
-            val sealed = o.opt("sealedEntry") as? String ?: ""
-            if (!isSafeRelativePath(sealed) || !sealed.endsWith(SealedCode.EXTENSION)) return invalid("sealedEntry", SEALED_ENTRY_PATH)
-            sealed
-        } else {
-            o.optString("entry").also { entry ->
-                if (!isSafeRelativePath(entry) || !entry.endsWith(".js")) {
-                    return invalid("entry", "El campo \"entry\" debe ser una ruta relativa a un archivo .js")
-                }
-            }
+        val entry = o.optString("entry")
+        if (!isSafeRelativePath(entry) || !entry.endsWith(".js")) {
+            return invalid("entry", "El campo \"entry\" debe ser una ruta relativa a un archivo .js")
         }
+        // Below apiVersion 5 `signature` is unknown and ignored like any other field.
+        val signature = if (api >= SIGNATURE_API_VERSION && o.has("signature")) {
+            parseSignature(o.opt("signature")) ?: return invalid("signature", BAD_SIGNATURE_FIELD)
+        } else null
 
         val hostsJson = o.optJSONArray("hosts") ?: return invalid("hosts", "Falta el campo \"hosts\"")
         // Empty is judged once the settings are read (below), and only from NO_HOSTS_API_VERSION:
@@ -313,7 +306,7 @@ object ManifestParser {
                 homepage = text(o, "homepage", MAX_HOMEPAGE_CHARS), hosts = hosts, capabilities = caps,
                 color = color?.uppercase(), icon = icon, permissions = permissions, settings = settings,
                 insecureHosts = insecureHosts, liveStreamHostsAny = liveStreamHostsAny, streamHostsAny = streamHostsAny, fetchHostsAny = fetchHostsAny, discoverable = discoverable,
-                secrets = secrets, entrySealed = entrySealed,
+                secrets = secrets, signature = signature,
             ),
         )
     }
@@ -330,4 +323,13 @@ object ManifestParser {
         (o.opt(key) as? String).orEmpty().trim().take(max)
 
     private fun invalid(field: String, message: String) = ManifestResult.Invalid(field, message)
+
+    /** `{ "authorKey": 64 lowercase hex, "value": 128 lowercase hex }` and nothing else, or null. */
+    private fun parseSignature(raw: Any?): EntrySignature? {
+        val o = raw as? JSONObject ?: return null
+        if (o.keys().asSequence().toSet() != setOf("authorKey", "value")) return null
+        val key = (o.opt("authorKey") as? String)?.takeIf { it.length == SignedEntry.KEY_HEX_CHARS }?.let(SignedEntry::hexBytes) ?: return null
+        val value = (o.opt("value") as? String)?.takeIf { it.length == SignedEntry.SIGNATURE_HEX_CHARS }?.let(SignedEntry::hexBytes) ?: return null
+        return EntrySignature(key, value)
+    }
 }

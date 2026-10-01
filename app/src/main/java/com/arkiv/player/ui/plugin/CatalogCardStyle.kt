@@ -161,15 +161,15 @@ internal fun artForInstalled(art: Map<String, CatalogArt>, address: String): Cat
     art.entries.firstOrNull { sameAddress(it.key, address) }?.value
 
 /**
- * The pill on a card's tile: what the person already used, else "Código cerrado" for sealed code (apiVersion
- * 5, catalog or community alike), else none. Community cards carry no other pill: they sit under the "De la
+ * The pill on a card's tile: what the person already used, else "Firmado" for a plugin signed by its author
+ * (apiVersion 5, catalog or community alike), else none. Community cards carry no other pill: they sit under the "De la
  * comunidad" header already, and installing one still shows "Plugin no verificado".
  */
 internal fun cardPill(row: CatalogRow): String? = when {
     row.entry.legacyDefault -> "Lo que ya usabas"
-    row.entry.sealed -> SEALED_CODE_PILL
+    row.entry.signed -> SIGNED_PILL
     else -> null
 }
 
-/** The pill of a sealed-code plugin's card (phone and TV). */
-const val SEALED_CODE_PILL = "Código cerrado"
+/** The pill of an author-signed plugin's card (phone and TV). */
+const val SIGNED_PILL = "Firmado"

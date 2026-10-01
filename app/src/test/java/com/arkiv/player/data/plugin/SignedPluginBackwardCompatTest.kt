@@ -15,12 +15,12 @@ import java.io.File
 import java.io.FileNotFoundException
 
 /**
- * Sealed code is strictly opt-in: every plugin written before it (apiVersion 1-4, a plain `entry`,
- * with or without sealed secrets, and every Nuvio-converted one) parses, installs, updates, consents
- * and loads exactly as before -- no new consent line, no pinned key, no extra field on disk, and the
- * seal agreement is never touched for its code.
+ * Author signatures are strictly opt-in: every plugin written before them (apiVersion 1-4, with or
+ * without sealed secrets, and every Nuvio-converted one) parses, installs, updates, consents and
+ * loads exactly as before -- no new consent line, no pinned key, no extra field on disk, and the seal
+ * agreement is never touched for its code.
  */
-class SealedCodeBackwardCompatTest {
+class SignedPluginBackwardCompatTest {
     @get:Rule val tmp = TemporaryFolder()
 
     private val files = mutableMapOf<String, ByteArray>()
@@ -33,7 +33,7 @@ class SealedCodeBackwardCompatTest {
     private val base = "https://raw.githubusercontent.com/o/r/HEAD/"
     private val script = "export async function search(){ return [] }\nexport async function resolve(){ return null }\n"
 
-    // installed.json's keys before sealed code existed: a plain plugin's record must still have exactly these.
+    // installed.json's keys before author signatures existed: a plain plugin's record must still have exactly these.
     private val recordKeysBefore = setOf(
         "address", "version", "sha256", "hosts", "installedAt", "enabled", "unresponsive", "damaged", "lastUpdateCheckAt",
         "pendingVersion", "pendingHosts", "permissions", "pendingPermissions", "capabilities", "pendingCapabilities",
@@ -62,9 +62,8 @@ class SealedCodeBackwardCompatTest {
 
     private fun assertPlainEverywhere(expectSecretsLine: Boolean) = runBlocking {
         val preview = installer.preview("o/r")
-        assertFalse(preview.manifest.entrySealed)
-        assertNull(preview.sealedEntry)
-        assertFalse(preview.newSealedCode)
+        assertNull(preview.manifest.signature)
+        assertNull(preview.signedEntry)
         val lines = PluginConsent.extraLines(preview).map { it.text }
         assertEquals(if (expectSecretsLine) listOf("Usa datos sellados por su autor") else emptyList<String>(), lines)
         val callsBefore = agreementCalls
@@ -73,9 +72,7 @@ class SealedCodeBackwardCompatTest {
         assertEquals(callsBefore, agreementCalls)
         assertNull(record.authorKey)
         assertEquals(recordKeysBefore, JSONObject(File(tmp.root, "plugins/demo/installed.json").readText()).keys().asSequence().toSet())
-        val plugin = PluginRegistry(store).apply { reload() }.find("demo")!!
-        assertEquals(script, loadEntryScript(store, plugin, refusingAgreement))
-        assertEquals(store.readVerifiedScript("demo"), loadEntryScript(store, plugin, refusingAgreement))
+        assertEquals(script, store.readVerifiedScript("demo"))
     }
 
     @Test fun `apiVersion 1 to 4 plain plugins install, consent and load exactly as before`() {
@@ -92,15 +89,21 @@ class SealedCodeBackwardCompatTest {
         assertPlainEverywhere(expectSecretsLine = true)
     }
 
-    @Test fun `below apiVersion 5 a stray sealedEntry is ignored like any unknown field`() {
+    @Test fun `below apiVersion 5 a stray signature is ignored like any unknown field`() {
         for (api in 1..4) {
-            val withBoth = ManifestParser.parse(manifest(api) { put("sealedEntry", "plugin.kjs") }.toString()) as ManifestResult.Valid
-            assertFalse(withBoth.manifest.entrySealed)
-            assertEquals("plugin.js", withBoth.manifest.entry)
-            val onlySealed = ManifestParser.parse(manifest(api) { remove("entry"); put("sealedEntry", "plugin.kjs") }.toString()) as ManifestResult.Invalid
-            assertEquals("entry", onlySealed.field)
-            assertEquals("El campo \"entry\" debe ser una ruta relativa a un archivo .js", onlySealed.message)
+            val m = ManifestParser.parse(manifest(api) { put("signature", "not even an object") }.toString()) as ManifestResult.Valid
+            assertNull(m.manifest.signature)
         }
+        // So an apiVersion 4 plugin carrying one installs unsigned, with nothing pinned.
+        publish(manifest(4) { put("signature", JSONObject().put("authorKey", "00".repeat(32)).put("value", "00".repeat(64))) })
+        assertPlainEverywhere(expectSecretsLine = false)
+    }
+
+    @Test fun `older Kino's refusal of apiVersion 5 is the clear update message`() {
+        // What Kino 0.9.45 and older answer (SUPPORTED_API was 4): the same rule, one version up.
+        val r = ManifestParser.parse(manifest(ManifestParser.SUPPORTED_API + 1).toString()) as ManifestResult.Invalid
+        assertEquals("apiVersion", r.field)
+        assertEquals("Este plugin necesita una versión más nueva de Kino", r.message)
     }
 
     @Test fun `a plain update of a plain plugin applies without asking, as before`() = runBlocking {
@@ -110,7 +113,7 @@ class SealedCodeBackwardCompatTest {
         assertNull(store.get("demo")!!.record.authorKey)
     }
 
-    @Test fun `apiVersion 5 itself is opt-in -- a plain entry at apiVersion 5 is a plain plugin`() {
+    @Test fun `apiVersion 5 itself is opt-in -- without a signature it is an unsigned plugin`() {
         publish(manifest(5))
         assertPlainEverywhere(expectSecretsLine = false)
     }
@@ -134,15 +137,14 @@ class SealedCodeBackwardCompatTest {
             )[url]?.toByteArray() ?: throw FileNotFoundException(url)
         })
         val preview = nuvio.previewScraper("owner/nuvio-repo", "fakesrc")
-        assertFalse(preview.manifest.entrySealed)
-        assertNull(preview.sealedEntry)
-        assertTrue(PluginConsent.extraLines(preview).none { it.text == PluginConsent.SEALED_CODE_LINE || it.text.startsWith("Firmado") })
+        assertNull(preview.manifest.signature)
+        assertNull(preview.signedEntry)
+        assertTrue(PluginConsent.extraLines(preview).none { it.text.startsWith(PluginConsent.SIGNED_LINE_PREFIX) })
         val record = nuvio.install(preview)
         assertNull(record.authorKey)
         val stored = store.list().single()
         assertTrue(stored.manifest.entry.endsWith(".js"))
-        val plugin = PluginRegistry(store).apply { reload() }.find(stored.manifest.id)!!
-        assertEquals(String(preview.nuvioOrigin!!.script, Charsets.UTF_8), loadEntryScript(store, plugin, refusingAgreement))
+        assertEquals(String(preview.nuvioOrigin!!.script, Charsets.UTF_8), store.readVerifiedScript(stored.manifest.id))
         assertEquals(recordKeysBefore, JSONObject(File(stored.dir, "installed.json").readText()).keys().asSequence().toSet())
     }
 }

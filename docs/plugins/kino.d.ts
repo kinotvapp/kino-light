@@ -1,4 +1,4 @@
-// TypeScript declarations for Kino plugins (apiVersion 1, 2, 3, 4 and 5; apiVersion 5 only adds the manifest's sealedEntry). Reference them from plugin.js
+// TypeScript declarations for Kino plugins (apiVersion 1, 2, 3, 4 and 5; apiVersion 5 only adds the manifest's signature). Reference them from plugin.js
 // with `/// <reference path="./kino.d.ts" />` for editor help; Kino itself runs plain JavaScript.
 // The numbers in the comments come from contract.json, which is authoritative. The app checks that
 // every `kino` member declared here exists in its runtime and nothing else does (KinoDtsTest).

@@ -19,8 +19,6 @@
 //   --raw                  print the plugin's answer as it returned it, without the app's checks
 //   --epg <url|file>       live playlist only: the XMLTV guide to show what is on now
 //   --live                 resolve only: the ref is a live channel's (liveStreamHosts "any" applies)
-//   --source <file>        sealed code (apiVersion 5's sealedEntry): the unsealed script to run; by
-//                          default the .kjs's sibling .js (the kit can never open a .kjs)
 // The first argument is the plugin's entry file or the folder that holds kino-plugin.json. The
 // result goes to stdout as JSON; everything else (kino.log, console.*, dropped entries, errors)
 // goes to stderr.
@@ -31,7 +29,6 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { checkOutput, contract, validateManifest } from "./contract.mjs";
 import { createKino } from "./kino-shim.mjs";
 import { channelLines, download, guideFor, loadPlaylist, summarisePlaylist, summaryLines } from "./live-playlist.mjs";
-import { defaultSourceFor } from "./seal.mjs";
 
 const FUNCTIONS = ["search", "home", "browse", "episodes", "resolve"];
 // `live <sub>` names one of the channels capability's exports.
@@ -49,7 +46,7 @@ function fail(message) {
 }
 
 export function parseArgs(argv) {
-  const opts = { config: {}, record: null, replay: null, raw: false, epg: null, live: false, source: null };
+  const opts = { config: {}, record: null, replay: null, raw: false, epg: null, live: false };
   const rest = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -63,7 +60,6 @@ export function parseArgs(argv) {
     else if (a === "--raw") opts.raw = true;
     else if (a === "--epg") opts.epg = argv[++i];
     else if (a === "--live") opts.live = true;
-    else if (a === "--source") opts.source = argv[++i];
     else rest.push(a);
   }
   return { opts, rest };
@@ -97,15 +93,8 @@ async function main() {
   const checked = validateManifest(manifestText);
   if (!checked.ok) return fail(`kino-plugin.json: ${checked.field}: ${checked.message}`);
   const manifest = checked.manifest;
-  // Sealed code: run its unsealed source instead (Kino itself opens the .kjs; the kit can't).
-  const entryPath = manifest.entrySealed
-    ? resolve(opts.source || (!stat.isDirectory() && target.endsWith(".js") ? target : join(dir, defaultSourceFor(manifest.entry))))
-    : resolve(dir, manifest.entry);
+  const entryPath = resolve(dir, manifest.entry);
   if (!stat.isDirectory() && target !== entryPath) return fail(`${targetArg} is not the manifest's entry (${manifest.entry})`);
-  if (manifest.entrySealed) {
-    if (!existsSync(entryPath)) return fail(`${manifest.entry} is sealed: the kit runs its unsealed source, not found at ${entryPath} (use --source <file>)`);
-    stderr(`ejecutando el código sin sellar ${entryPath} (el kit no puede abrir ${manifest.entry})`);
-  }
   const capability = Object.values(LIVE).includes(fn) ? "channels" : fn;
   if (!manifest.capabilities.includes(capability)) return fail(`the manifest does not declare "${capability}" in capabilities`);
 

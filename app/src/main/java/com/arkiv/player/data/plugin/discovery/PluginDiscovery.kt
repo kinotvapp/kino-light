@@ -41,8 +41,8 @@ data class DiscoveredPlugin(
     val name: String,
     val description: String,
     val stars: Int,
-    /** The manifest's entry is sealed (apiVersion 5's `sealedEntry`): the card says "Código cerrado". */
-    val sealed: Boolean = false,
+    /** The manifest is signed by its author (apiVersion 5's `signature`): the card says "Firmado". */
+    val signed: Boolean = false,
 ) {
     /** `owner/repo`: what the installer is given. */
     val address: String get() = "$owner/$repo"
@@ -325,7 +325,7 @@ class PluginDiscovery(
         if (bytes.size > ManifestParser.MAX_BYTES) return null
         val m = (ManifestParser.parse(bytes.toString(Charsets.UTF_8)) as? ManifestResult.Valid)?.manifest ?: return null
         if (!m.discoverable) return null
-        return DiscoveredPlugin(r.owner, r.repo, m.id, m.name, m.description, r.stars, sealed = m.entrySealed)
+        return DiscoveredPlugin(r.owner, r.repo, m.id, m.name, m.description, r.stars, signed = m.signature != null)
     }
 
     private fun readState(): DiskState? = runCatching {
@@ -344,7 +344,7 @@ class PluginDiscovery(
         val id = (o.opt("id") as? String)?.takeIf { ManifestParser.ID.matches(it) } ?: return null
         val name = (o.opt("name") as? String)?.takeIf { it.isNotBlank() }?.take(ManifestParser.MAX_NAME_CHARS) ?: return null
         val description = ((o.opt("description") as? String) ?: "").take(ManifestParser.MAX_DESCRIPTION_CHARS)
-        return DiscoveredPlugin(owner, repo, id, name, description, o.optInt("stars", 0).coerceAtLeast(0), sealed = o.optBoolean("sealed", false))
+        return DiscoveredPlugin(owner, repo, id, name, description, o.optInt("stars", 0).coerceAtLeast(0), signed = o.optBoolean("signed", false))
     }
 
     /** A disk that refuses costs only the cache: the answer is still returned. */
@@ -354,7 +354,7 @@ class PluginDiscovery(
             .put("plugins", JSONArray(state.plugins.map {
                 JSONObject().put("owner", it.owner).put("repo", it.repo).put("id", it.id)
                     .put("name", it.name).put("description", it.description).put("stars", it.stars)
-                    .apply { if (it.sealed) put("sealed", true) }
+                    .apply { if (it.signed) put("signed", true) }
             }))
         try {
             writeFileAtomically(cacheFile, json.toString().toByteArray(Charsets.UTF_8))

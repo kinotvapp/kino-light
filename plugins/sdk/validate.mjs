@@ -5,9 +5,9 @@
 //     and that every declared capability is an exported function (the app refuses the install
 //     otherwise).
 //   node sdk/validate.mjs <plugin folder> --run <function> [argument] [cursor] [--config k=v] [--replay file]
-//   A sealed entry (apiVersion 5's sealedEntry): the .kjs's structure and author signature are checked
-//   (the kit can never open it), and the exports are checked on the unsealed source -- `--source <file>`,
-//   by default the .kjs's sibling .js -- which must NOT be tracked by git next to the sealed file.
+//   A signed plugin (apiVersion 5's signature): the signature is checked against the entry file for
+//   `--repo owner/repo[/path]`, by default the folder's GitHub origin; an author key (*.pem) tracked
+//   by git is refused.
 //     also runs one function and reports every entry the app would drop, and why. With
 //     `--run liveCategories`, each declared playlist is downloaded and parsed as the app would.
 // It also prints the consent sheet's extra lines, the red ones marked, as the person will read them.
@@ -15,13 +15,13 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join, relative, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { checkOutput, contract, kb, requiredExports, validateManifest } from "./contract.mjs";
 import { createKino } from "./kino-shim.mjs";
 import { call, parseArgs, resolveFirstLiveRef } from "./run.mjs";
 import { loadPlaylist } from "./live-playlist.mjs";
-import { defaultSourceFor, fingerprint, inspectSealedCode } from "./seal.mjs";
+import { fingerprint, normalizeBinding, verifyEntry } from "./seal.mjs";
 
 // Every return carries { ok, problems, drops, output, consent, notes } — even the early ones, before
 // a `kino` even exists — so a caller (this file's own CLI included) never has to guess which fields
@@ -42,10 +42,7 @@ export function consentLines(m, { authorFingerprint = null } = {}) {
   if (m.capabilities.includes("drm")) line("Reproduce video protegido (DRM)");
   if (m.capabilities.includes("channels")) line("Agrega canales en vivo a la pestaña En vivo");
   if (m.secrets && Object.keys(m.secrets).length) line("Usa datos sellados por su autor");
-  if (m.entrySealed) {
-    line(contract.manifest.sealedEntry.consentLine);
-    if (authorFingerprint) line(`Firmado por su autor con la clave ${authorFingerprint} (primera vez)`);
-  }
+  if (authorFingerprint) line(`${contract.manifest.signature.consentLinePrefix} ${authorFingerprint} (primera vez)`);
   (m.insecureHosts || []).forEach((h) => line(`Conexión sin cifrar con ${h}`, true));
   if (m.liveStreamHostsAny) line("Puede reproducir canales desde cualquier servidor que indique su lista", true);
   if (m.streamHostsAny) line("Puede reproducir video desde cualquier servidor que indique", true);
@@ -58,7 +55,23 @@ function trackedByGit(dir, paths) {
   return r.status === 0 ? r.stdout.split("\n").filter(Boolean) : [];
 }
 
-export async function validate(dirArg, { run = null, args = [], config = {}, replay = null, fetchImpl = globalThis.fetch, source = null } = {}) {
+/** `owner/repo[/folder]` from [dir]'s git origin on GitHub, or null. */
+export function bindingFromGit(dir) {
+  const git = (...a) => spawnSync("git", a, { cwd: dir, encoding: "utf8" });
+  const origin = git("remote", "get-url", "origin");
+  if (origin.status !== 0) return null;
+  const match = origin.stdout.trim().match(/github\.com[/:]([^/]+)\/([^/]+?)(\.git)?\/?$/i);
+  if (!match) return null;
+  const prefix = git("rev-parse", "--show-prefix");
+  const folder = prefix.status === 0 ? prefix.stdout.trim().replace(/\/+$/, "") : "";
+  try {
+    return normalizeBinding([match[1], match[2], folder].filter(Boolean).join("/"));
+  } catch {
+    return null;
+  }
+}
+
+export async function validate(dirArg, { run = null, args = [], config = {}, replay = null, fetchImpl = globalThis.fetch, repo = null } = {}) {
   const problems = [];
   const dir = resolve(dirArg);
   const manifestFile = join(dir, "kino-plugin.json");
@@ -81,31 +94,23 @@ export async function validate(dirArg, { run = null, args = [], config = {}, rep
   if (m.secrets && Object.keys(m.secrets).length) {
     notes.push("No se puede comprobar aquí para qué repositorio se sellaron los secretos: Kino lo comprueba al instalar. Además, solo se abren si la persona instala el plugin desde su rama principal, sin @rama.");
   }
-  const sc = contract.manifest.sealedEntry;
-  if (m.apiVersion >= sc.apiVersion) {
-    notes.push(`apiVersion ${m.apiVersion}: requiere Kino ${sc.fromApp} o superior; las versiones anteriores lo rechazan con «Este plugin necesita una versión más nueva de Kino»`);
+  const sg = contract.manifest.signature;
+  if (m.apiVersion >= sg.apiVersion) {
+    notes.push(`apiVersion ${m.apiVersion}: requiere Kino ${sg.fromApp} o superior; las versiones anteriores lo rechazan con «Este plugin necesita una versión más nueva de Kino»`);
   }
-  let entry = join(dir, m.entry);
+  const entry = join(dir, m.entry);
   if (!existsSync(entry)) return { ...refused([`entry ${m.entry} not found`]), consent: consentLines(m), notes };
   if (statSync(entry).size > contract.manifest.entryMaxBytes) problems.push(`${m.entry} is bigger than ${kb(contract.manifest.entryMaxBytes)}: Kino refuses it`);
-  let checkExports = true;
-  if (m.entrySealed) {
-    const inspected = inspectSealedCode(readFileSync(entry));
-    if (!inspected.ok) problems.push(`${m.entry} ${inspected.problem}`);
-    else authorFingerprint = fingerprint(inspected.authorKey);
-    notes.push("No se puede comprobar aquí para qué repositorio y plugin se selló el código: Kino lo comprueba al instalar. Además, solo se abre si la persona instala el plugin desde su rama principal, sin @rama.");
-    const src = source ? resolve(source) : join(dir, defaultSourceFor(m.entry));
-    // The commonest real-world leak: the plain source (or the author key) committed next to the sealed file.
-    const leaks = trackedByGit(dir, [relative(dir, src), "*.pem"].filter((p) => !p.startsWith("..")));
-    leaks.forEach((f) => problems.push(`${f} is tracked by git next to the sealed ${m.entry}: anyone can read it on GitHub. Remove it (git rm --cached ${f}) and add it to .gitignore${f.endsWith(".pem") ? " -- and since the key leaked, make a new one" : ""}`));
-    if (existsSync(src)) {
-      entry = src;
-      if (inspected.ok && Buffer.byteLength(readFileSync(src, "utf8"), "utf8") !== inspected.plainLength) {
-        notes.push(`${basename(src)} no es lo que está sellado en ${m.entry} (otro tamaño): ¿olvidaste volver a sellarlo con node sdk/seal.mjs --code?`);
-      }
-    } else {
-      checkExports = false;
-      notes.push(`Sin el código sin sellar (${relative(dir, src) || src}; o --source <archivo>) no se comprueban sus funciones exportadas.`);
+  if (m.signature) {
+    authorFingerprint = fingerprint(Buffer.from(m.signature.authorKey, "hex"));
+    // The author key committed by mistake: anyone could then sign "updates" Kino accepts.
+    trackedByGit(dir, ["*.pem"]).forEach((f) => problems.push(`${f} is tracked by git: anyone can read your author key on GitHub. Remove it (git rm --cached ${f}), add it to .gitignore, and since it leaked, make a new key (everyone must reinstall)`));
+    let binding = null;
+    try { binding = repo ? normalizeBinding(repo) : bindingFromGit(dir); } catch (e) { problems.push(e.message); }
+    if (!binding) {
+      notes.push("No sé desde qué repositorio se instalará (usa --repo owner/repo[/carpeta]): la firma no se comprobó aquí; Kino la comprueba al instalar.");
+    } else if (!verifyEntry(m.signature, readFileSync(entry), binding, m.id, m.version)) {
+      problems.push(`signature: ${sg.badSignatureMessage} (for ${binding}). Sign again: node sdk/seal.mjs --sign --repo ${binding}`);
     }
   }
   const consent = consentLines(m, { authorFingerprint });
@@ -117,7 +122,6 @@ export async function validate(dirArg, { run = null, args = [], config = {}, rep
     // Inside the try too: an invalid --replay path (or any other setup failure) must become a
     // problem, not an uncaught rejection.
     // The same local stand-in run.mjs reads: a plugin with `secrets` gets its plain values from it.
-    if (!checkExports) return { ok: problems.length === 0, problems, drops, output, consent, notes };
     const { kino, servers } = createKino(m, { config, replay: replay && resolve(replay), fetchImpl, secretsFile: join(dir, ".kino-secrets.json") });
     globalThis.kino = kino;
     const copy = join(scratch, "plugin.mjs");
@@ -161,11 +165,15 @@ export async function validate(dirArg, { run = null, args = [], config = {}, rep
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const { opts, rest } = parseArgs(process.argv.slice(2));
+  // --repo is validate's own (run.mjs's parser doesn't know it): taken out before the rest is read.
+  const argv = process.argv.slice(2);
+  const repoAt = argv.indexOf("--repo");
+  const repo = repoAt === -1 ? null : argv.splice(repoAt, 2)[1];
+  const { opts, rest } = parseArgs(argv);
   const runAt = rest.indexOf("--run");
   const dir = rest[0];
   if (!dir) {
-    console.error("usage: node sdk/validate.mjs <plugin folder> [--run <function> [argument] [cursor]] [--config k=v] [--replay file] [--source plugin.js]");
+    console.error("usage: node sdk/validate.mjs <plugin folder> [--run <function> [argument] [cursor]] [--config k=v] [--replay file] [--repo owner/repo[/path]]");
     process.exitCode = 2;
   } else {
     const result = await validate(dir, {
@@ -173,7 +181,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       args: runAt === -1 ? [] : rest.slice(runAt + 2),
       config: opts.config,
       replay: opts.replay,
-      source: opts.source,
+      repo,
     });
     if (result.consent.length) {
       // Red on a terminal, as on the consent sheet; "(en rojo)" either way so a log keeps it.

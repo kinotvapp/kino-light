@@ -35,8 +35,8 @@ data class ConsentLine(val text: String, val warning: Boolean = false, val isNew
 
 /** The consent sheet's lines beyond the host list (spec §1.2, §1.3, and round 2's §"Security"). Pure. */
 object PluginConsent {
-    /** The consent sheet's line for a sealed entry (apiVersion 5), also the kit's (validate.mjs). */
-    const val SEALED_CODE_LINE = "El código de este plugin está cifrado"
+    /** The start of the consent sheet's line for an author-signed plugin (apiVersion 5), also the kit's (validate.mjs). */
+    const val SIGNED_LINE_PREFIX = "Firmado por su autor con la clave"
 
     fun extraLines(preview: InstallPreview): List<ConsentLine> {
         val m = preview.manifest
@@ -56,12 +56,11 @@ object PluginConsent {
         if (m.secrets.isNotEmpty()) {
             out += ConsentLine("Usa datos sellados por su autor", isNew = preview.isUpdate && preview.newSealedSecrets)
         }
-        // Sealed code (apiVersion 5): said plainly, no extra confirmation; the author key is pinned on accept.
-        preview.sealedEntry?.let { sealed ->
-            out += ConsentLine(SEALED_CODE_LINE, isNew = preview.isUpdate && preview.newSealedCode)
+        // Author-signed (apiVersion 5): the key, said plainly, no extra confirmation; it is pinned on accept.
+        preview.signedEntry?.let { signed ->
             out += ConsentLine(
-                "Firmado por su autor con la clave ${sealed.fingerprint}" + if (sealed.firstKey) " (primera vez)" else "",
-                isNew = preview.isUpdate && sealed.firstKey,
+                "$SIGNED_LINE_PREFIX ${signed.fingerprint}" + if (signed.firstKey) " (primera vez)" else "",
+                isNew = preview.isUpdate && signed.firstKey,
             )
         }
         m.insecureHosts.forEach { host ->
