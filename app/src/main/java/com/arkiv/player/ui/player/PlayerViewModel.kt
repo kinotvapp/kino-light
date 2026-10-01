@@ -110,6 +110,11 @@ data class PlayerData(
      * PlaylistData.startPositionMs instead.
      */
     val startPositionMs: Long = 0L,
+    /**
+     * Start paused at [startPositionMs]: only a stream resolved again by the network recovery
+     * ([PlayerViewModel.onVodNetworkReResolve]) for a player the person had paused.
+     */
+    val startPaused: Boolean = false,
 )
 
 /**
@@ -610,6 +615,8 @@ class PlayerViewModel internal constructor(
         clearTrivia()
         // A host question for the previous title belongs to nobody now.
         hostPromptJob?.cancel()
+        // A new title gets its own network re-resolves (see [onVodNetworkReResolve]).
+        networkReResolves.reset()
         // What the live gate asks about (see [xuperLiveStopMessage]): only a `live:` id is stoppable.
         loadedEpisodeId = episodeId
         _otherSources.value = null
@@ -1273,6 +1280,37 @@ class PlayerViewModel internal constructor(
         if (item != null) offerOtherSources(item)
     }
 
+    /** Network re-resolves spent on the title on screen; see [onVodNetworkReResolve]. */
+    private val networkReResolves = NetworkReResolveBudget()
+
+    /**
+     * `StreamExoPlayer`'s VOD network recovery asks for a fresh Stream (its second attempt, see
+     * [VodNetworkRecovery]): the connection died after the title had played -- a pause in the
+     * background, the CDN closed the idle connection, the URL/token may have expired. Only a plugin's
+     * VOD title has a source to ask ([VodNetworkRecovery.canReResolve]), and only
+     * [NetworkReResolveBudget]'s few times. Resolved again through [loadPlugin] at [positionMs] --
+     * where the player was, not the saved progress, which can be minutes older -- and paused if it
+     * was ([playWhenReady] false). False: not taken, the player re-prepares in place instead.
+     */
+    fun onVodNetworkReResolve(positionMs: Long, playWhenReady: Boolean): Boolean {
+        val item = _magisItem.value ?: return false
+        val live = com.arkiv.player.data.plugin.PluginIds.isLiveEpisode(item.episodeId)
+        if (!VodNetworkRecovery.canReResolve(item.kind, live, hostQuestionOpen = hostPromptJob?.isActive == true)) return false
+        if (!networkReResolves.tryTake(System.currentTimeMillis())) {
+            Log.w(PLAY, "network recovery: ${item.episodeId} already resolved again recently -> re-preparing instead")
+            return false
+        }
+        Log.w(PLAY, "network recovery: ${item.episodeId} lost its connection -> resolving again at ${positionMs}ms paused=${!playWhenReady}")
+        // Through null first, like [onMagisExoError]'s retry: an equal PlayerData (same URL) would be dropped by StateFlow.
+        _magisItem.value = null
+        viewModelScope.launch {
+            // Another title loaded meanwhile: its own load decides.
+            if (loadedEpisodeId != item.episodeId) return@launch
+            loadPlugin(item.episodeId, resumeAt = positionMs, startPaused = !playWhenReady)
+        }
+        return true
+    }
+
     /** A plugin title's stream failed for good: its error offers the title's other sources. */
     private fun offerOtherSources(item: PlayerData) {
         if (item.kind != SourceKind.PLUGIN || com.arkiv.player.data.plugin.PluginIds.isLiveEpisode(item.episodeId)) return
@@ -1714,7 +1752,11 @@ class PlayerViewModel internal constructor(
      * A disabled, damaged or uninstalled plugin never reaches `resolve`: the person gets the
      * spec's message naming the plugin instead of "No hay ninguna fuente que sepa abrir esto".
      */
-    private suspend fun loadPlugin(episodeId: String) {
+    /**
+     * [resumeAt]/[startPaused]: only the network recovery's re-resolve ([onVodNetworkReResolve]),
+     * which resumes where the player was, and paused if it was; null = the saved progress, playing.
+     */
+    private suspend fun loadPlugin(episodeId: String, resumeAt: Long? = null, startPaused: Boolean = false) {
         val pluginId = com.arkiv.player.data.plugin.PluginIds.pluginIdOfEpisode(episodeId)
         val access = pluginAccessFor(pluginId, plugins)
         val blocked = access.blockedMessage()
@@ -1792,7 +1834,7 @@ class PlayerViewModel internal constructor(
         )
         // A live stream has no "where you were": it starts at the player's default position (the
         // live edge), and with 0 `StreamExoPlayer` doesn't seek.
-        val startPos = if (live) 0L else safeStartPosition(episodeId, SourceKind.PLUGIN)
+        val startPos = if (live) 0L else resumeAt ?: safeStartPosition(episodeId, SourceKind.PLUGIN)
         // The official Xuper plugin's VOD titles cast like the native Magis ones did: through
         // `ArchiveCacheProxy`, which puts the CDN headers on for the receiver (see
         // `castableStreamItem`). The phone itself doesn't play through it, so it's only started
@@ -1842,6 +1884,7 @@ class PlayerViewModel internal constructor(
             probedMime = probedMime,
             drm = play.drmLicenseUrl.isNotBlank() || play.drmClearKey.isNotEmpty(),
             startPositionMs = startPos,
+            startPaused = startPaused && !live,
         )
         Log.w(PLAY, "loadPlugin() published · mime=${play.mime.ifBlank { "sniff" }} subs=${play.subtitles.size} drm=${play.drmLicenseUrl.isNotBlank()} startPos=$startPos")
     }

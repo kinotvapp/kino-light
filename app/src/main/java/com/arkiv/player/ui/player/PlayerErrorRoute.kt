@@ -15,6 +15,13 @@ internal enum class PlayerErrorRoute {
      */
     STUCK_RETRY,
 
+    /**
+     * A VOD that had played lost its connection (an idle one the CDN closed during a pause in the
+     * background, an expired token), with attempts left: recovered without the person seeing it --
+     * re-prepared in place, or resolved again. See [VodNetworkRecovery].
+     */
+    NETWORK_RETRY,
+
     /** Presumed a side audio track's fault: drop the one to blame and rebuild from the same position. */
     DROP_AUDIO,
 
@@ -42,6 +49,10 @@ internal enum class PlayerErrorRoute {
  * - [askableHost]: the error is the gate's `UndeclaredPlaybackHostException` (see [undeclaredPlaybackHost])
  *   and someone is there to ask; it wins over everything else.
  * - [stuck]: the error is the player's own stuck watchdog ([isStuckPlayer]); [stuckRetriesLeft]: how many re-prepares are left.
+ * - [networkRetry]: [VodNetworkRecovery.shouldRetry] said so (a VOD's network error, attempts left).
+ *   Before the side audio tracks are blamed: a lost connection takes the video and every track down
+ *   together, and dropping a dub over it would lose it for nothing. Once the attempts run out, the
+ *   error goes on to them as before.
  *
  * A live channel's DRM error goes through its reopen budget like any cut (a fresh resolve may bring
  * a fresh license) -- except when the device refused the software level: nothing a reopen brings
@@ -56,6 +67,7 @@ internal fun playerErrorRoute(
     stuck: Boolean = false,
     stuckRetriesLeft: Int = 0,
     askableHost: Boolean = false,
+    networkRetry: Boolean = false,
 ): PlayerErrorRoute = when {
     // First: an undeclared host is neither an audio track's fault nor a cut a reopen would fix (the
     // rebuilt player would meet the same refusal); only the person's answer changes anything.
@@ -63,6 +75,7 @@ internal fun playerErrorRoute(
     live && liveInPlace -> PlayerErrorRoute.LIVE_IN_PLACE
     drmError && (!live || drmSoftwareRefused) -> PlayerErrorRoute.DRM_FINAL
     !live && stuck && stuckRetriesLeft > 0 -> PlayerErrorRoute.STUCK_RETRY
+    !live && networkRetry -> PlayerErrorRoute.NETWORK_RETRY
     audioTracksActive -> PlayerErrorRoute.DROP_AUDIO
     live -> PlayerErrorRoute.LIVE_CUT
     else -> PlayerErrorRoute.FINAL

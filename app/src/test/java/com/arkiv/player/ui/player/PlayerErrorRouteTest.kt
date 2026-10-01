@@ -13,7 +13,8 @@ class PlayerErrorRouteTest {
         stuck: Boolean = false,
         stuckRetriesLeft: Int = 0,
         askHost: Boolean = false,
-    ) = playerErrorRoute(live, liveInPlace, drmError, drmSoftwareRefused, audio, stuck, stuckRetriesLeft, askableHost = askHost)
+        network: Boolean = false,
+    ) = playerErrorRoute(live, liveInPlace, drmError, drmSoftwareRefused, audio, stuck, stuckRetriesLeft, askableHost = askHost, networkRetry = network)
 
     // A request refused ONLY because its host is undeclared (and askable) is a question for the
     // person, not an audio track's fault, a live cut, a stuck re-prepare or a final error: asking comes first.
@@ -78,5 +79,19 @@ class PlayerErrorRouteTest {
         assertEquals(true, isStuckPlayer(runtimeCheck, listOf("Player stuck buffering and not loading for 4000 ms")))
         assertEquals(false, isStuckPlayer(runtimeCheck, listOf("flush() is valid only at Executing states")))
         assertEquals(false, isStuckPlayer(2000, listOf("Player stuck playing with no progress for 10000 ms")))
+    }
+
+    // A lost connection takes the video and its side audio down together: it is recovered before
+    // a dub is blamed for it, and an undeclared host or a DRM failure is still decided first.
+    @Test fun `a VOD network error with attempts left is recovered before anything is blamed`() {
+        assertEquals(PlayerErrorRoute.NETWORK_RETRY, route(network = true))
+        assertEquals(PlayerErrorRoute.NETWORK_RETRY, route(network = true, audio = true))
+        assertEquals(PlayerErrorRoute.ASK_HOST, route(network = true, askHost = true))
+        assertEquals(PlayerErrorRoute.DRM_FINAL, route(network = true, drmError = true))
+    }
+
+    @Test fun `network recovery is never a live channel's, whose reopen budget decides`() {
+        assertEquals(PlayerErrorRoute.LIVE_CUT, route(network = true, live = true))
+        assertEquals(PlayerErrorRoute.LIVE_IN_PLACE, route(network = true, live = true, liveInPlace = true))
     }
 }

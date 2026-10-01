@@ -3049,6 +3049,10 @@ private fun PlayerContent(
                 },
                 onTextureViewReady = { tv -> magisTextureView = tv },
                 onError = { msg -> vm.onMagisExoError(msg) },
+                // A VOD that lost its connection after playing gets a fresh Stream on its second
+                // attempt (the VM decides whether this title has a source to ask). See VodNetworkRecovery.
+                onNetworkReResolve = vm::onVodNetworkReResolve,
+                startPlaying = !mItem.startPaused,
                 onUndeclaredHost = if (mItem.kind == SourceKind.PLUGIN && vm.asksAboutPlaybackHosts) {
                     { host, positionMs -> vm.onPluginHostRefused(host, positionMs) }
                 } else {

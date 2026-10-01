@@ -61,6 +61,8 @@ import com.arkiv.player.playback.VodSyncStats
 import com.arkiv.player.playback.fallbackRenderers
 import com.arkiv.player.ui.rememberGraph
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 private const val TAG = "StreamExo"
 
@@ -242,6 +244,15 @@ internal fun StreamExoPlayer(
      */
     onUndeclaredHost: ((host: String, positionMs: Long) -> Unit)? = null,
     /**
+     * A VOD's network recovery wants the stream resolved again (its second attempt, see
+     * [VodNetworkRecovery.step]): called with where playback was and whether it was playing; true
+     * when the caller took it (this player is then rebuilt from a fresh Stream), false to re-prepare
+     * in place instead. Null: nothing to resolve again, every attempt re-prepares.
+     */
+    onNetworkReResolve: ((positionMs: Long, playWhenReady: Boolean) -> Boolean)? = null,
+    /** Whether the first prepare starts playing. False only for a stream rebuilt by a recovery while paused. */
+    startPlaying: Boolean = true,
+    /**
      * Every track report, with the side [audioTracks] merged in RIGHT NOW: the list starts as
      * [audioTracks] and shrinks when [fallbackAudioTracks] drops a failing one and the source is
      * rebuilt, so the audio menu must be labelled against this one, never the Stream's original.
@@ -265,7 +276,11 @@ internal fun StreamExoPlayer(
     val graph = rememberGraph()
     // While casting the TV plays and this player sits paused: its last cue stayed frozen on the
     // phone (2026-10-01), so the subtitles are not drawn at all until the cast ends.
-    val castingNow by rememberCastingState(graph)
+    val castingState = rememberCastingState(graph)
+    val castingNow by castingState
+    // A network recovery waits for the app to be in front (see NETWORK_RETRY in onPlayerError).
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    val recoveryScope = androidx.compose.runtime.rememberCoroutineScope()
     val subtitleStyle by graph.subtitlePrefs.prefs.collectAsStateWithLifecycle()
 
     val prepared = remember(mediaUrl, subtitleConfigs, requestHeaders, mimeType, http, audioTracks, drm, clearKey) {
@@ -374,7 +389,7 @@ internal fun StreamExoPlayer(
         val built = PreparedSource(player, mediaItem, mediaSourceFactory, drmSoftwareLevelRefused)
         // Unchanged from before audio tracks existed when [audioTracks] is empty: same mediaItem,
         // same setMediaItem call, no merge at all (see [applyAudioTracks]).
-        applyAudioTracks(built, audioTracks, startPositionMs)
+        applyAudioTracks(built, audioTracks, startPositionMs, playWhenReady = startPlaying)
         built
     }
     val exoPlayer = prepared.player
@@ -384,6 +399,12 @@ internal fun StreamExoPlayer(
     var activeAudioTracks by remember(prepared) { mutableStateOf(audioTracks) }
     // Re-prepares already spent on a stuck VOD player (see PlayerErrorRoute.STUCK_RETRY); per prepared source.
     var stuckRetries by remember(prepared) { mutableStateOf(0) }
+    // The VOD network recovery's state, per prepared source (see [VodNetworkRecovery]): whether this
+    // stream ever reached READY (a stream that never opened is an error at once), the attempts spent
+    // since it was last READY, and one deferred until the cast ends.
+    var everReady by remember(prepared) { mutableStateOf(false) }
+    var networkRetries by remember(prepared) { mutableStateOf(0) }
+    var networkRetryAfterCast by remember(prepared) { mutableStateOf(false) }
 
     var videoAspectRatio by remember(exoPlayer) { mutableFloatStateOf(0f) }
     // Read inside the layout listener below, which is built once (`remember`) and outlives every
@@ -443,6 +464,8 @@ internal fun StreamExoPlayer(
         } else null
 
         var lastReadyDuration = Long.MIN_VALUE
+        // The pending network recovery attempt (waiting for the app to come back, or its back-off).
+        var networkRetryJob: kotlinx.coroutines.Job? = null
         val listener = object : Player.Listener {
 
             override fun onVideoSizeChanged(videoSize: VideoSize) {
@@ -490,6 +513,14 @@ internal fun StreamExoPlayer(
                 }
                 Log.i(TAG, "onPlaybackStateChanged → $name · isPlaying=${exoPlayer.isPlaying} pos=${exoPlayer.currentPosition}ms dur=${exoPlayer.duration}ms")
                 mirror.updateBuffering(state == Player.STATE_BUFFERING)
+                if (state == Player.STATE_READY) {
+                    everReady = true
+                    // The connection is back: a later loss (the next pause in the background) gets its full attempts.
+                    if (networkRetries > 0) {
+                        Log.i(TAG, "network recovery: READY again after $networkRetries attempt(s)")
+                        networkRetries = 0
+                    }
+                }
                 // Progress diagnostics: once per READY with a new duration (not on every rebuffer).
                 if (state == Player.STATE_READY && exoPlayer.duration != lastReadyDuration) {
                     lastReadyDuration = exoPlayer.duration
@@ -542,7 +573,11 @@ internal fun StreamExoPlayer(
                 val msg = error.message ?: "Error de reproducción (${error.errorCode})"
                 val liveKind = if (onLiveError != null) liveErrorKind(error) else null
                 val undeclared = if (onUndeclaredHost != null) undeclaredPlaybackHost(error) else null
+                val networkRetry = undeclared == null && VodNetworkRecovery.shouldRetry(
+                    error.errorCode, live = onLiveError != null, everReady = everReady, retriesSpent = networkRetries,
+                )
                 val route = playerErrorRoute(
+                    networkRetry = networkRetry,
                     live = liveKind != null,
                     liveInPlace = liveKind?.recoverableInPlace == true,
                     drmError = PluginWidevine.isDrmError(error.errorCode),
@@ -568,6 +603,40 @@ internal fun StreamExoPlayer(
                         val at = exoPlayer.currentPosition.coerceAtLeast(0L)
                         Log.w(TAG, "player stuck ($msg) → re-preparing at ${at}ms, retry $stuckRetries/$MAX_STUCK_RETRIES")
                         applyAudioTracks(prepared, activeAudioTracks, at, playWhenReady = exoPlayer.playWhenReady)
+                    }
+                    // A VOD that had played lost its connection: recovered without an error. See [VodNetworkRecovery].
+                    PlayerErrorRoute.NETWORK_RETRY -> {
+                        networkRetries++
+                        val attempt = networkRetries
+                        // While casting this player sits paused on purpose and the TV plays: nothing
+                        // is reopened now (a re-resolve would even recast). The cast's end resumes it
+                        // (seek + play, or stays paused after "stop"); the LaunchedEffect below
+                        // re-prepares it then.
+                        if (castingState.value) {
+                            Log.w(TAG, "network error while casting ($msg) -> re-prepared when the cast ends")
+                            networkRetryAfterCast = true
+                            return
+                        }
+                        networkRetryJob?.cancel()
+                        networkRetryJob = recoveryScope.launch {
+                            // In the background the network may be cut for this app: an attempt
+                            // there would only burn the budget. The person is away anyway.
+                            lifecycle.currentStateFlow.first { it.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED) }
+                            delay(VodNetworkRecovery.delayMs(attempt))
+                            // Something else already re-prepared it (a seek does not, a new source does).
+                            if (exoPlayer.playerError == null) return@launch
+                            // Read now, not at the error: the person may have pressed play meanwhile.
+                            val at = exoPlayer.currentPosition.coerceAtLeast(0L)
+                            val playing = exoPlayer.playWhenReady
+                            val step = VodNetworkRecovery.step(attempt, canReResolve = onNetworkReResolve != null)
+                            if (step == NetworkRetryStep.RE_RESOLVE && onNetworkReResolve!!(at, playing)) {
+                                Log.w(TAG, "network error ($msg) -> attempt $attempt/${VodNetworkRecovery.MAX_RETRIES}: resolving the stream again at ${at}ms playing=$playing")
+                                return@launch
+                            }
+                            Log.w(TAG, "network error ($msg) -> attempt $attempt/${VodNetworkRecovery.MAX_RETRIES}: re-preparing at ${at}ms playing=$playing")
+                            // Same item, same position, same play/pause: prepare() after an error reopens the source.
+                            exoPlayer.prepare()
+                        }
                     }
                     // A live channel's playlist-level error (behind the live window, reset, stuck) is
                     // never an audio track's fault: it is fixed in place before anything is blamed.
@@ -624,6 +693,7 @@ internal fun StreamExoPlayer(
                 runCatching { it.finish() }
                 exoPlayer.removeAnalyticsListener(it)
             }
+            networkRetryJob?.cancel()
             exoPlayer.removeListener(listener)
             exoPlayer.removeAnalyticsListener(decoderLog)
             exoPlayer.clearVideoTextureView(textureView)
@@ -633,6 +703,17 @@ internal fun StreamExoPlayer(
             onPlayerReady(null)
             onTextureViewReady(null)
             onFirstFrame(false)
+        }
+    }
+
+    // A network recovery deferred while casting (see NETWORK_RETRY): once the cast ends, the player
+    // the cast handed back (already seeked to the TV's position, playing or not) reopens its source.
+    LaunchedEffect(exoPlayer, castingNow) {
+        if (castingNow || !networkRetryAfterCast) return@LaunchedEffect
+        networkRetryAfterCast = false
+        if (exoPlayer.playerError != null) {
+            Log.w(TAG, "cast ended -> re-preparing after the network error it had while casting")
+            exoPlayer.prepare()
         }
     }
 
