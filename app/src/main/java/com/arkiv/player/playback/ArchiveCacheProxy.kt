@@ -427,11 +427,16 @@ class ArchiveCacheProxy(
      * The probe ([TsDurationProbe] over 256 KB at each end) fails on titles whose last PCR sits
      * further from the end (a Xuper film: 652 KB) and against a CDN slower than its 3 s deadline,
      * and then the playlist was a 502 every time (2026-10-01). Ignored when not positive.
+     *
+     * The latest one wins: the phone's player refines a TS duration as it reads (an estimate from
+     * the bitrate first, the last PCR later), and a first figure kept for good built every later
+     * playlist on a wrong length (review 2026-10-01). A segment table already handed out
+     * ([segments]) is not rebuilt by it.
      */
     fun rememberDuration(proxyUrl: String, durationMs: Long) {
         if (durationMs <= 0L) return
         val stream = streamOf(proxyUrl) ?: return
-        durations.putIfAbsent(stream.origin, durationMs)
+        durations[stream.origin] = durationMs
     }
 
     /**

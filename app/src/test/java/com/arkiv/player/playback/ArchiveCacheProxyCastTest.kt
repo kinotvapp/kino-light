@@ -98,4 +98,14 @@ class ArchiveCacheProxyCastTest {
         assertEquals("*", c.getHeaderField("Access-Control-Allow-Origin"))
         assertTrue(c.getHeaderField("Access-Control-Expose-Headers").contains("Content-Range"))
     }
+
+    @Test
+    fun `the phone's latest duration wins over its first estimate`() {
+        val url = proxy.proxyUrl(origin.url("/vod/d_media.ts").toString(), emptyMap(), direct = true)
+        proxy.rememberDuration(url, 60_000L) // an early estimate
+        proxy.rememberDuration(url, 7_667_166L) // what the player settled on
+        val body = open(url.removeSuffix("/s") + "/hls.m3u8").inputStream.readBytes().toString(Charsets.UTF_8)
+        val seconds = Regex("#EXTINF:([0-9.]+),").findAll(body).sumOf { it.groupValues[1].toDouble() }
+        assertEquals(7_667.166, seconds, 1.0)
+    }
 }
