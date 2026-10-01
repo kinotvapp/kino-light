@@ -53,6 +53,8 @@ class DefaultPluginAdmin(
     private val forgetLiveChannels: (pluginId: String) -> Unit = {},
     /** Uninstall only, FIRST: closes the plugin's En vivo provider while its data dir still exists (`LiveCatalog.forget`). */
     private val closeLive: (pluginId: String) -> Unit = {},
+    /** Install, update and uninstall: the plugin's compiled bytecode goes ([PluginBytecodeCache.discard]). */
+    private val forgetCompiledCode: (pluginId: String) -> Unit = {},
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : PluginAdmin {
     override val plugins: StateFlow<List<InstalledPlugin>> get() = registry.plugins
@@ -70,12 +72,16 @@ class DefaultPluginAdmin(
         // against the old registry entry (old approved hosts) and keep it until idle close.
         registry.reload()
         runtimes.close(preview.manifest.id)
+        forgetCompiledCode(preview.manifest.id)
     }
 
     override suspend fun checkUpdate(id: String): UpdateOutcome = withContext(io) {
         val outcome = coordinator.checkUpdate(id)
         registry.reload()
-        if (outcome is UpdateOutcome.Applied) runtimes.close(id)
+        if (outcome is UpdateOutcome.Applied) {
+            runtimes.close(id)
+            forgetCompiledCode(id)
+        }
         outcome
     }
 
@@ -120,6 +126,7 @@ class DefaultPluginAdmin(
         runtimes.close(id)
         afterSessionClosed(id)
         forgetLiveChannels(id)
+        forgetCompiledCode(id)
     }
 
     override suspend fun settingsOf(id: String): PluginSettingsForm? = withContext(io) {

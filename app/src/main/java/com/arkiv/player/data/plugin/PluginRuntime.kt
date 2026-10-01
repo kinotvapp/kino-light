@@ -295,10 +295,23 @@ class PluginRuntime private constructor(
          * Loads [script] as an ES module. Fails with [PluginScriptException] on a syntax error or a
          * throw at module top level, and [PluginTimeoutException] if loading takes longer than
          * [PluginEnv.loadTimeoutMs] (a top-level infinite loop leaks that thread, see the class KDoc).
+         *
+         * [compiled] + [owner]: keep the bytecode QuickJS compiles from the prelude and from [script]
+         * in [compiled] (see [PluginBytecodeCache]) and reuse it on the next open of the same code.
+         * Without them (the install probe, tests) every open compiles from source, as before.
          */
-        suspend fun open(label: String, script: String, host: PluginHost, env: PluginEnv, calls: PluginCallTracker = PluginCallTracker()): PluginRuntime =
+        suspend fun open(
+            label: String,
+            script: String,
+            host: PluginHost,
+            env: PluginEnv,
+            calls: PluginCallTracker = PluginCallTracker(),
+            compiled: CompiledCodeStore? = null,
+            owner: String? = null,
+        ): PluginRuntime =
             try {
-                open(label, script, host, env, prelude(env), calls)
+                val cache = if (compiled != null && owner != null) CodeCache(compiled, owner) else null
+                open(label, script, host, env, prelude(env), calls, cache)
             } catch (e: PluginException) {
                 e.atLoad = true
                 throw e
@@ -313,42 +326,24 @@ class PluginRuntime private constructor(
             env: PluginEnv,
             preludeCode: String,
             calls: PluginCallTracker = PluginCallTracker(),
+            cache: CodeCache? = null,
         ): PluginRuntime {
             val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "plugin-$label").apply { isDaemon = true } }
             val dispatcher = executor.asCoroutineDispatcher()
             val loading = CoroutineScope(SupervisorJob() + dispatcher).async {
-                val js = QuickJs.create(jobDispatcher = dispatcher)
-                try {
-                    js.memoryLimit = env.memoryLimitBytes
-                    js.maxStackSize = env.maxStackBytes
-                    bind(js, host)
-                    js.evaluate<Any?>(code = preludeCode, filename = "prelude.js", asModule = false)
-                    // A prelude that stops early (a native callback failing while it loads) can come
-                    // back from evaluate() as a plain result, with no exception: without this check
-                    // the runtime would open fine and every call would then die on a missing
-                    // __kinoCall. Fail the load instead, where the pool reports and retries it.
-                    if (js.evaluate<Any?>("typeof __kinoCall === 'function'") != true) {
-                        throw PluginScriptException(PRELUDE_INCOMPLETE)
+                // Cached bytecode that fails to load (or a script that now fails on top of bytes
+                // that loaded before) is forgotten and the whole load runs once more from source,
+                // in a fresh engine: the cache may only ever make an open faster, never break it.
+                // The cache is read here, on the plugin's own thread, never on the caller's.
+                val cached = cache?.let { c -> runCatching { c.read(script, preludeCode) }.getOrNull() }
+                if (cache != null && cached != null) {
+                    try {
+                        return@async load(executor, dispatcher, host, env, preludeCode, script, calls, from = cached, into = null)
+                    } catch (_: EngineFailure) {
+                        runCatching { cache.discard() }
                     }
-                    js.addModule("plugin.js", script)
-                    js.evaluate<Any?>(
-                        code = "import * as p from 'plugin.js'; " +
-                            "Object.defineProperty(globalThis, '__kinoExports', { value: p, writable: false, configurable: false });",
-                        filename = "loader.js",
-                        asModule = true,
-                    )
-                    // alpha13: the first global evaluate after a module evaluate always throws.
-                    runCatching { js.evaluate<Any?>("0") }
-                    val names = js.evaluate<String>(
-                        "Object.keys(__kinoExports).filter(k => typeof __kinoExports[k] === 'function').join(',')",
-                    )
-                    PluginRuntime(executor, dispatcher, js, names.split(',').filter { it.isNotEmpty() }.toSet(), calls)
-                } catch (e: Throwable) {
-                    runCatching { js.close() }
-                    // Also covers a module that throws, at top level, an error named after a Java
-                    // class (see EngineFailure): it must fail the load, not the app.
-                    throw EngineFailure(e)
                 }
+                load(executor, dispatcher, host, env, preludeCode, script, calls, from = null, into = cache)
             }
             return try {
                 withTimeout(env.loadTimeoutMs) { loading.await() }
@@ -373,6 +368,82 @@ class PluginRuntime private constructor(
             } catch (e: Exception) {
                 executor.shutdown()
                 throw PluginScriptException(errorText(e.message, e.javaClass.simpleName), boundedCause(e))
+            }
+        }
+
+        /**
+         * One attempt at building the runtime, on the plugin's thread. [from]: bytecode to run
+         * instead of compiling (both parts, as one cache read answered them). [into]: compile here
+         * and hand the bytecode to the cache once the runtime is fully up, so only code that loaded
+         * is ever kept. Neither: evaluate from source, exactly as before the cache existed.
+         */
+        private suspend fun load(
+            executor: ExecutorService,
+            dispatcher: CoroutineDispatcher,
+            host: PluginHost,
+            env: PluginEnv,
+            preludeCode: String,
+            script: String,
+            calls: PluginCallTracker,
+            from: CachedCode?,
+            into: CodeCache?,
+        ): PluginRuntime {
+            val js = QuickJs.create(jobDispatcher = dispatcher)
+            try {
+                js.memoryLimit = env.memoryLimitBytes
+                js.maxStackSize = env.maxStackBytes
+                bind(js, host)
+                var preludeBytes: ByteArray? = null
+                when {
+                    from != null -> js.evaluate<Any?>(from.prelude)
+                    into != null -> {
+                        // compile + evaluate(bytes) is what evaluate(code) does in one step.
+                        val bytes = js.compile(code = preludeCode, filename = "prelude.js", asModule = false)
+                        preludeBytes = bytes
+                        js.evaluate<Any?>(bytes)
+                    }
+                    else -> js.evaluate<Any?>(code = preludeCode, filename = "prelude.js", asModule = false)
+                }
+                // A prelude that stops early (a native callback failing while it loads) can come
+                // back from evaluate() as a plain result, with no exception: without this check
+                // the runtime would open fine and every call would then die on a missing
+                // __kinoCall. Fail the load instead, where the pool reports and retries it.
+                if (js.evaluate<Any?>("typeof __kinoCall === 'function'") != true) {
+                    throw PluginScriptException(PRELUDE_INCOMPLETE)
+                }
+                var scriptBytes: ByteArray? = null
+                when {
+                    from != null -> js.addModule(from.script)
+                    into != null -> {
+                        // What addModule(name, code) does inside: compile as a module named
+                        // plugin.js, queue the bytes; the next evaluate reads and links them.
+                        val bytes = js.compile(code = script, filename = "plugin.js", asModule = true)
+                        scriptBytes = bytes
+                        js.addModule(bytes)
+                    }
+                    else -> js.addModule("plugin.js", script)
+                }
+                js.evaluate<Any?>(
+                    code = "import * as p from 'plugin.js'; " +
+                        "Object.defineProperty(globalThis, '__kinoExports', { value: p, writable: false, configurable: false });",
+                    filename = "loader.js",
+                    asModule = true,
+                )
+                // alpha13: the first global evaluate after a module evaluate always throws.
+                runCatching { js.evaluate<Any?>("0") }
+                val names = js.evaluate<String>(
+                    "Object.keys(__kinoExports).filter(k => typeof __kinoExports[k] === 'function').join(',')",
+                )
+                val runtime = PluginRuntime(executor, dispatcher, js, names.split(',').filter { it.isNotEmpty() }.toSet(), calls)
+                if (into != null && preludeBytes != null && scriptBytes != null) {
+                    runCatching { into.write(script, preludeCode, CachedCode(preludeBytes, scriptBytes)) }
+                }
+                return runtime
+            } catch (e: Throwable) {
+                runCatching { js.close() }
+                // Also covers a module that throws, at top level, an error named after a Java
+                // class (see EngineFailure): it must fail the load, not the app.
+                throw EngineFailure(e)
             }
         }
 
@@ -447,5 +518,36 @@ class PluginRuntime private constructor(
             .put("thrownFallback", THROWN_FALLBACK)
             .put("resultTooBig", RESULT_TOO_BIG)
             .toString()
+    }
+}
+
+/** Bytecode for one runtime: the prelude (a script) and the plugin (a module named `plugin.js`). */
+internal class CachedCode(val prelude: ByteArray, val script: ByteArray)
+
+/**
+ * [CompiledCodeStore] as one plugin's runtime uses it: the prelude is one entry shared by every
+ * plugin ([PluginBytecodeCache.SHARED_OWNER]), the script belongs to [owner]. A hit needs both.
+ */
+internal class CodeCache(private val store: CompiledCodeStore, private val owner: String) {
+    fun read(script: String, prelude: String): CachedCode? {
+        val p = store.read(PluginBytecodeCache.SHARED_OWNER, PRELUDE_KIND, prelude) ?: return null
+        val s = store.read(owner, SCRIPT_KIND, script) ?: return null
+        return CachedCode(p, s)
+    }
+
+    fun write(script: String, prelude: String, code: CachedCode) {
+        store.write(PluginBytecodeCache.SHARED_OWNER, PRELUDE_KIND, prelude, code.prelude)
+        store.write(owner, SCRIPT_KIND, script, code.script)
+    }
+
+    /** Bytecode that was read but then failed to load: drop both parts, the next open compiles them again. */
+    fun discard() {
+        store.discard(owner)
+        store.discard(PluginBytecodeCache.SHARED_OWNER)
+    }
+
+    private companion object {
+        const val PRELUDE_KIND = "prelude"
+        const val SCRIPT_KIND = "script"
     }
 }

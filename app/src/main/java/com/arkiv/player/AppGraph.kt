@@ -741,6 +741,18 @@ class AppGraph(context: Context) {
         )
     }
 
+    /**
+     * Compiled plugin code (QuickJS bytecode) kept between runtimes, so a cold open after the first
+     * skips the parse (see PluginBytecodeCache). App-private and outside backups; only ever filled
+     * by this app's own compiles. Nothing touches it at startup: the first read is the first open.
+     */
+    private val pluginBytecode: com.arkiv.player.data.plugin.PluginBytecodeCache by lazy {
+        com.arkiv.player.data.plugin.PluginBytecodeCache(
+            java.io.File(appContext.noBackupFilesDir, "plugin-bytecode"),
+            com.arkiv.player.data.plugin.PluginBytecodeCache.engineTag(BuildConfig.VERSION_CODE),
+        )
+    }
+
     private suspend fun openPluginRuntime(id: String): ScriptRuntime {
         val plugin = pluginRegistry.find(id) ?: throw PluginScriptException("El plugin no está instalado")
         val script = try {
@@ -798,7 +810,10 @@ class AppGraph(context: Context) {
         // A plugin converted from Nuvio gets Kino's TMDB key the same way, toward TMDB only.
         val secrets = pluginSecretsFor(plugin, sealAgreement, tmdbApiKey = { credentialsStore.read()?.tmdbApiKey })
         val host = pluginHostFor(plugin, http, storage, config, cookies, magisPluginBridge, secrets)
-        val runtime = PluginRuntime.open(id, script, host, PluginEnv(appVersion = BuildConfig.VERSION_NAME), calls)
+        val runtime = PluginRuntime.open(
+            id, script, host, PluginEnv(appVersion = BuildConfig.VERSION_NAME), calls,
+            compiled = pluginBytecode, owner = id,
+        )
         // F5: drop this plugin's PluginHttp the moment its runtime is closed -- idle timeout, or an
         // explicit pool.close() from DefaultPluginAdmin's disable/update/uninstall -- so pluginHttps
         // never keeps a stale, no-longer-approved host list around after the runtime that used it is
@@ -913,6 +928,7 @@ class AppGraph(context: Context) {
             forgetSession = ::forgetPluginSession,
             afterSessionClosed = ::bumpPluginSessionRevision,
             closeLive = { id -> liveModule.forget(id) },
+            forgetCompiledCode = { id -> pluginBytecode.discard(id) },
             forgetLiveChannels = { id ->
                 applicationScope.launch {
                     runCatching { database.liveChannelCacheDao().clearProvider(com.arkiv.player.data.gateway.LiveChannelKeys.pluginProvider(id)) }
@@ -983,7 +999,10 @@ class AppGraph(context: Context) {
         }
         // Reload before closing, as in DefaultPluginAdmin: never a new script with the old hosts.
         pluginRegistry.reload()
-        outcomes.filter { it.second is UpdateOutcome.Applied }.forEach { pluginRuntimes.close(it.first) }
+        outcomes.filter { it.second is UpdateOutcome.Applied }.forEach {
+            pluginRuntimes.close(it.first)
+            pluginBytecode.discard(it.first)
+        }
     }
 
     internal val magisLive: com.arkiv.player.data.magis.MagisLive by lazy {
