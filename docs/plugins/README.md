@@ -833,7 +833,9 @@ A plugin can give its channels in three ways, and mix them:
    the list, for the channels that only answer a known `User-Agent` (or a `Referer`): they are filtered
    like a Stream's `headers` and kept apart from `headers` on purpose, because those carry your list's own
    credentials and go only to the list's host, never to the many hosts the channels are on. A header an
-   M3U entry names itself (`#EXTVLCOPT:http-user-agent=...`) wins. Kino versions before the one that added
+   M3U entry names itself (`#EXTVLCOPT:http-user-agent=...`, `#EXTHTTP:{"User-Agent":"..."}`, a
+   `url|User-Agent=...&Referer=...` suffix, or `#KODIPROP` stream headers) wins; only `User-Agent`,
+   `Referer`, `Origin` and `Cookie` are kept, and a value with a control character is dropped. Kino versions before the one that added
    `streamHeaders` ignore the field, so the list plays without it. `refreshHours` is 1 to 168 (default 12); `hideGroups` lists
    group titles not to show (case doesn't matter, at most 50). With `resolve: true`, each entry plays
    through your `resolve(<entry url>)`, for lists whose links need a fresh token. At most 10 per

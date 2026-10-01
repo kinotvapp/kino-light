@@ -1,0 +1,6 @@
+{"total":5,"skipped":0,"entries":[
+ {"name":"Con EXTHTTP","url":"https://live.example.com/a.m3u8","tvgId":"","tvgName":"","logo":"","number":0,"group":"Noticias","language":"","country":"","headers":{"User-Agent":"Mozilla/5.0 (X11)","Referer":"https://ref.example.com/"}},
+ {"name":"La tubería gana a EXTHTTP","url":"https://live.example.com/b.m3u8","tvgId":"","tvgName":"","logo":"","number":0,"group":"","language":"","country":"","headers":{"User-Agent":"Dos/2","Origin":"https://o.example.com"}},
+ {"name":"EXTHTTP roto","url":"https://live.example.com/c.m3u8","tvgId":"","tvgName":"","logo":"","number":0,"group":"","language":"","country":"","headers":{}},
+ {"name":"Nada heredado","url":"https://live.example.com/d.m3u8","tvgId":"","tvgName":"","logo":"","number":0,"group":"","language":"","country":"","headers":{}},
+ {"name":"Valores raros","url":"https://live.example.com/e.m3u8","tvgId":"","tvgName":"","logo":"","number":0,"group":"","language":"","country":"","headers":{}}]}

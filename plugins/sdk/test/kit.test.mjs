@@ -1786,7 +1786,7 @@ test("the repo's own .gitignore excludes the kit's local secrets file too", () =
 const fixturesDir = join(here, "..", "..", "..", "docs", "plugins", "fixtures", "live");
 const fixtures = existsSync(fixturesDir) ? fixturesDir : null;
 const needFixtures = (t) => { if (!fixtures) t.skip("no shared live fixtures around this kit"); return !!fixtures; };
-const M3U_FIXTURES = ["basic", "bom-crlf", "latin1", "broken", "headers", "unterminated-quote", "huge-line"];
+const M3U_FIXTURES = ["basic", "bom-crlf", "latin1", "broken", "headers", "unterminated-quote", "huge-line", "exthttp"];
 // Whole-playlist fixtures: their .expected.json holds the manifest, the typed servers, the
 // declaration and the grouped counts, checked here through loadPlaylist and in the app's
 // PluginLivePlaylistTest through PluginLiveProvider.

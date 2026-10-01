@@ -1,0 +1,15 @@
+#EXTM3U
+#EXTINF:-1 group-title="Noticias",Con EXTHTTP
+#EXTHTTP:{"User-Agent":"Mozilla/5.0 (X11)","Referer":"https://ref.example.com/","X-Forwarded-For":"1.2.3.4"}
+https://live.example.com/a.m3u8
+#EXTINF:-1,La tubería gana a EXTHTTP
+#EXTHTTP:{"user-agent":"Uno/1","origin":"https://o.example.com"}
+https://live.example.com/b.m3u8|User-Agent=Dos/2
+#EXTINF:-1,EXTHTTP roto
+#EXTHTTP:{"User-Agent":
+https://live.example.com/c.m3u8
+#EXTINF:-1,Nada heredado
+https://live.example.com/d.m3u8
+#EXTINF:-1,Valores raros
+#EXTHTTP:{"User-Agent":"a\r\nX-Evil: 1","Referer":42,"Cookie":["x"]}
+https://live.example.com/e.m3u8|Origin=https%3A%2F%2Fo.example.com%0D%0AX-Evil%3A%201
