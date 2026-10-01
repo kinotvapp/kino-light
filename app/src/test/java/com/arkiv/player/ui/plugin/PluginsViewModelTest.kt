@@ -479,6 +479,37 @@ class PluginsViewModelTest {
         assertEquals(listOf("api.themoviedb.org", "fakesrc.example"), consent.manifest.hosts)
     }
 
+    @Test fun `a Nuvio repo whose picker opens is listed for the person's other devices, and opening it from the list needs no typing`() = kotlinx.coroutines.test.runTest(dispatcher) {
+        val admin = FakeAdmin()
+        val nuvio = nuvioInstaller(mapOf("https://raw.githubusercontent.com/owner/nuvio-repo/HEAD/manifest.json" to nuvioManifestJson))
+        val repos = com.arkiv.player.data.plugin.sync.NuvioRepoList(com.arkiv.player.data.plugin.sync.FakeNuvioRepoDao()) { 1L }
+        val vm = PluginsViewModel(admin, io = dispatcher, nuvioPluginInstaller = nuvio, nuvioRepoList = repos)
+        vm.onAddressChange("owner/nuvio-repo")
+        vm.add()
+        testScheduler.advanceUntilIdle()
+        assertEquals(listOf("owner/nuvio-repo"), vm.nuvioRepos.value)
+        vm.cancelNuvioPicker()
+        assertNull(vm.state.value.nuvioPicker)
+
+        vm.openNuvioRepo("owner/nuvio-repo")
+        testScheduler.advanceUntilIdle()
+        assertEquals("owner/nuvio-repo", vm.state.value.nuvioPicker?.repoInput)
+
+        vm.forgetNuvioRepo("owner/nuvio-repo")
+        testScheduler.advanceUntilIdle()
+        assertTrue(vm.nuvioRepos.value.isEmpty())
+    }
+
+    @Test fun `an address that is not a Nuvio repo is never listed`() = kotlinx.coroutines.test.runTest(dispatcher) {
+        val admin = FakeAdmin().apply { previewResult = { preview } }
+        val repos = com.arkiv.player.data.plugin.sync.NuvioRepoList(com.arkiv.player.data.plugin.sync.FakeNuvioRepoDao()) { 1L }
+        val vm = PluginsViewModel(admin, io = dispatcher, nuvioPluginInstaller = nuvioInstaller(emptyMap()), nuvioRepoList = repos)
+        vm.onAddressChange("o/r")
+        vm.add()
+        testScheduler.advanceUntilIdle()
+        assertTrue(vm.nuvioRepos.value.isEmpty())
+    }
+
     @Test fun `a plugin from another device opens the normal consent sheet for its address`() {
         val admin = FakeAdmin().apply { previewResult = { preview } }
         val offers = MutableStateFlow(listOf(com.arkiv.player.data.plugin.sync.PeerPluginOffer("demo", "Demo", "o/r", null, null, com.arkiv.player.data.plugin.sync.PeerOfferStatus.NEEDS_CONSENT)))

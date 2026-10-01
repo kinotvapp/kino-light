@@ -40,6 +40,7 @@ class SyncApply(
     private val liveRecentDao: LiveRecentDao,
     private val ownLiveSourceDao: OwnLiveSourceDao? = null,
     private val pluginInstallDao: PluginInstallDao? = null,
+    private val nuvioRepoDao: com.arkiv.player.data.db.NuvioRepoDao? = null,
     /**
      * Told the id of every `plugin_installs` row a peer's newer copy just replaced here: the plugin
      * sync reconciler installs, enables or removes the plugin itself (rows never touch `plugins/`).
@@ -55,6 +56,7 @@ class SyncApply(
         db.liveRecentDao(),
         db.ownLiveSourceDao(),
         db.pluginInstallDao(),
+        db.nuvioRepoDao(),
         onPluginInstallApplied,
     )
 
@@ -68,6 +70,7 @@ class SyncApply(
             "live_recents" -> applyLiveRecent(row)
             "own_live_sources" -> applyOwnLiveSource(row)
             "plugin_installs" -> applyPluginInstall(row)
+            "nuvio_repos" -> applyNuvioRepo(row)
             else -> throw IllegalArgumentException("SyncApply: unknown table \"$table\"")
         }
     }
@@ -132,6 +135,15 @@ class SyncApply(
         // A row this build can't accept (hostile or garbled) is skipped, never stored.
         val incoming = jsonToOwnLiveSource(row) ?: return
         val local = dao.get(incoming.id)
+        if (!LwwMerge.pickWinner(local?.updatedAt ?: Long.MIN_VALUE, incoming.updatedAt)) return
+        dao.save(incoming)
+    }
+
+    private suspend fun applyNuvioRepo(row: JSONObject) {
+        val dao = nuvioRepoDao ?: return
+        // Not a canonical public repo (hostile or garbled): skipped.
+        val incoming = jsonToNuvioRepo(row) ?: return
+        val local = dao.get(incoming.address)
         if (!LwwMerge.pickWinner(local?.updatedAt ?: Long.MIN_VALUE, incoming.updatedAt)) return
         dao.save(incoming)
     }

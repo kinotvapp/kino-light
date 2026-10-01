@@ -50,6 +50,8 @@ class SyncTriggersTest {
             OwnLiveSourcesMigration.STATEMENTS.forEach { stmt -> it.executeUpdate(stmt) }
             // The installed plugins: the eighth synced table (v35).
             PluginInstallsMigration.STATEMENTS.forEach { stmt -> it.executeUpdate(stmt) }
+            // The Nuvio repos the person opened: the ninth synced table (v36).
+            NuvioReposMigration.STATEMENTS.forEach { stmt -> it.executeUpdate(stmt) }
         }
     }
 

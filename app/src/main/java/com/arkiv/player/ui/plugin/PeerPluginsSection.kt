@@ -22,6 +22,12 @@ import com.arkiv.player.ui.theme.ArkivTextSecondary
 /** The title of the list of plugins the person has on another device and not on this one (phone and TV). */
 const val PEER_PLUGINS_TITLE = "Plugins de tus otros aparatos"
 
+/** The title of the list of Nuvio repos the person opened on any of their devices (phone and TV). */
+const val NUVIO_REPOS_TITLE = "Tus repositorios de Nuvio"
+
+/** What a Nuvio repo's button says: its scrapers, from the repo's own list (phone and TV). */
+fun nuvioRepoOpenLabel(address: String): String = "Ver scrapers de $address"
+
 /** What a row of that list says about its plugin here (phone and TV). */
 fun peerOfferStatusText(status: PeerOfferStatus): String = when (status) {
     PeerOfferStatus.WAITING -> "Se instalará solo en un momento"
@@ -51,6 +57,26 @@ internal fun PeerPluginsSection(offers: List<PeerPluginOffer>, busy: Boolean, on
                 TextButton(onClick = { onInstall(offer) }, enabled = peerOfferInstallEnabled(offer.status, busy)) {
                     Text("Instalar", color = ArkivRed)
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Phone: "Tus repositorios de Nuvio", the Nuvio repos the person opened here or on another device. Each
+ * opens its scraper picker without typing the address ("Ver scrapers"), or leaves the list ("Quitar":
+ * also on the other devices; its installed scrapers stay). Nothing at all when there are none.
+ */
+@Composable
+internal fun NuvioReposSection(repos: List<String>, busy: Boolean, onOpen: (String) -> Unit, onForget: (String) -> Unit, modifier: Modifier = Modifier) {
+    if (repos.isEmpty()) return
+    Column(modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+        Text(NUVIO_REPOS_TITLE, style = MaterialTheme.typography.titleSmall, color = Color.White, fontWeight = FontWeight.SemiBold)
+        repos.forEach { address ->
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(address, style = MaterialTheme.typography.bodyMedium, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                TextButton(onClick = { onOpen(address) }, enabled = !busy) { Text("Ver scrapers", color = ArkivRed) }
+                TextButton(onClick = { onForget(address) }, enabled = !busy) { Text("Quitar", color = ArkivTextSecondary) }
             }
         }
     }

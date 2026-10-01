@@ -231,13 +231,13 @@ class CompanionSyncEngine(
          * `when(table)` cases. Mirrors (doesn't share: that one is `private`)
          * `com.arkiv.player.data.db.SyncTriggers.TABLES`.
          */
-        val TABLES = listOf("items", "episodes", "playback", "skip_markers", "live_favorites", "live_recents", "own_live_sources", "plugin_installs")
+        val TABLES = listOf("items", "episodes", "playback", "skip_markers", "live_favorites", "live_recents", "own_live_sources", "plugin_installs", "nuvio_repos")
 
         /**
          * Tables added after the first six. An older peer's SyncApply throws on a table it does not
          * know, so these are pushed only to a peer whose hello lists them (see [peerKnows]).
          */
-        val OPTIONAL_TABLES = setOf("own_live_sources", "plugin_installs")
+        val OPTIONAL_TABLES = setOf("own_live_sources", "plugin_installs", "nuvio_repos")
 
         const val PUSH_DEBOUNCE_MS = 3000L
     }

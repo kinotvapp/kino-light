@@ -346,6 +346,19 @@ class SyncApplyTest {
         assertTrue(dao.rows.isEmpty())
         assertTrue(told.isEmpty())
     }
+
+    @Test fun `nuvio repos merge last-write-wins and a hostile address is never stored`() = runTest {
+        val dao = com.arkiv.player.data.plugin.sync.FakeNuvioRepoDao()
+        val sync = SyncApply(FakeItemDao(), FakePlaybackDao(), FakeSkipMarkerDao(), FakeLiveFavoriteDao(), FakeLiveRecentDao(), null, null, dao)
+        fun r(address: String, at: Long, deleted: Boolean = false) = JSONObject().put("address", address).put("updatedAt", at).put("deleted", deleted)
+        sync.apply("nuvio_repos", r("a/b", 10))
+        sync.apply("nuvio_repos", r("a/b", 5, deleted = true)) // older: dropped
+        assertTrue(!dao.rows.getValue("a/b").deleted)
+        sync.apply("nuvio_repos", r("a/b", 20, deleted = true))
+        assertTrue(dao.rows.getValue("a/b").deleted)
+        sync.apply("nuvio_repos", r("https://evil.example.com/x", 30))
+        assertEquals(setOf("a/b"), dao.rows.keys)
+    }
 }
 
 private class FakeOwnLiveSourceDao : com.arkiv.player.data.db.OwnLiveSourceDao {

@@ -400,6 +400,8 @@ class AppGraph(context: Context) {
         } finally {
             // Plugin sync: a row for every plugin installed before sync existed, and versions a background update brought.
             runCatching { pluginSyncMirror.backfill() }
+            // "Tus repositorios de Nuvio": the repos of Nuvio plugins installed before that list existed.
+            runCatching { nuvioRepoList.backfill(pluginRegistry.plugins.value.mapNotNull { it.record.nuvioRepo }) }
             // The migration step ran (or failed): an updating device's picker decision may be made now.
             _pickerDecisionReady.value = true
         }
@@ -943,6 +945,11 @@ class AppGraph(context: Context) {
     }
 
     /** Records the person's plugin actions in `plugin_installs` for companion sync (see [pluginAdmin]). */
+    /** "Tus repositorios de Nuvio": the Nuvio repos the person opened on any of their devices (synced). */
+    val nuvioRepoList: com.arkiv.player.data.plugin.sync.NuvioRepoList by lazy {
+        com.arkiv.player.data.plugin.sync.NuvioRepoList(database.nuvioRepoDao())
+    }
+
     val pluginSyncMirror: com.arkiv.player.data.plugin.sync.PluginSyncMirror by lazy {
         com.arkiv.player.data.plugin.sync.PluginSyncMirror(database.pluginInstallDao(), pluginSyncHost, applicationScope)
     }

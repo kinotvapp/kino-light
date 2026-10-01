@@ -984,3 +984,23 @@ interface PluginInstallDao {
     @Query(QUERY_PLUGIN_INSTALLS_SINCE)
     suspend fun getSince(cursor: Long): List<PluginInstallEntity>
 }
+
+internal const val QUERY_NUVIO_REPOS_SINCE =
+    "SELECT * FROM nuvio_repos WHERE updatedAt > :cursor ORDER BY updatedAt ASC"
+
+@Dao
+interface NuvioRepoDao {
+    /** Every row, tombstones included. */
+    @Query("SELECT * FROM nuvio_repos ORDER BY address COLLATE NOCASE")
+    fun flowAll(): Flow<List<NuvioRepoEntity>>
+
+    @Query("SELECT * FROM nuvio_repos WHERE address = :address")
+    suspend fun get(address: String): NuvioRepoEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun save(row: NuvioRepoEntity)
+
+    /** Sync push: rows touched after [cursor], oldest first. */
+    @Query(QUERY_NUVIO_REPOS_SINCE)
+    suspend fun getSince(cursor: Long): List<NuvioRepoEntity>
+}

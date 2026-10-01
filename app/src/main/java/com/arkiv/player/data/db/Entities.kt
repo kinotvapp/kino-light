@@ -273,7 +273,7 @@ data class OwnLiveSourceEntity(
  * the uninstall tombstone). It names WHERE the plugin comes from ([address], or the Nuvio repo and
  * scraper) and what the person approved ([approvedJson], a `PluginReach`), never its code: the
  * receiving device fetches and checks that itself. [settingsJson] holds only the settings that are not
- * private (no passwords, no typed servers). [version]/[sha256] are information: a newer one on the
+ * private (no passwords). [version]/[sha256] are information: a newer one on the
  * other device triggers an update check here.
  */
 @Entity(tableName = "plugin_installs")
@@ -288,6 +288,19 @@ data class PluginInstallEntity(
     val enabled: Boolean = true,
     val approvedJson: String = "{}",
     val settingsJson: String = "{}",
+    val updatedAt: Long = 0,
+    val deleted: Boolean = false,
+)
+
+/**
+ * A Nuvio provider repo the person opened on one of their devices ("Tus repositorios de Nuvio"), so
+ * their other devices list it too and its scrapers can be picked there without typing the address
+ * again. [address] is the canonical `owner/repo[@ref]` the scraper picker resolved; [deleted] is the
+ * "Quitar" tombstone. Last-write-wins by [updatedAt], like every synced table.
+ */
+@Entity(tableName = "nuvio_repos")
+data class NuvioRepoEntity(
+    @PrimaryKey val address: String,
     val updatedAt: Long = 0,
     val deleted: Boolean = false,
 )
