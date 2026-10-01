@@ -1,5 +1,18 @@
 package com.arkiv.player.ui.live
 
+import android.content.ClipboardManager
+import android.content.Context
+import android.net.Uri
+import android.provider.OpenableColumns
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalContext
+import com.arkiv.player.data.live.OwnPastedList
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -64,10 +77,25 @@ private fun OwnSourceFormDialog(ui: OwnFormUi, vm: OwnSourcesViewModel) {
                     }
                 }
                 OwnTextField(OwnSourcesCopy.NAME, f.name, ui.errors[OwnField.NAME]) { vm.change(f.copy(name = it)) }
-                OwnTextField(
-                    if (playlist) OwnSourcesCopy.URL_PLAYLIST else OwnSourcesCopy.URL_CHANNEL, f.url, ui.errors[OwnField.URL], uri = true,
-                    placeholder = if (playlist) OwnSourcesCopy.URL_PLAYLIST_HINT else OwnSourcesCopy.URL_CHANNEL_HINT,
-                ) { vm.change(f.copy(url = it)) }
+                val pastedLabel = ui.pasted
+                if (playlist && pastedLabel != null) {
+                    // A list with no address: what it is, and how to replace it.
+                    Text(pastedLabel, style = MaterialTheme.typography.titleSmall)
+                    if (ui.editingId != null && f.pastedText == null) {
+                        Text(OwnSourcesCopy.PASTED_REPLACE, style = MaterialTheme.typography.bodySmall)
+                    }
+                    ui.errors[OwnField.URL]?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                } else {
+                    OwnTextField(
+                        if (playlist) OwnSourcesCopy.URL_PLAYLIST else OwnSourcesCopy.URL_CHANNEL, f.url, ui.errors[OwnField.URL], uri = true,
+                        placeholder = if (playlist) OwnSourcesCopy.URL_PLAYLIST_HINT else OwnSourcesCopy.URL_CHANNEL_HINT,
+                    ) { vm.change(f.copy(url = it)) }
+                }
+                if (playlist) {
+                    OwnPasteOrFile(vm, enabled = !ui.busy)
+                    if (pastedLabel == null) Text(OwnSourcesCopy.PASTE_HINT, style = MaterialTheme.typography.bodySmall)
+                    else TextButton(onClick = vm::clearPasted, enabled = !ui.busy) { Text(OwnSourcesCopy.USE_URL) }
+                }
                 if (ui.cleartext) {
                     Text(OwnSourcesCopy.CLEARTEXT, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
                 }
@@ -93,11 +121,62 @@ private fun OwnSourceFormDialog(ui: OwnFormUi, vm: OwnSourcesViewModel) {
         confirmButton = { TextButton(onClick = vm::save, enabled = !ui.busy) { Text(OwnSourcesCopy.SAVE) } },
         dismissButton = {
             Row {
-                TextButton(onClick = vm::probeNow, enabled = !ui.busy && f.url.isNotBlank()) { Text(OwnSourcesCopy.PROBE) }
+                TextButton(onClick = vm::probeNow, enabled = !ui.busy && f.url.isNotBlank() && ui.pasted == null) { Text(OwnSourcesCopy.PROBE) }
                 TextButton(onClick = vm::dismiss, enabled = !ui.busy) { Text(OwnSourcesCopy.CANCEL) }
             }
         },
     )
+}
+
+/**
+ * "Pegar lista" (the clipboard's text, read only when tapped) and "Abrir archivo" (the system file picker:
+ * every type, since lists come as .m3u, .m3u8, .w3u, .json or no known type; the extension and the content
+ * are checked afterwards). The file is read here, at most [OwnPastedList.MAX_BYTES] + 1 bytes.
+ */
+@Composable
+private fun OwnPasteOrFile(vm: OwnSourcesViewModel, enabled: Boolean) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) scope.launch {
+            val (name, bytes, truncated) = withContext(Dispatchers.IO) { readPickedList(context, uri) }
+            vm.useFile(name, bytes, truncated)
+        }
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(onClick = { vm.usePasted(clipboardText(context)) }, enabled = enabled) { Text(OwnSourcesCopy.PASTE) }
+        OutlinedButton(onClick = { runCatching { picker.launch(arrayOf("*/*")) } }, enabled = enabled) { Text(OwnSourcesCopy.OPEN_FILE) }
+    }
+}
+
+private fun clipboardText(context: Context): String? = runCatching {
+    val clip = context.getSystemService(ClipboardManager::class.java)?.primaryClip
+    if (clip == null || clip.itemCount == 0) null else clip.getItemAt(0).coerceToText(context)?.toString()
+}.getOrNull()
+
+/** The picked file's display name, its bytes (null = unreadable) and whether it went past the cap. Blocking IO. */
+private fun readPickedList(context: Context, uri: Uri): Triple<String?, ByteArray?, Boolean> {
+    val name = runCatching {
+        context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+            if (c.moveToFirst()) c.getString(0) else null
+        }
+    }.getOrNull()
+    return try {
+        val limit = OwnPastedList.MAX_BYTES + 1
+        val bytes = context.contentResolver.openInputStream(uri)?.use { input ->
+            val out = java.io.ByteArrayOutputStream()
+            val buf = ByteArray(64 * 1024)
+            while (out.size() < limit) {
+                val n = input.read(buf, 0, minOf(buf.size, limit - out.size()))
+                if (n < 0) break
+                out.write(buf, 0, n)
+            }
+            out.toByteArray()
+        }
+        Triple(name, bytes, bytes != null && bytes.size > OwnPastedList.MAX_BYTES)
+    } catch (e: Exception) {
+        Triple(name, null, false)
+    }
 }
 
 @Composable

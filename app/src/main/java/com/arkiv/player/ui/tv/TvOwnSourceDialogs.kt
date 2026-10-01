@@ -96,10 +96,15 @@ private fun TvOwnSourceForm(ui: OwnFormUi, vm: OwnSourcesViewModel) {
                 }
             }
             TvOwnTextField(OwnSourcesCopy.NAME, f.name, ui.errors[OwnField.NAME], focusManager, Modifier.focusRequester(nameFocus)) { vm.change(f.copy(name = it)) }
-            TvOwnTextField(
-                if (playlist) OwnSourcesCopy.URL_PLAYLIST else OwnSourcesCopy.URL_CHANNEL, f.url, ui.errors[OwnField.URL], focusManager, uri = true,
-                placeholder = if (playlist) OwnSourcesCopy.URL_PLAYLIST_HINT else OwnSourcesCopy.URL_CHANNEL_HINT,
-            ) { vm.change(f.copy(url = it)) }
+            if (ui.pasted != null) {
+                // A list pasted on the phone (synced here): no address to edit, and no paste on a TV keyboard.
+                Text(OwnSourcesCopy.PASTED_TV, style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary)
+            } else {
+                TvOwnTextField(
+                    if (playlist) OwnSourcesCopy.URL_PLAYLIST else OwnSourcesCopy.URL_CHANNEL, f.url, ui.errors[OwnField.URL], focusManager, uri = true,
+                    placeholder = if (playlist) OwnSourcesCopy.URL_PLAYLIST_HINT else OwnSourcesCopy.URL_CHANNEL_HINT,
+                ) { vm.change(f.copy(url = it)) }
+            }
             if (ui.cleartext) Text(OwnSourcesCopy.CLEARTEXT, style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary)
             TvCompactAction(label = OwnSourcesCopy.ADVANCED + if (advanced) " ▴" else " ▾", onClick = { advanced = !advanced })
             if (advanced) {
@@ -120,7 +125,7 @@ private fun TvOwnSourceForm(ui: OwnFormUi, vm: OwnSourcesViewModel) {
             }
             ui.notice?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error) }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End)) {
-                TvCompactAction(label = OwnSourcesCopy.PROBE, enabled = !ui.busy && f.url.isNotBlank(), onClick = vm::probeNow)
+                TvCompactAction(label = OwnSourcesCopy.PROBE, enabled = !ui.busy && f.url.isNotBlank() && ui.pasted == null, onClick = vm::probeNow)
                 TvCompactAction(label = OwnSourcesCopy.CANCEL, enabled = !ui.busy, onClick = vm::dismiss)
                 TvCompactAction(label = OwnSourcesCopy.SAVE, enabled = !ui.busy, onClick = vm::save)
             }
