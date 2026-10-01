@@ -261,8 +261,15 @@ class PluginsViewModel(
      * installer existed.
      */
     private val nuvioPluginInstaller: NuvioPluginInstaller? = null,
+    /**
+     * "Plugins de tus otros aparatos" (plugin sync): what the person has on another device and not here.
+     * Null -- Configurar's view model, every test that doesn't care -- shows none.
+     */
+    peerOffers: StateFlow<List<com.arkiv.player.data.plugin.sync.PeerPluginOffer>>? = null,
 ) : ViewModel() {
     val plugins: StateFlow<List<InstalledPlugin>> = admin.plugins
+
+    val peerOffers: StateFlow<List<com.arkiv.player.data.plugin.sync.PeerPluginOffer>> = peerOffers ?: MutableStateFlow(emptyList())
 
     private val _state = MutableStateFlow(PluginsUiState())
     val state: StateFlow<PluginsUiState> = _state.asStateFlow()
@@ -496,6 +503,26 @@ class PluginsViewModel(
                 withContext(io) { installer.previewScraper(repo, scraperId) }
             } else {
                 admin.preview(record.address)
+            }
+            _state.update { it.copy(consent = preview) }
+        }
+    }
+
+    /**
+     * "Instalar" on a plugin from another of the person's devices that did not install by itself here
+     * (it asks for more than was approved there, or the silent try failed): the normal consent sheet,
+     * for exactly what that device has -- a Nuvio scraper re-converted from its repo, any other plugin
+     * previewed from its address. Installing it records it like any install by hand.
+     */
+    fun installFromPeer(offer: com.arkiv.player.data.plugin.sync.PeerPluginOffer) {
+        busy(pluginId = null) {
+            val repo = offer.nuvioRepo
+            val scraperId = offer.nuvioScraperId
+            val preview = if (repo != null && scraperId != null) {
+                val installer = nuvioPluginInstaller ?: throw InstallException("Agrega este plugin de Nuvio desde Ajustes ▸ Plugins")
+                withContext(io) { installer.previewScraper(repo, scraperId) }
+            } else {
+                admin.preview(offer.address)
             }
             _state.update { it.copy(consent = preview) }
         }

@@ -479,6 +479,30 @@ class PluginsViewModelTest {
         assertEquals(listOf("api.themoviedb.org", "fakesrc.example"), consent.manifest.hosts)
     }
 
+    @Test fun `a plugin from another device opens the normal consent sheet for its address`() {
+        val admin = FakeAdmin().apply { previewResult = { preview } }
+        val offers = MutableStateFlow(listOf(com.arkiv.player.data.plugin.sync.PeerPluginOffer("demo", "Demo", "o/r", null, null, com.arkiv.player.data.plugin.sync.PeerOfferStatus.NEEDS_CONSENT)))
+        val vm = PluginsViewModel(admin, io = dispatcher, peerOffers = offers)
+        assertEquals(offers.value, vm.peerOffers.value)
+        vm.installFromPeer(offers.value.single())
+        assertEquals(listOf("o/r"), admin.previewed)
+        assertEquals(preview, vm.state.value.consent)
+        vm.confirmInstall()
+        assertEquals(listOf(preview), admin.installed)
+    }
+
+    @Test fun `a nuvio plugin from another device re-converts exactly its scraper`() {
+        val admin = FakeAdmin()
+        val nuvio = nuvioInstaller(mapOf(
+            "https://raw.githubusercontent.com/owner/nuvio-repo/HEAD/manifest.json" to nuvioManifestJson,
+            "https://raw.githubusercontent.com/owner/nuvio-repo/HEAD/providers/fakesrc.js" to nuvioScraperJs,
+        ))
+        val vm = PluginsViewModel(admin, io = dispatcher, nuvioPluginInstaller = nuvio)
+        vm.installFromPeer(com.arkiv.player.data.plugin.sync.PeerPluginOffer("x", "X", "owner/nuvio-repo", "owner/nuvio-repo", "fakesrc", com.arkiv.player.data.plugin.sync.PeerOfferStatus.FAILED))
+        assertTrue(admin.previewed.isEmpty())
+        assertEquals("fakesrc", vm.state.value.consent?.nuvioOrigin?.scraperId)
+    }
+
     @Test fun `reinstalling a normal plugin still goes through the generic preview`() {
         val admin = FakeAdmin().apply { previewResult = { preview } }
         val vm = PluginsViewModel(admin, io = dispatcher, nuvioPluginInstaller = nuvioInstaller(emptyMap()))
