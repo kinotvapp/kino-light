@@ -166,9 +166,10 @@ object NuvioPluginConverter {
      * needs it -- [NuvioPluginInstaller.checkUpdate] compares the script's hash -- but it goes into
      * [VERSION], so "Buscar actualización" and Ajustes show a new version for a new conversion.
      * 0 was every conversion before it existed ("1.0.0"); 1 is apiVersion 4, fetchHosts any, the
-     * series adapter and the TMDB key behind a marker.
+     * series adapter and the TMDB key behind a marker; 2 is the typed search (no tmdbId) answered
+     * from TMDB's own search.
      */
-    const val CONVERTER_REVISION = 1
+    const val CONVERTER_REVISION = 2
 
     /**
      * A converted plugin's `version`: `1.<CONVERTER_REVISION>.0`. The upstream scraper's own changes
@@ -219,13 +220,22 @@ object NuvioPluginConverter {
      * Nuvio has no catalogue or text search of its own, only that call, so the titles come from TMDB
      * (with the TMDB key the shim already carries):
      *
-     * - `search` answers ONE item for the TMDB id Kino asks about, with TMDB's poster, backdrop, year
+     * - `search` with a TMDB id answers ONE item for the TMDB id Kino asks about, with TMDB's poster, backdrop, year
      *   and synopsis when TMDB answers (one call, given 4 s of the search's 15: without it the item
      *   still comes back, bare, instead of the whole search timing out on optional artwork). A series
      *   with no episode chosen is a `series` item, so Kino opens its season/episode list like any
      *   other source's. A query that already names the episode (Kino's refine flow) or a movie is a
      *   `movie` item that plays straight away; only a real movie carries `ids.tmdb`, because Kino
      *   enriches a movie-kind item from TMDB's `/movie/<id>` and an episode's id is a show's.
+     * - `search` WITHOUT a TMDB id (a typed search: the TV's "Ir", "Ver otras fuentes" by text, an
+     *   anime card) but with a `q` asks TMDB's own search instead -- `/search/multi`, or
+     *   `/search/movie` / `/search/tv` when the scraper only has one of them or Kino asked for a
+     *   series -- in one request (8 s of the search's 15), and answers up to 10 matches shaped
+     *   exactly like the TMDB-id items above (same `id`/`ref`), ranked by `kino.rank.sortBySimilarity`
+     *   over `q`/`originalTitle`/`altTitles` against each match's title and original title, ties by
+     *   TMDB popularity. It never calls `getStreams`: `resolve`/`episodes` do, with the id in the ref.
+     *   Kino's `type` `"movie"` is NOT a restriction here: a typed search's card is always a movie
+     *   (`freeTextCard`), so only `"series"` narrows it. A TMDB failure answers `[]`, never an error.
      * - `episodes` lists every season but 0 (specials, which Nuvio scrapers don't carry) from TMDB's
      *   `/tv/<id>` and `/tv/<id>/season/<n>`, fetched together, dropping episodes that haven't aired.
      * - `resolve` calls the wrapped `getStreams` exactly as Nuvio does: the id as a string, `"tv"`
@@ -259,6 +269,8 @@ object NuvioPluginConverter {
         var __NUVIO_TMDB_API = "https://api.themoviedb.org/3";
         var __NUVIO_TMDB_IMAGES = "https://image.tmdb.org/t/p/";
         var __NUVIO_ARTWORK_TIMEOUT_MS = 4000;
+        var __NUVIO_TEXT_SEARCH_TIMEOUT_MS = 8000;
+        var __NUVIO_TEXT_SEARCH_MAX = 10;
 
         function __nuvioMediaType(type, season, episode) {
           if (type === "series" || type === "tv") return "tv";
@@ -314,11 +326,11 @@ object NuvioPluginConverter {
           return lang.toLowerCase().indexOf("es") === 0 ? "es-MX" : (lang || "en-US");
         }
 
-        async function __nuvioTmdb(path, timeoutMs) {
+        async function __nuvioTmdb(path, timeoutMs, params) {
           var opts = { headers: { Accept: "application/json" } };
           if (timeoutMs) opts.timeoutMs = timeoutMs;
           var r = await kino.fetch(__NUVIO_TMDB_API + path + "?api_key=" + encodeURIComponent(__NUVIO_TMDB_KEY) +
-            "&language=" + encodeURIComponent(__nuvioTmdbLanguage()), opts);
+            "&language=" + encodeURIComponent(__nuvioTmdbLanguage()) + (params || ""), opts);
           if (!r.ok) throw kino.error(r.status === 404 ? "not_found" : "unavailable", "TMDB respondió " + r.status);
           return r.json();
         }
@@ -327,9 +339,67 @@ object NuvioPluginConverter {
 
         function __nuvioYear(date) { return (typeof date === "string" && date.length >= 4) ? date.slice(0, 4) : undefined; }
 
+        // A typed search (no TMDB id): TMDB's own search, one request, never getStreams. See the KDoc.
+        async function __nuvioTextSearch(query) {
+          var q = String(query.q || "").trim();
+          if (!q) return [];
+          var season = query.season || 0, episode = query.episode || 0;
+          var kinds = (query.type === "series" ? ["tv"] : ["movie", "tv"]).filter(__nuvioSupports);
+          if (!kinds.length) return [];
+          var path = kinds.length > 1 ? "/search/multi" : "/search/" + kinds[0];
+          var body;
+          try {
+            body = await __nuvioTmdb(path, __NUVIO_TEXT_SEARCH_TIMEOUT_MS, "&query=" + encodeURIComponent(q) + "&include_adult=false&page=1");
+          } catch (e) {
+            console.log("[Kino] TMDB search failed: " + (e && e.message ? e.message : String(e)));
+            return [];
+          }
+          var results = (body && Array.isArray(body.results)) ? body.results : [];
+          var matches = [];
+          results.forEach(function (m) {
+            if (!m || typeof m.id !== "number" || m.id <= 0) return;
+            var mediaType = kinds.length > 1 ? m.media_type : kinds[0];
+            if (kinds.indexOf(mediaType) < 0) return;
+            var title = mediaType === "movie" ? (m.title || m.original_title) : (m.name || m.original_name);
+            if (!title) return;
+            var original = mediaType === "movie" ? m.original_title : m.original_name;
+            matches.push({ m: m, mediaType: mediaType, title: String(title), original: original ? String(original) : "" });
+          });
+          matches.sort(function (a, b) { return (Number(b.m.popularity) || 0) - (Number(a.m.popularity) || 0); });
+          var forms = [q, query.originalTitle].concat(Array.isArray(query.altTitles) ? query.altTitles : [])
+            .filter(function (t) { return typeof t === "string" && t.trim().length > 0; });
+          matches = kino.rank.sortBySimilarity(matches, forms, function (x) { return [x.title, x.original]; });
+          return matches.slice(0, __NUVIO_TEXT_SEARCH_MAX).map(function (x) {
+            var m = x.m, id = m.id;
+            var art = {
+              year: __nuvioYear(m.release_date || m.first_air_date),
+              poster: __nuvioImage("w500", m.poster_path),
+              backdrop: __nuvioImage("w1280", m.backdrop_path),
+              overview: m.overview || undefined,
+            };
+            if (x.mediaType === "tv" && !(season > 0 && episode > 0)) {
+              return Object.assign({
+                id: id + "-series", ref: JSON.stringify({ tmdbId: id, type: "tv" }),
+                title: x.title, kind: "series", ids: { tmdb: id },
+              }, art);
+            }
+            var type = x.mediaType === "tv" ? "series" : "movie";
+            var item = Object.assign({
+              id: id + "-" + type + "-" + season + "-" + episode,
+              ref: JSON.stringify({ tmdbId: id, type: type, season: x.mediaType === "tv" ? season : 0, episode: x.mediaType === "tv" ? episode : 0 }),
+              title: x.title, kind: "movie",
+            }, art);
+            if (x.mediaType === "movie") {
+              item.id = id + "-movie-0-0";
+              item.ids = { tmdb: id };
+            }
+            return item;
+          });
+        }
+
         export async function search(query) {
           await null;
-          if (!query.tmdbId) return [];
+          if (!query.tmdbId) return __nuvioTextSearch(query);
           var season = query.season || 0, episode = query.episode || 0;
           var mediaType = __nuvioMediaType(query.type, season, episode);
           if (!__nuvioSupports(mediaType)) return [];
