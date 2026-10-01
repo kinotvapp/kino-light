@@ -165,3 +165,22 @@ internal fun artForInstalled(art: Map<String, CatalogArt>, address: String): Cat
  * sit under the "De la comunidad" header already, and installing one still shows "Plugin no verificado".
  */
 internal fun cardPill(row: CatalogRow): String? = if (row.entry.legacyDefault) "Lo que ya usabas" else null
+
+/** The word a signed plugin's card adds to its status line, never anything else ("Seguro", "Verificado"). */
+internal const val SIGNED_TAG = "Firmado"
+
+/**
+ * The tag a TV recommended or community card adds to its status line for a plugin signed by its author
+ * ([SIGNED_TAG]), or null. On the TV it is never a tile pill and never in a corner: the line under the name
+ * says it, as "Instalado · Firmado" (the phone's cards keep their own design).
+ *
+ * Always null on this branch: the catalog and discovery entries do not carry the signature flag yet. The
+ * signed-plugins work (feat/sealed-code) wires it here (its entry's `signed`); the TV card already has the
+ * slot for it ([withSignedTag]).
+ */
+@Suppress("UNUSED_PARAMETER")
+internal fun cardSignedTag(row: CatalogRow): String? = null
+
+/** [label] followed by " · [signedTag]" ("Instalado · Firmado"), or [label] alone when there is no tag. */
+internal fun withSignedTag(label: String, signedTag: String?): String =
+    if (signedTag == null) label else "$label · $signedTag"

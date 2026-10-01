@@ -56,6 +56,8 @@ import com.arkiv.player.ui.plugin.cardActionLabel
 import com.arkiv.player.ui.plugin.cardDescriptionLines
 import com.arkiv.player.ui.plugin.cardInitial
 import com.arkiv.player.ui.plugin.cardPill
+import com.arkiv.player.ui.plugin.cardSignedTag
+import com.arkiv.player.ui.plugin.withSignedTag
 import com.arkiv.player.ui.plugin.cardStatusLabel
 import com.arkiv.player.ui.plugin.catalogActionOf
 import com.arkiv.player.ui.plugin.onTileColor
@@ -81,9 +83,11 @@ private const val COMPACT_TILE_RATIO = 3.5f
 private val COMPACT_ART_SIZE = 32.dp
 
 /**
- * One recommended plugin as a card of the Plugins screen's Recomendados grid: a 16:9 tile in the plugin's own colour
- * with its icon (or, while it has none, the first letter of its name), then its name, what it does and
- * the one thing OK will do ([cardActionLabel]). The whole card is the focus target; an installed plugin
+ * One recommended (or community) plugin as a card of the Plugins screen's Recomendados grid, drawn exactly like
+ * an Instalados card ([TvInstalledPluginCard]: the plugin's app-style icon on a gradient tinted with its own
+ * colour, the name, a status line, grey text under it) but without the gear: its status line is the one
+ * thing OK will do ([cardActionLabel]) or "Instalado", plus "Firmado" for a signed plugin ([cardSignedTag]),
+ * and the grey text is what it does. The whole card is the focus target; an installed plugin
  * that needs nothing is still focusable, so the grid is walked one card at a time, and its click does
  * nothing.
  *
@@ -112,7 +116,7 @@ fun TvPluginCard(
 ) {
     val entry = row.entry
     val action = catalogActionOf(row)
-    val label = catalogRowLabel(action, entry.name)
+    val label = listOfNotNull(catalogRowLabel(action, entry.name), cardSignedTag(row)).joinToString(". ")
     Card(
         onClick = onClick,
         // The description of the whole card is the same sentence the row had ("Instalar Xuper"); what is
@@ -131,6 +135,7 @@ fun TvPluginCard(
                 description = entry.description,
                 action = action,
                 status = cardStatus(row),
+                signedTag = cardSignedTag(row),
                 reserveStatusLine = reserveStatusLine,
                 compact = compact,
             )
@@ -268,12 +273,20 @@ private fun TileArt(name: String, tileColorArgb: Long, letterSize: Float) {
     }
 }
 
+/**
+ * The texts under the tile. The full-size card (Ajustes > Plugins: Recomendados and "De la comunidad") is laid
+ * out like an Instalados card ([TvInstalledPluginCard]): the name, then the status line -- what OK does or
+ * "Instalado", with " · Firmado" for a signed plugin ([withSignedTag]) -- then the description in the grey of
+ * the hosts line, then the plugin's own status when it explains the action. A [compact] card ("Elige tus
+ * fuentes") keeps the action last, under a one-line description.
+ */
 @Composable
 private fun CardTexts(
     name: String,
     description: String,
     action: CatalogAction,
     status: PluginStatus?,
+    signedTag: String?,
     reserveStatusLine: Boolean,
     compact: Boolean,
 ) {
@@ -281,14 +294,13 @@ private fun CardTexts(
         modifier = Modifier.fillMaxWidth().padding(horizontal = if (compact) 10.dp else 12.dp, vertical = if (compact) 4.dp else 10.dp),
         verticalArrangement = Arrangement.spacedBy(if (compact) 1.dp else 2.dp),
     ) {
-        Text(
-            name,
-            style = if (compact) MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-            color = Color.White,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        if (compact) {
+            Text(name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        } else {
+            // The Instalados card's own title style.
+            Text(name, style = MaterialTheme.typography.titleMedium, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            ActionLine(action, signedTag, compact = false)
+        }
         // minLines as well as maxLines: a shorter description still takes its lines, so every card is as tall as the next.
         Text(
             description,
@@ -304,14 +316,26 @@ private fun CardTexts(
         } else if (reserveStatusLine) {
             Text(" ", style = MaterialTheme.typography.bodySmall, maxLines = 1)
         }
-        if (action == CatalogAction.INSTALLED) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                Icon(Icons.Filled.Check, contentDescription = null, tint = ArkivTextSecondary, modifier = Modifier.size(14.dp))
-                Text(cardActionLabel(action), style = MaterialTheme.typography.labelLarge, color = ArkivTextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-        } else {
-            Text(cardActionLabel(action), style = MaterialTheme.typography.labelLarge, color = ArkivRed, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (compact) ActionLine(action, signedTag, compact = true)
+    }
+}
+
+/**
+ * What OK does on this card ([cardActionLabel]) in red, or a grey "Instalado" with a check for a plugin that
+ * needs nothing, followed by " · Firmado" for a signed one. On the full-size card it is the status line under
+ * the name, at the Instalados status line's size; on a [compact] one, the last line.
+ */
+@Composable
+private fun ActionLine(action: CatalogAction, signedTag: String?, compact: Boolean) {
+    val style = if (compact) MaterialTheme.typography.labelLarge else MaterialTheme.typography.bodySmall
+    val label = withSignedTag(cardActionLabel(action), signedTag)
+    if (action == CatalogAction.INSTALLED) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Icon(Icons.Filled.Check, contentDescription = null, tint = ArkivTextSecondary, modifier = Modifier.size(14.dp))
+            Text(label, style = style, color = ArkivTextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
+    } else {
+        Text(label, style = style, fontWeight = FontWeight.Medium, color = ArkivRed, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 

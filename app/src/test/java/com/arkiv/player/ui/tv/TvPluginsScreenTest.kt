@@ -69,6 +69,13 @@ class TvPluginsScreenTest {
         assertEquals(listOf(3, 4), (0..4).filter { cardHasNothingToTheRight(it, lastIndex = 4, columns = TV_INSTALLED_COLUMNS) })
     }
 
+    // Recomendados and "De la comunidad" draw the Instalados card now, so they keep its four columns (and the
+    // same Right stops: the fourth card of a line, under "Agregar", and the last card).
+    @Test fun `Recomendados lays the Instalados card four per line`() {
+        assertEquals(TV_INSTALLED_COLUMNS, TV_RECOMMENDED_COLUMNS)
+        assertEquals(listOf(3, 5), (0..5).filter { cardHasNothingToTheRight(it, lastIndex = 5, columns = TV_RECOMMENDED_COLUMNS) })
+    }
+
     @Test fun `a message or a live notice reserves room on the four cards of its own line only`() {
         assertEquals(
             listOf(false, false, false, false, true, true, true, true, false),

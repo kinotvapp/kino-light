@@ -4,7 +4,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -83,10 +83,18 @@ import com.arkiv.player.ui.theme.ArkivTextSecondary
 import kotlinx.coroutines.delay
 
 /**
- * Installed plugins per line of the Instalados grid (Recomendados lays compact cards: [tvPickerColumns]). Four
- * fill the pane of a 960 dp wide TV (Fire TV at density 2) without leaving a column empty with a few plugins.
+ * Installed plugins per line of the Instalados grid. Four fill the pane of a 960 dp wide TV (Fire TV at
+ * density 2) without leaving a column empty with a few plugins.
  */
 internal const val TV_INSTALLED_COLUMNS = 4
+
+/**
+ * Cards per line of Recomendados and its "De la comunidad": the same as Instalados, because their cards are
+ * now the very same full-size card ([TvPluginCard] without `compact`: the big app icon on the plugin's
+ * colour-tinted gradient), and that card needs the Instalados width to keep its proportions. "Elige tus
+ * fuentes" keeps its compact cards ([tvPickerColumns]): it has to show both sections on one screen.
+ */
+internal const val TV_RECOMMENDED_COLUMNS = TV_INSTALLED_COLUMNS
 
 /**
  * Room kept between a focused item and the edge of the list when the scroll brings it into view. The
@@ -107,8 +115,8 @@ private val FULL_WIDTH: LazyGridItemSpanScope.() -> GridItemSpan = { GridItemSpa
  * the selected tab's body.
  *
  * - **Recomendados**: the notice while the list is only the copy shipped in the APK (with "Reintentar"), and
- *   the recommended plugins as compact cards ([TvPluginCard], as many per line as [tvPickerColumns] fits, the
- *   same as "Elige tus fuentes") of one lazy grid, then "De la comunidad".
+ *   the recommended plugins as cards ([TvPluginCard], the Instalados card's look, [TV_RECOMMENDED_COLUMNS] per
+ *   line) of one lazy grid, then "De la comunidad" with the same cards.
  * - **Instalados**: the installed plugins as cards ([TvInstalledPluginCard]) in one lazy grid of
  *   [TV_INSTALLED_COLUMNS] columns; OK on a card opens its actions dialog
  *   ([TvInstalledActionsDialog]). With nothing installed, a line saying so and "Ver recomendados".
@@ -436,8 +444,8 @@ private fun PluginsHeader(
 
 /**
  * Recomendados: the notice while the list is only the copy shipped in the APK, and the recommended plugins,
- * each a compact [TvPluginCard] in one cell of a grid of [tvPickerColumns] columns (the rule and the card of
- * "Elige tus fuentes"). Everything but the cards is a full-width item. "De la comunidad" follows the cards
+ * each a full-size [TvPluginCard] (the same look as an Instalados card, without its gear) in one cell of a
+ * grid of [TV_RECOMMENDED_COLUMNS] columns, the same as Instalados. Everything but the cards is a full-width item. "De la comunidad" follows the cards
  * ([tvCommunityItems]). The search lives in the header row ([TvPluginSearch]). The first card carries
  * [firstRowModifier] (Down from the header row).
  */
@@ -454,8 +462,8 @@ private fun RecommendedTab(
 ) {
     val gridState = rememberLazyGridState()
     val gridFocus = rememberTvGridFocus(gridState)
-    BoxWithConstraints(modifier) {
-        val columns = tvPickerColumns(maxWidth.value)
+    Box(modifier) {
+        val columns = TV_RECOMMENDED_COLUMNS
         val statusLines = remember(rows, columns) { gridLinesWithStatus(rows, columns) }
         // Up/Down among the cards, "Actualizar" and the community cards go by line (see TvGridFocus): the geometric
         // search let Down from some columns skip "De la comunidad". Above the first card line the key takes its usual course.
@@ -466,8 +474,9 @@ private fun RecommendedTab(
             modifier = Modifier.fillMaxSize(),
             // 8 dp on top: the room the focused first line's zoom ([TV_CARD_FOCUS_SCALE]) needs, and no more.
             contentPadding = PaddingValues(top = 8.dp, bottom = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(PICKER_CARD_GAP_DP.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            // The Instalados grid's own spacing, so both tabs read as one grid.
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             // Only while the list is still the copy shipped in the APK. The notice waits for the refresh to end
             // (it may still succeed); meanwhile the action reads "Actualizando…" and does nothing, but stays
@@ -509,7 +518,6 @@ private fun RecommendedTab(
                         .then(if (index == 0) firstRowModifier else Modifier)
                         .then(if (cardHasNothingToTheRight(index, rows.lastIndex, columns)) Modifier.noFocusToTheRight() else Modifier),
                     reserveStatusLine = statusLines.getOrElse(index) { false },
-                    compact = true,
                     onClick = { runCatalogAction(vm, row) },
                 )
             }
@@ -526,7 +534,6 @@ private fun RecommendedTab(
                 onRefresh = vm::refreshCommunity,
                 onAction = { runCatalogAction(vm, it) },
                 focus = gridFocus,
-                compact = true,
             )
         }
     }

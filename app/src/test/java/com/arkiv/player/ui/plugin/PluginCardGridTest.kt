@@ -38,3 +38,21 @@ class PluginCardGridTest {
         assertEquals(listOf(false, false, false), gridLinesWithStatus(rowsWithStatus(false, false, false), columns = 2))
     }
 }
+
+/** The "Firmado" slot a TV catalog card has on its status line. */
+class CatalogSignedTagTest {
+    private val row = CatalogRow(CatalogEntry(id = "demo", repo = "o/r", name = "Demo", description = ""), null)
+
+    @Test fun `the tag follows the status line's label`() {
+        assertEquals("Instalado · Firmado", withSignedTag("Instalado", SIGNED_TAG))
+        assertEquals("Instalar", withSignedTag("Instalar", null))
+    }
+
+    @Test fun `the word is Firmado`() {
+        assertEquals("Firmado", SIGNED_TAG)
+    }
+
+    @Test fun `no catalog entry is signed until the signature flag is wired`() {
+        assertEquals(null, cardSignedTag(row))
+    }
+}
