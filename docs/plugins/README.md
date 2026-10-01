@@ -56,6 +56,12 @@ use a build step or a library, bundle everything into that single file -- see
 | `owner/repo/sub/dir` | a folder inside the repository |
 | `owner/repo@v1.2.0` | a branch, tag or commit (the name cannot contain `/`); also works with a folder |
 | `https://github.com/owner/repo` or `.../tree/<ref>/<path>` | the same, pasted from the browser |
+| `https://raw.githubusercontent.com/owner/repo/<ref>/<path>/kino-plugin.json`, or `https://github.com/owner/repo/blob/<ref>/<path>/kino-plugin.json` (also `/raw/`, and `refs/heads/<branch>` as the ref) | the folder that file is in, at that ref; the file has to be a `.json` one (`kino-plugin.json`, or a Nuvio repo's `manifest.json`), any other file is refused |
+
+A query string or `#fragment` in a pasted URL is ignored. A ref that only comes from a pasted URL
+(`tree`, `blob`, `raw` or `raw.githubusercontent.com`) is not a pin: a plugin with sealed secrets
+pasted that way installs from the default branch when that branch serves the same
+`kino-plugin.json` (see [Sealed secrets](#sealed-secrets-apiversion-4)).
 
 Kino downloads `kino-plugin.json`, your entry file and the icon from `raw.githubusercontent.com`,
 which is why the repository has to be public.

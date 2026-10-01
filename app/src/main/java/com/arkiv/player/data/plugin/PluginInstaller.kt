@@ -156,9 +156,10 @@ class PluginInstaller(
     suspend fun preview(input: String): InstallPreview {
         val address = PluginAddress.parse(input)
             ?: throw InstallException("Escribe usuario/repositorio, por ejemplo kinotvapp/kino-plugin-archive")
-        // A pasted GitHub page (`…/tree/<branch>/<folder>`) names its branch only because the page
-        // does: that is not a pin the person chose. See [previewFor]'s headTwin.
-        val headTwin = address.copy(ref = PluginAddress.HEAD).takeIf { address.ref != PluginAddress.HEAD && PluginAddress.isTreeUrl(input) }
+        // A pasted GitHub page or file URL (`…/tree/<branch>/<folder>`, `…/blob/<branch>/…/kino-plugin.json`,
+        // `raw.githubusercontent.com/…/<branch>/…`) names its branch only because the page does: that
+        // is not a pin the person chose. See [previewFor]'s headTwin.
+        val headTwin = address.copy(ref = PluginAddress.HEAD).takeIf { address.ref != PluginAddress.HEAD && PluginAddress.isBrowsedRefUrl(input) }
         return previewFor(address, headTwin)
     }
 
@@ -304,7 +305,7 @@ class PluginInstaller(
 
     /**
      * [headTwin]: the same repo and folder without a ref, for an [address] whose ref came from a
-     * pasted GitHub page URL. Only for a manifest with sealed secrets (which never open at an
+     * pasted GitHub page or file URL ([PluginAddress.isBrowsedRefUrl]). Only for a manifest with sealed secrets (which never open at an
      * explicit ref, [SealedSecrets.opensAt]): when the default branch serves the very same
      * `kino-plugin.json`, the plugin installs from there, ref-less, exactly as if the person had
      * typed `owner/repo/folder`; otherwise the refusal names that address.
@@ -419,7 +420,7 @@ class PluginInstaller(
         /** Shown when a manifest declares `secrets` and this build has no way to open any seal at all. */
         const val NO_SEALS_MESSAGE = "Este Kino no puede abrir datos sellados"
         /** Shown when a manifest with `secrets` is installed or updated from any address with an explicit `@ref` ([SealedSecrets.opensAt]). */
-        /** A pasted `…/tree/<branch>/…` URL of a plugin with seals whose branch isn't what the default branch serves. */
+        /** A pasted `…/tree/<branch>/…` (or blob/raw file) URL of a plugin with seals whose branch isn't what the default branch serves. */
         fun treeSealsMessage(headTwin: PluginAddress) =
             "Los datos sellados solo funcionan desde la rama principal del repositorio: escribe ${headTwin.canonical}"
 

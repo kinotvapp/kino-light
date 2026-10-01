@@ -115,6 +115,18 @@ class NuvioPluginInstallerTest {
         assertNull(n.previewRepo("o/r@main")) // must not fall back to HEAD (nor try @master)
     }
 
+    @Test fun `a pasted raw manifest json URL resolves at its branch and installs from there`() = runBlocking {
+        val n = NuvioPluginInstaller(installer, fetcher(mapOf(
+            "https://raw.githubusercontent.com/latinokodi/latinuvio-V2/main/manifest.json" to manifestJson,
+            "https://raw.githubusercontent.com/latinokodi/latinuvio-V2/main/providers/fakesrc.js" to scraperJs,
+        )))
+        val repoPreview = n.previewRepo("https://raw.githubusercontent.com/latinokodi/latinuvio-V2/main/manifest.json")!!
+        assertEquals("latinokodi/latinuvio-V2@main", repoPreview.address)
+        assertEquals(listOf("fakesrc"), repoPreview.scrapers.map { it.id })
+        val record = n.install(n.previewScraper(repoPreview.address, "fakesrc"))
+        assertEquals("latinokodi/latinuvio-V2@main", record.nuvioRepo)
+    }
+
     @Test fun `previewRepo tries no fallback at all when the default branch has no manifest json`() = runBlocking {
         val requested = mutableListOf<String>()
         val n = NuvioPluginInstaller(installer, PluginFetcher { url, _ -> requested += url; throw FileNotFoundException(url) })

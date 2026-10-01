@@ -449,6 +449,24 @@ class PluginInstallerTest {
         assertEquals("o/r/sub/dir", installer.install(preview).address)
     }
 
+    @Test fun `a pasted raw or blob file URL of a sealed plugin installs ref-less like a tree URL`() = runBlocking {
+        installer = installerWithSeal()
+        val seal = TestSealing.seal("shh", SealedSecrets.bindingOf(PluginAddress("o", "r", "sub/dir")), "apiKey")
+        publish(api = 4, secrets = mapOf("apiKey" to seal), prefix = "https://raw.githubusercontent.com/o/r/main/sub/dir/")
+        publish(api = 4, secrets = mapOf("apiKey" to seal), prefix = "https://raw.githubusercontent.com/o/r/HEAD/sub/dir/")
+        for (url in listOf(
+            "https://raw.githubusercontent.com/o/r/main/sub/dir/kino-plugin.json",
+            "https://raw.githubusercontent.com/o/r/refs/heads/main/sub/dir/kino-plugin.json",
+            "https://github.com/o/r/blob/main/sub/dir/kino-plugin.json",
+            "https://github.com/o/r/raw/main/sub/dir/kino-plugin.json",
+        )) {
+            assertEquals(url, PluginAddress("o", "r", "sub/dir"), installer.preview(url).address)
+        }
+        // A typed @ref is still a pin the person chose.
+        val e = assertThrows(InstallException::class.java) { runBlocking { installer.preview("o/r/sub/dir@main") } }
+        assertEquals(PluginInstaller.NON_HEAD_SEALS_MESSAGE, e.message)
+    }
+
     @Test fun `a pasted tree URL whose branch differs from the default one names the address to type`() {
         installer = installerWithSeal()
         val seal = TestSealing.seal("shh", SealedSecrets.bindingOf(PluginAddress("o", "r", "sub")), "apiKey")
