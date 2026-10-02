@@ -140,6 +140,51 @@ object TsStartPoint {
         return out
     }
 
+    /** What dated a byte of the file: a video PES's PTS, else another media PES's (audio), else a PCR. */
+    enum class ClockSource(val label: String) {
+        VIDEO_PES("video PES"),
+        OTHER_PES("audio PES"),
+        PCR("PCR"),
+    }
+
+    /** A timestamp found in a buffer: the packet's offset in it, the 90 kHz value and what it came from. */
+    data class Clock(val offset: Int, val pts: Long, val source: ClockSource)
+
+    /**
+     * The first timestamp in [buf]: its first video PES when it has one, else its first other media
+     * PES (audio), else its first PCR. A real file's window can hold no video PES start at all -- an
+     * audio-only or padded tail past the last frame, or the middle of one big frame -- and the
+     * byte-to-time interpolation only needs some clock of the title there, not a video one.
+     */
+    fun firstClock(buf: ByteArray, head: Head): Clock? = clock(buf, head, last = false)
+
+    /** The last timestamp in [buf], with the same preference as [firstClock]. */
+    fun lastClock(buf: ByteArray, head: Head): Clock? = clock(buf, head, last = true)
+
+    private fun clock(buf: ByteArray, head: Head, last: Boolean): Clock? {
+        val start = MpegTs.alignment(buf)
+        if (start < 0) return null
+        var video: Clock? = null
+        var other: Clock? = null
+        var pcr: Clock? = null
+        var i = start
+        while (i + MpegTs.PACKET <= buf.size) {
+            val pid = pid(buf, i)
+            if (pid in head.mediaPids && pusi(buf, i)) {
+                val pts = pesPts(buf, i)
+                if (pts != null && pid == head.videoPid) {
+                    video = Clock(i, pts, ClockSource.VIDEO_PES)
+                    if (!last) return video
+                } else if (pts != null && (last || other == null)) {
+                    other = Clock(i, pts, ClockSource.OTHER_PES)
+                }
+            }
+            if (last || pcr == null) MpegTs.readPcr(buf, i)?.let { pcr = Clock(i, it.base90k, ClockSource.PCR) }
+            i += MpegTs.PACKET
+        }
+        return video ?: other ?: pcr
+    }
+
     /**
      * First keyframe in [buf] whose PTS is at least [minPts] ticks past [head]'s zero (wrap-aware):
      * a video PES that starts in its packet and either declares a random access point or opens
@@ -242,25 +287,31 @@ class TsStartLocator(
         if (targetMs <= 0L || total <= HEAD_BYTES * 2L) return null
         val head = read(0L, HEAD_BYTES)?.let(TsStartPoint::head) ?: return null.also { log("no PAT/PMT/video in the head") }
         val target = targetMs * 90L
-        // The clock at the end: the last video PES of the tail window.
-        val tailAt = total - PROBE_BYTES
-        val tail = read(tailAt, PROBE_BYTES) ?: return null
-        val lastPes = TsStartPoint.videoPes(tail, head).lastOrNull() ?: return null.also { log("no video timestamp in the tail") }
-        var lo = Probe(0L, 0L)
-        var hi = Probe(tailAt + lastPes.offset, TsStartPoint.ticksAfter(head.firstPts, lastPes.pts))
+        // The clock at the end: the last timestamp of the tail, widening backwards until there is one.
+        val end = endClock(head) ?: return null
+        var lo = Probe(0L, 0L, TsStartPoint.ClockSource.VIDEO_PES)
+        var hi = end
         if (target >= hi.ticks) return null.also { log("the point is past the end") }
         // Interpolate towards a little before the point.
         for (step in 0 until MAX_PROBES) {
             if (target - lo.ticks <= CLOSE_TICKS || hi.offset - lo.offset <= SCAN_BYTES) break
             val guess = (lo.offset + (hi.offset - lo.offset) * ((target - CLOSE_TICKS / 2 - lo.ticks).toDouble() / (hi.ticks - lo.ticks)))
                 .toLong().coerceIn(lo.offset + 1, hi.offset - PROBE_BYTES)
-            val buf = read(guess, PROBE_BYTES) ?: return null
-            val pes = TsStartPoint.firstVideoPes(buf, head) ?: return null.also { log("no video PES at byte $guess") }
-            val probe = Probe(guess + pes.offset, TsStartPoint.ticksAfter(head.firstPts, pes.pts))
+            val probe = clockAfter(guess, head) ?: return null
+            if (probe.offset >= hi.offset) {
+                log("the probe at byte $guess found its first timestamp past the upper bound: interpolation stops")
+                break
+            }
             if (probe.ticks <= target) lo = probe else hi = probe
         }
-        // Forward from there to the first keyframe at or after the point.
+        // Forward from there to the first keyframe at or after the point. A probe dated by audio or a
+        // PCR is not where the video of that time is muxed (it can run a little ahead): start the scan
+        // some seconds' worth of bytes earlier, so the keyframe cannot sit behind it.
         var at = lo.offset
+        if (lo.source != TsStartPoint.ClockSource.VIDEO_PES) {
+            at = (lo.offset - (INEXACT_SLACK_TICKS.toDouble() * end.offset / end.ticks).toLong()).coerceAtLeast(0L)
+            log("the last probe was dated by the ${lo.source.label}: scanning from byte $at, ${lo.offset - at}B before it")
+        }
         var scanned = 0L
         while (scanned < MAX_SCAN_BYTES && at < total) {
             val n = minOf(SCAN_BYTES.toLong(), total - at).toInt()
@@ -279,9 +330,74 @@ class TsStartLocator(
         return null
     }
 
-    private data class Probe(val offset: Long, val ticks: Long)
+    /**
+     * The last timestamp of the file: the tail window ([WIDEN_BYTES]`[0]`), then further back while
+     * a window holds none. Measured on a Xuper title (911 MB, HEVC+AAC) the last 128 KB held no video
+     * PES start; any clock works there, it only bounds the interpolation.
+     */
+    private fun endClock(head: TsStartPoint.Head): Probe? {
+        var regionEnd = total
+        for (span in WIDEN_BYTES) {
+            val regionStart = (total - span).coerceAtLeast(HEAD_BYTES.toLong())
+            if (regionStart >= regionEnd) continue
+            val buf = read(regionStart, (regionEnd - regionStart).toInt())
+                ?: return null.also { log("the tail read at byte $regionStart failed") }
+            TsStartPoint.lastClock(buf, head)?.let { c ->
+                val probe = Probe(regionStart + c.offset, ticksOf(head, c), c.source)
+                if (c.source != TsStartPoint.ClockSource.VIDEO_PES || span > WIDEN_BYTES[0]) {
+                    log("end clock: the ${c.source.label} ${total - probe.offset}B before the end (looked through the last ${span}B)")
+                }
+                return probe
+            }
+            // Keep a packet's worth of overlap so a packet cut by the edge is seen whole.
+            regionEnd = regionStart + MpegTs.PACKET - 1
+        }
+        log("no timestamp in the last ${WIDEN_BYTES.last()}B")
+        return null
+    }
+
+    /** The first timestamp at or after [from]: a [PROBE_BYTES] window, widened forwards while it holds none. */
+    private fun clockAfter(from: Long, head: TsStartPoint.Head): Probe? {
+        var regionStart = from
+        for (span in WIDEN_BYTES) {
+            val regionEnd = minOf(from + span, total)
+            if (regionEnd - regionStart < MpegTs.PACKET) break
+            val buf = read(regionStart, (regionEnd - regionStart).toInt())
+                ?: return null.also { log("the probe read at byte $regionStart failed") }
+            TsStartPoint.firstClock(buf, head)?.let { c ->
+                val probe = Probe(regionStart + c.offset, ticksOf(head, c), c.source)
+                if (c.source != TsStartPoint.ClockSource.VIDEO_PES || span > WIDEN_BYTES[0]) {
+                    log("probe at byte $from: dated by the ${c.source.label} ${probe.offset - from}B after it")
+                }
+                return probe
+            }
+            regionStart = regionEnd - (MpegTs.PACKET - 1)
+        }
+        log("no timestamp within ${WIDEN_BYTES.last()}B after byte $from")
+        return null
+    }
+
+    /**
+     * [clock]'s ticks past the head's zero. An audio PTS or a PCR just behind the zero (a PCR runs
+     * ahead of the PTS it paces) would wrap to ~26 h: it reads as the zero instead.
+     */
+    private fun ticksOf(head: TsStartPoint.Head, clock: TsStartPoint.Clock): Long {
+        val ticks = TsStartPoint.ticksAfter(head.firstPts, clock.pts)
+        return if (clock.source != TsStartPoint.ClockSource.VIDEO_PES && ticks > MpegTs.PCR_WRAP / 2) 0L else ticks
+    }
+
+    private data class Probe(val offset: Long, val ticks: Long, val source: TsStartPoint.ClockSource)
 
     companion object {
+        /**
+         * The windows a timestamp is looked for in, widening while one holds none: the probe size,
+         * then 1 MiB, then 4 MiB (as the duration's tail search, [TsTailPcrExtractor]).
+         */
+        val WIDEN_BYTES = longArrayOf(PROBE_BYTES.toLong(), 1L shl 20, 4L shl 20)
+
+        /** How far behind an audio- or PCR-dated probe the keyframe scan starts (ticks of 90 kHz: 3 s). */
+        const val INEXACT_SLACK_TICKS = 3L * 90_000
+
         /** The head read: PAT and PMT go by every ~100 ms, so a few hundred KB always hold both. */
         const val HEAD_BYTES = 512 * 1024
         const val PROBE_BYTES = 128 * 1024
