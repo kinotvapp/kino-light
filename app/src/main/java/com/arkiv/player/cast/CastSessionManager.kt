@@ -349,6 +349,7 @@ class CastSessionManager(
     fun setMedia(request: CastRequest) {
         generation++
         pending = request
+        offsetOf = request.episodeId to request.offsetMs
         idleWatch.onNewMedia(request.episodeId, if (request.asLive) 0L else request.startPositionMs)
         retryingSince = 0L
         _trouble.value = null
@@ -626,10 +627,16 @@ class CastSessionManager(
     }
 
     /**
-     * The freshest position known for [episodeId] while it is the cast title: what the receiver
-     * last reported, else where its load started; null for anything else. Main thread.
+     * The freshest position known for [episodeId] while it is the cast title, on the TITLE's clock:
+     * what the receiver last reported (else where its load started) plus where the media it was
+     * given begins in the title ([CastRequest.offsetMs], a remux started mid-title); null for
+     * anything else. Main thread.
      */
-    fun lastKnownPositionMs(episodeId: String): Long? = idleWatch.lastKnownMs(episodeId)
+    fun lastKnownPositionMs(episodeId: String): Long? =
+        idleWatch.lastKnownMs(episodeId)?.let { it + (offsetOf.takeIf { o -> o.first == episodeId }?.second ?: 0L) }
+
+    /** The last [setMedia]'s title and [CastRequest.offsetMs]: what [lastKnownPositionMs] adds. */
+    @Volatile private var offsetOf: Pair<String, Long> = "" to 0L
 
     /**
      * A load the receiver never got to play within [LOAD_STALL_MS]: ask ("Reintentar" / "Ver en el
@@ -757,11 +764,8 @@ class CastSessionManager(
                 // saved nothing at all and "continue watching" quietly stopped working. The phone
                 // knows the duration (it has been drawing the bar with it) and knows where the
                 // remux was clipped, so both are supplied here rather than trusted from the TV.
-                val durReal = if (dur > 0L) dur else request.durationMs
-                val progress = CastProgress.toSave(
-                    reportedPosMs = pos + request.offsetMs,
-                    reportedDurMs = durReal,
-                )
+                // A remux started mid-title counts both from its start: moved onto the title's clock.
+                val progress = CastProgress.toSaveInTitle(pos, dur, request.durationMs, request.offsetMs)
                 if (progress == null) {
                     // Loud on purpose -- born diagnosing "torrent always restarts from zero" (a
                     // source removed in this branch's pruning); if this shows up for VOD, progress

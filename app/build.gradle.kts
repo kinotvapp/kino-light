@@ -835,6 +835,10 @@ dependencies {
     // Real SQLite to test the DDL Room doesn't validate (the `updatedAt` triggers): they're plain
     // SQL, so running them is the only honest way to know whether they seal what they must seal.
     testImplementation("org.xerial:sqlite-jdbc:3.45.3.0")
+    // Android on the JVM for the one test that has to run media3's Transformer itself: whether a
+    // remux started mid-file keeps audio and video in step is decided inside the muxer, and the
+    // in-app muxer needs a real SparseArray and Looper (RemuxMidFileSyncTest).
+    testImplementation("org.robolectric:robolectric:4.16")
     // The same engine with desktop natives (macOS/Linux), so PluginRuntime runs in JVM unit tests.
     // The Android artifact is excluded from the unit-test classpaths below: its loader calls
     // System.loadLibrary, which can't find an Android .so on the host JVM. On macOS arm64 the jar's

@@ -4,6 +4,8 @@ import android.content.Context
 import android.util.Log
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
@@ -35,6 +37,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import com.arkiv.player.cast.CastAudioChoice
@@ -81,15 +85,14 @@ class TsRemuxer(
     private val pace: (key: String) -> Boolean = { false },
     /** Is the remux of `key` what a TV is playing right now? Then a failed export is not run again. */
     private val onAir: (key: String) -> Boolean = { false },
+    /**
+     * May a cast remux start near the phone's position instead of at 0:00 ([startPoint])? The
+     * runtime switch `debug.kino.remux_seek_start` (anything but `off` = yes), read off the main thread.
+     */
+    private val seekStartEnabled: () -> Boolean = { true },
 ) {
 
     private val folder = File(cacheDir, RemuxPolicy.FOLDER)
-
-    /**
-     * Length of each fragment. Short enough that playback can begin almost immediately, long
-     * enough that the overhead of a `moof` header per fragment stays negligible.
-     */
-    private val FRAGMENT_MS = 2_000L
 
     /**
      * Exports in flight, by key. A second caller for the same title joins the one already running
@@ -113,6 +116,94 @@ class TsRemuxer(
         /** [code] is media3's `ExportException.errorCode` (0 when it is not an export error). */
         data class Failed(val reason: String, val code: Int = 0, val writtenBytes: Long = 0L) : RemuxResult
     }
+
+    /**
+     * Where each mid-file remux starts reading ([TsStart]), by its key without the audio part
+     * ([RemuxPolicy.startKey]): every audio of a title starts on the same keyframe. Located once
+     * per title and grid point ([startPoint]), read by the export and by [startMsOf].
+     */
+    private val starts = ConcurrentHashMap<String, TsStart>()
+
+    /**
+     * The grid point (ms) the cast remux of [originKey] (with [audioOrdinal]) should start at for a
+     * TV starting at [positionMs], with its [TsStart] located through [inputUri] -- or 0, a remux
+     * from the top: switched off, too near the start to be worth it, a finished remux from the top
+     * already on disk (nothing to wait for), or a stream the start cannot be found in. Suspends for
+     * the few ranged reads that takes (see [TsStartLocator]), at most [LOCATE_BUDGET_MS].
+     */
+    suspend fun startPoint(inputUri: String, originKey: String, audioOrdinal: Int?, positionMs: Long): Long {
+        val grid = TsStartPoint.gridMs(positionMs)
+        if (grid <= 0L) return 0L
+        if (alreadyDone(RemuxPolicy.keyFrom(originKey, 0L, audioOrdinal)) != null) {
+            Log.w(TAG, "start point: a whole remux from the top is on disk, using it")
+            return 0L
+        }
+        val startKey = RemuxPolicy.keyFrom(originKey, grid)
+        if (starts.containsKey(startKey)) return grid
+        val enabled = withContext(Dispatchers.IO) { runCatching(seekStartEnabled).getOrDefault(true) }
+        if (!enabled) {
+            Log.w(TAG, "start point: debug.kino.remux_seek_start=off → remux from 0:00")
+            return 0L
+        }
+        val t0 = System.currentTimeMillis()
+        val start = withTimeoutOrNull(LOCATE_BUDGET_MS) {
+            runInterruptible(Dispatchers.IO) { locate(inputUri, grid) }
+        }
+        val ms = System.currentTimeMillis() - t0
+        if (start == null) {
+            Log.w(TAG, "start point for ${grid}ms not found in ${ms}ms → remux from 0:00")
+            return 0L
+        }
+        starts[startKey] = start
+        Log.w(TAG, "start point: phone at ${positionMs}ms → grid ${grid}ms → $start, found in ${ms}ms")
+        return grid
+    }
+
+    /** Where the remux filed under [key] begins in the title, in ms: its keyframe's time, 0 from the top. */
+    fun startMsOf(key: String): Long =
+        if (RemuxPolicy.fromInKey(key) <= 0L) 0L else starts[RemuxPolicy.startKey(key)]?.startMs ?: 0L
+
+    /** [TsStartLocator] over ranged reads of [inputUri] (the loopback proxy, which adds the CDN's headers). */
+    private fun locate(inputUri: String, gridMs: Long): TsStart? {
+        val source = remuxHttp().createDataSource()
+        val uri = android.net.Uri.parse(inputUri)
+        fun spec(offset: Long, size: Long) = DataSpec.Builder().setUri(uri).setPosition(offset).setLength(size).build()
+        fun range(offset: Long, size: Int): ByteArray? = runCatching {
+            try {
+                source.open(spec(offset, size.toLong()))
+                val out = java.io.ByteArrayOutputStream(size)
+                val buf = ByteArray(64 * 1024)
+                while (out.size() < size) {
+                    val n = source.read(buf, 0, minOf(buf.size, size - out.size()))
+                    if (n == C.RESULT_END_OF_INPUT) break
+                    out.write(buf, 0, n)
+                }
+                out.toByteArray()
+            } finally {
+                runCatching { source.close() }
+            }
+        }.getOrNull()
+        val total = runCatching {
+            try {
+                source.open(spec(0L, 1L))
+                val headers = source.responseHeaders.entries
+                FileWindow.totalFromContentRange(headers.firstOrNull { it.key.equals("Content-Range", true) }?.value?.firstOrNull())
+            } finally {
+                runCatching { source.close() }
+            }
+        }.getOrDefault(0L)
+        if (total <= 0L) {
+            Log.w(TAG, "start point: the input's length is unknown")
+            return null
+        }
+        return TsStartLocator(total, ::range) { Log.i(TAG, "start point: $it") }.locate(gridMs)
+    }
+
+    /** The remux's own HTTP reads: patient, and marked for the proxy so it is patient with the CDN too (REMUX_HEADER). */
+    private fun remuxHttp(): DefaultHttpDataSource.Factory = DefaultHttpDataSource.Factory()
+        .setConnectTimeoutMs(RemuxPolicy.INPUT_CONNECT_MS)
+        .setReadTimeoutMs(RemuxPolicy.INPUT_READ_MS)
+        .setDefaultRequestProperties(mapOf(ArchiveCacheProxy.REMUX_HEADER to "1"))
 
     /** The finished remux for [key] if one is already on disk, or null. */
     fun alreadyDone(key: String): File? =
@@ -178,32 +269,14 @@ class TsRemuxer(
     }
 
     /**
-     * Where Transformer reads the input from. Its own media source setup (the same extractor flags
-     * `ExoPlayerAssetLoader.Factory` uses), with two changes: the input is read through
+     * Where Transformer reads the input from ([RemuxExport.assetLoaderFactory]): through
      * [PacedDataSource], which holds the reads while [pace] says the cast is far enough ahead, and
-     * with an [audio] choice the audio track is picked by [AudioPinnedTrackSelector] instead of
-     * Transformer's own selector.
+     * from [start]'s keyframe on when the remux begins mid-file ([TsStartDataSource]).
      */
-    private fun assetLoaderFactory(audio: CastAudioChoice?, key: String): AssetLoader.Factory {
-        // Patient reads, marked for the proxy so it is patient with the CDN too (REMUX_HEADER).
-        val http = DefaultHttpDataSource.Factory()
-            .setConnectTimeoutMs(RemuxPolicy.INPUT_CONNECT_MS)
-            .setReadTimeoutMs(RemuxPolicy.INPUT_READ_MS)
-            .setDefaultRequestProperties(mapOf(ArchiveCacheProxy.REMUX_HEADER to "1"))
-        val input = PacedDataSource.Factory(DefaultDataSource.Factory(context, http)) { pace(key) }
-        val extractors = DefaultExtractorsFactory()
-            .setAdtsExtractorFlags(AdtsExtractor.FLAG_ENABLE_CONSTANT_BITRATE_SEEKING)
-            .setAmrExtractorFlags(AmrExtractor.FLAG_ENABLE_CONSTANT_BITRATE_SEEKING)
-        val sources = DefaultMediaSourceFactory(input, extractors)
-            .setEnableClippingInMediaPeriod(true)
-            .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(RemuxPolicy.INPUT_LOAD_RETRIES))
-        val decoders = DefaultDecoderFactory.Builder(context).build()
-        val bitmaps = DataSourceBitmapLoader.Builder(context).build()
-        return if (audio == null) {
-            DefaultAssetLoaderFactory(context, decoders, Clock.DEFAULT, sources, bitmaps)
-        } else {
-            DefaultAssetLoaderFactory(context, decoders, Clock.DEFAULT, sources, bitmaps) { ctx -> AudioPinnedTrackSelector(ctx, audio) }
-        }
+    private fun assetLoaderFactory(audio: CastAudioChoice?, key: String, start: TsStart?): AssetLoader.Factory {
+        val plain = DefaultDataSource.Factory(context, remuxHttp())
+        val read: DataSource.Factory = start?.let { TsStartDataSource.Factory(plain, it) } ?: plain
+        return RemuxExport.assetLoaderFactory(context, PacedDataSource.Factory(read) { pace(key) }, audio)
     }
 
     /** The export itself. One per key at a time; see [remux]. */
@@ -221,32 +294,20 @@ class TsRemuxer(
         val t0 = System.currentTimeMillis()
         Log.w(TAG, "remux starts → ${destination.name} · audio=${audio?.let { "#${it.ordinal} ${it.id}/${it.language}" } ?: "default"}")
 
+        // A remux keyed past 0:00 reads from its start point's keyframe (see TsStart); one whose
+        // start point is not known (the process restarted between locating it and this) has nothing
+        // to read from, and failing it sends the cast to its fallback instead of a wrong timeline.
+        val start = if (RemuxPolicy.fromInKey(key) > 0L) {
+            starts[RemuxPolicy.startKey(key)] ?: return RemuxResult.Failed("no start point for ${destination.name}")
+        } else {
+            null
+        }
+        start?.let { Log.w(TAG, "remux reads from byte ${it.byteOffset}: the title from ${it.startMs}ms") }
+
         return withContext(Dispatchers.Main) {
             suspendCancellableCoroutine { cont ->
-                val transformer = Transformer.Builder(context)
-                    // media3's OWN muxer, never the platform one. Transformer defaults to
-                    // `FrameworkMuxer`, which is `MediaMuxer` and underneath it libstagefright's
-                    // `MPEG4Writer` -- and that one ABORTS THE PROCESS on the HEVC samples coming
-                    // out of a Magis transport stream: `FORTIFY: write: count
-                    // 18446744073709551615 > SSIZE_MAX` (a sample size of -1 read as unsigned),
-                    // SIGABRT on the MPEG4Writer thread, measured 2026-09-12. A native abort is
-                    // not catchable, so the only defence is not to use that muxer. The in-app one
-                    // is pure Java, and it is also what can write fragmented MP4.
-                    .setMuxerFactory(
-                        // FRAGMENTED, so the file can be served WHILE it is written. A plain
-                        // MP4 keeps its index at the end, which is why casting one meant
-                        // waiting minutes for the whole title before a single frame reached
-                        // the TV. A fragmented one is a chain of self-contained pieces: the
-                        // receiver can start on the first while the rest is still arriving.
-                        InAppFragmentedMp4Muxer.Factory(FRAGMENT_MS),
-                    )
-                    .setAssetLoaderFactory(assetLoaderFactory(audio, key))
-                    // No "no output sample in 10 s" abort. Transformer's watchdog killed remuxes
-                    // whose CDN took 7 s to open (`Muxer error`, `Abort: no output sample written
-                    // in the last 10000 milliseconds`, 2026-10-01), and pacing (above) holds the
-                    // input on purpose for minutes. A dead input still fails: its reads time out
-                    // and the loader gives up after its retries.
-                    .setMaxDelayBetweenMuxerSamplesMs(C.TIME_UNSET)
+                val transformer = RemuxExport.transformer(context, assetLoaderFactory(audio, key, start), startsMidFile = start != null)
+                    .buildUpon()
                     .addListener(object : Transformer.Listener {
                         override fun onCompleted(composition: Composition, result: ExportResult) {
                             val ok = runCatching { partial.renameTo(destination) }.getOrDefault(false)
@@ -307,29 +368,10 @@ class TsRemuxer(
                     _progress.value = -1
                 }
 
-                // Clipped when the key says so, so the result BEGINS where playback should.
-                // The remux is cast as a live stream and a live stream has no timeline to seek
-                // along, so a file that starts at the right place is the only way to land there.
-                val fromMs = RemuxPolicy.fromInKey(key)
-                val input = if (fromMs > 0L) {
-                    Log.w(TAG, "remux starts at ${fromMs}ms, so nothing has to seek")
-                    MediaItem.Builder()
-                        .setUri(inputUri)
-                        .setClippingConfiguration(
-                            MediaItem.ClippingConfiguration.Builder()
-                                .setStartPositionMs(fromMs)
-                                // On a KEYFRAME. Video can only begin at one while audio can begin
-                                // anywhere, so an arbitrary cut point starts the tracks at
-                                // different instants -- heard on device as the sound running ahead
-                                // of the picture. It is also what keeps the clip a sample copy
-                                // rather than a re-encode.
-                                .setStartsAtKeyFrame(true)
-                                .build(),
-                        )
-                        .build()
-                } else {
-                    MediaItem.fromUri(inputUri)
-                }
+                // Never clipped: a mid-file remux starts by READING from its keyframe (the data
+                // source above), not by Transformer cutting a timeline, which measured the tracks
+                // half a second apart (see TsStart).
+                val input = MediaItem.fromUri(inputUri)
 
                 runCatching {
                     transformer.start(input, partial.absolutePath)
@@ -506,5 +548,82 @@ class TsRemuxer(
     /** Bytes the remuxes are taking up, so the caller can decide when to clear them. */
     fun bytesOnDisk(): Long = folder.listFiles().orEmpty().sumOf { it.length() }
 
-    private companion object { const val TAG = "ArkivRemux" }
+    private companion object {
+        const val TAG = "ArkivRemux"
+        /** At most this long finding a start point; past it the remux starts from 0:00. */
+        const val LOCATE_BUDGET_MS = 45_000L
+    }
+}
+
+/**
+ * How a cast remux is put together, apart from where it reads from: the extractors and the input's
+ * error policy ([assetLoaderFactory]) and the Transformer itself ([transformer]). Shared by
+ * [TsRemuxer] and the test that checks a mid-file remux keeps audio and video in step on the very
+ * pipeline the app runs (`RemuxMidFileSyncTest`).
+ */
+@androidx.annotation.OptIn(UnstableApi::class)
+internal object RemuxExport {
+
+    /**
+     * Length of each fragment. Short enough that playback can begin almost immediately, long
+     * enough that the overhead of a `moof` header per fragment stays negligible.
+     */
+    const val FRAGMENT_MS = 2_000L
+
+    /**
+     * Transformer's media source setup (the extractor flags `ExoPlayerAssetLoader.Factory` uses)
+     * reading [input], with an [audio] choice picked by [AudioPinnedTrackSelector] instead of
+     * Transformer's own selector.
+     */
+    fun assetLoaderFactory(context: Context, input: DataSource.Factory, audio: CastAudioChoice?): AssetLoader.Factory {
+        val extractors = DefaultExtractorsFactory()
+            .setAdtsExtractorFlags(AdtsExtractor.FLAG_ENABLE_CONSTANT_BITRATE_SEEKING)
+            .setAmrExtractorFlags(AmrExtractor.FLAG_ENABLE_CONSTANT_BITRATE_SEEKING)
+        val sources = DefaultMediaSourceFactory(input, extractors)
+            .setEnableClippingInMediaPeriod(true)
+            .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(RemuxPolicy.INPUT_LOAD_RETRIES))
+        val decoders = DefaultDecoderFactory.Builder(context).build()
+        val bitmaps = DataSourceBitmapLoader.Builder(context).build()
+        return if (audio == null) {
+            DefaultAssetLoaderFactory(context, decoders, Clock.DEFAULT, sources, bitmaps)
+        } else {
+            DefaultAssetLoaderFactory(context, decoders, Clock.DEFAULT, sources, bitmaps) { ctx -> AudioPinnedTrackSelector(ctx, audio) }
+        }
+    }
+
+    /**
+     * The cast remux's Transformer. [startsMidFile]: the input begins at a keyframe in the middle
+     * of the title ([TsStart]), and every audio sample before that keyframe is dropped
+     * (`setEnsureFileStartsOnVideoFrameEnabled`): the muxer starts each track at decode time 0 on
+     * its first sample, so audio left half a second ahead of the keyframe would play half a second early.
+     */
+    fun transformer(context: Context, assets: AssetLoader.Factory, startsMidFile: Boolean): Transformer =
+        Transformer.Builder(context)
+            // media3's OWN muxer, never the platform one. Transformer defaults to
+            // `FrameworkMuxer`, which is `MediaMuxer` and underneath it libstagefright's
+            // `MPEG4Writer` -- and that one ABORTS THE PROCESS on the HEVC samples coming
+            // out of a Magis transport stream: `FORTIFY: write: count
+            // 18446744073709551615 > SSIZE_MAX` (a sample size of -1 read as unsigned),
+            // SIGABRT on the MPEG4Writer thread, measured 2026-09-12. A native abort is
+            // not catchable, so the only defence is not to use that muxer. The in-app one
+            // is pure Java, and it is also what can write fragmented MP4.
+            .setMuxerFactory(
+                // FRAGMENTED, so the file can be served WHILE it is written. A plain
+                // MP4 keeps its index at the end, which is why casting one meant
+                // waiting minutes for the whole title before a single frame reached
+                // the TV. A fragmented one is a chain of self-contained pieces: the
+                // receiver can start on the first while the rest is still arriving.
+                InAppFragmentedMp4Muxer.Factory(FRAGMENT_MS),
+            )
+            .setAssetLoaderFactory(assets)
+            // Only mid-file: from the top the tracks already start together, and the from-zero
+            // remux is the measured-good path, left exactly as it was.
+            .setEnsureFileStartsOnVideoFrameEnabled(startsMidFile)
+            // No "no output sample in 10 s" abort. Transformer's watchdog killed remuxes
+            // whose CDN took 7 s to open (`Muxer error`, `Abort: no output sample written
+            // in the last 10000 milliseconds`, 2026-10-01), and pacing holds the
+            // input on purpose for minutes. A dead input still fails: its reads time out
+            // and the loader gives up after its retries.
+            .setMaxDelayBetweenMuxerSamplesMs(C.TIME_UNSET)
+            .build()
 }

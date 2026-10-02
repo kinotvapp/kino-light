@@ -122,13 +122,14 @@ class CastSubtitles(
 
     /**
      * What a DLNA cast of the title on screen sends along: the phone's choice and the rest, as SRT on
-     * the title's own timeline (a DLNA cast always starts the file at 0:00). Null without subtitles.
+     * the timeline of what the TV plays -- the title's, moved back by [offsetMs] when that is a remux
+     * started mid-title (`TsStart`). Null without subtitles.
      */
-    internal fun dlnaSidecar(): com.arkiv.player.dlna.DlnaSidecar? {
+    internal fun dlnaSidecar(offsetMs: Long = 0L): com.arkiv.player.dlna.DlnaSidecar? {
         val episodeId = server.episodeId ?: return null
         val sources = server.sourcesFor(episodeId)
         if (sources.isEmpty()) return null
-        val base = server.baseUrl(episodeId, 0L) ?: return null
+        val base = server.baseUrl(episodeId, offsetMs) ?: return null
         // Not capped here: the selected one may be past the cap, and DlnaSubtitles caps after it.
         val all = sources.mapIndexed { i, s ->
             com.arkiv.player.dlna.DlnaSubtitle(

@@ -36,4 +36,16 @@ object CastProgress {
         if (reportedPosMs >= reportedDurMs) return null
         return SavedProgress(reportedPosMs, reportedDurMs)
     }
+
+    /**
+     * [toSave] for a cast whose media begins [offsetMs] into the title (a remux started mid-title,
+     * `CastRequest.offsetMs`): the receiver counts position AND duration from that point, so both
+     * move onto the title's clock. [requestDurMs] is the media's own length as the load stated it,
+     * for when the receiver reports none.
+     */
+    fun toSaveInTitle(receiverPosMs: Long, receiverDurMs: Long, requestDurMs: Long, offsetMs: Long): SavedProgress? {
+        val mediaDur = if (receiverDurMs > 0L) receiverDurMs else requestDurMs
+        if (mediaDur <= 0L) return null
+        return toSave(receiverPosMs + offsetMs, mediaDur + offsetMs)
+    }
 }

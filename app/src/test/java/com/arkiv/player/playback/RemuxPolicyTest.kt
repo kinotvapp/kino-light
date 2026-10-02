@@ -14,6 +14,21 @@ import org.junit.Test
 class RemuxPolicyTest {
 
     @Test
+    fun `every audio of a title starting at the same point shares one start key`() {
+        val cdn = "https://cdn.example/x_media.ts"
+        val a0 = RemuxPolicy.keyFrom(cdn, 2_100_000L, 0)
+        val a1 = RemuxPolicy.keyFrom(cdn, 2_100_000L, 1)
+        assertNotEquals(a0, a1)
+        assertEquals(RemuxPolicy.keyFrom(cdn, 2_100_000L), RemuxPolicy.startKey(a0))
+        assertEquals(RemuxPolicy.startKey(a0), RemuxPolicy.startKey(a1))
+        assertEquals(2_100_000L, RemuxPolicy.fromInKey(a1))
+        // Another start point is another key; from the top there is no start point at all.
+        assertNotEquals(RemuxPolicy.startKey(a0), RemuxPolicy.startKey(RemuxPolicy.keyFrom(cdn, 1_800_000L, 0)))
+        assertEquals(cdn, RemuxPolicy.startKey(RemuxPolicy.keyFrom(cdn, 0L, 1)))
+        assertEquals(0L, RemuxPolicy.fromInKey(RemuxPolicy.keyFrom(cdn, 0L, 1)))
+    }
+
+    @Test
     fun `only an MPEG-TS needs remuxing`() {
         assertTrue(RemuxPolicy.needsRemux("video/mp2t"))
     }

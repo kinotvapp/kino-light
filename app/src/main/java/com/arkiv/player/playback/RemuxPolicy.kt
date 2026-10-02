@@ -138,16 +138,14 @@ object RemuxPolicy {
         if (durationMs <= 0L) 0 else Math.ceil(durationMs / 1000.0 / CHUNK_SEC).toInt()
 
     /**
-     * Cache key for a remux that starts at [fromMs] instead of at the beginning.
+     * Cache key for a remux that starts at the grid point [fromMs] ([TsStartPoint.gridMs]) instead
+     * of at the beginning, with [audioOrdinal]'s audio.
      *
-     * Starting somewhere other than zero is done by remuxing FROM that point, not by seeking into
-     * the result. The remux is cast as a LIVE stream -- that is what stopped the receiver inventing
-     * an end and stalling against it -- and a live stream has no timeline to seek along. A file
-     * that begins where you left off needs none: it plays from its own zero.
-     *
-     * Rounded to [GRAIN_SEC] so reopening a title seconds later reuses the remux instead of paying
-     * for another. The rounding goes BACKWARDS on purpose: starting a few seconds early is
-     * harmless, starting late skips content.
+     * Starting somewhere other than zero is done by remuxing FROM that point -- reading the TS from
+     * the first keyframe at or after it ([TsStart]) -- so the remux on the TV plays from its own
+     * zero there, and the phone adds the keyframe's time back (`TsRemuxer.startMsOf`). Keyed by
+     * the grid point, not the keyframe: every cast near the same place finds the same key, and with
+     * it what an earlier cast already remuxed ([RemuxLeftover]).
      */
     fun keyFrom(originKey: String, fromMs: Long, audioOrdinal: Int? = null): String {
         // The audio track goes INTO the key: a remux carries exactly one audio track, so the same
@@ -162,11 +160,8 @@ object RemuxPolicy {
     private const val AUDIO_MARK = "|audio="
 
     private fun keyFromExact(originKey: String, fromMs: Long): String {
-        // EXACT milliseconds, no rounding. Rounding here was a real bug: the keyframe is found to
-        // the millisecond and then this filed it under the nearest 30 s, so the remux was clipped
-        // 583 ms away from the keyframe and the tracks went back to starting at different instants
-        // -- the very desync the search exists to remove. Reuse comes from rounding the REQUEST
-        // before the search instead, which lands on the same keyframe and so the same key.
+        // As given: the caller already put it on the grid, and the keyframe it stands for is
+        // looked up by this key (TsRemuxer.startMsOf), never derived from the number.
         return "$originKey#$fromMs"
     }
 
@@ -177,9 +172,23 @@ object RemuxPolicy {
     /** How coarsely a resume point is rounded when keying a remux. */
     const val GRAIN_SEC = 30L
 
-    /** Where a remux keyed by [keyFrom] actually begins, in ms. */
+    /**
+     * Where a remux keyed by [keyFrom] begins, in ms: its start point on the grid
+     * ([TsStartPoint.gridMs]). The keyframe it really starts on is a little after it
+     * (`TsRemuxer.startMsOf`).
+     */
     fun fromInKey(key: String): Long =
         key.substringAfterLast('#', "").toLongOrNull() ?: 0L
+
+    /**
+     * [key] without its audio part: what every audio of a title starting at the same point shares
+     * -- the keyframe it starts on ([TsStart]).
+     */
+    fun startKey(key: String): String {
+        val from = fromInKey(key)
+        val base = if (from > 0L) key.substringBeforeLast('#') else key
+        return keyFrom(base.substringBefore(AUDIO_MARK), from)
+    }
 
     /** Cache name for chunk [index] of [originKey]. */
     fun chunkFileName(originKey: String, index: Int): String =

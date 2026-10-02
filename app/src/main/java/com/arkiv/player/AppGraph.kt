@@ -1620,6 +1620,9 @@ class AppGraph(context: Context) {
             pace = { key -> remuxHlsServer.remuxShouldWait(key) },
             // Never restarted from scratch under a TV that is already playing it.
             onAir = { key -> remuxHlsServer.onAir(key) },
+            // A cast remux starts near the phone's position (TsStart) unless a device test turns
+            // it off: `adb shell setprop debug.kino.remux_seek_start off` (back on: `on`).
+            seekStartEnabled = { com.arkiv.player.cast.CastTextMedia.systemProperty("debug.kino.remux_seek_start") != "off" },
         )
     }
 
@@ -1707,7 +1710,7 @@ class AppGraph(context: Context) {
             ),
             // The Chromecast's own remux server: same pacing, same reuse of an earlier remux.
             remuxHls = remuxHlsServer,
-        ).also { it.subtitleSidecar = { castSubtitles.dlnaSidecar() } }
+        ).also { it.subtitleSidecar = { offsetMs -> castSubtitles.dlnaSidecar(offsetMs) } }
     }
 
     /**
