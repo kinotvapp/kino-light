@@ -163,12 +163,12 @@ class TsStartPointTest {
     fun `a probe window without a video PES start is dated by its audio, or widened`() {
         val plain = locator().locate(61_000L)!!
         val head = TsStartPoint.head(ts)!!
-        // Every 128 KB probe read (not the head, not the tail) has its video PES starts cleared.
+        // Every probe read (shorter than a scan read; not the head, not the tail) has its video PES starts cleared.
         fun probeReads(edit: (ByteArray, Int, Int) -> Unit): Pair<TsStart?, List<String>> {
             val logs = ArrayList<String>()
             val start = TsStartLocator(ts.size.toLong(), { offset, size ->
                 val buf = ts.copyOfRange(offset.toInt(), minOf(ts.size.toLong(), offset + size).toInt())
-                if (offset > 0L && size == TsStartLocator.PROBE_BYTES && offset + size < ts.size) rewritten(buf, 0, edit) else buf
+                if (offset > 0L && size < TsStartLocator.SCAN_BYTES && offset + size < ts.size) rewritten(buf, 0, edit) else buf
             }, { logs += it }).locate(61_000L)
             return start to logs
         }

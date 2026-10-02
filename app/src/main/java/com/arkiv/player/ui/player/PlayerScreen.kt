@@ -1360,7 +1360,11 @@ private fun PlayerContent(
                 val aligned = when {
                     !magisIsTs(item) -> 0L
                     tvOnTitle && castAsRemux != null -> com.arkiv.player.playback.RemuxPolicy.fromInKey(castAsRemux!!)
-                    else -> graph.tsRemuxer.startPoint(item.mediaUrl, cdn, audio?.ordinal, requestedPosition)
+                    // The player's duration aims the start point's first probe (0 while unknown).
+                    else -> graph.tsRemuxer.startPoint(
+                        item.mediaUrl, cdn, audio?.ordinal, requestedPosition,
+                        durationMs = runCatching { magisPlayer?.duration }.getOrNull()?.takeIf { it > 0L } ?: 0L,
+                    )
                 }
                 remuxStartPoint[item.episodeId] = aligned
                 // Served as HLS, the receiver can start at any segment: it starts where the phone
