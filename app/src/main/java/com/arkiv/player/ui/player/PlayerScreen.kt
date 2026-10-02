@@ -453,6 +453,7 @@ private fun PlayerContent(
                     startPluginCastProxy = { graph.pluginCastProxy.start() },
                     probePluginMime = { url, headers, hosts -> graph.pluginCastProxy.probeMime(url, headers, hosts) },
                     castingNow = { graph.castSession?.casting?.value == true },
+                    onlineSubtitlesFor = { ep -> graph.onlineSubtitles.rememberedFor(ep).map(::onlineSub) },
                 )
             }
         },
@@ -1161,7 +1162,7 @@ private fun PlayerContent(
             // A LOCAL remux is still one progressive mp4 with no seek index: asking the receiver to
             // start at minute 4:52 of one sent it hunting through the file blind (`range=bytes=
             // 308510720-`, broken pipe, again, never a frame -- measured 2026-09-12), so it starts
-            // at zero.
+            // at zero. A downloaded MP4's single-audio copy is faststart (LocalMp4Audio): it seeks.
             startPositionMs = when {
                 remuxMagis != null -> {
                     val key = magisRemuxKey(item) ?: item.castUrl.orEmpty()
@@ -1173,7 +1174,7 @@ private fun PlayerContent(
                     ).also { graph.remuxHlsServer.planStart(key, it) }
                         .let { com.arkiv.player.playback.RemuxHls.loadStartMs(it) }
                 }
-                remuxLocal != null || isPluginLiveCast(item) -> 0L
+                remuxLocal != null && !localRemuxSeeks(graph, localRemuxKey(item)) || isPluginLiveCast(item) -> 0L
                 else -> startPositionMs
             },
             isLive = isLiveItem,
@@ -1234,7 +1235,8 @@ private fun PlayerContent(
             // its pacing stays anchored to a TV that left and holds the export paused forever.
             if (remuxMagis == null) graph.remuxHlsServer.endCast(dlna = false, alsoStaged = false)
         }
-        return request
+        // A direct plugin file carries its proxied twin, loaded once if the receiver fails it.
+        return request?.let { pluginCastFallback(it, item, graph, lanIp) }
     }
 
     /**
@@ -1390,8 +1392,16 @@ private fun PlayerContent(
                 com.arkiv.player.playback.RemuxPolicy.transmuxOutlook(fmt?.pixelWidthHeightRatio),
         )
 
-        if (!com.arkiv.player.playback.RemuxPolicy.needsRemux(mime)) {
+        if (!com.arkiv.player.playback.RemuxPolicy.needsRemux(mime) && !localAudioCopy(item, audio?.ordinal)) {
             android.util.Log.i("ArkivCast", "${item.kind} is $mime, no remux needed")
+            // A download with several audios back on its first one: the TV gets the file itself again.
+            if (item.kind == SourceKind.LOCAL && castToReceiver == item.episodeId && castAsRemux != null) {
+                val at = castSession.lastKnownPositionMs(item.episodeId) ?: 0L
+                castRequestFor(PlaylistData(listOf(item), 0, at, requested = item.episodeId), 0, at)?.let {
+                    android.util.Log.w("ArkivCast", "first audio again → reloading the receiver with the file itself from ${at}ms")
+                    castSession.setMedia(it)
+                }
+            }
             return@LaunchedEffect
         }
         // Another audio than the one on the TV: the export for the previous one stops (it covers
@@ -1514,6 +1524,9 @@ private fun PlayerContent(
         // audio) is replaced by the remux FROM WHERE THE RECEIVER IS, not from the top.
         val from = if (item.kind == SourceKind.MAGIS) {
             castSession.lastKnownPositionMs(item.episodeId) ?: resumeMs
+        } else if (item.kind == SourceKind.LOCAL && castToReceiver == item.episodeId) {
+            // Another audio of what the TV plays: from where the TV is.
+            castSession.lastKnownPositionMs(item.episodeId) ?: runCatching { contentPositionMs() }.getOrDefault(0L).coerceAtLeast(0L)
         } else {
             runCatching { contentPositionMs() }.getOrDefault(0L).coerceAtLeast(0L)
         }
@@ -2782,10 +2795,7 @@ private fun PlayerContent(
         if (liveItem != null) return fixed
         val item = playlistRef.value?.items?.getOrNull(currentIndex) ?: return fixed
         if (item.kind != SourceKind.LOCAL) return fixed
-        val mime = runCatching {
-            com.arkiv.player.playback.VideoContainer.ofFile(java.io.File(item.mediaUrl.removePrefix("file://"))).mime
-        }.getOrNull()
-        return if (com.arkiv.player.playback.RemuxPolicy.needsRemux(mime) && localRemuxKey(item) !in remuxFailed) remux else fixed
+        return if (localAudioReachesTv(item.mediaUrl) && localRemuxKey(item) !in remuxFailed) remux else fixed
     }
 
     /**
@@ -3169,6 +3179,7 @@ private fun PlayerContent(
                     gestures.setExoPlayer(player)
                 },
                 onError = { msg -> vm.onLiveExoError(msg) },
+                onUnsupportedFormat = vm::onLiveFormatUnsupported,
                 onFirstFrame = { got -> exoRenderedSomething = got },
                 zoom = gestures.zoomForExo,
             )
@@ -4510,7 +4521,7 @@ private fun PlayerContent(
 
     // DLNA devices dialog. Building the URL sent to the renderer lives in `sendToRenderer`; here
     // it's only left which item it comes from and what to do if the renderer rejects it.
-    DlnaDevicesDialog(dlnaState) { device ->
+    DlnaDevicesDialog(dlnaState) { device, atMs ->
         // Live via ExoPlayer (Task 1, light-magis pruning) is no longer in `playlist`: it falls to
         // `liveItem`, which carries the same `kind = SourceKind.LIVE` that `sendToRenderer` needs
         // to resolve the proxy's LAN URL (it doesn't use `ep.mediaUrl`/`castUrl` for live).
@@ -4524,8 +4535,9 @@ private fun PlayerContent(
         val ep = castMagis?.takeIf { it.kind == SourceKind.MAGIS || it.kind == SourceKind.PLUGIN }
             ?: playlistRef.value?.items?.getOrNull(currentIndex)
             ?: liveItem
-        // Where the person is, for the TV to start there (dlnaStartMs): never 0:00 when elsewhere.
-        val livePositionMs = runCatching { activePlayer.currentPosition }.getOrNull()
+        // Where the person is, for the TV to start there (dlnaStartMs): never 0:00 when elsewhere. From the
+        // Chromecast's trouble dialog ("Probar por DLNA"), where the Chromecast was.
+        val livePositionMs = atMs ?: runCatching { activePlayer.currentPosition }.getOrNull()
         // Silent from now on, as under a Chromecast (CastLocalHold): it used to pause only `controller`,
         // and a Magis/plugin title or a live channel played on under the TV.
         CastLocalHold.hold(controller, magisPlayer, livePlayer, dituPlayer, isLive)
@@ -4555,10 +4567,11 @@ private fun PlayerContent(
     AudioAndSubtitlesDialog(
         state = tracksState,
         isMagis = PlayerSource.kindFor(episodeId) == SourceKind.MAGIS,
-        declaredLanguages = webExtras?.subtitles?.map { it.lang }.orEmpty(),
+        declaredLanguages = webExtras?.declaredLanguages.orEmpty(),
         // Only while the menu is open and casting: the route may read a downloaded file's header.
         castNote = if (casting && tracksState.pickerOpen) castTracksNote(true, castAudioRoute(), webExtras?.subtitles)
         else dlnaState.tracksNote(tracksState.pickerOpen, webExtras?.subtitles),
+        onOnlineSubtitle = vm::addOnlineSubtitle,
     )
     // The same menu, opened from the DLNA bar: what a choice there does on the TV.
     DlnaTracksFollower(dlnaState, tracksState, { runCatching { activePlayer.currentPosition }.getOrNull() }, dlnaLan(graph))

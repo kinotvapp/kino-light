@@ -96,6 +96,8 @@ class TsRemuxer(
      * bytes and its duration in ms (0 = unknown). Saves [locate] a round trip (`ArchiveCacheProxy.knownTotal`).
      */
     private val inputHints: (inputUri: String) -> Pair<Long, Long> = { 0L to 0L },
+    /** The remux keys a cast still serves or has staged (`RemuxHlsServer`): never evicted ([trim]). */
+    private val servedKeys: () -> Collection<String> = { emptyList() },
 ) {
 
     private val folder = File(cacheDir, RemuxPolicy.FOLDER)
@@ -349,6 +351,10 @@ class TsRemuxer(
         }
         start?.let { Log.w(TAG, "remux reads from byte ${it.byteOffset}: the title from ${it.startMs}ms") }
 
+        // A downloaded MP4 with several audio tracks (see LocalMp4Audio): a single-audio copy,
+        // faststart and nothing re-encoded, in seconds -- not Transformer's fragmented export.
+        localMp4(inputUri)?.let { file -> return copyWithOneAudio(file, destination, audio, t0) }
+
         return withContext(Dispatchers.Main) {
             suspendCancellableCoroutine { cont ->
                 val transformer = RemuxExport.transformer(context, assetLoaderFactory(audio, key, start), startsMidFile = start != null)
@@ -429,6 +435,33 @@ class TsRemuxer(
         }
     }
 
+    /** The file behind [inputUri] when it is a local MP4, else null. */
+    private fun localMp4(inputUri: String): File? {
+        if (!inputUri.startsWith("file://")) return null
+        val file = File(inputUri.removePrefix("file://"))
+        return file.takeIf { it.exists() && runCatching { VideoContainer.ofFile(it) }.getOrNull() == Container.MP4 }
+    }
+
+    /** [file] with only [audio]'s track, by `Mp4Repackager`; the progress goes to [progress] like an export's. */
+    private suspend fun copyWithOneAudio(file: File, destination: File, audio: CastAudioChoice?, t0: Long): RemuxResult {
+        _progress.value = 0
+        val result = try {
+            com.arkiv.player.data.local.Mp4Repackager().repack(file, destination, onlyAudio = audio?.ordinal ?: 0) { _progress.value = it }
+        } finally {
+            _progress.value = -1
+        }
+        return when (result) {
+            is com.arkiv.player.data.local.Mp4Repackager.Result.Done -> {
+                Log.w(TAG, "single-audio copy done in ${System.currentTimeMillis() - t0}ms → ${destination.name} (${destination.length()}B, faststart=${result.fastStart})")
+                RemuxResult.Done(destination)
+            }
+            else -> {
+                Log.w(TAG, "single-audio copy failed: $result")
+                RemuxResult.Failed(result.toString())
+            }
+        }
+    }
+
     /**
      * Evicts the oldest remuxes until the cache is back under its ceiling.
      *
@@ -437,8 +470,17 @@ class TsRemuxer(
      */
     private fun makeRoom() {
         val files = folder.listFiles().orEmpty().filter { it.isFile }
+        val held = files.sumOf { it.length() }
+        val cap = RemuxPolicy.capFor(runCatching { folder.usableSpace }.getOrDefault(0L), held)
+        // What is being written (every export in flight), served or staged for a TV, and any file a
+        // LAN file server is handing out: never evicted, even past the ceiling.
+        val served = LocalFileServer.servedPaths()
+        val keep = RemuxPolicy.namesOf(activeExports.keys + runCatching { servedKeys() }.getOrDefault(emptyList())) +
+            files.filter { it.absolutePath in served }.map { it.name }
         val toDelete = RemuxPolicy.toDelete(
             files.map { Triple(it.name, it.length(), it.lastModified()) },
+            cap = cap,
+            keep = keep,
         )
         if (toDelete.isEmpty()) return
         var freed = 0L
@@ -447,7 +489,16 @@ class TsRemuxer(
             val bytes = f.length()
             if (runCatching { f.delete() }.getOrDefault(false)) freed += bytes
         }
-        Log.w(TAG, "cache over its ceiling: dropped ${toDelete.size} file(s), freed ${freed}B")
+        Log.w(TAG, "cache over its ceiling (${cap / 1_048_576L}MB): dropped ${toDelete.size} file(s), freed ${freed}B")
+    }
+
+    /**
+     * Brings the cache back under its ceiling ([RemuxPolicy.capFor]), oldest first, never touching
+     * what is being written or served. Called after every cast (Chromecast and DLNA); a new remux
+     * does it before it starts. Blocking file work: off the main thread.
+     */
+    fun trim() {
+        runCatching { makeRoom() }.onFailure { Log.w(TAG, "trim failed: $it") }
     }
 
     /** The finished chunk [index] of [key], or null. */

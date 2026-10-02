@@ -2,6 +2,7 @@ package com.arkiv.player.data.plugin
 
 import com.arkiv.player.data.magis.MagisResult
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -53,6 +54,50 @@ class XuperErrorMappingTest {
     @Test fun `a null msg falls back to an empty message instead of crashing`() {
         val e = MagisResult.PortalError(code = "portal000000", msg = null)
         assertEquals(PluginErrors.UNAVAILABLE to "", e.toPluginError())
+    }
+
+    // --- 0.9.45: ERRORES-AO3 / AKQ / ALU ---
+
+    @Test fun `portal100006 (the series behind a chapter is gone) says so in Spanish`() {
+        val e = MagisResult.PortalError(code = "portal100006", msg = "剧集不存在")
+        assertEquals(PluginErrors.NOT_FOUND to XUPER_EPISODE_GONE, e.toPluginError())
+        assertEquals(PluginErrors.NOT_FOUND to XUPER_SERIES_GONE, e.toPluginError(goneMessage = XUPER_SERIES_GONE))
+    }
+
+    @Test fun `a linked account's dead session asks to re-link it`() {
+        for (code in listOf("aaa100027", "aaa100028")) {
+            val (kind, message) = MagisResult.PortalError(code = code, msg = "未登录！").toPluginError(accountLinked = true)
+            assertEquals(PluginErrors.AUTH_REQUIRED, kind)
+            assertTrue(message, message.contains("Vuelve a vincularla en Ajustes, Cuenta"))
+            assertTrue(message in XUPER_HOST_SENTENCES)
+        }
+    }
+
+    @Test fun `a linked account logged in on another device says so`() {
+        val (kind, message) = MagisResult.PortalError(code = "aaa100083", msg = "您的账号已经在其他设备登录").toPluginError(accountLinked = true)
+        assertEquals(PluginErrors.AUTH_REQUIRED, kind)
+        assertTrue(message, message.contains("otro dispositivo"))
+        assertTrue(message in XUPER_HOST_SENTENCES)
+    }
+
+    @Test fun `without a linked account the session codes keep their old mapping`() {
+        val e = MagisResult.PortalError(code = "aaa100028", msg = "未登录")
+        assertEquals(PluginErrors.AUTH_REQUIRED to e.msg, e.toPluginError(accountLinked = false))
+        val elsewhere = MagisResult.PortalError(code = "aaa100083", msg = "x")
+        assertEquals(PluginErrors.UNAVAILABLE to "x", elsewhere.toPluginError(accountLinked = false))
+    }
+
+    @Test fun `a host sentence reaches the screen as it is, in the blocked dialog`() {
+        for (sentence in XUPER_HOST_SENTENCES) {
+            for (code in listOf(PluginErrors.NOT_FOUND, PluginErrors.AUTH_REQUIRED)) {
+                val shown = PluginCalls.typed(PluginErrorException(code, sentence), "xuper", "Xuper", "resolve")
+                assertTrue(shown is com.arkiv.player.data.gateway.GatewayBlockedException)
+                assertEquals(sentence, shown.message)
+            }
+        }
+        // Any other message keeps the code's generic line.
+        val other = PluginCalls.typed(PluginErrorException(PluginErrors.NOT_FOUND, "剧集不存在"), "xuper", "Xuper", "resolve")
+        assertEquals("No se encontró en Xuper", other.message)
     }
 
     @Test fun `a RedError (network-level failure) maps to unavailable`() {

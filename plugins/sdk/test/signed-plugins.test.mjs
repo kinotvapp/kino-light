@@ -79,7 +79,7 @@ test("validate: a signed plugin passes with the author's fingerprint and the Kin
     assert.equal(r.ok, true, r.problems.join("\n"));
     assert.deepEqual(r.consent.map((c) => c.text), ["Firmado por su autor"]);
     assert.ok(r.notes.includes(`Clave del autor: ${fingerprint(key.raw)} (Kino la muestra en los detalles del plugin, no en la ventana de instalación)`));
-    assert.ok(r.notes.some((n) => /requiere Kino 0\.9\.46/.test(n)));
+    assert.ok(r.notes.some((n) => /requiere Kino 0\.9\.45/.test(n)));
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -131,7 +131,7 @@ test("seal.mjs --keygen writes a private key once; --sign writes the signature i
     assert.equal(cli("--keygen").status, 2); // never overwritten
     const s = cli("--sign", "--repo", "o/r");
     assert.equal(s.status, 0, s.stderr);
-    assert.match(s.stderr, /requires Kino 0\.9\.46 or newer/);
+    assert.match(s.stderr, /requires Kino 0\.9\.45 or newer/);
     const m = JSON.parse(readFileSync(join(dir, "kino-plugin.json"), "utf8"));
     assert.equal(verifyEntry(m.signature, readFileSync(join(dir, "plugin.js")), "o/r", "demo", "1.0.0"), true);
     // The script itself is untouched: still the readable source.

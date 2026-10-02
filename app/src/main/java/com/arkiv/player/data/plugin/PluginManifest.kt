@@ -181,7 +181,10 @@ object ManifestParser {
         if (api > SUPPORTED_API) return invalid("apiVersion", "Este plugin necesita una versión más nueva de Kino")
         if (api < 1) return invalid("apiVersion", "El campo \"apiVersion\" debe ser 1 o mayor")
 
-        val entry = o.optString("entry")
+        // "./plugin.js" is how many authors write a relative path (it is what Node and bundlers print):
+        // a leading "./" names the same file, so it is dropped before the safety check instead of
+        // refusing the plugin. Anything else -- "..", absolute paths, "a/./b" -- is still refused.
+        val entry = withoutDotSlash(o.optString("entry"))
         if (!isSafeRelativePath(entry) || !entry.endsWith(".js")) {
             return invalid("entry", "El campo \"entry\" debe ser una ruta relativa a un archivo .js")
         }
@@ -277,7 +280,7 @@ object ManifestParser {
         val color = o.optString("color").takeIf { it.isNotEmpty() }
         if (color != null && !COLOR.matches(color)) return invalid("color", "El campo \"color\" debe ser del tipo #RRGGBB")
 
-        val icon = o.optString("icon").takeIf { it.isNotEmpty() }
+        val icon = withoutDotSlash(o.optString("icon")).takeIf { it.isNotEmpty() }
         if (icon != null && (!isSafeRelativePath(icon) || !icon.endsWith(".png"))) {
             return invalid("icon", "El campo \"icon\" debe ser una ruta relativa a un .png")
         }
@@ -315,6 +318,9 @@ object ManifestParser {
     private data class HostEntry(val host: String, val insecure: Boolean)
 
     /** A path inside the plugin's repo folder: no absolute paths, no `..`, no backslashes. */
+    /** [p] without one leading "./" ("./plugin.js" -> "plugin.js"); every other path is returned as is. */
+    fun withoutDotSlash(p: String): String = if (p.startsWith("./")) p.substring(2) else p
+
     fun isSafeRelativePath(p: String): Boolean =
         p.isNotEmpty() && p.length <= MAX_PATH_CHARS && !p.startsWith("/") && '\\' !in p &&
             p.split('/').all { it.isNotEmpty() && it != "." && it != ".." && PATH_SEGMENT.matches(it) }

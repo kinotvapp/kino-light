@@ -62,6 +62,42 @@ class MagisHomeCatalogTest {
         assertTrue(home.rows.any { it.id == "magis_g_series_drama" })
     }
 
+    // --- 0.9.45, ERRORES-AKR: every root empty at once ---
+
+    @Test
+    fun `a pass where every root came back empty asks again after each pause, until one answers`() = runTest {
+        val passes = AtomicInteger()
+        val catalog = MagisHomeCatalog(
+            tree = { root ->
+                if (root == "peliculas") passes.incrementAndGet()
+                if (passes.get() >= 2) dramas("teleplay") else emptyList()
+            },
+            emptyPassRetryDelaysMs = listOf(1_000L, 2_000L),
+        )
+
+        val home = catalog.load()
+
+        assertEquals("the second pass answered: no third", 2, passes.get())
+        assertEquals(emptySet<MagisKind>(), home.missing)
+    }
+
+    @Test
+    fun `the retries are bounded and a partial pass is not retried`() = runTest {
+        val empty = AtomicInteger()
+        MagisHomeCatalog(
+            tree = { root -> if (root == "peliculas") empty.incrementAndGet(); emptyList() },
+            emptyPassRetryDelaysMs = listOf(1_000L, 2_000L),
+        ).load()
+        assertEquals("one pass + one per pause", 3, empty.get())
+
+        val partial = AtomicInteger()
+        MagisHomeCatalog(
+            tree = { root -> if (root == "peliculas") { partial.incrementAndGet(); emptyList() } else dramas("teleplay") },
+            emptyPassRetryDelaysMs = listOf(1_000L, 2_000L),
+        ).load()
+        assertEquals(1, partial.get())
+    }
+
     @Test
     fun `a pass where every root answered misses nothing`() = runTest {
         val home = MagisHomeCatalog(tree = { dramas("teleplay") }).load()

@@ -67,6 +67,29 @@ internal class TracksState(
      */
     private val episodeId: String,
 ) {
+    /** The title on screen: what an online subtitle search looks for. */
+    val title: String get() = episodeId
+
+    /** An in-screen ExoPlayer is playing (not the local service player): the one online subtitles can join. */
+    val playsInScreen: Boolean get() = exoRef != null && exoRef !== local
+
+    /** An online subtitle just added, by its menu label: turned on once its track is reported. */
+    private var pendingSpuLabel: String? = null
+
+    /** Turns on the subtitle named [label] as soon as the player reports it (an online one being added). */
+    fun selectWhenReported(label: String) {
+        pendingSpuLabel = label
+        takePendingSpu()
+    }
+
+    private fun takePendingSpu() {
+        val label = pendingSpuLabel ?: return
+        val id = trackIdByLabel(label, spuTracks) ?: return
+        pendingSpuLabel = null
+        android.util.Log.i("ExoTracks", "online subtitle on: '$label'")
+        chooseSpu(id)
+    }
+
     /** The audio/subtitles menu is open. */
     var pickerOpen by mutableStateOf(false)
         private set
@@ -249,6 +272,7 @@ internal class TracksState(
         } else {
             autoPickLanguageExo()
         }
+        takePendingSpu()
     }
 
     /**
@@ -430,7 +454,9 @@ internal class TracksState(
                 .build()
         }
         curAudio = id
-        promoteLanguage(nameOf(audioTracks, id) ?: return, audioTracks.realNames(), isAudio = true)
+        val name = nameOf(audioTracks, id) ?: return
+        runCatching { graph.subtitlePrefs.rememberTitleAudio(episodeId, name) }
+        promoteLanguage(name, audioTracks.realNames(), isAudio = true)
     }
 
     fun chooseSpu(id: Int) {
@@ -665,6 +691,8 @@ internal fun AudioAndSubtitlesDialog(
     declaredLanguages: List<String>,
     /** While casting: what the choices here do on the TV (see [castTracksNote]); null otherwise. */
     castNote: String? = null,
+    /** Adds a downloaded online subtitle to the title (episode id, subtitle); null = no online search. */
+    onOnlineSubtitle: ((String, ResolvedSub) -> Unit)? = null,
 ) {
     if (!state.pickerOpen) return
     // Only turns off the flag: focus is handled by the screen's LaunchedEffect(pickerOpen), the
@@ -712,6 +740,11 @@ internal fun AudioAndSubtitlesDialog(
                         }
                     }
                 }
+
+                // ONLINE SUBTITLES (OpenSubtitles, SubDL): only for what an in-screen player plays.
+                if (onOnlineSubtitle != null && onlineSearchFits(state)) {
+                    OnlineSubtitlesSection(state, onOnlineSubtitle)
+                }
             }
         },
         confirmButton = { TextButton(onClick = { close() }) { Text("Cerrar") } },
@@ -719,7 +752,7 @@ internal fun AudioAndSubtitlesDialog(
 }
 
 @Composable
-private fun SectionTitle(text: String, first: Boolean = false) {
+internal fun SectionTitle(text: String, first: Boolean = false) {
     Text(
         text,
         style = MaterialTheme.typography.titleSmall,

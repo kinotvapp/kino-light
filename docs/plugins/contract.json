@@ -35,7 +35,7 @@
     "fetchHosts": { "value": "any", "apiVersion": 4 },
     "discoverable": { "default": true },
     "secrets": { "apiVersion": 4, "namePattern": "^[A-Za-z][A-Za-z0-9_]{0,31}$", "maxSecrets": 16, "maxValueBytes": 4096, "prefix": "kino-sealed:v1:" },
-    "signature": { "apiVersion": 5, "fromApp": "0.9.46", "domain": "kino-signed-entry:v1", "authorKeyHexChars": 64, "valueHexChars": 128, "consentLine": "Firmado por su autor", "authorKeyLabel": "Clave del autor", "badFieldMessage": "El campo \"signature\" debe ser { \"authorKey\": 64 caracteres hex, \"value\": 128 caracteres hex } (node sdk/seal.mjs --sign)", "badSignatureMessage": "La firma del autor no es válida: el código no es el que firmó, o no es para este repositorio, este plugin o esta versión" }
+    "signature": { "apiVersion": 5, "fromApp": "0.9.45", "domain": "kino-signed-entry:v1", "authorKeyHexChars": 64, "valueHexChars": 128, "consentLine": "Firmado por su autor", "authorKeyLabel": "Clave del autor", "badFieldMessage": "El campo \"signature\" debe ser { \"authorKey\": 64 caracteres hex, \"value\": 128 caracteres hex } (node sdk/seal.mjs --sign)", "badSignatureMessage": "La firma del autor no es válida: el código no es el que firmó, o no es para este repositorio, este plugin o esta versión" }
   },
   "hostRules": {
     "labelPattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",

@@ -84,6 +84,8 @@ export function validateManifest(text, { knownPermissions = contract.permissions
   if (!Number.isInteger(o.apiVersion)) return bad("apiVersion", 'El campo "apiVersion" debe ser un número entero');
   if (o.apiVersion > contract.maxApiVersion) return bad("apiVersion", "Este plugin necesita una versión más nueva de Kino");
   if (o.apiVersion < 1) return bad("apiVersion", 'El campo "apiVersion" debe ser 1 o mayor');
+  // Kino 0.9.46+ drops a leading "./" itself, but 0.9.45 and older refuse it: tell the author to remove it.
+  if (typeof o.entry === "string" && o.entry.startsWith("./")) return bad("entry", 'Quita el "./" del campo "entry" (por ejemplo "plugin.js"): Kino 0.9.45 y anteriores no instalan el plugin con "./"');
   if (!isSafeRelativePath(o.entry) || !o.entry.endsWith(".js")) return bad("entry", 'El campo "entry" debe ser una ruta relativa a un archivo .js');
   // apiVersion 5's signature (the author's Ed25519 key and signature over the entry). Below that
   // apiVersion it is unknown and ignored like any other field.

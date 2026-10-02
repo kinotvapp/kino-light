@@ -137,8 +137,30 @@ class SubtitlePrefs(context: Context) {
         store.edit().putString(KEY_TITLES, TitleSubtitleMemory.encode(entries)).apply()
     }
 
+    /** The audio last picked by hand on [title] (its menu label), kept like [titleSubtitle]; the MP4 of a download keeps it. */
+    fun titleAudio(title: String): String? = synchronized(this) {
+        TitleSubtitleMemory.decode(store.getString(KEY_TITLE_AUDIO, null)).lastOrNull { it.first == title }?.second
+    }
+
+    fun rememberTitleAudio(title: String, label: String) = synchronized(this) {
+        val entries = TitleSubtitleMemory.remember(TitleSubtitleMemory.decode(store.getString(KEY_TITLE_AUDIO, null)), title, label)
+        store.edit().putString(KEY_TITLE_AUDIO, TitleSubtitleMemory.encode(entries)).apply()
+    }
+
+    /** The online subtitles [title] got ([OnlineSubtitleMemory]), oldest first. */
+    fun onlineSubtitles(title: String): List<SavedOnlineSubtitle> = synchronized(this) {
+        OnlineSubtitleMemory.of(OnlineSubtitleMemory.decode(store.getString(KEY_ONLINE, null)), title)
+    }
+
+    fun rememberOnlineSubtitle(title: String, sub: SavedOnlineSubtitle) = synchronized(this) {
+        val entries = OnlineSubtitleMemory.add(OnlineSubtitleMemory.decode(store.getString(KEY_ONLINE, null)), title, sub)
+        store.edit().putString(KEY_ONLINE, OnlineSubtitleMemory.encode(entries)).apply()
+    }
+
     private companion object {
         const val KEY = "subtitle_style"
         const val KEY_TITLES = "title_subtitles"
+        const val KEY_TITLE_AUDIO = "title_audio"
+        const val KEY_ONLINE = "title_online_subtitles"
     }
 }

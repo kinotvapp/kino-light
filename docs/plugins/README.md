@@ -156,9 +156,9 @@ names the field.
 | `id` | Required. `^[a-z0-9][a-z0-9-]{1,39}$` (2 to 40 lowercase letters, digits or hyphens, not starting with a hyphen). Not one of `magis`, `ditu`, `live`, `local`, `unknown`, `plugin`. It is the plugin's identity: never change it once people have installed it. |
 | `name` | Required. 1 to 40 characters. |
 | `version` | Required. `MAJOR.MINOR.PATCH` and nothing else (no `-beta`, no `+build`), each number up to 6 digits and without leading zeros. |
-| `apiVersion` | Required. `1`, `2`, `3`, `4` or `5` (5 only for a [signed plugin](#signed-plugins-apiversion-5-kino-0946)). A higher number than Kino supports is refused with "Este plugin necesita una versión más nueva de Kino". Declare the lowest number that has what you use, so your plugin also runs on older Kino builds. |
+| `apiVersion` | Required. `1`, `2`, `3`, `4` or `5` (5 only for a [signed plugin](#signed-plugins-apiversion-5-kino-0945)). A higher number than Kino supports is refused with "Este plugin necesita una versión más nueva de Kino". Declare the lowest number that has what you use, so your plugin also runs on older Kino builds. |
 | `entry` | Required. Relative path of the JavaScript file: letters, digits, `.`, `_`, `-` and `/` only, no `..`, at most 200 characters, ends in `.js`. The file is at most 1 MB. |
-| `signature` | Optional, apiVersion 5 only: `{ "authorKey": …, "value": … }`, written by `sdk/seal.mjs --sign` — your signature over the entry file. See [Signed plugins](#signed-plugins-apiversion-5-kino-0946). |
+| `signature` | Optional, apiVersion 5 only: `{ "authorKey": …, "value": … }`, written by `sdk/seal.mjs --sign` — your signature over the entry file. See [Signed plugins](#signed-plugins-apiversion-5-kino-0945). |
 | `hosts` | Required. At least 1 entry, with no upper limit from Kino 0.9.45 (only the manifest's 16 KB bounds it); Kino 0.9.44 and older refuse more than 20, and `sdk/validate.mjs` warns "Más de 20 hosts: Kino 0.9.44 o anterior rechaza este plugin; necesita Kino 0.9.45 o superior". From apiVersion 2 it may be empty, `[]`, when the plugin has a `url` setting: see [The person's own servers](#the-persons-own-servers). Each a lowercase DNS name (`archive.org`), `*.` plus a DNS name (`*.archive.org`), or (apiVersion 2 only) an object `{ "host": "…", "insecureHttp": true }` (below). Host names only: no scheme, port or path. No bare `*`, no IP addresses, no `localhost`, nothing ending in `.local`, `.lan`, `.internal`, `.localhost` or `.home.arpa`, and at least one dot. **`*.x` covers subdomains only, not `x` itself**: if you need both, list both. |
 | `capabilities` | Required. A subset of `search`, `home`, `browse`, `episodes`, `resolve`, `download`, `drm`, `channels`. Must include `resolve` and at least one of `search` or `home`. `search`, `home`, `browse`, `episodes` and `resolve` must each be an exported function of the entry file, or the install fails with "El plugin no carga: le falta ...". `download` and `drm` need `apiVersion: 2` and are declarative flags instead — the app acts on them, not your code, so nothing extra to export; declaring one shows its consent line ("Puede descargar videos para verlos sin conexión" / "Reproduce video protegido (DRM)") and needs approval again on an update that adds it. `download` gives your titles offline downloads (see [Downloads](#downloads-apiversion-2)); `drm` lets a `Stream` carry a Widevine license (see [A Widevine-protected stream](#a-widevine-protected-stream-apiversion-2)). `channels` needs `apiVersion: 3` and the exports `liveCategories` and `liveChannels` (see [Channels in the En vivo tab](#channels-in-the-en-vivo-tab-apiversion-3)). |
 | `settings` | Optional. What the person fills in on your plugin's "Configurar" screen: see below. |
@@ -565,7 +565,7 @@ host-and-https check, the `kino.crypto` restrictions and redaction. `--record` n
 value to a fixtures file either — a canonical placeholder stands in for it, so a committed recording
 never carries a secret however it is replayed later. See [section 7](#7-test-it-locally).
 
-### Signed plugins (apiVersion 5, Kino 0.9.46+)
+### Signed plugins (apiVersion 5, Kino 0.9.45+)
 
 Strictly optional: you may **sign** your plugin with your own author key, so the people who install
 it know every update comes from you. Your code stays plain, readable JavaScript — signing hides
@@ -1606,7 +1606,9 @@ To stay out of the search while keeping the topic, set `"discoverable": false`;
   `color`), next to the app's own sources; your `home` rows appear on Home after the app's own; your
   titles play in Kino's player and appear in "Continuar viendo" and the library. Titles of a plugin
   that declares `download` can be saved for offline viewing ([section 3](#downloads-apiversion-2));
-  Chromecast and DLNA are not available for plugin titles in this version. A `live` item's card
+  a plugin's stream can also be sent to a Chromecast or a DLNA TV (Kino picks the lightest route: a
+  stream with no `headers` goes straight to the TV, one with `headers` is relayed through the phone;
+  DRM, DASH, a progressive MPEG-TS or an unknown format is not offered). A `live` item's card
   says "EN VIVO" and plays on tap, with no info page; a channel never enters "Continuar viendo" or
   the library ([Live channels](#live-channels-apiversion-2)). A plugin found through the `kino-plugin`
   topic carries the label "De la comunidad" on its card.
@@ -2041,7 +2043,7 @@ What Kino does with it, and what it does not:
   person reads "No se pudo abrir este video protegido" (after one more `resolve` if `expiresInSeconds`
   had passed, like any stream). A protected live channel reads the same at once on a device with no
   L3; its other license failures are cuts, re-resolved like any other (see Live channels). A protected title is **never downloadable** ("Este video no se puede
-  descargar"), even with `download` declared, and cannot be sent to a Chromecast (no plugin title can).
+  descargar"), even with `download` declared, and is never offered for Chromecast or DLNA.
 - The consent sheet adds "Reproduce video protegido (DRM)" when `drm` is declared, and an update that
   newly declares it waits for the person's approval ([section 8](#8-publishing-your-plugin)).
 

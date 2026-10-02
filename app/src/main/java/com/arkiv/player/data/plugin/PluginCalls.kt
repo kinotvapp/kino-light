@@ -70,6 +70,9 @@ internal object PluginCalls {
 
     /** A typed error as the screens expect it; an unknown code gets [PluginErrorText]'s sentence. */
     fun typed(e: PluginErrorException, pluginId: String, name: String, function: String): RuntimeException {
+        // A sentence Kino's own Xuper bridge wrote for the person (a gone chapter, a linked account to re-link):
+        // shown as it is, in the "No se puede reproducir" dialog, never reworded to the code's generic line.
+        e.message?.takeIf { it in XUPER_HOST_SENTENCES }?.let { return GatewayBlockedException(it) }
         val message = PluginErrors.userMessage(e.code, name) ?: return GatewayException(PluginErrorText.of(name, function, e.message), e)
         return when (e.code) {
             PluginErrors.AUTH_REQUIRED -> PluginSetupRequiredException(pluginId, message)

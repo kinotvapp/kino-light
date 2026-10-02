@@ -22,8 +22,12 @@ import java.io.File
  */
 object OfflineSubtitleFiles {
 
-    /** A saved subtitle sidecar: its file, the language label to show, and whether it's SubRip. */
-    data class Saved(val file: File, val lang: String, val srt: Boolean)
+    /**
+     * A saved subtitle sidecar: its file, the language label to show, and whether it's SubRip.
+     * [origin]: the online subtitle's file in the app's cache this sidecar is a copy of (see
+     * [Mp4SubtitleSidecars]), null for the download's own subtitles.
+     */
+    data class Saved(val file: File, val lang: String, val srt: Boolean, val origin: String? = null)
 
     /** Where subtitle [index] of [episodeId] is written, picking the extension from [format]. */
     fun fileFor(dir: File, episodeId: String, index: Int, format: String): File {
@@ -39,17 +43,25 @@ object OfflineSubtitleFiles {
         if (saved.isEmpty()) return
         val arr = JSONArray()
         saved.forEach { s ->
-            arr.put(JSONObject().put("name", s.file.name).put("lang", s.lang).put("srt", s.srt))
+            val o = JSONObject().put("name", s.file.name).put("lang", s.lang).put("srt", s.srt)
+            s.origin?.let { o.put("origin", it) }
+            arr.put(o)
         }
         manifest(dir, episodeId).writeText(JSONObject().put("subs", arr).toString())
     }
 
     /**
-     * The saved subtitle sidecars for [episodeId], from the manifest. Empty when there's no
-     * manifest (a streaming item, or a download from before this existed) or it can't be read; a
-     * sidecar whose file is gone is skipped.
+     * The saved subtitle sidecars for [episodeId], from the manifest, as offline playback offers
+     * them. Empty when there's no manifest (a streaming item, or a download from before this
+     * existed) or it can't be read; a sidecar whose file is gone is skipped. So is the copy of an
+     * online subtitle while its cached original is still there: the player already brings that one
+     * back as an online subtitle, and listing both would show the same subtitle twice.
      */
-    fun read(dir: File, episodeId: String): List<Saved> = runCatching {
+    fun read(dir: File, episodeId: String): List<Saved> =
+        readAll(dir, episodeId).filter { s -> s.origin == null || !File(s.origin).exists() }
+
+    /** Every sidecar in [episodeId]'s manifest whose file is there, online copies included. */
+    fun readAll(dir: File, episodeId: String): List<Saved> = runCatching {
         val file = manifest(dir, episodeId)
         if (!file.exists()) return emptyList()
         val arr = JSONObject(file.readText()).optJSONArray("subs") ?: return emptyList()
@@ -57,7 +69,7 @@ object OfflineSubtitleFiles {
             val o = arr.optJSONObject(i) ?: return@mapNotNull null
             val sidecar = File(dir, o.optString("name"))
             if (o.optString("name").isBlank() || !sidecar.exists()) return@mapNotNull null
-            Saved(sidecar, o.optString("lang"), o.optBoolean("srt"))
+            Saved(sidecar, o.optString("lang"), o.optBoolean("srt"), o.optString("origin").ifBlank { null })
         }
     }.getOrDefault(emptyList())
 }
