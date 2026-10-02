@@ -130,7 +130,9 @@ internal class OwnLiveProvider(
                 val e = snap.entries[c.code]
                 val programmes = if (guide == null || e == null) emptyList()
                 else guide.programmes[e.tvgId] ?: nameToId[XmltvParser.normaliseName(e.name)]?.let { guide.programmes[it] }.orEmpty()
-                out[c.liveCode] = programmes.map { LiveProgram(it.title, it.startMs / 1000, it.endMs / 1000, it.description) }
+                // `tvg-shift`: this channel's guide is that many hours off.
+                val shift = (e?.tvgShiftMin ?: 0) * 60_000L
+                out[c.liveCode] = programmes.map { LiveProgram(it.title, (it.startMs + shift) / 1000, (it.endMs + shift) / 1000, it.description) }
             }
         }
         return out to emptyList()
@@ -189,6 +191,8 @@ internal class OwnLiveProvider(
         var channelsLeft = PluginLiveContract.MAX_CHANNELS_PER_PROVIDER - singles.size
         val built = ArrayList<PlaylistGroups>()
         val entries = HashMap<String, M3uEntry>()
+        // Why a list could not be loaded when the server said something the person can act on (a refused or expired Xtream login).
+        val failures = ArrayList<String>()
         val playlistOf = HashMap<String, OwnLiveSourceEntity>()
         for (src in lists) {
             val declared = PluginPlaylist(
@@ -211,14 +215,16 @@ internal class OwnLiveProvider(
             // A pasted list keeps its url (and so its key and channel codes) when its text changes: the saved
             // copy is still "fresh", so new text is read at once instead of after the refresh hours.
             val newText = OwnPastedList.isPasted(src.url) && pastedLoaded[src.id] != src.contentDigest
-            val result = try {
+            val loaded = try {
                 source.entries(force || newText, maxEntries = channelsLeft).also { pastedLoaded[src.id] = src.contentDigest }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 safeLog("playlist ${src.id} failed: ${e.message}")
                 null
-            } ?: continue
+            }
+            source.lastFailure?.let { failures += "${src.name}: ${it.message}" }
+            val result = loaded ?: continue
             val g = groupPlaylist(
                 result, source.key, id, OwnLive.PLUGIN_ID, source.playlist, EffectiveHosts(emptyList()),
                 ::entryAllowed, categoriesLeft, channelsLeft,
@@ -234,7 +240,7 @@ internal class OwnLiveProvider(
             g.entries.keys.forEach { playlistOf[it] = src }
         }
         guideAvailable = lists.any { src -> !src.epgUrl.isNullOrBlank() || playlistSources[src.id]?.hasGuide() == true }
-        _notice.value = trimNotice(built)
+        _notice.value = (listOfNotNull(trimNotice(built)) + failures).joinToString("\n").ifEmpty { null }
         val snap = Snapshot(clock(), signature, categories, byCategory, singles.associateBy { it.id }, entries, playlistOf)
         snapshot = snap
         mirrorIntoSearchCache(built)

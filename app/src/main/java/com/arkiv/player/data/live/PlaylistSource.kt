@@ -66,6 +66,9 @@ internal class PlaylistSource(
     /** Test seam: runs between the M3U encoding sniff and the read (a file vanishing mid-parse). */
     @Volatile internal var beforeRead: (File) -> Unit = {}
     @Volatile private var parsed: M3uResult? = null
+    /** Why the last list download failed when it said something the person can act on (an Xtream login problem); null after a good download. */
+    @Volatile var lastFailure: XtreamException? = null
+        private set
     /** The budget [parsed] was parsed or trimmed to. */
     private var parsedMax = 0
     private var parsedUntil = 0L
@@ -90,7 +93,8 @@ internal class PlaylistSource(
         if (cacheDir == null) return null
         if (!force && clock() < parsedUntil) fitted(maxEntries)?.let { return it }
         val file = fileOf("m3u")
-        val state = refresh(playlist.url, file, PluginLiveContract.MAX_PLAYLIST_BYTES, force)
+        val state = refresh(playlist.url, file, PluginLiveContract.MAX_PLAYLIST_BYTES, force, onFailure = { lastFailure = it as? XtreamException })
+        if (state == Refresh.DOWNLOADED) lastFailure = null
         if (state == Refresh.FAILED) {
             parsedUntil = clock() + RETRY_MS
             // Offline: the list already parsed is as good as the stale copy, without parsing it again.
@@ -194,7 +198,7 @@ internal class PlaylistSource(
     private enum class Refresh { FRESH, DOWNLOADED, FAILED }
 
     /** Downloads [url] over [file] when it is missing, older than `refreshHours`, or [force]d. On FAILED the saved copy (if any) stands. */
-    private suspend fun refresh(url: String, file: File, max: Long, force: Boolean, headers: Map<String, String> = playlist.headers): Refresh {
+    private suspend fun refresh(url: String, file: File, max: Long, force: Boolean, headers: Map<String, String> = playlist.headers, onFailure: (Exception) -> Unit = {}): Refresh {
         val now = clock()
         val fresh = withContext(Dispatchers.IO) { file.exists() && now - file.lastModified() < refreshMs }
         if (fresh && !force) return Refresh.FRESH
@@ -216,6 +220,7 @@ internal class PlaylistSource(
             throw e
         } catch (e: Exception) {
             withContext(Dispatchers.IO) { tmp.delete() }
+            onFailure(e)
             log("playlist ${url.take(100)} not downloaded (${e.message}); ${if (file.exists()) "using the saved copy" else "no saved copy"}")
             Refresh.FAILED
         }
@@ -251,7 +256,9 @@ internal class PlaylistSource(
         /** First 8 hex of sha1(scheme://host:port/path): query and fragment (tokens) left out. */
         fun cacheKey(url: String): String {
             val u = url.toHttpUrlOrNull() ?: return sha1Hex(url).take(8)
-            return sha1Hex("${u.scheme}://${u.host}:${u.port}${u.encodedPath}").take(8)
+            // Two Xtream accounts on one server are two lists: the login (not a token) is part of what a list is.
+            val account = if (u.pathSegments.lastOrNull().equals(XtreamUrl.API, ignoreCase = true)) u.queryParameter("username")?.let { "?$it" }.orEmpty() else ""
+            return sha1Hex("${u.scheme}://${u.host}:${u.port}${u.encodedPath}$account").take(8)
         }
 
         internal fun isHiddenGroup(group: String, playlist: PluginPlaylist): Boolean {

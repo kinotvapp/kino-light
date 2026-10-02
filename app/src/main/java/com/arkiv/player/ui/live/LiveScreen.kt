@@ -163,6 +163,8 @@ fun LiveScreen(
         when (chrome.consumeAction()) {
             LiveChromeAction.ADD_CHANNEL -> ownVm.startNew(OwnKind.CHANNEL)
             LiveChromeAction.ADD_PLAYLIST -> ownVm.startNew(OwnKind.PLAYLIST)
+            LiveChromeAction.ADD_XTREAM -> ownVm.startNewXtream()
+            LiveChromeAction.ADD_IPTV_ORG -> ownVm.openPicker()
             LiveChromeAction.MANAGE -> manager = true
             null -> Unit
         }

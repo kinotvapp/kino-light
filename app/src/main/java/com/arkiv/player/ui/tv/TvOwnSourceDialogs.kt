@@ -32,6 +32,11 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import com.arkiv.player.data.live.IptvOrgCatalog
+import com.arkiv.player.data.live.IptvOrgKind
+import com.arkiv.player.data.live.XtreamUrl
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -57,6 +62,7 @@ import com.arkiv.player.ui.theme.ArkivTextSecondary
 internal fun TvOwnSourceDialogs(vm: OwnSourcesViewModel, showManager: Boolean, onCloseManager: () -> Unit) {
     val ui by vm.ui.collectAsStateWithLifecycle()
     if (ui.open) TvOwnSourceForm(ui, vm)
+    if (ui.picker) TvIptvOrgPicker(ui, vm)
     if (showManager) TvOwnSourcesManager(vm, onCloseManager)
 }
 
@@ -64,6 +70,8 @@ internal fun TvOwnSourceDialogs(vm: OwnSourcesViewModel, showManager: Boolean, o
 private fun TvOwnSourceForm(ui: OwnFormUi, vm: OwnSourcesViewModel) {
     val f = ui.form
     val playlist = f.kind == OwnKind.PLAYLIST
+    val xtream = ui.xtream
+    var showPassword by remember { mutableStateOf(false) }
     var advanced by remember(ui.editingId) {
         mutableStateOf(f.userAgent.isNotEmpty() || f.referer.isNotEmpty() || f.epgUrl.isNotEmpty() || f.logo.isNotEmpty() || f.groupName.isNotEmpty())
     }
@@ -84,6 +92,7 @@ private fun TvOwnSourceForm(ui: OwnFormUi, vm: OwnSourcesViewModel) {
             Text(
                 when {
                     ui.editingId != null -> OwnSourcesCopy.TITLE_EDIT
+                    xtream != null -> OwnSourcesCopy.TITLE_XTREAM
                     playlist -> OwnSourcesCopy.TITLE_PLAYLIST
                     else -> OwnSourcesCopy.TITLE_CHANNEL
                 },
@@ -91,15 +100,29 @@ private fun TvOwnSourceForm(ui: OwnFormUi, vm: OwnSourcesViewModel) {
             )
             if (ui.editingId == null) {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    TvCompactAction(label = (if (!playlist) "✓ " else "") + "Canal", onClick = { vm.change(f.copy(kind = OwnKind.CHANNEL)) })
-                    TvCompactAction(label = (if (playlist) "✓ " else "") + OwnSourcesCopy.KIND_PLAYLIST, onClick = { vm.change(f.copy(kind = OwnKind.PLAYLIST)) })
+                    TvCompactAction(label = (if (!playlist) "✓ " else "") + OwnSourcesCopy.KIND_CHANNEL, onClick = { vm.setXtreamMode(false); vm.change(f.copy(kind = OwnKind.CHANNEL)) })
+                    TvCompactAction(label = (if (playlist && xtream == null) "✓ " else "") + OwnSourcesCopy.KIND_PLAYLIST, onClick = { vm.setXtreamMode(false); vm.change(f.copy(kind = OwnKind.PLAYLIST)) })
+                    TvCompactAction(label = (if (xtream != null) "✓ " else "") + OwnSourcesCopy.KIND_XTREAM, onClick = { vm.setXtreamMode(true) })
                 }
             }
             TvOwnTextField(OwnSourcesCopy.NAME, f.name, ui.errors[OwnField.NAME], focusManager, Modifier.focusRequester(nameFocus)) { vm.change(f.copy(name = it)) }
-            if (ui.pasted != null) {
+            if (xtream != null) {
+                // Server, user and password typed with the system keyboard (D-pad Up/Down leave every field).
+                Text(OwnSourcesCopy.XTREAM_INFO, style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary)
+                TvOwnTextField(
+                    OwnSourcesCopy.XTREAM_SERVER, xtream.server, ui.xtreamErrors[XtreamUrl.XtreamField.SERVER] ?: ui.errors[OwnField.URL], focusManager, uri = true,
+                    placeholder = OwnSourcesCopy.XTREAM_SERVER_HINT,
+                ) { vm.changeXtream(xtream.copy(server = it)) }
+                TvOwnTextField(OwnSourcesCopy.XTREAM_USER, xtream.username, ui.xtreamErrors[XtreamUrl.XtreamField.USERNAME], focusManager, uri = true) { vm.changeXtream(xtream.copy(username = it)) }
+                TvOwnTextField(
+                    OwnSourcesCopy.XTREAM_PASS, xtream.password, ui.xtreamErrors[XtreamUrl.XtreamField.PASSWORD], focusManager, uri = true, password = !showPassword,
+                ) { vm.changeXtream(xtream.copy(password = it)) }
+                TvCompactAction(label = if (showPassword) OwnSourcesCopy.XTREAM_HIDE else OwnSourcesCopy.XTREAM_SHOW, onClick = { showPassword = !showPassword })
+            } else if (ui.pasted != null) {
                 // A list pasted on the phone (synced here): no address to edit, and no paste on a TV keyboard.
                 Text(OwnSourcesCopy.PASTED_TV, style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary)
             } else {
+                if (playlist) Text(OwnSourcesCopy.PLAYLIST_INFO, style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary)
                 TvOwnTextField(
                     if (playlist) OwnSourcesCopy.URL_PLAYLIST else OwnSourcesCopy.URL_CHANNEL, f.url, ui.errors[OwnField.URL], focusManager, uri = true,
                     placeholder = if (playlist) OwnSourcesCopy.URL_PLAYLIST_HINT else OwnSourcesCopy.URL_CHANNEL_HINT,
@@ -125,9 +148,51 @@ private fun TvOwnSourceForm(ui: OwnFormUi, vm: OwnSourcesViewModel) {
             }
             ui.notice?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error) }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End)) {
-                TvCompactAction(label = OwnSourcesCopy.PROBE, enabled = !ui.busy && f.url.isNotBlank() && ui.pasted == null, onClick = vm::probeNow)
+                TvCompactAction(label = OwnSourcesCopy.PROBE, enabled = !ui.busy && ui.pasted == null && (if (xtream != null) xtream.server.isNotBlank() else f.url.isNotBlank()), onClick = vm::probeNow)
                 TvCompactAction(label = OwnSourcesCopy.CANCEL, enabled = !ui.busy, onClick = vm::dismiss)
                 TvCompactAction(label = OwnSourcesCopy.SAVE, enabled = !ui.busy, onClick = vm::save)
+            }
+        }
+    }
+}
+
+/** The ready-made iptv-org lists on the TV: kind buttons, then one button per country, language or category. */
+@Composable
+private fun TvIptvOrgPicker(ui: OwnFormUi, vm: OwnSourcesViewModel) {
+    var kind by remember { mutableStateOf(IptvOrgKind.COUNTRY) }
+    val firstFocus = remember { FocusRequester() }
+    FocusWhenReady(firstFocus)
+    Dialog(onDismissRequest = { if (!ui.busy) vm.dismiss() }) {
+        Column(
+            modifier = Modifier
+                .width(640.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(ArkivSurface)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 32.dp, vertical = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(OwnSourcesCopy.IPTV_ORG_TITLE, style = MaterialTheme.typography.headlineSmall, color = Color.White)
+            Text(OwnSourcesCopy.IPTV_ORG_INFO, style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary)
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                IptvOrgKind.entries.forEachIndexed { i, k ->
+                    TvCompactAction(
+                        label = (if (kind == k) "✓ " else "") + k.label,
+                        modifier = if (i == 0) Modifier.focusRequester(firstFocus) else Modifier,
+                        onClick = { kind = k },
+                    )
+                }
+            }
+            if (ui.busy) LinearProgressIndicator(Modifier.fillMaxWidth(), color = ArkivRed)
+            ui.notice?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error) }
+            // Two buttons per row keeps the list short enough to scroll with the D-pad.
+            IptvOrgCatalog.of(kind).chunked(2).forEach { pair ->
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    pair.forEach { item -> TvCompactAction(label = item.title, enabled = !ui.busy, onClick = { vm.addIptvOrg(item) }) }
+                }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TvCompactAction(label = OwnSourcesCopy.CLOSE, enabled = !ui.busy, onClick = vm::dismiss)
             }
         }
     }
@@ -142,9 +207,11 @@ private fun TvOwnTextField(
     modifier: Modifier = Modifier,
     uri: Boolean = false,
     placeholder: String? = null,
+    password: Boolean = false,
     onChange: (String) -> Unit,
 ) {
     OutlinedTextField(
+        visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None,
         value = value,
         onValueChange = onChange,
         label = { Text(label) },
@@ -155,7 +222,7 @@ private fun TvOwnTextField(
         keyboardOptions = KeyboardOptions(
             capitalization = if (uri) KeyboardCapitalization.None else KeyboardCapitalization.Sentences,
             autoCorrectEnabled = false,
-            keyboardType = if (uri) KeyboardType.Uri else KeyboardType.Text,
+            keyboardType = if (password) KeyboardType.Password else if (uri) KeyboardType.Uri else KeyboardType.Text,
             imeAction = ImeAction.Next,
         ),
         modifier = modifier.fillMaxWidth().dpadLeavesTheField(focusManager),
@@ -183,6 +250,10 @@ private fun TvOwnSourcesManager(vm: OwnSourcesViewModel, onClose: () -> Unit) {
                 TvCompactAction(label = OwnSourcesCopy.ADD_CHANNEL, onClick = { vm.startNew(OwnKind.CHANNEL); onClose() })
                 TvCompactAction(label = OwnSourcesCopy.ADD_PLAYLIST, onClick = { vm.startNew(OwnKind.PLAYLIST); onClose() })
             }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                TvCompactAction(label = OwnSourcesCopy.ADD_XTREAM, onClick = { vm.startNewXtream(); onClose() })
+                TvCompactAction(label = OwnSourcesCopy.ADD_IPTV_ORG, onClick = { vm.openPicker(); onClose() })
+            }
             if (sources.isEmpty()) {
                 Text(OwnSourcesCopy.EMPTY_TITLE, style = MaterialTheme.typography.titleMedium, color = Color.White)
                 Text(OwnSourcesCopy.EMPTY_BODY, style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary)
@@ -192,7 +263,7 @@ private fun TvOwnSourcesManager(vm: OwnSourcesViewModel, onClose: () -> Unit) {
                         Column(Modifier.weight(1f)) {
                             Text(s.name, style = MaterialTheme.typography.titleMedium, color = Color.White, maxLines = 1)
                             Text(
-                                "${OwnSourcesCopy.kindLabel(s.kind == "PLAYLIST")}\u00A0·\u00A0${OwnSourcesCopy.hostOf(s.url)}",
+                                "${OwnSourcesCopy.kindLabel(s.kind, s.url)}\u00A0·\u00A0${OwnSourcesCopy.hostOf(s.url)}",
                                 style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary, maxLines = 1,
                                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                             )

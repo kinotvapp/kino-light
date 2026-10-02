@@ -21,6 +21,9 @@ import okio.sink
 /** The answer went past the size the caller allowed. Its own type so a caller can tell "too big" from "unreachable" (an endless live stream is "too big"). */
 class PlaylistTooLargeException(val maxMb: Long) : IOException("playlist over $maxMb MB")
 
+/** The server answered a non-success [code]: its own type so a caller can tell a refused login (401/403) from a dead server. */
+class PlaylistHttpException(val code: Int) : IOException("playlist answered $code")
+
 /** Downloads a declared playlist or guide, refusing (IOException) anything over [maxBytes]. */
 fun interface LivePlaylistFetcher {
     suspend fun fetch(url: String, headers: Map<String, String>, maxBytes: Long): ByteArray
@@ -84,7 +87,7 @@ class PluginPlaylistFetcher(client: OkHttpClient, timeoutMs: Long = DEFAULT_TIME
         try {
             withContext(Dispatchers.IO) {
                 call.execute().use { r ->
-                    if (!r.isSuccessful) throw IOException("playlist answered ${r.code}")
+                    if (!r.isSuccessful) throw PlaylistHttpException(r.code)
                     val body = r.body ?: throw IOException("empty playlist response")
                     val declared = body.contentLength()
                     if (declared > maxBytes) throw PlaylistTooLargeException(maxBytes / (1024 * 1024))
