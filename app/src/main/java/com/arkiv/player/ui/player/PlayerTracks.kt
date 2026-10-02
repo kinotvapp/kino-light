@@ -29,6 +29,7 @@ import androidx.media3.common.Tracks
 import com.arkiv.player.AppGraph
 import com.arkiv.player.cast.AudioTrackRef
 import com.arkiv.player.cast.CastAudioChoice
+import com.arkiv.player.data.subtitles.TitleSubtitleMemory
 import com.arkiv.player.playback.LangPromotion
 import com.arkiv.player.playback.LangTokens
 import com.arkiv.player.playback.SubtitleDecision
@@ -97,6 +98,12 @@ internal class TracksState(
     /** The preferred language was already applied for this playback. See [autoPickLanguageExo]. */
     private var alreadyAutoPickedExo = false
 
+    /**
+     * This title's remembered subtitle ([TitleSubtitleMemory]) still waits for its tracks: the
+     * first report had none to match it against. See [restoreTitleSubtitle].
+     */
+    private var titleSubtitlePending = false
+
     /** Notices an audio-track fallback's rebuild under this playback. See [AudioFallbackRepick]. */
     private val fallbackRepick = AudioFallbackRepick()
 
@@ -147,6 +154,7 @@ internal class TracksState(
         // Every playback decides the language again: what was hand-picked in the previous one
         // doesn't carry over to the next (see [autoPickLanguageExo]).
         alreadyAutoPickedExo = false
+        titleSubtitlePending = false
         fallbackRepick.reset()
         if (player == null) {
             forgetTracks()
@@ -161,6 +169,7 @@ internal class TracksState(
      */
     fun onLocalItemLoad() {
         alreadyAutoPickedExo = false
+        titleSubtitlePending = false
         fallbackRepick.reset()
         forgetTracks()
     }
@@ -233,7 +242,32 @@ internal class TracksState(
         curSpu   = subGroups.indexOfFirst   { it.isSelected }.coerceAtLeast(-1)
         android.util.Log.i("ExoTracks", "tracks updated: audio=${audioTracks.size} subs=${spuTracks.size} curAudio=$curAudio curSpu=$curSpu")
         val pending = fallbackRepick.take(audioTracks)
-        if (pending != null) reapplyAfterFallback(pending) else autoPickLanguageExo()
+        if (pending != null) {
+            reapplyAfterFallback(pending)
+        } else if (alreadyAutoPickedExo) {
+            if (titleSubtitlePending) restoreTitleSubtitle()
+        } else {
+            autoPickLanguageExo()
+        }
+    }
+
+    /**
+     * Turns on the subtitle the person last left this title with ([TitleSubtitleMemory]: the same
+     * label, or one in the same language, or off), instead of the language decision. False when
+     * there is nothing remembered, or nothing to match it yet (then [titleSubtitlePending]).
+     */
+    private fun restoreTitleSubtitle(): Boolean {
+        val remembered = runCatching { graph.subtitlePrefs.titleSubtitle(episodeId) }.getOrNull()
+        titleSubtitlePending = false
+        if (remembered == null) return false
+        if (remembered != TitleSubtitleMemory.OFF && spuTracks.isEmpty()) {
+            titleSubtitlePending = true
+            return false
+        }
+        val spu = TitleSubtitleMemory.restore(remembered, spuTracks) ?: return false
+        android.util.Log.i("ExoTracks", "title subtitle: ${if (spu < 0) "off" else nameOf(spuTracks, spu)} (remembered '$remembered')")
+        if (spu != curSpu) applySpuExo(spu)
+        return true
     }
 
     /**
@@ -290,6 +324,8 @@ internal class TracksState(
                 applyAudioExo(picked)
             }
 
+        // A subtitle picked by hand on this title wins over the language rule ("Continuar").
+        if (restoreTitleSubtitle() || titleSubtitlePending) return
         val spu = SubtitleDecision.decide(
             audioTrackName = nameOf(audioTracks, curAudio),
             spuTracks = spuTracks,
@@ -405,6 +441,7 @@ internal class TracksState(
                 .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
                 .build()
             curSpu = -1
+            rememberTitleSubtitle(TitleSubtitleMemory.OFF)
             return
         }
         val group = exoSubGroups.getOrNull(id)
@@ -416,7 +453,9 @@ internal class TracksState(
                 .build()
         }
         curSpu = id
-        promoteLanguage(nameOf(spuTracks, id) ?: return, spuTracks.realNames(), isAudio = false)
+        val name = nameOf(spuTracks, id) ?: return
+        rememberTitleSubtitle(name)
+        promoteLanguage(name, spuTracks.realNames(), isAudio = false)
     }
 
     /**
@@ -434,6 +473,12 @@ internal class TracksState(
         ) ?: return
         val updated = if (isAudio) prefs.copy(audioLangs = updatedOrder) else prefs.copy(subtitleLangs = updatedOrder)
         graph.subtitlePrefs.update(updated)
+    }
+
+    /** A hand pick: this title reopens with it ([restoreTitleSubtitle]). */
+    private fun rememberTitleSubtitle(choice: String) {
+        titleSubtitlePending = false
+        runCatching { graph.subtitlePrefs.rememberTitleSubtitle(episodeId, choice) }
     }
 
     private fun nameOf(tracks: List<Pair<Int, String>>, id: Int): String? =
