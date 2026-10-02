@@ -49,7 +49,7 @@ private const val NODE_CRYPTO = """["'`](?:node:)?crypto["'`]"""
  * Pure and offline -- every network call (fetching the scraper's raw `.js`, the optional
  * `domains.json`) happens in `NuvioPluginInstaller`, before this runs.
  *
- * The whole result loads as ONE ES module (`PluginRuntime.open`'s `js.addModule`), so the shim's own
+ * The whole result loads as ONE ES module (`PluginRuntime.open` compiles it as the module `plugin.js`), so the shim's own
  * top-level `module`/`exports`/`require`/`fetch` and the scraper's own top-level code can't just be
  * concatenated at the same top level: two top-level declarations of the same name in one module
  * scope make QuickJS reject the WHOLE script with `SyntaxError: invalid redefinition of global
