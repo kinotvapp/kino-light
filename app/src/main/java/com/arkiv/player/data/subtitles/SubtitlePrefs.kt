@@ -126,7 +126,19 @@ class SubtitlePrefs(context: Context) {
     private fun read(): PlaybackPrefs =
         store.getString(KEY, null)?.let { PlaybackPrefs.fromJson(it) } ?: PlaybackPrefs()
 
+    /** The subtitle last picked by hand on [title] ([TitleSubtitleMemory]): a label, [TitleSubtitleMemory.OFF], or null. */
+    fun titleSubtitle(title: String): String? = synchronized(this) {
+        TitleSubtitleMemory.decode(store.getString(KEY_TITLES, null)).lastOrNull { it.first == title }?.second
+    }
+
+    /** Remembers [choice] (a menu label, or [TitleSubtitleMemory.OFF]) as [title]'s subtitle. */
+    fun rememberTitleSubtitle(title: String, choice: String) = synchronized(this) {
+        val entries = TitleSubtitleMemory.remember(TitleSubtitleMemory.decode(store.getString(KEY_TITLES, null)), title, choice)
+        store.edit().putString(KEY_TITLES, TitleSubtitleMemory.encode(entries)).apply()
+    }
+
     private companion object {
         const val KEY = "subtitle_style"
+        const val KEY_TITLES = "title_subtitles"
     }
 }

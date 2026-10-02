@@ -56,11 +56,13 @@ import com.arkiv.player.playback.LiveErrorKind
 import com.arkiv.player.playback.MpegTs
 import com.arkiv.player.playback.SourceKind
 import com.arkiv.player.playback.TsDurationProbe
+import com.arkiv.player.playback.ValidatedNetwork
 import com.arkiv.player.playback.VodSyncMonitor
 import com.arkiv.player.playback.VodSyncStats
 import com.arkiv.player.playback.fallbackRenderers
 import com.arkiv.player.ui.rememberGraph
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -250,6 +252,12 @@ internal fun StreamExoPlayer(
      * in place instead. Null: nothing to resolve again, every attempt re-prepares.
      */
     onNetworkReResolve: ((positionMs: Long, playWhenReady: Boolean, reprepare: () -> Unit) -> Boolean)? = null,
+    /**
+     * Where a VOD's network recovery shows itself: waiting for the network ("Sin conexión,
+     * esperando la red…") and, once it gave up on a network error, the "Reintentar" that reopens
+     * this player (also pressed by itself when the network comes back). Null: neither shows.
+     */
+    networkUi: VodNetworkUi? = null,
     /** Whether the first prepare starts playing. False only for a stream rebuilt by a recovery while paused. */
     startPlaying: Boolean = true,
     /**
@@ -406,6 +414,8 @@ internal fun StreamExoPlayer(
     var networkRetries by remember(prepared) { mutableStateOf(0) }
     val networkBudget = remember(prepared) { NetworkRecoveryBudget() }
     var networkRetryAfterCast by remember(prepared) { mutableStateOf(false) }
+    // How long this stream's recoveries already waited for a network since it was last READY.
+    var offlineWaitedMs by remember(prepared) { mutableStateOf(0L) }
 
     var videoAspectRatio by remember(exoPlayer) { mutableFloatStateOf(0f) }
     // Read inside the layout listener below, which is built once (`remember`) and outlives every
@@ -521,6 +531,7 @@ internal fun StreamExoPlayer(
                         Log.i(TAG, "network recovery: READY again after $networkRetries attempt(s)")
                         networkRetries = 0
                     }
+                    offlineWaitedMs = 0L
                 }
                 // Progress diagnostics: once per READY with a new duration (not on every rebuffer).
                 if (state == Player.STATE_READY && exoPlayer.duration != lastReadyDuration) {
@@ -567,6 +578,29 @@ internal fun StreamExoPlayer(
                         // Only the definitive failure reaches Sentry: three hiccups in a row are one report, not three.
                         com.arkiv.player.crash.Crash.report(error, "$crashTag-live-playback-${androidx.media3.common.PlaybackException.getErrorCodeName(error.errorCode)}", pluginExtras(http))
                     }
+                }
+            }
+
+            /**
+             * A VOD's network error is on screen: "Reintentar" reopens this player where it was,
+             * with its recovery's attempts and offline wait fresh; and it is pressed by itself the
+             * first time the network comes back ([NetworkReturn]).
+             */
+            fun offerNetworkRetry(ui: VodNetworkUi) {
+                networkRetryJob?.cancel()
+                ui.offerRetry(prepared) {
+                    networkRetryJob?.cancel()
+                    networkRetries = 0
+                    offlineWaitedMs = 0L
+                    Log.w(TAG, "network error: reopening at ${exoPlayer.currentPosition.coerceAtLeast(0L)}ms")
+                    if (exoPlayer.playerError != null) runCatching { exoPlayer.prepare() }
+                }
+                networkRetryJob = recoveryScope.launch {
+                    val back = NetworkReturn()
+                    ValidatedNetwork.states(context).first { back.onState(it) }
+                    lifecycle.currentStateFlow.first { it.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED) }
+                    Log.w(TAG, "network error: the network is back -> retrying once by itself")
+                    ui.retry()
                 }
             }
 
@@ -623,6 +657,21 @@ internal fun StreamExoPlayer(
                             // In the background the network may be cut for this app: an attempt
                             // there would only burn the budget. The person is away anyway.
                             lifecycle.currentStateFlow.first { it.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED) }
+                            // No network at all (the Wi-Fi dropped): an attempt now only burns the
+                            // budget. Wait for one, bounded, saying so on screen; then try.
+                            val waitMs = VodNetworkRecovery.offlineWaitMs(ValidatedNetwork.isUp(context), offlineWaitedMs)
+                            if (waitMs > 0) {
+                                Log.w(TAG, "network error ($msg) -> no network: waiting up to ${waitMs}ms before attempt $attempt")
+                                networkUi?.setWaiting(prepared, true)
+                                val start = android.os.SystemClock.elapsedRealtime()
+                                try {
+                                    val back = withTimeoutOrNull(waitMs) { ValidatedNetwork.states(context).first { it } } != null
+                                    Log.w(TAG, "network recovery: " + if (back) "the network is back" else "still no network, trying anyway")
+                                } finally {
+                                    offlineWaitedMs += android.os.SystemClock.elapsedRealtime() - start
+                                    networkUi?.setWaiting(prepared, false)
+                                }
+                            }
                             delay(VodNetworkRecovery.delayMs(attempt, networkBudget.recent(System.currentTimeMillis())))
                             // Something else already re-prepared it (a seek does not, a new source does).
                             if (exoPlayer.playerError == null) return@launch
@@ -682,6 +731,9 @@ internal fun StreamExoPlayer(
                         // into Logcat -- this is proactive signal on which content/devices can't play.
                         com.arkiv.player.crash.Crash.report(error, "$crashTag-playback-${androidx.media3.common.PlaybackException.getErrorCodeName(error.errorCode)}", pluginExtras(http))
                         onError(shown)
+                        if (networkUi != null && VodNetworkRecovery.offersRetry(error.errorCode, live = onLiveError != null)) {
+                            offerNetworkRetry(networkUi)
+                        }
                     }
                 }
             }
@@ -697,6 +749,7 @@ internal fun StreamExoPlayer(
                 exoPlayer.removeAnalyticsListener(it)
             }
             networkRetryJob?.cancel()
+            networkUi?.reset(prepared)
             exoPlayer.removeListener(listener)
             exoPlayer.removeAnalyticsListener(decoderLog)
             exoPlayer.clearVideoTextureView(textureView)

@@ -78,6 +78,30 @@ internal object VodNetworkRecovery {
     const val MAX_BACKOFF_MS = 30_000L
 
     /**
+     * How long, overall since the stream was last READY, a recovery waits for the device to have a
+     * network again ([offlineWaitMs]) before it tries anyway and lets the attempts decide.
+     */
+    const val MAX_OFFLINE_WAIT_MS = 150_000L
+
+    /**
+     * How long the next attempt waits for a validated network first: none when there is one
+     * ([networkUp]); otherwise what is left of [MAX_OFFLINE_WAIT_MS] after [waitedMs]. Found on the
+     * Redmi (2026-10-01): the Wi-Fi dropped on its own after a resume, the three attempts (one a
+     * re-resolve that failed on DNS) ran out in ~15 s and the error stayed on screen although the
+     * Wi-Fi was back 16 s later. An attempt without a network only burns the budget.
+     */
+    fun offlineWaitMs(networkUp: Boolean, waitedMs: Long): Long =
+        if (networkUp) 0L else (MAX_OFFLINE_WAIT_MS - waitedMs).coerceAtLeast(0L)
+
+    /**
+     * Whether a VOD's final error offers "Reintentar" (and retries once by itself when the network
+     * comes back, [NetworkReturn]): a network error ([isNetworkError]) not of a live channel, which
+     * has its own reopen path. Opened or not: a stream that failed while the device was offline
+     * is worth one more try either way.
+     */
+    fun offersRetry(errorCode: Int, live: Boolean): Boolean = !live && isNetworkError(errorCode)
+
+    /**
      * Whether a title may be resolved again after a network error: a plugin's VOD title (the only
      * kind with a source to ask for a fresh URL), not while the person is being asked about a host
      * ([hostQuestionOpen]: their answer rebuilds the player already). Never asked while casting: the
@@ -86,6 +110,82 @@ internal object VodNetworkRecovery {
      */
     fun canReResolve(kind: SourceKind?, live: Boolean, hostQuestionOpen: Boolean): Boolean =
         kind == SourceKind.PLUGIN && !live && !hostQuestionOpen
+}
+
+/**
+ * Says when the network has come back, once: the first "up" after a "down". A network that is up
+ * when the error shows (the server failed, not the device) only counts after it drops and returns.
+ */
+internal class NetworkReturn {
+    private var sawDown = false
+    private var fired = false
+
+    /** Feeds the current state; true exactly once, on the first [up] that follows a down. */
+    fun onState(up: Boolean): Boolean {
+        if (fired) return false
+        if (!up) {
+            sawDown = true
+            return false
+        }
+        if (!sawDown) return false
+        fired = true
+        return true
+    }
+}
+
+/**
+ * What the screen shows about a VOD's network recovery, shared by the player that recovers
+ * (StreamExoPlayer) and the screen that draws it: [waiting] while an attempt waits for the network
+ * ("Sin conexión, esperando la red…"), and [canRetry] while a network error is on screen and its
+ * player can be reopened ("Reintentar"). Every write names its [owner] (the player's prepared
+ * source): a player rebuilt by a re-resolve takes over, and the old one's late reset is ignored.
+ */
+internal class VodNetworkUi(private val onRetry: () -> Unit = {}) {
+    private val _waiting = kotlinx.coroutines.flow.MutableStateFlow(false)
+    val waiting: kotlinx.coroutines.flow.StateFlow<Boolean> = _waiting
+    private val _canRetry = kotlinx.coroutines.flow.MutableStateFlow(false)
+    val canRetry: kotlinx.coroutines.flow.StateFlow<Boolean> = _canRetry
+    private var owner: Any? = null
+    private var retry: (() -> Unit)? = null
+
+    fun setWaiting(owner: Any, waiting: Boolean) {
+        take(owner)
+        _waiting.value = waiting
+    }
+
+    /** The player that failed on a network error: [reopen] reopens it where it was. */
+    fun offerRetry(owner: Any, reopen: () -> Unit) {
+        take(owner)
+        _waiting.value = false
+        retry = reopen
+        _canRetry.value = true
+    }
+
+    /** "Reintentar", or the network coming back: clears the error ([onRetry]) and reopens, once. */
+    fun retry(): Boolean {
+        val reopen = retry ?: return false
+        retry = null
+        _canRetry.value = false
+        onRetry()
+        reopen()
+        return true
+    }
+
+    /** The player [owner] went away: nothing of it stays on screen. */
+    fun reset(owner: Any) {
+        if (this.owner !== owner) return
+        this.owner = null
+        retry = null
+        _waiting.value = false
+        _canRetry.value = false
+    }
+
+    private fun take(owner: Any) {
+        if (this.owner === owner) return
+        this.owner = owner
+        retry = null
+        _canRetry.value = false
+    }
 }
 
 /**

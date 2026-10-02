@@ -1286,6 +1286,16 @@ class PlayerViewModel internal constructor(
     private val networkReResolves = NetworkReResolveBudget()
 
     /**
+     * The VOD network recovery on screen (see [VodNetworkUi]): "Sin conexión, esperando la red…"
+     * while an attempt waits for a network, and "Reintentar" on a network error, which clears the
+     * error (and its "Ver otras fuentes") before the player reopens.
+     */
+    internal val vodNetworkUi = VodNetworkUi(onRetry = {
+        _error.value = null
+        _otherSources.value = null
+    })
+
+    /**
      * `StreamExoPlayer`'s VOD network recovery asks for a fresh Stream (its second attempt, see
      * [VodNetworkRecovery]): the connection died after the title had played -- a pause in the
      * background, the CDN closed the idle connection, the URL/token may have expired. Only a plugin's

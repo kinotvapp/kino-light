@@ -521,7 +521,12 @@ internal fun DlnaCastButtons(
         AndroidView(
             modifier = Modifier.padding(horizontal = 8.dp),
             factory = { ctx ->
-                val themed = ContextThemeWrapper(ctx, androidx.appcompat.R.style.Theme_AppCompat_DayNight)
+                // Always the dark theme: the button picks its icon from the theme it is given
+                // (MediaRouterThemeHelper: a light one -> Theme.MediaRouter.Light -> the BLACK
+                // mr_button_light). DayNight followed the phone, so on a phone in light mode (the
+                // Redmi, 2026-10-01) the icon was black on the player's dark bar: invisible, yet
+                // tappable. Dark -> mr_button_dark, white like the DLNA icon next to it.
+                val themed = ContextThemeWrapper(ctx, androidx.appcompat.R.style.Theme_AppCompat)
                 MediaRouteButton(themed).also {
                     CastButtonFactory.setUpMediaRouteButton(ctx.applicationContext, it)
                     // One entry per TV: Play services lists the same Cast device twice.
