@@ -110,8 +110,19 @@ class CastSessionManager(
     /**
      * Something the phone has to tell about the cast: the receiver stopped by itself and is being
      * retried, or it stopped again and the person has to choose. Null when all is well.
+     *
+     * [failures]: how many times the Chromecast failed this title ([episodeId]) so far, for
+     * "Probar por DLNA" ([CastDlnaOffer]). [exhausted] and [lastResort]: the question is the last
+     * one, every Chromecast route spent ([CastGaveUp]); the last option it may offer (none today).
      */
-    data class Trouble(val title: String, val retrying: Boolean)
+    data class Trouble(
+        val title: String,
+        val retrying: Boolean,
+        val episodeId: String = "",
+        val failures: Int = 0,
+        val exhausted: CastGaveUp.Exhausted? = null,
+        val lastResort: CastGaveUp.LastResort? = null,
+    )
 
     private val _trouble = MutableStateFlow<Trouble?>(null)
     val trouble: StateFlow<Trouble?> = _trouble.asStateFlow()
@@ -186,6 +197,9 @@ class CastSessionManager(
             player.currentTracks.groups.firstOrNull { it.type == C.TRACK_TYPE_VIDEO }
                 ?.takeIf { it.length > 0 }?.getTrackFormat(0)
         }.getOrNull()
+        // The route that failed now closes the trail of every route this title tried on the Chromecast.
+        val route = pending?.route?.ifBlank { null } ?: "load"
+        routeTrail.tried(route, reason)
         Crash.report(
             error ?: CastFailure(reason),
             "cast-failure",
@@ -193,6 +207,8 @@ class CastSessionManager(
                 "reason" to reason,
                 "receiver" to (device?.friendlyName ?: ""),
                 "receiver_model" to (device?.modelName ?: ""),
+                "receiver_version" to (device?.deviceVersion ?: ""),
+                "title_failures" to titleFailures.toString(),
                 "episode" to (pending?.episodeId ?: ""),
                 "requested_mime" to (pending?.mimeType ?: ""),
                 "route" to (pending?.route ?: ""),
@@ -202,8 +218,59 @@ class CastSessionManager(
                 "video_size" to (videoFormat?.let { "${it.width}x${it.height}" } ?: ""),
                 "playback_state" to player.playbackState.toString(),
                 "position_ms" to player.currentPosition.toString(),
-            ),
+            ) + CastRouteTrail.reportExtras(routeTrail, route, pending?.uri),
         )
+    }
+
+    /** Every route this title tried on the Chromecast and how each ended ([CastRouteTrail]); new per title. */
+    @Volatile private var routeTrail = CastRouteTrail()
+
+    /** How many times the Chromecast failed the title of [failuresOf] (retries and questions), for [CastDlnaOffer]. */
+    @Volatile private var titleFailures = 0
+    @Volatile private var failuresOf = ""
+
+    private fun countFailure(episodeId: String) {
+        if (failuresOf != episodeId) {
+            failuresOf = episodeId
+            titleFailures = 0
+        }
+        titleFailures++
+    }
+
+    /**
+     * The last question about [r]: every Chromecast route is spent, so it goes through [CastGaveUp]
+     * (the one place every exhausted cast passes) and carries what that offers. Main thread.
+     */
+    private fun ask(r: CastRequest): Trouble {
+        countFailure(r.episodeId)
+        val e = CastGaveUp.Exhausted(
+            CastGaveUp.Receiver.CHROMECAST, r.episodeId, r.title, r.asLive, routeTrail.summary(),
+            positionMs = lastKnownPositionMs(r.episodeId) ?: 0L,
+        )
+        return Trouble(r.title, retrying = false, r.episodeId, titleFailures, e, CastGaveUp.exhausted(e))
+    }
+
+    /** The title the player screen shows ([onScreenTitle]), null with none. */
+    @Volatile private var screenEpisode: String? = null
+
+    /** Whether a player screen in the foreground shows [episodeId]: the one that would cast it over DLNA. */
+    fun screenShows(episodeId: String): Boolean = episodeId.isNotEmpty() && screenEpisode == episodeId && openScreens.get() > 0
+
+    /** The Cast device of this session: its IP address and its name, for [CastDlnaOffer.match]. Main thread. */
+    fun receiverAddress(): Pair<String?, String?> {
+        val device = runCatching { castContext.sessionManager.currentCastSession?.castDevice }.getOrNull()
+        val ip = runCatching { device?.inetAddress?.hostAddress }.getOrNull()
+        return ip to device?.friendlyName
+    }
+
+    /**
+     * "Probar por DLNA": ends the session like [watchOnPhone] and returns where the receiver was in
+     * the title, for the DLNA cast to start there. Main thread.
+     */
+    fun endForDlna(): Long? {
+        val at = pending?.let { lastKnownPositionMs(it.episodeId) }
+        watchOnPhone()
+        return at
     }
 
     /**
@@ -358,6 +425,7 @@ class CastSessionManager(
     fun setMedia(request: CastRequest) {
         generation++
         fellBackFrom = ""
+        routeTrail = CastRouteTrail()
         pending = request
         offsetOf = request.episodeId to request.offsetMs
         idleWatch.onNewMedia(request.episodeId, if (request.asLive) 0L else request.startPositionMs)
@@ -615,6 +683,7 @@ class CastSessionManager(
             "the ${r.route.ifBlank { "first" }} load never played ($why): loading it through the phone's proxy · " +
                 com.arkiv.player.dlna.DlnaXml.safeUrl(next.uri),
         )
+        routeTrail.tried(r.route.ifBlank { "first" }, why)
         pending = next
         fellBackFrom = r.route
         idleWatch.onNewMedia(next.episodeId, if (next.asLive) 0L else next.startPositionMs)
@@ -635,10 +704,12 @@ class CastSessionManager(
             CastIdleWatch.Decision.Ignore -> Unit
             is CastIdleWatch.Decision.Retry -> {
                 reportFailure("receiver_idle_${reason.name.lowercase()}")
-                _trouble.value = Trouble(r.title, retrying = true)
+                countFailure(r.episodeId)
+                routeTrail.tried("retry", "idle_${reason.name.lowercase()}")
+                _trouble.value = Trouble(r.title, retrying = true, r.episodeId, titleFailures)
                 reload(r, decision.fromMs)
             }
-            is CastIdleWatch.Decision.Ask -> _trouble.value = Trouble(r.title, retrying = false)
+            is CastIdleWatch.Decision.Ask -> _trouble.value = ask(r)
         }
     }
 
@@ -646,7 +717,7 @@ class CastSessionManager(
     private fun reload(r: CastRequest, fromMs: Long?) {
         if (!stillServed(r.uri)) {
             android.util.Log.w(TAG, "retry skipped: the request's server/token is gone")
-            _trouble.value = Trouble(r.title, retrying = false)
+            _trouble.value = ask(r)
             return
         }
         val from = if (r.asLive || r.durationMs <= 0L) r.startPositionMs else fromMs ?: r.startPositionMs
@@ -662,7 +733,7 @@ class CastSessionManager(
         if (player.isPlaying) return
         val decision = idleWatch.onRetryStalled()
         android.util.Log.w(TAG, "the retry never played · ${RETRY_STALL_MS}ms → $decision")
-        if (decision is CastIdleWatch.Decision.Ask) _trouble.value = Trouble(r.title, retrying = false)
+        if (decision is CastIdleWatch.Decision.Ask) _trouble.value = ask(r)
     }
 
     /**
@@ -692,7 +763,7 @@ class CastSessionManager(
         android.util.Log.w(TAG, "the load never played · ${LOAD_STALL_MS}ms · ep=${r.episodeId} → $decision")
         if (decision is CastIdleWatch.Decision.Ask) {
             reportFailure("load_never_played")
-            _trouble.value = Trouble(r.title, retrying = false)
+            _trouble.value = ask(r)
         }
     }
 
@@ -703,6 +774,7 @@ class CastSessionManager(
      * the cast goes on with the player closed, and the bar and the progress save read it.
      */
     fun onScreenTitle(episodeId: String?) {
+        screenEpisode = episodeId
         if (_casting.value) return
         val p = pending ?: return
         if (p.episodeId == episodeId) return
@@ -719,7 +791,7 @@ class CastSessionManager(
     fun retryAfterTrouble() {
         val r = pending ?: run { _trouble.value = null; return }
         idleWatch.onUserRetry()
-        _trouble.value = Trouble(r.title, retrying = true)
+        _trouble.value = Trouble(r.title, retrying = true, r.episodeId, titleFailures)
         reload(r, idleWatch.lastKnownMs(r.episodeId))
     }
 
