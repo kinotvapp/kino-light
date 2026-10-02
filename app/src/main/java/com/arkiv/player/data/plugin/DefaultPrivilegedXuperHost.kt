@@ -30,7 +30,7 @@ class DefaultPrivilegedXuperHost internal constructor(
      * `type` in its vocabulary ("movie"/"tv"/"anime") and the plugin contract's "series" read as
      * "tv". Answer: the envelope around [MagisPluginBridge.search]'s items.
      */
-    override suspend fun xuperSearch(argsJson: String): String = envelope {
+    override suspend fun xuperSearch(argsJson: String): String = envelope(accountLinked()) {
         magis.value.search(searchQueryOf(JSONObject(argsJson)))
     }
 
@@ -79,13 +79,17 @@ class DefaultPrivilegedXuperHost internal constructor(
      * Argument: a series item's own `ref`, as `kino.xuper.search` returned it. Answer: the envelope
      * around [MagisPluginBridge.episodes]'s `{episodes, series}`.
      */
-    override suspend fun xuperEpisodes(ref: String): String = envelope { magis.value.episodes(ref) }
+    override suspend fun xuperEpisodes(ref: String): String =
+        envelope(accountLinked(), goneMessage = XUPER_SERIES_GONE) { magis.value.episodes(ref) }
 
     /**
      * Argument: the item's own `ref`, as `kino.xuper.search` returned it. Answer: the envelope
      * around [MagisPluginBridge.resolve]'s stream.
      */
-    override suspend fun xuperResolve(ref: String): String = envelope { magis.value.resolve(ref) }
+    override suspend fun xuperResolve(ref: String): String = envelope(accountLinked()) { magis.value.resolve(ref) }
+
+    /** Read lazily (a thunk) so a call never forces the Magis objects before it runs; see [toPluginError]. */
+    private fun accountLinked(): () -> Boolean = { runCatching { magis.value.accountLinked() }.getOrDefault(false) }
 }
 
 /**
@@ -129,7 +133,11 @@ private fun searchQueryOf(args: JSONObject) = GatewaySearchQuery(
  * portal failure's code collapsed by Task 4's `toPluginError()`. Anything else thrown is
  * `unavailable`, with MagisSource's own fallback text. Never throws, except cancellation.
  */
-private suspend fun envelope(call: suspend () -> MagisResult<Any>): String = withContext(Dispatchers.IO) {
+private suspend fun envelope(
+    accountLinked: () -> Boolean = { false },
+    goneMessage: String = XUPER_EPISODE_GONE,
+    call: suspend () -> MagisResult<Any>,
+): String = withContext(Dispatchers.IO) {
     val result = try {
         call()
     } catch (e: CancellationException) {
@@ -139,7 +147,7 @@ private suspend fun envelope(call: suspend () -> MagisResult<Any>): String = wit
     }
     when (result) {
         is MagisResult.Ok -> JSONObject().put("ok", true).put("data", result.data).toString()
-        is MagisResult.PortalError -> result.toPluginError().let { (code, message) -> failure(code, message) }
+        is MagisResult.PortalError -> result.toPluginError(accountLinked(), goneMessage).let { (code, message) -> failure(code, message) }
         is MagisResult.RedError -> result.toPluginError().let { (code, message) -> failure(code, message) }
     }
 }

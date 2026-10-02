@@ -222,6 +222,7 @@ fun HomeScreen(
     val installedPlugins by graph.pluginAdmin.plugins.collectAsStateWithLifecycle()
     val homeEmpty = homeShowsEmptyState(installedPlugins, pluginRows.size, liveSources)
     val emptyCopy = homeEmptyCopy(installedPlugins, isTv = false)
+    val xuperFailed = xuperHomeFailed(installedPlugins, pluginRows, pluginRowsSettled)
     val liveTabs by graph.liveModule.tabs.collectAsStateWithLifecycle()
     // null = no row (empty module, or no channel to list yet); never just "Ver más canales".
     val liveRow = remember(recentChannels, countryChannels, liveOn, liveTabs) {
@@ -520,6 +521,21 @@ fun HomeScreen(
                         Text(emptyCopy.action)
                     }
                 }
+            }
+        }
+
+        // 5b. Xuper's catalog came back empty (see xuperHomeFailed): say so, with a retry, instead of a silent gap.
+        item(key = "xuper_home_failed") {
+            if (xuperFailed) {
+                Text(
+                    XUPER_HOME_FAILED_PHONE,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = ArkivTextSecondary,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClickLabel = XUPER_HOME_RETRY) { vm.retryPluginHome() }
+                        .padding(horizontal = 16.dp, vertical = 16.dp),
+                )
             }
         }
 

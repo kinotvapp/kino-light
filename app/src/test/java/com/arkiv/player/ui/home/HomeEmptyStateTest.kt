@@ -62,4 +62,33 @@ class HomeEmptyStateTest {
         assertFalse(emptyStateNeedsRefocus(wasEmpty = false, isEmpty = true, screenHasFocus = false))
         assertFalse(emptyStateNeedsRefocus(wasEmpty = true, isEmpty = true, screenHasFocus = false))
     }
+
+    // --- 0.9.45, ERRORES-AKR: Xuper's catalog came back empty ---
+
+    private fun xuper(enabled: Boolean = true, address: String = com.arkiv.player.data.plugin.XuperPrivilege.SOURCE_REPO) = InstalledPlugin(
+        PluginManifest("xuper", "Xuper", "1.0.0", 1, "plugin.js", "", "", "", listOf("example.com"), setOf("search", "resolve", "home"), null, null),
+        InstalledRecord(address, "1.0.0", "x", listOf("example.com"), 0L, enabled = enabled),
+        iconFile = null,
+    )
+
+    private fun row(pluginId: String) = com.arkiv.player.data.plugin.PluginHomeRow(pluginId, "P", 0L, "r1", "Row", emptyList())
+
+    @Test fun `the Xuper notice shows only once the pass settled with no Xuper row at all`() {
+        assertTrue(xuperHomeFailed(listOf(xuper()), emptyList(), settled = true))
+        assertTrue("another plugin's rows don't count", xuperHomeFailed(listOf(xuper(), plugin(true)), listOf(row("demo")), settled = true))
+        assertFalse("still loading", xuperHomeFailed(listOf(xuper()), emptyList(), settled = false))
+        assertFalse(xuperHomeFailed(listOf(xuper()), listOf(row("xuper")), settled = true))
+    }
+
+    @Test fun `no Xuper notice without a usable recognized Xuper`() {
+        assertFalse(xuperHomeFailed(emptyList(), emptyList(), settled = true))
+        assertFalse(xuperHomeFailed(listOf(xuper(enabled = false)), emptyList(), settled = true))
+        assertFalse("a copy from another repo is not Xuper", xuperHomeFailed(listOf(xuper(address = "someone/xuper")), emptyList(), settled = true))
+        assertFalse("a plugin with no rows is not a failure", xuperHomeFailed(listOf(plugin(true)), emptyList(), settled = true))
+    }
+
+    @Test fun `the Xuper notice copy`() {
+        assertEquals("No pudimos cargar el catálogo de Xuper, toca para reintentar", XUPER_HOME_FAILED_PHONE)
+        assertEquals("Reintentar", XUPER_HOME_RETRY)
+    }
 }

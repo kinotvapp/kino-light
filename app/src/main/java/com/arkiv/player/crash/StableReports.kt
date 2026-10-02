@@ -56,9 +56,12 @@ internal object StableReports {
         queries: List<String>,
         fullTitleRetry: List<String>,
         forms: List<String>,
+        /** The best of what the portal answered instead (its look-alikes), title only. */
+        poolTop: List<String> = emptyList(),
     ) = StableReport(
         "0 sources",
         mapOf(
+            "pool_top" to poolTop.toString(),
             "query" to query,
             "tmdb" to tmdbId.toString(),
             "type" to type,
