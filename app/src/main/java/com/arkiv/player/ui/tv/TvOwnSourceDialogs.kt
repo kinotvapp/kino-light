@@ -210,22 +210,16 @@ private fun TvOwnTextField(
     password: Boolean = false,
     onChange: (String) -> Unit,
 ) {
-    OutlinedTextField(
-        visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None,
+    // A button that opens the generic keyboard dialog: no system text field here to take the D-pad.
+    TvTextFieldEntry(
+        label = label,
         value = value,
-        onValueChange = onChange,
-        label = { Text(label) },
-        placeholder = placeholder?.let { { Text(it) } },
-        singleLine = true,
-        isError = error != null,
-        supportingText = error?.let { { Text(it) } },
-        keyboardOptions = KeyboardOptions(
-            capitalization = if (uri) KeyboardCapitalization.None else KeyboardCapitalization.Sentences,
-            autoCorrectEnabled = false,
-            keyboardType = if (password) KeyboardType.Password else if (uri) KeyboardType.Uri else KeyboardType.Text,
-            imeAction = ImeAction.Next,
-        ),
-        modifier = modifier.fillMaxWidth().dpadLeavesTheField(focusManager),
+        onSave = { onChange(it) },
+        modifier = modifier,
+        secret = password,
+        kind = if (uri) TvTextKind.URL else TvTextKind.TEXT,
+        hint = placeholder.orEmpty(),
+        error = error,
     )
 }
 

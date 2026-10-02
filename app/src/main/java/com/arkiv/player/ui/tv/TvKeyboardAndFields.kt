@@ -31,6 +31,8 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.semantics.password
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Border
 import androidx.tv.material3.ClickableSurfaceDefaults
@@ -108,6 +110,8 @@ fun TvKeyboardAndFields(
     activeText: String,
     onActiveTextChange: (String) -> Unit,
     extras: List<Char> = emptyList(),
+    /** True while the active field is a hidden secret: the TV's own keyboard then types into a masked field. */
+    activeSecret: Boolean = false,
     fields: @Composable ColumnScope.(firstFieldFocus: FocusRequester) -> Unit,
 ) {
     val firstFieldFocus = remember { FocusRequester() }
@@ -141,6 +145,7 @@ fun TvKeyboardAndFields(
                         text = activeText,
                         onTextChange = onActiveTextChange,
                         onBack = { nativeKeyboardActive = false },
+                        secret = activeSecret,
                     )
                 } else {
                     TvKeyboard(
@@ -215,7 +220,7 @@ fun TvKeyboardWithNative(
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun TvNativeKeyboardField(text: String, onTextChange: (String) -> Unit, onBack: () -> Unit) {
+private fun TvNativeKeyboardField(text: String, onTextChange: (String) -> Unit, onBack: () -> Unit, secret: Boolean = false) {
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) {
         repeat(20) {
@@ -245,6 +250,7 @@ private fun TvNativeKeyboardField(text: String, onTextChange: (String) -> Unit, 
                 textStyle = TextStyle(color = Color.White, fontSize = MaterialTheme.typography.bodyLarge.fontSize),
                 cursorBrush = SolidColor(ArkivRed),
                 singleLine = true,
+                visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None,
             )
             Surface(
                 onClick = onBack,

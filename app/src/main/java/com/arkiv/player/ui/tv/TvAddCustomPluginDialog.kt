@@ -108,28 +108,17 @@ internal fun TvAddCustomPluginDialog(
                 },
                 style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary,
             )
-            OutlinedTextField(
+            // A button that opens the generic keyboard dialog; Down still goes to "Agregar" (or "Cancelar").
+            TvTextFieldEntry(
+                label = "usuario/repositorio",
                 value = address,
-                onValueChange = onAddressChange,
-                label = { Text("usuario/repositorio") },
-                singleLine = true,
-                readOnly = busy,
-                isError = message != null,
-                supportingText = message?.let { { Text(it) } },
-                keyboardOptions = KeyboardOptions(
-                    capitalization = KeyboardCapitalization.None,
-                    autoCorrectEnabled = false,
-                    keyboardType = KeyboardType.Uri,
-                    imeAction = ImeAction.Done,
-                ),
-                // Done on an empty field does nothing at all: the handler replaces the default action, so the keyboard
-                // stays up and focus stays in the field.
-                keyboardActions = KeyboardActions(onDone = { if (canSubmit) onSubmit() }),
+                onSave = { if (!busy) onAddressChange(it) },
                 modifier = Modifier
-                    .fillMaxWidth()
                     .focusRequester(addressFocus)
-                    .focusProperties { down = if (canSubmit) addFocus else cancelFocus }
-                    .dpadLeavesTheField(focusManager),
+                    .focusProperties { down = if (canSubmit) addFocus else cancelFocus },
+                kind = TvTextKind.URL,
+                hint = "kinotvapp/kino-plugin-archive",
+                error = message,
             )
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth(), color = ArkivRed)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End)) {
