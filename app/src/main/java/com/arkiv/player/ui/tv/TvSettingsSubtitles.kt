@@ -61,4 +61,5 @@ internal fun TvSettingsSubtitles() {
         setPrefs(prefs.copy(subtitleMode = newMode))
     }
     TvSubtitleStyleSection(prefs, onChange = ::setPrefs)
+    TvOnlineSubtitleKeys()
 }

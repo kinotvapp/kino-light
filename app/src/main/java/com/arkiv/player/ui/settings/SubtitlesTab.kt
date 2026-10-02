@@ -128,4 +128,6 @@ internal fun SubtitlesTab() {
         Chip("Sombra", style.edge == PlaybackPrefs.EDGE_SHADOW) { onChange(style.copy(edge = PlaybackPrefs.EDGE_SHADOW)) }
         Chip("Ninguno", style.edge == PlaybackPrefs.EDGE_NONE) { onChange(style.copy(edge = PlaybackPrefs.EDGE_NONE)) }
     }
+
+    OnlineSubtitleKeysSettings()
 }
