@@ -3,6 +3,7 @@ package com.arkiv.player.ui.tv
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,6 +17,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -221,28 +223,38 @@ fun TvTextFieldButton(
             onClick = onClick,
             modifier = Modifier.fillMaxWidth().let { if (masked) it.semantics { password() } else it },
             shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+            // Looks like an INPUT, not an action button: dark fill, a thin outline, the label small on top and a
+            // pencil at the end. Action buttons are filled and turn red on focus; this one only brightens its outline.
             colors = ClickableSurfaceDefaults.colors(
-                containerColor = ArkivSurfaceHigh,
-                focusedContainerColor = ArkivRed,
-                pressedContainerColor = ArkivRed,
+                containerColor = ArkivBlack,
+                focusedContainerColor = ArkivSurfaceHigh.copy(alpha = 0.5f),
+                pressedContainerColor = ArkivSurfaceHigh,
                 contentColor = Color.White,
                 focusedContentColor = Color.White,
                 pressedContentColor = Color.White,
             ),
             border = ClickableSurfaceDefaults.border(
-                border = if (alert) Border(BorderStroke(2.dp, ArkivRed), shape = RoundedCornerShape(10.dp)) else Border.None,
-                focusedBorder = Border(BorderStroke(2.dp, Color.White), shape = RoundedCornerShape(10.dp)),
-                pressedBorder = Border.None,
+                border = Border(BorderStroke(1.5.dp, if (alert) ArkivRed else ArkivTextSecondary), shape = RoundedCornerShape(10.dp)),
+                focusedBorder = Border(BorderStroke(3.dp, Color.White), shape = RoundedCornerShape(10.dp)),
+                pressedBorder = Border(BorderStroke(3.dp, Color.White), shape = RoundedCornerShape(10.dp)),
             ),
         ) {
-            Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
-                text.label?.let {
-                    Text(it, style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.75f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    text.label?.let {
+                        Text(it, style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.75f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    // A field with nothing in it reads as a placeholder (dimmer); a set one as text.
+                    Text(
+                        text.value, style = MaterialTheme.typography.bodyLarge,
+                        color = if (text.label == null) Color.White.copy(alpha = 0.6f) else Color.White,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                    text.hint?.let {
+                        Text(it, style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.5f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
                 }
-                Text(text.value, style = MaterialTheme.typography.bodyLarge, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                text.hint?.let {
-                    Text(it, style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.6f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
+                Text("✎", style = MaterialTheme.typography.titleMedium, color = Color.White.copy(alpha = 0.7f), modifier = Modifier.padding(start = 12.dp))
             }
         }
         error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = ArkivRed, modifier = Modifier.padding(top = 4.dp, start = 4.dp)) }
