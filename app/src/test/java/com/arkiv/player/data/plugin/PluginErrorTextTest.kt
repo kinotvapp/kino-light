@@ -77,7 +77,7 @@ class PluginErrorTextTest {
 
     @Test fun `typed errors keep their Spanish sentences and an unknown code is cleaned`() {
         assertEquals("PelisPlusHD no está disponible ahora", shown(PluginErrorException(PluginErrors.UNAVAILABLE, "https://x.example boom")))
-        assertEquals("No se encontró en PelisPlusHD", shown(PluginErrorException(PluginErrors.NOT_FOUND, "x")))
+        assertEquals("Esta fuente ya no tiene este título (PelisPlusHD)", shown(PluginErrorException(PluginErrors.NOT_FOUND, "x")))
         assertEquals(
             "PelisPlusHD no pudo obtener el video: cuota agotada",
             shown(PluginErrorException("quota_hit", "[Api] cuota agotada: https://api.example/v1")),

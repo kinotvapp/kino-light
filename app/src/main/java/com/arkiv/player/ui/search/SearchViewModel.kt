@@ -298,7 +298,9 @@ class SearchViewModel(
                     arkivApiClient.search(ctx).collect { ev ->
                         when (ev) {
                             is com.arkiv.player.data.gateway.SearchEvent.ResultEvent -> {
-                                ev.item.toPlaySource()?.let { batch += it }
+                                // A card's search lists only what is that title ([TitleMatch]); a source's
+                                // loose text match for something else is not a source of it.
+                                ev.item.toPlaySource()?.takeIf { it !is PlaySource.Plugin || TitleMatch.matches(it.result, ctx) }?.let { batch += it }
                                 if (batch.size >= GATEWAY_BATCH_SIZE) flushBatch()
                             }
                             is com.arkiv.player.data.gateway.SearchEvent.SourceError -> {
