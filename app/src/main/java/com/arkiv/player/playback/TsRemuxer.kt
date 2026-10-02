@@ -42,6 +42,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import com.arkiv.player.cast.CastAudioChoice
+import com.arkiv.player.cast.CastDiag
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.resume
@@ -90,9 +91,17 @@ class TsRemuxer(
      * runtime switch `debug.kino.remux_seek_start` (anything but `off` = yes), read off the main thread.
      */
     private val seekStartEnabled: () -> Boolean = { true },
+    /**
+     * What the loopback proxy already knows about an input URL without asking the CDN: its size in
+     * bytes and its duration in ms (0 = unknown). Saves [locate] a round trip (`ArchiveCacheProxy.knownTotal`).
+     */
+    private val inputHints: (inputUri: String) -> Pair<Long, Long> = { 0L to 0L },
 ) {
 
     private val folder = File(cacheDir, RemuxPolicy.FOLDER)
+
+    /** What locating start points taught about each title ([TsStartIndex]), next to the remuxes. */
+    private val indexes = TsStartIndexStore(folder)
 
     /**
      * Exports in flight, by key. A second caller for the same title joins the one already running
@@ -129,9 +138,11 @@ class TsRemuxer(
      * TV starting at [positionMs], with its [TsStart] located through [inputUri] -- or 0, a remux
      * from the top: switched off, too near the start to be worth it, a finished remux from the top
      * already on disk (nothing to wait for), or a stream the start cannot be found in. Suspends for
-     * the few ranged reads that takes (see [TsStartLocator]), at most [LOCATE_BUDGET_MS].
+     * the few ranged reads that takes (see [TsStartLocator]), at most [LOCATE_BUDGET_MS] -- none when
+     * the title's index has the point already. [durationMs] is the phone player's duration of the
+     * title when it knows (0 = not): it lets the first probe go out with the head and the tail.
      */
-    suspend fun startPoint(inputUri: String, originKey: String, audioOrdinal: Int?, positionMs: Long): Long {
+    suspend fun startPoint(inputUri: String, originKey: String, audioOrdinal: Int?, positionMs: Long, durationMs: Long = 0L): Long {
         val grid = TsStartPoint.gridMs(positionMs)
         if (grid <= 0L) return 0L
         if (alreadyDone(RemuxPolicy.keyFrom(originKey, 0L, audioOrdinal)) != null) {
@@ -146,31 +157,60 @@ class TsRemuxer(
             return 0L
         }
         val t0 = System.currentTimeMillis()
-        val start = withTimeoutOrNull(LOCATE_BUDGET_MS) {
-            runInterruptible(Dispatchers.IO) { locate(inputUri, grid) }
+        val known = withContext(Dispatchers.IO) { indexes.get(originKey) }
+        known?.startFor(grid)?.let { start ->
+            starts[startKey] = start
+            report("phone at ${positionMs}ms → grid ${grid}ms → $start, from the title's index in ${System.currentTimeMillis() - t0}ms · 0 requests")
+            return grid
+        }
+        val located = withTimeoutOrNull(LOCATE_BUDGET_MS) {
+            runInterruptible(Dispatchers.IO) { locate(inputUri, grid, known, durationMs) }
         }
         val ms = System.currentTimeMillis() - t0
+        located?.index?.let { index -> withContext(Dispatchers.IO) { indexes.put(originKey, index) } }
+        val start = located?.start
         if (start == null) {
-            Log.w(TAG, "start point for ${grid}ms not found in ${ms}ms → remux from 0:00")
+            report("for ${grid}ms not found in ${ms}ms${located?.let { " · ${it.cost}" } ?: " (over the budget)"} → remux from 0:00")
             return 0L
         }
         starts[startKey] = start
-        Log.w(TAG, "start point: phone at ${positionMs}ms → grid ${grid}ms → $start, found in ${ms}ms")
+        report("phone at ${positionMs}ms → grid ${grid}ms → $start, found in ${ms}ms · ${located.cost}")
         return grid
     }
+
+    /** A start point's outcome, in the remux's log and the cast's diagnostic trail (masked there). */
+    private fun report(message: String) {
+        Log.w(TAG, "start point: $message")
+        CastDiag.i("remux start point: $message")
+    }
+
+    /** What [locate] found, what the title's index holds after it, and what it cost (reads, bytes, phases). */
+    private class Located(val start: TsStart?, val index: TsStartIndex?, val cost: String)
 
     /** Where the remux filed under [key] begins in the title, in ms: its keyframe's time, 0 from the top. */
     fun startMsOf(key: String): Long =
         if (RemuxPolicy.fromInKey(key) <= 0L) 0L else starts[RemuxPolicy.startKey(key)]?.startMs ?: 0L
 
-    /** [TsStartLocator] over ranged reads of [inputUri] (the loopback proxy, which adds the CDN's headers). */
-    private fun locate(inputUri: String, gridMs: Long): TsStart? {
-        val source = remuxHttp().createDataSource()
+    /**
+     * [TsStartLocator] over ranged reads of [inputUri] (the loopback proxy, which adds the CDN's
+     * headers), seeded with the title's index [known]. The size comes from the index, from the proxy
+     * ([inputHints]: it has seen the file's ranges) or from the head read's `Content-Range` -- never
+     * from a read of its own (0.9.45 asked with a 1-byte read first: a round trip more). Each read
+     * opens its own data source, so the head and the tail can go at once.
+     */
+    private fun locate(inputUri: String, gridMs: Long, known: TsStartIndex?, durationMs: Long): Located {
+        val http = remuxHttp()
         val uri = android.net.Uri.parse(inputUri)
-        fun spec(offset: Long, size: Long) = DataSpec.Builder().setUri(uri).setPosition(offset).setLength(size).build()
+        val requests = java.util.concurrent.atomic.AtomicInteger()
+        val bytes = java.util.concurrent.atomic.AtomicLong()
+        val sizeSeen = java.util.concurrent.atomic.AtomicLong()
         fun range(offset: Long, size: Int): ByteArray? = runCatching {
+            val source = http.createDataSource()
             try {
-                source.open(spec(offset, size.toLong()))
+                requests.incrementAndGet()
+                source.open(DataSpec.Builder().setUri(uri).setPosition(offset).setLength(size.toLong()).build())
+                val contentRange = source.responseHeaders.entries.firstOrNull { it.key.equals("Content-Range", true) }?.value?.firstOrNull()
+                FileWindow.totalFromContentRange(contentRange).takeIf { it > 0L }?.let(sizeSeen::set)
                 val out = java.io.ByteArrayOutputStream(size)
                 val buf = ByteArray(64 * 1024)
                 while (out.size() < size) {
@@ -178,25 +218,30 @@ class TsRemuxer(
                     if (n == C.RESULT_END_OF_INPUT) break
                     out.write(buf, 0, n)
                 }
-                out.toByteArray()
+                out.toByteArray().also { bytes.addAndGet(it.size.toLong()) }
             } finally {
                 runCatching { source.close() }
             }
         }.getOrNull()
-        val total = runCatching {
-            try {
-                source.open(spec(0L, 1L))
-                val headers = source.responseHeaders.entries
-                FileWindow.totalFromContentRange(headers.firstOrNull { it.key.equals("Content-Range", true) }?.value?.firstOrNull())
-            } finally {
-                runCatching { source.close() }
-            }
-        }.getOrDefault(0L)
+        val (hintTotal, hintDuration) = runCatching { inputHints(inputUri) }.getOrDefault(0L to 0L)
+        var total = known?.total ?: hintTotal
+        // The size unknown: the head is read first and tells it (then the tail follows it, not with it).
+        val head = if (total <= 0L) range(0L, TsStartLocator.HEAD_BYTES).also { total = sizeSeen.get() } else null
+        fun cost(locator: TsStartLocator?) =
+            "${requests.get()} request(s), ${bytes.get() / 1024}KB" + (locator?.let { " · ${it.stats.phases()}" } ?: "")
         if (total <= 0L) {
             Log.w(TAG, "start point: the input's length is unknown")
-            return null
+            return Located(null, null, cost(null))
         }
-        return TsStartLocator(total, ::range) { Log.i(TAG, "start point: $it") }.locate(gridMs)
+        val read = { offset: Long, size: Int ->
+            if (head != null && offset == 0L && size <= head.size) head.copyOf(size) else range(offset, size)
+        }
+        val locator = TsStartLocator(
+            total, read, log = { Log.i(TAG, "start point: $it") }, known = known,
+            durationHintMs = durationMs.takeIf { it > 0L } ?: hintDuration,
+        )
+        val start = locator.locate(gridMs)
+        return Located(start, locator.index, cost(locator))
     }
 
     /** The remux's own HTTP reads: patient, and marked for the proxy so it is patient with the CDN too (REMUX_HEADER). */
@@ -538,6 +583,7 @@ class TsRemuxer(
      * when a NEW remux pushes over the 4 GB ceiling.
      */
     fun clear(): Int {
+        indexes.clear()
         val files = folder.listFiles().orEmpty()
         var n = 0
         files.forEach { if (runCatching { it.delete() }.getOrDefault(false)) n++ }

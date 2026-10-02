@@ -440,6 +440,17 @@ class ArchiveCacheProxy(
     }
 
     /**
+     * What is known of [proxyUrl]'s stream without asking the CDN: its size in bytes (a
+     * `Content-Range` already seen, by the pre-warm or [totalOfOrigin]) and its duration in ms
+     * ([rememberDuration]), each 0 when unknown. The cast remux's start point reads it
+     * (`TsRemuxer.locate`): a known size lets its head and tail go out at once.
+     */
+    fun knownSizeAndDuration(proxyUrl: String): Pair<Long, Long> {
+        val stream = streamOf(proxyUrl) ?: return 0L to 0L
+        return (totals[stream.origin] ?: 0L) to (durations[stream.origin] ?: 0L)
+    }
+
+    /**
      * Can `/hls.m3u8` be answered for [proxyUrl] without a trip to the CDN that may fail? Only
      * then is its playlist URL handed to a TV: a playlist that cannot be built is a 502, and the
      * receiver shows an error for it. (The size, the other half, is fetched with retries.)

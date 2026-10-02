@@ -1623,6 +1623,8 @@ class AppGraph(context: Context) {
             // A cast remux starts near the phone's position (TsStart) unless a device test turns
             // it off: `adb shell setprop debug.kino.remux_seek_start off` (back on: `on`).
             seekStartEnabled = { com.arkiv.player.cast.CastTextMedia.systemProperty("debug.kino.remux_seek_start") != "off" },
+            // The size (and duration) the proxy already saw: the start point skips asking for them.
+            inputHints = { uri -> archiveCacheProxy.knownSizeAndDuration(uri) },
         )
     }
 
