@@ -185,18 +185,29 @@ class ArkivApp : Application(), ImageLoaderFactory {
     private fun wireCompanionLifecycle() {
         val companion = graph.companion
         // Sync is symmetric (see CompanionSyncEngine's class KDoc): both host and controller push
-        // AND pull, so it starts/stops the same way on both branches below.
+        // AND pull, so it starts/stops the same way on both branches below. Its dependencies are
+        // built on IO: the plugin-secret table forces pluginRegistry's first reload() (ERRORES-AHE).
+        val sync = com.arkiv.player.companion.CompanionSyncStarter(
+            scope = graph.applicationScope,
+            main = kotlinx.coroutines.Dispatchers.Main.immediate,
+            io = kotlinx.coroutines.Dispatchers.IO,
+            resolve = { SyncDeps(graph.roomSyncSource, graph.syncApply, graph.syncCursorStore, graph.pluginSecretSync) },
+            fallback = { SyncDeps(graph.roomSyncSource, graph.syncApply, graph.syncCursorStore, null) },
+            start = { d -> companion.startSync(d.source, d.apply, d.cursors, d.secrets) },
+            stopSync = companion::stopSync,
+            onError = { report(it, "startup: companion sync plugin secrets") },
+        )
         val observer = if (DeviceType.isTelevision(this)) {
             val resolver = com.arkiv.player.companion.AndroidPlayResolver(this, graph)
             object : androidx.lifecycle.DefaultLifecycleObserver {
                 override fun onStart(owner: androidx.lifecycle.LifecycleOwner) {
                     companion.startHost()
                     companion.startReceiving(resolver, resolver::openPlayer)
-                    companion.startSync(graph.roomSyncSource, graph.syncApply, graph.syncCursorStore, graph.pluginSecretSync)
+                    sync.start()
                     graph.retryPluginSync()
                 }
                 override fun onStop(owner: androidx.lifecycle.LifecycleOwner) {
-                    companion.stopSync()
+                    sync.stop()
                     companion.stopReceiving()
                     companion.stopHost()
                 }
@@ -205,17 +216,24 @@ class ArkivApp : Application(), ImageLoaderFactory {
             object : androidx.lifecycle.DefaultLifecycleObserver {
                 override fun onStart(owner: androidx.lifecycle.LifecycleOwner) {
                     companion.startAutoConnect()
-                    companion.startSync(graph.roomSyncSource, graph.syncApply, graph.syncCursorStore, graph.pluginSecretSync)
+                    sync.start()
                     graph.retryPluginSync()
                 }
                 override fun onStop(owner: androidx.lifecycle.LifecycleOwner) {
-                    companion.stopSync()
+                    sync.stop()
                     companion.stopAutoConnect()
                 }
             }
         }
         androidx.lifecycle.ProcessLifecycleOwner.get().lifecycle.addObserver(observer)
     }
+
+    private class SyncDeps(
+        val source: com.arkiv.player.data.sync.RoomSyncSource,
+        val apply: com.arkiv.player.data.sync.SyncApply,
+        val cursors: com.arkiv.player.data.sync.SyncCursorStore,
+        val secrets: com.arkiv.player.companion.PeerScopedTable?,
+    )
 
     private fun report(error: Throwable, label: String) {
         android.util.Log.w("ArkivStartup", "$label: ${error.message}", error)

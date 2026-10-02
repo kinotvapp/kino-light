@@ -29,14 +29,19 @@ import kotlinx.coroutines.withContext
  */
 internal fun updatePromptWaitsForCast(casting: Boolean, troubleShown: Boolean): Boolean = casting || troubleShown
 
-/** [updatePromptWaitsForCast] for the app's cast session, as state. False without one (a TV, no Play services). */
+/**
+ * [updatePromptWaitsForCast] for the app's cast session, as state. False without one (a TV, no Play
+ * services). The session is only read once the warm-up opened the gate: it builds `repository` (Room
+ * + TMDB) on the main thread, and this composes behind the splash, before the warm-up built it
+ * (ERRORES-AHE, lazy=repository).
+ */
 @Composable
 fun rememberUpdatePromptWaitsForCast(graph: AppGraph): Boolean {
-    var session by remember { mutableStateOf<CastSessionManager?>(graph.castSession) }
+    var session by remember { mutableStateOf(if (graph.warmedUp.value) graph.castSession else null) }
     LaunchedEffect(session == null) {
         while (session == null) {
             delay(3_000)
-            session = graph.castSession
+            if (graph.warmedUp.value) session = graph.castSession
         }
     }
     val s = session ?: return false
