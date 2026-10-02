@@ -375,7 +375,8 @@ class PluginRuntime private constructor(
          * One attempt at building the runtime, on the plugin's thread. [from]: bytecode to run
          * instead of compiling (both parts, as one cache read answered them). [into]: compile here
          * and hand the bytecode to the cache once the runtime is fully up, so only code that loaded
-         * is ever kept. Neither: evaluate from source, exactly as before the cache existed.
+         * is ever kept. Neither: compile from source and keep nothing. Either way the script's top
+         * level runs once, in the loader's import.
          */
         private suspend fun load(
             executor: ExecutorService,
@@ -411,17 +412,16 @@ class PluginRuntime private constructor(
                 if (js.evaluate<Any?>("typeof __kinoCall === 'function'") != true) {
                     throw PluginScriptException(PRELUDE_INCOMPLETE)
                 }
-                var scriptBytes: ByteArray? = null
-                when {
-                    from != null -> js.addModule(from.script)
-                    into != null -> {
-                        // What addModule(name, code) does inside: compile as a module named
-                        // plugin.js, queue the bytes; the next evaluate reads and links them.
-                        val bytes = js.compile(code = script, filename = "plugin.js", asModule = true)
-                        scriptBytes = bytes
-                        js.addModule(bytes)
-                    }
-                    else -> js.addModule("plugin.js", script)
+                // Exactly ONE module record named plugin.js, left unevaluated: the loader's import
+                // below links and evaluates it, so the top level runs once (PluginTopLevelOnceTest).
+                // compile() registers the record it builds in this engine; addModule(bytes) adds a
+                // record of its own, evaluated by the next evaluate's loadModules(). So it's one or
+                // the other, never both: addModule(name, code) is both (compile + queue the bytes),
+                // and with it, or compile() + addModule(bytes), the loader's import resolved to the
+                // compiled, unevaluated record and ran the whole top level a second time.
+                val scriptBytes: ByteArray? = when (from) {
+                    null -> js.compile(code = script, filename = "plugin.js", asModule = true)
+                    else -> { js.addModule(from.script); null }
                 }
                 js.evaluate<Any?>(
                     code = "import * as p from 'plugin.js'; " +
