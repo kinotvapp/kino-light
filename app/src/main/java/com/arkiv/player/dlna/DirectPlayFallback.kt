@@ -26,4 +26,15 @@ internal object DirectPlayFallback {
      */
     fun wholeFileAfterHls(upnpCode: Int?, http: Int): Boolean =
         http == 500 && upnpCode != null && upnpCode != 701
+
+    /**
+     * The TV accepted a file sent as it is and then gave up on it on its own -- [stage] is
+     * [DlnaDiagnosis.STOPPED_EARLY] or [DlnaDiagnosis.TRANSPORT_ERROR] -- without ever playing it
+     * ([advanced] false: no position past 0:00). Measured: an LG webOS listing `video/mp2t` fetched
+     * 39 MB of a TS in 6 requests over 21 s, then went STOPPED at 0:00 (ERRORES-AL7, 0.9.45) -- the
+     * network was fine (15 Mbit/s at -68 dBm), the container was not. The remux is worth one try. A
+     * file that played and then stopped is not the container's fault: reported as before.
+     */
+    fun remuxAfterEarlyStop(stage: String, advanced: Boolean): Boolean =
+        !advanced && (stage == DlnaDiagnosis.STOPPED_EARLY || stage == DlnaDiagnosis.TRANSPORT_ERROR)
 }

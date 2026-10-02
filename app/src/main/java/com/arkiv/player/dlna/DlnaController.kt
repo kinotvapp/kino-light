@@ -146,6 +146,13 @@ class DlnaController(
         @Volatile var idleSince = 0L
         /** The SOAP rejection that ended this cast, for [DirectPlayFallback]: the step, the UPnP code and the HTTP status. */
         @Volatile var soapRejection: Triple<String, Int?, Int>? = null
+        /**
+         * The remux to try when the TV gives up on the file it accepted as it is before ever playing it
+         * ([DirectPlayFallback.remuxAfterEarlyStop]); run once, from the monitor. Null: nothing to try.
+         */
+        @Volatile var onEarlyStop: (() -> Unit)? = null
+        /** The TV reported a position past 0:00 while PLAYING: it did play something. */
+        @Volatile var advanced = false
         /** While a fallback may still recover this cast, its failure report waits here instead of being sent. */
         @Volatile var deferReport = false
         @Volatile var pendingReport: (() -> Unit)? = null
@@ -443,7 +450,24 @@ class DlnaController(
             DlnaLog.i("cast: renderer already lists ${container.mime} (${sinkMimes.size} types): skipping the remux")
             // A TV can list a container and still refuse the file (an LG webOS answered Play with 501 Action Failed): its
             // rejection is held back, and if it is the kind a real MP4 fixes, the remux is tried before giving up.
-            if (playViaProxy(device, archiveUrl, container, title, startMs, deferReport = true)) return true
+            if (playViaProxy(device, archiveUrl, container, title, startMs, deferReport = true)) {
+                // Accepted. A TV can still give up on it afterwards, STOPPED at 0:00 having fetched tens of
+                // MB (an LG listing video/mp2t, 39 MB in 21 s, ERRORES-AL7): the monitor then tries the remux
+                // once ([DirectPlayFallback.remuxAfterEarlyStop]) instead of reporting.
+                cast?.let { c ->
+                    c.deferReport = false
+                    val next = CastStrategy.afterRejection(format, route, receiver, remuxAvailable = true)
+                    if (next != CastStrategy.Route.NONE) {
+                        c.onEarlyStop = {
+                            remuxScope.launch {
+                                val retry = ++attempt
+                                castRemux(device, archiveUrl, remuxKeyUrl, title, audio, next, startMs, retry, null)
+                            }
+                        }
+                    }
+                }
+                return true
+            }
             val direct = cast
             val why = direct?.soapRejection
             val next = if (why != null && DirectPlayFallback.shouldRemux(why.first, why.second, why.third)) {
@@ -1068,7 +1092,7 @@ class DlnaController(
                     put("tv_requests", DlnaLog.lanHits.get().toString())
                     put("bytes_served", DlnaLog.lanBytes.get().toString())
                     put("since_play_ms", since.toString())
-                    put("sink_mimes", c.sinkMimes.take(12).joinToString(","))
+                    put("sink_mimes", c.sinkMimes.take(40).joinToString(","))
                     put("mime_listed", DlnaXml.isSupported(c.mime, c.sinkMimes).toString())
                     extras.forEach { (k, v) -> put(k, v) }
                 },
@@ -1177,6 +1201,19 @@ class DlnaController(
                 stalledMs = stalledMs,
             ),
         )
+        if (info.state.equals("PLAYING", true) && (position ?: 0L) > 0L) c.advanced = true
+        val earlyStop = c.onEarlyStop
+        if (stage != null && !c.reported && earlyStop != null && DirectPlayFallback.remuxAfterEarlyStop(stage, c.advanced)) {
+            c.onEarlyStop = null
+            c.reported = true
+            DlnaLog.diagW(
+                "cast: the TV gave up on the file as it is ($stage, ${DlnaLog.lanHits.get()} requests, ${DlnaLog.lanBytes.get()}B, " +
+                    "never played): retrying it remuxed",
+            )
+            monitorTask?.cancel(false)
+            earlyStop()
+            return
+        }
         if (stage != null && !c.reported) {
             report(c, "dlna cast failed: $stage", DlnaDiagnosis.userMessage(stage), "position_ms" to (position?.toString() ?: ""))
         }
