@@ -54,6 +54,8 @@ data class PluginFailure(
     val facts: PluginFacts? = null,
     /** Text the person gave the call (a search query, a title, a ref): removed from [raw] like a setting value, never sent. */
     val privateText: List<String> = emptyList(),
+    /** What the plugin itself logged during this failed call ([PluginLogBuffer]); sent only for [PluginTelemetry.LOG_ORIGINS], cleaned like [raw]. */
+    val pluginLog: List<String> = emptyList(),
 )
 
 /**
@@ -136,9 +138,17 @@ class PluginTelemetry(
      * own exception is always the one that propagates; the call's argument ([argJson], up to 64 KB) is
      * parsed only for an admitted event, in the background.
      */
-    fun reportCall(pluginId: String, function: String, error: Throwable, elapsedMs: Long? = null, argJson: String? = null) {
+    fun reportCall(
+        pluginId: String,
+        function: String,
+        error: Throwable,
+        elapsedMs: Long? = null,
+        argJson: String? = null,
+        /** The plugin's own `kino.log` lines of THIS failed call; never passed for a call that succeeded. */
+        logLines: List<String> = emptyList(),
+    ) {
         runCatching {
-            val failure = failureOf(pluginId, function, error, elapsedMs) ?: return
+            val failure = failureOf(pluginId, function, error, elapsedMs)?.copy(pluginLog = logLines) ?: return
             submit(failure) { argTexts(argJson) }
         }
     }
@@ -181,6 +191,7 @@ class PluginTelemetry(
         failure.elapsedMs?.takeIf { it >= 0 }?.let { extras["elapsed_ms"] = it.toString() }
         publicHost(failure.host, f, values)?.let { extras["host"] = it }
         cleanReason(failure.raw, values + failure.privateText, f.privateHosts)?.let { extras["reason"] = it }
+        if (f.origin in LOG_ORIGINS) cleanLog(failure.pluginLog, values + failure.privateText, f.privateHosts)?.let { extras["plugin_log"] = it }
         failure.detail.forEach { (k, v) -> extras[safeWord(k)] = safeWord(v) }
         return Event(
             message = "plugin $id $function $kind",
@@ -309,16 +320,53 @@ class PluginTelemetry(
          * long token replaced. Null when nothing readable is left.
          */
         fun cleanReason(raw: String?, privateValues: List<String> = emptyList(), privateHosts: Set<String> = emptySet()): String? {
-            var text = PluginErrorText.reason(raw) ?: return null
+            val text = PluginErrorText.reason(raw) ?: return null
+            return scrub(text, privateValues, privateHosts)?.trim()?.take(MAX_REASON_CHARS)?.ifEmpty { null }
+        }
+
+        /**
+         * The origins whose plugins' own `kino.log` lines may travel with a failure report: only `catalog` (a
+         * recommended plugin from a public repo whose author the owner knows). Not `community_or_manual` (a repo
+         * the owner did not pick, and the record cannot tell it from a person's own, sideloaded one), not `nuvio`
+         * (a third party's scraper converted on the device; its error already is the reason) and not `unknown`.
+         */
+        val LOG_ORIGINS = setOf("catalog")
+
+        /**
+         * A failed call's own log [lines] as they may leave the device, or null when nothing readable is left: each
+         * line scrubbed like [cleanReason] (the person's setting values, query and titles removed, credential shapes,
+         * every URL, e-mail, hostname, IP and long id replaced) plus any long hex or base64 run, then the NEWEST lines
+         * that fit in [PluginLogBuffer.MAX_REPORT_CHARS] joined by newlines.
+         */
+        fun cleanLog(lines: List<String>, privateValues: List<String> = emptyList(), privateHosts: Set<String> = emptySet()): String? {
+            val clean = lines.mapNotNull { raw ->
+                scrub(raw, privateValues, privateHosts)?.let { BLOB.replace(it, "[id]") }?.trim()?.take(PluginLogBuffer.MAX_LINE_CHARS)?.ifEmpty { null }
+            }
+            val kept = ArrayDeque<String>()
+            var total = 0
+            for (line in clean.asReversed()) {
+                val cost = line.length + if (kept.isEmpty()) 0 else 1
+                if (total + cost > PluginLogBuffer.MAX_REPORT_CHARS) break
+                kept.addFirst(line)
+                total += cost
+            }
+            return kept.joinToString("\n").ifEmpty { null }
+        }
+
+        /** The person's own values and servers out, credential shapes redacted, every address and long id replaced. */
+        private fun scrub(raw: String, privateValues: List<String>, privateHosts: Set<String>): String? {
+            var text = raw
             val whole = (privateValues + privateHosts).map { it.trim() }.filter { it.length >= MIN_PRIVATE_CHARS }
             whole.sortedByDescending { it.length }.forEach { text = text.replace(it, "[private]", ignoreCase = true) }
             // A query's words one by one too: "no hay resultados para casa" must not carry "casa de papel" in pieces.
             whole.flatMap { WORDS.findAll(it).map { m -> m.value }.toList() }.filter { it.length >= MIN_PRIVATE_WORD_CHARS }.distinct()
                 .forEach { w -> text = Regex("(?<![\\p{L}\\p{N}])" + Regex.escape(w) + "(?![\\p{L}\\p{N}])", RegexOption.IGNORE_CASE).replace(text, "[private]") }
             text = SentryScrubber.redactSensitiveText(text) ?: return null
-            text = PrivateText.scrubAddresses(text)
-            return text.trim().take(MAX_REASON_CHARS).ifEmpty { null }
+            return PrivateText.scrubAddresses(text)
         }
+
+        /** 24+ hex or base64(url) characters in a row: a key, a hash, a signed blob. */
+        private val BLOB = Regex("[A-Za-z0-9+/_=-]{24,}")
 
         /**
          * [host] when it may be named: a public DNS name that isn't one of the person's own servers
@@ -435,13 +483,18 @@ class PluginTelemetry(
  * (which decides what is worth reporting): search, Home, browse, resolve, episodes and the live
  * lists all go through the app's one caller, so this is the one place they are seen.
  */
-class ReportingPluginCaller(private val delegate: PluginCaller) : PluginCaller {
+class ReportingPluginCaller(
+    /** Where the plugin's `kino.log` lines are kept; only what it wrote DURING a failed call is read, never after a success. */
+    private val logs: PluginLogBuffer = PluginLogBuffer.shared,
+    private val delegate: PluginCaller,
+) : PluginCaller {
     override suspend fun call(pluginId: String, function: String, argJson: String, timeoutMs: Long): String {
         val t0 = System.nanoTime()
+        val mark = logs.mark(pluginId)
         try {
             return delegate.call(pluginId, function, argJson, timeoutMs)
         } catch (e: Exception) {
-            PluginTelemetry.current.reportCall(pluginId, function, e, (System.nanoTime() - t0) / 1_000_000, argJson)
+            PluginTelemetry.current.reportCall(pluginId, function, e, (System.nanoTime() - t0) / 1_000_000, argJson, logs.since(pluginId, mark))
             throw e
         }
     }
