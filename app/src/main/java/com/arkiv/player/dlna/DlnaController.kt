@@ -746,6 +746,8 @@ class DlnaController(
             lastError = "No se pudo preparar el nuevo audio: la TV sigue con el anterior"
             return false
         }
+        // Stopped or superseded while the whole file was being written: nothing to send, nothing to report.
+        if (attempt != mine) return false
         val at = if (following) tvMs(handOver(onTv, key, followTv, startMs)) else resumeAt
         val c = beginCast(
             device, kind = "vod-remux", mime = com.arkiv.player.playback.Container.MP4.mime, title = title, source = archiveUrl, startMs = at,
