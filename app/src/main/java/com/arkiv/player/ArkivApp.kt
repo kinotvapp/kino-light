@@ -62,14 +62,28 @@ class ArkivApp : Application(), ImageLoaderFactory {
         // ones were: recents only store code and name, never the category. And it costs nothing —
         // the cloud ones were already cleaned up by hand, so the next sync repopulates the list
         // with the legitimate ones.
+        //
+        // On a device out of space the `databases/` dir may not even exist (ERRORES-AL6, SQLITE_CANTOPEN
+        // under DEVICE_STORAGE_LOW): the purge is skipped, unreported, and tried again on a later start.
         graph.applicationScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             runCatching {
                 if (!graph.settings.recentsPurged) {
+                    val free = runCatching { java.io.File(applicationInfo.dataDir).usableSpace }.getOrDefault(-1L)
+                    if (!com.arkiv.player.data.db.StorageFailure.roomFor(free)) {
+                        android.util.Log.w("ArkivAccount", "recents purge skipped: ${free / 1024} KB free")
+                        return@runCatching
+                    }
                     graph.database.liveRecentDao().deleteAll()
                     graph.settings.setRecentsPurged(true)
                     android.util.Log.w("ArkivAccount", "recent items purged (adult channel leak)")
                 }
-            }.onFailure { report(it, "startup: purge recents") }
+            }.onFailure {
+                if (com.arkiv.player.data.db.StorageFailure.isNoRoom(it)) {
+                    android.util.Log.w("ArkivAccount", "recents purge skipped, no room: ${it.javaClass.simpleName}")
+                } else {
+                    report(it, "startup: purge recents")
+                }
+            }
         }
 
         graph.startNetworkMonitor()
