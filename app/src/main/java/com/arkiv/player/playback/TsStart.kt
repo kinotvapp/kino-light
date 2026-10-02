@@ -14,7 +14,9 @@ package com.arkiv.player.playback
  * on 0: measured on a test stream at -459 ms, the "sound ahead of the picture" heard on the
  * KALLEY. Reading from the keyframe's own packet with Transformer's
  * `setEnsureFileStartsOnVideoFrameEnabled` drops the audio before it, so both tracks start within
- * one audio frame of each other (+12.7 ms on the same stream, see `RemuxMidFileSyncTest`).
+ * one audio frame of each other: -29 and -19 ms in `RemuxMidFileSyncTest`, where the from-the-top
+ * remux every cast has used measures -61 ms (the rest is the server's summed `tfdt` against
+ * GOPs with more or fewer leading pictures than the first, a frame either way).
  */
 class TsStart(val byteOffset: Long, val startMs: Long, val tables: ByteArray) {
     override fun toString(): String = "TsStart(byte=$byteOffset, at=${startMs}ms, tables=${tables.size}B)"
