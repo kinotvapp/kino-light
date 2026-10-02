@@ -71,6 +71,30 @@ class PluginHomeRowsTest {
         assertEquals(emptyList<PluginHomeRow>(), last.rows)
     }
 
+    @Test fun `a plugin whose home failed with nothing cached is listed as failed, with its sentence`() = runTest {
+        val caller = CountingCaller { id ->
+            if (id == "a") throw com.arkiv.player.data.gateway.GatewayException("Caracol TV: ditu.example respondió con error 403") else rowJson
+        }
+        val last = home(listOf(plugin("a"), plugin("b")), caller).load().toList().last()
+        assertEquals(setOf("a"), last.failed.keys)
+        assertEquals("Caracol TV: ditu.example respondió con error 403", last.failed["a"])
+    }
+
+    @Test fun `a plugin that answered with no rows is not a failure`() = runTest {
+        val last = home(listOf(plugin("a")), CountingCaller { "[]" }).load().toList().last()
+        assertEquals(emptyMap<String, String>(), last.failed)
+    }
+
+    @Test fun `a plugin that fails but still has cached rows is not listed as failed`() = runTest {
+        var fail = false
+        val caller = CountingCaller { if (fail) throw PluginTimeoutException("home", 20_000) else rowJson }
+        home(listOf(plugin("a")), caller).load().toList()
+        fail = true
+        val last = home(listOf(plugin("a")), caller).load(force = true).toList().last()
+        assertEquals(emptyMap<String, String>(), last.failed)
+        assertEquals(1, last.rows.size)
+    }
+
     @Test fun `load is settled at once when no plugin has the home capability`() = runTest {
         val emissions = home(listOf(plugin("c", setOf("search", "resolve"))), CountingCaller { rowJson }).load().toList()
         assertEquals(listOf(PluginHomeLoad(emptyList(), settled = true)), emissions)

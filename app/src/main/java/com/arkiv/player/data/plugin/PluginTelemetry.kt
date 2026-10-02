@@ -231,7 +231,18 @@ class PluginTelemetry(
                     if (error.atLoad) of(PluginFailureKind.LOAD, detail = mapOf("load" to "timeout"))
                     else of(PluginFailureKind.TIMEOUT, host = trace?.waitingFor)
                 is PluginErrorException -> typed(error, function, failedHost, ::of)
-                is PluginThrownException -> of(if (error.atLoad) PluginFailureKind.LOAD else PluginFailureKind.THROWN, raw = error.message, host = failedHost)
+                // The first HTTP error a `kino.fetch` of this call met, as a bare number plus its host: a script that
+                // turns a 403 into "Caracol respondió 403 en TRAY/SEARCH/VOD" has its sentence dropped as code-shaped
+                // ([PluginErrorText.reason]), and the status is what says "geo-blocked" (ERRORES-AVF).
+                is PluginThrownException -> {
+                    val answered = trace?.events?.filterIsInstance<PluginCallTrace.Answered>()?.firstOrNull { it.status >= 400 }
+                    of(
+                        if (error.atLoad) PluginFailureKind.LOAD else PluginFailureKind.THROWN,
+                        raw = error.message,
+                        host = failedHost ?: answered?.host,
+                        detail = answered?.let { mapOf("http_status" to it.status.toString()) }.orEmpty(),
+                    )
+                }
                 is PluginDamagedException -> of(PluginFailureKind.LOAD, detail = mapOf("load" to "damaged"))
                 is PluginException -> of(if (error.atLoad) PluginFailureKind.LOAD else PluginFailureKind.RUNTIME, raw = error.message)
                 else -> of(PluginFailureKind.RUNTIME, detail = mapOf("error" to errorName(error)))
