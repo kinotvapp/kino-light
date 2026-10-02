@@ -157,6 +157,12 @@ class DlnaController(
         @Volatile var seekVerify = false
         /** The remux this cast plays while it grows (the HLS route): stopped with the cast. */
         @Volatile var remuxKey: String? = null
+        /** What the TV was sent ([startPlayback]), for [resendForSubtitles] to send it again. */
+        @Volatile var url: String? = null
+        @Volatile var title: String = ""
+        @Volatile var source: String = ""
+        /** The subtitle the TV was sent with ([DlnaSidecar.selected]'s URL); null = none. */
+        @Volatile var subtitleUrl: String? = null
     }
 
     @Volatile
@@ -700,6 +706,7 @@ class DlnaController(
         monitorTask?.cancel(false)
         val c = Cast(DlnaLog.newSession(), device, kind, mime)
         c.startMs = startMs
+        c.source = source
         cast = c
         lastError = null
         DlnaLog.i(
@@ -729,6 +736,9 @@ class DlnaController(
         val subs = runCatching(subtitleSidecar).getOrNull()
         DlnaSubtitles.captionHeader(subs).let { proxy.extraHeaders = it; localFileServer.extraHeaders = it }
         subs?.selected?.let { DlnaLog.i("cast: with subtitles · ${it.language} + ${subs.others.size} more") }
+        c.url = url
+        c.title = title
+        c.subtitleUrl = subs?.selected?.url
         val didl = xmlEscape(didlLiteFor(url, title, c.mime, subs))
         DlnaLog.i("cast: SetAVTransportURI · url=${DlnaXml.safeUrl(url)} mime=${c.mime}")
         val setUriBody = "<u:SetAVTransportURI xmlns:u=\"$AVT\"><InstanceID>0</InstanceID>" +
@@ -792,6 +802,33 @@ class DlnaController(
 
     /** The cast in progress (a new one per send), null with none: tells whether a re-send replaced it. */
     fun activeCastId(): String? = cast?.id
+
+    /** The subtitle the cast in progress was sent with (its URL on the phone); null = none or no cast. */
+    fun subtitleOnTv(): String? = cast?.subtitleUrl
+
+    /** The subtitle a send would carry now: the phone's choice ([subtitleSidecar]); null = off or none offered. */
+    fun subtitleWanted(): String? = runCatching(subtitleSidecar).getOrNull()?.selected?.url
+
+    /**
+     * Sends the cast in progress again, the same URL with the subtitles the phone has on now in its
+     * DIDL-Lite and headers ([startPlayback]), and puts the TV at [atMs] once it plays (the start
+     * `Seek`, [DlnaSeek]). A renderer has no action to switch subtitles mid-play: re-sending is the
+     * only way, so the TV is paused where it is first. A growing remux goes on as it was (its
+     * playlist now starts at [atMs]). Blocking; false with no cast or when the TV refused it
+     * ([lastError] says why).
+     */
+    fun resendForSubtitles(atMs: Long): Boolean {
+        val old = cast ?: return false
+        val url = old.url ?: return false
+        pause(old.device)
+        val c = beginCast(old.device, kind = old.kind, mime = old.mime, title = old.title, source = old.source, startMs = atMs)
+        // The remux goes on with the new cast: nothing must release it with the old one.
+        c.remuxKey = old.remuxKey
+        old.remuxKey = null
+        c.remuxKey?.let { remuxHls.planStart(it, atMs) }
+        DlnaLog.diag("subtitles: re-sending the cast ${if (subtitleWanted() != null) "with" else "without"} subtitles from ${atMs / 1000}s")
+        return startPlayback(c, url, old.title)
+    }
 
     /**
      * Where the TV is right now, for a re-send to continue there ([DlnaAudioSwitch.tvPositionMs]):

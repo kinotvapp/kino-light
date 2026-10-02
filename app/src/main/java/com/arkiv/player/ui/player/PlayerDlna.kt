@@ -42,6 +42,7 @@ import com.arkiv.player.dlna.DlnaAudioSwitch
 import com.arkiv.player.dlna.DlnaController
 import com.arkiv.player.dlna.DlnaDevice
 import com.arkiv.player.dlna.DlnaLog
+import com.arkiv.player.dlna.DlnaSubtitleSwitch
 import com.arkiv.player.dlna.DlnaXml
 import com.arkiv.player.playback.LiveHlsProxy
 import com.arkiv.player.playback.SourceKind
@@ -53,6 +54,8 @@ import com.google.android.gms.cast.framework.CastContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -111,23 +114,29 @@ internal class DlnaState(
         pickerOpen = false
     }
 
-    /** The renderer accepted the video: from here on the controls drive the TV, not the local one. */
     /** A new audio is being remuxed and re-sent ([audioChanged]): the bar says so instead of the TV's name. */
     var preparingAudio by mutableStateOf(false)
         private set
 
+    /** Another subtitle is being sent to the TV ([subtitleChanged]): the bar says so. */
+    var changingSubtitles by mutableStateOf(false)
+        private set
+
+    /** One subtitle re-send at a time: the next one compares against what the last one left on the TV. */
+    private val subtitleSends = Mutex()
+
     /** What was sent to [active] and with which audio, for [audioChanged] to send it again. */
     private var sentEp: PlayerData? = null
     private var audioOnTv: Int? = null
-    private var spuOnPhone: Int? = null
 
+    /** The renderer accepted the video: from here on the controls drive the TV, not the local one. */
     fun markActive(device: DlnaDevice, ep: PlayerData? = null, audio: com.arkiv.player.cast.CastAudioChoice? = null) {
         active = device
         paused = false
         preparingAudio = false
+        changingSubtitles = false
         sentEp = ep
         audioOnTv = audio?.ordinal
-        spuOnPhone = null
     }
 
     /**
@@ -183,16 +192,39 @@ internal class DlnaState(
         if (menuOpen && active != null) castTracksNote(true, DlnaAudioSwitch.routeOf(dlna.activeKind()), externalSubtitles) else null
 
     /**
-     * Another subtitle picked in the phone's menu while the TV plays. The choice is the phone's
-     * (TracksState already applied it there); the TV gets no subtitles yet. THE hook for sending
-     * them: re-send the cast with [spuId] at the TV's position (`dlna.tvPositionMs()`), as
-     * [audioChanged] does for the audio. The first value seen is only recorded.
+     * Another subtitle picked in the phone's menu while the TV plays ([DlnaSubtitleSwitch]): what
+     * the TV was sent with is compared with what a send would carry now (the app-wide choice,
+     * `CastSubtitles`, already updated by `CastSubtitlesSync`), and when they differ the cast is
+     * sent again with it -- the audio switch's reload: the TV paused, the same URL re-sent with the
+     * new subtitle in its DIDL/headers (none for "Desactivados"), and sought back to where it was
+     * ([DlnaAudioSwitch.startMs]: the TV's position, else the phone's, never 0:00). While another
+     * audio is being prepared it simply goes along with that send.
      */
-    fun subtitleChanged(spuId: Int) {
-        val previous = spuOnPhone
-        spuOnPhone = spuId
-        if (active == null || previous == null || previous == spuId) return
-        DlnaLog.i("subtitle while casting: #$previous → #$spuId (phone only: the TV gets no subtitles yet)")
+    fun subtitleChanged(phoneMs: Long?, notify: (String) -> Unit) {
+        val dev = active ?: return
+        scope.launch {
+            subtitleSends.withLock {
+                if (active !== dev) return@withLock
+                val (kind, onTv, wanted) = withContext(Dispatchers.IO) {
+                    Triple(dlna.activeKind(), dlna.subtitleOnTv(), dlna.subtitleWanted())
+                }
+                val action = DlnaSubtitleSwitch.onChoiceChanged(kind, onTv, wanted, preparingAudio)
+                if (action == DlnaSubtitleSwitch.Action.NONE) return@withLock
+                DlnaLog.diag("subtitle while casting: ${if (onTv != null) "on" else "off"} → ${if (wanted != null) "on" else "off"} on $kind · $action")
+                if (action == DlnaSubtitleSwitch.Action.WITH_AUDIO) return@withLock
+                changingSubtitles = true
+                val itemStartMs = sentEp?.startPositionMs ?: 0L
+                val ok = withContext(Dispatchers.IO) {
+                    dlna.resendForSubtitles(DlnaAudioSwitch.startMs(dlna.tvPositionMs(), phoneMs, itemStartMs))
+                }
+                // Stopped meanwhile: whoever did that owns the bar now.
+                if (active !== dev) return@withLock
+                changingSubtitles = false
+                // A failed re-send leaves the TV paused (or stopped): the bar says so, "Reanudar" asks it to play.
+                paused = !ok
+                if (!ok) notify(dlna.lastError ?: "No se pudieron cambiar los subtítulos en la TV")
+            }
+        }
     }
 
     fun togglePause() {
@@ -209,6 +241,7 @@ internal class DlnaState(
             withContext(Dispatchers.IO) { dlna.stop(dev) }
             active = null
             preparingAudio = false
+            changingSubtitles = false
         }
     }
 
@@ -384,13 +417,18 @@ internal fun BoxScope.ActiveDlnaBar(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (state.preparingAudio) {
+            val busy = state.preparingAudio || state.changingSubtitles
+            if (busy) {
                 CircularProgressIndicator(strokeWidth = 2.dp, color = ArkivRed, modifier = Modifier.size(20.dp))
             } else {
                 Icon(Icons.Default.Tv, contentDescription = null, tint = ArkivRed)
             }
             Text(
-                if (state.preparingAudio) "Preparando el nuevo audio…" else "Reproduciendo en ${active.friendlyName}",
+                when {
+                    state.preparingAudio -> "Preparando el nuevo audio…"
+                    state.changingSubtitles -> "Cambiando subtítulos en la TV…"
+                    else -> "Reproduciendo en ${active.friendlyName}"
+                },
                 modifier = Modifier.weight(1f).padding(start = 12.dp),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -398,7 +436,7 @@ internal fun BoxScope.ActiveDlnaBar(
             IconButton(onClick = onOpenTracks) {
                 Icon(Icons.Default.ClosedCaption, contentDescription = "Subtítulos y audio", tint = Color.White)
             }
-            TextButton(onClick = { state.togglePause() }, enabled = !state.preparingAudio) {
+            TextButton(onClick = { state.togglePause() }, enabled = !busy) {
                 Text(if (state.paused) "Reanudar" else "Pausar")
             }
             TextButton(onClick = { state.stop() }) { Text("Detener") }
@@ -517,8 +555,12 @@ internal fun DlnaTracksFollower(
             android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_LONG).show()
         }
     }
-    val spu = tracks.curSpu
-    LaunchedEffect(active, spu) {
-        if (active != null) state.subtitleChanged(spu)
+    // The menu's choice as the cast sees it: the same key CastSubtitlesSync hands to CastSubtitles.
+    val subtitle = tracks.castTextSelection
+    LaunchedEffect(active, subtitle) {
+        if (active == null) return@LaunchedEffect
+        state.subtitleChanged(phoneMs()) {
+            android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_LONG).show()
+        }
     }
 }

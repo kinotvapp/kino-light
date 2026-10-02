@@ -25,8 +25,8 @@ internal data class DlnaSidecar(val selected: DlnaSubtitle?, val others: List<Dl
  * With the subtitles off on the phone ([DlnaSidecar.selected] null) nothing is sent at all: a TV that
  * gets any of these tends to show it, and the person turned them off.
  *
- * A renderer cannot switch subtitles mid-play; the one chosen when the video is sent is the one the
- * TV gets (the phone's controls are hidden while DLNA plays). Pure: the DIDL is pinned by tests.
+ * A renderer cannot switch subtitles mid-play: another choice on the phone sends the video again
+ * with it, from where the TV was ([DlnaSubtitleSwitch]). Pure: the DIDL is pinned by tests.
  */
 internal object DlnaSubtitles {
 
