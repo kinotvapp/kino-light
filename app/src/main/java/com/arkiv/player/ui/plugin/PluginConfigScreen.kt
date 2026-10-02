@@ -49,6 +49,10 @@ import com.arkiv.player.data.plugin.PluginSettings
 import com.arkiv.player.data.plugin.SettingType
 import com.arkiv.player.ui.rememberGraph
 import com.arkiv.player.ui.settings.PasswordField
+import com.arkiv.player.ui.tv.TvTextFieldEntry
+import com.arkiv.player.ui.tv.TvTextInput
+import com.arkiv.player.ui.tv.TvTextInputDialog
+import com.arkiv.player.ui.tv.TvTextKind
 import com.arkiv.player.ui.theme.ArkivBlack
 import com.arkiv.player.ui.theme.ArkivRed
 import com.arkiv.player.ui.theme.ArkivTextSecondary
@@ -91,7 +95,7 @@ fun PluginConfigContent(
         Text("Lo que escribas aquí solo lo usa este plugin.", style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary)
         draft.settings.forEachIndexed { i, s ->
             val firstFocus = if (isTv && i == 0) initialFocus else null
-            SettingField(s, draft, width.then(leaveOnDown), onChange, firstFocus)
+            SettingField(s, draft, width.then(leaveOnDown), onChange, firstFocus, isTv)
         }
         draft.error?.let { Text(it, color = ArkivRed, style = MaterialTheme.typography.bodyMedium) }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -104,9 +108,18 @@ fun PluginConfigContent(
 
 /** [firstFocus] is non-null only for TV's first setting (see [PluginConfigContent]); for [SettingType.SELECT] it lands on the first option, not the group. */
 @Composable
-private fun SettingField(s: PluginSetting, draft: PluginConfigDraft, modifier: Modifier, onChange: (String, Any?) -> Unit, firstFocus: FocusRequester? = null) {
+private fun SettingField(s: PluginSetting, draft: PluginConfigDraft, modifier: Modifier, onChange: (String, Any?) -> Unit, firstFocus: FocusRequester? = null, isTv: Boolean = false) {
     val label = s.label + if (s.required) " *" else ""
     val fieldModifier = firstFocus?.let { modifier.focusRequester(it) } ?: modifier
+    // On TV a text-like setting is a button that opens the generic keyboard dialog: a system text field would keep the D-pad.
+    if (isTv && (s.type == SettingType.TEXT || s.type == SettingType.URL || s.type == SettingType.PASSWORD)) {
+        TvTextFieldEntry(
+            label = s.label, value = draft.text(s.key), onSave = { onChange(s.key, it) }, modifier = fieldModifier,
+            secret = s.type == SettingType.PASSWORD, kind = if (s.type == SettingType.URL) TvTextKind.URL else TvTextKind.TEXT,
+            required = s.required, hint = s.hint,
+        )
+        return
+    }
     when (s.type) {
         SettingType.TEXT -> OutlinedTextField(
             value = draft.text(s.key), onValueChange = { onChange(s.key, it) }, label = { Text(label) },
@@ -126,7 +139,7 @@ private fun SettingField(s: PluginSetting, draft: PluginConfigDraft, modifier: M
             Text(s.label, color = Color.White, modifier = Modifier.weight(1f))
             Switch(checked = draft.toggle(s.key), onCheckedChange = null)
         }
-        SettingType.LIST -> ListField(s, draft.entries(s.key), modifier, firstFocus) { onChange(s.key, it) }
+        SettingType.LIST -> ListField(s, draft.entries(s.key), modifier, firstFocus, isTv) { onChange(s.key, it) }
         SettingType.SELECT -> Column(modifier) {
             Text(s.label, color = Color.White)
             s.options.forEachIndexed { i, o ->
@@ -148,7 +161,7 @@ private fun SettingField(s: PluginSetting, draft: PluginConfigDraft, modifier: M
  * Adding and editing share one dialog with the list's fields; editing also offers "Quitar".
  */
 @Composable
-private fun ListField(s: PluginSetting, entries: List<Map<String, String>>, modifier: Modifier, firstFocus: FocusRequester?, onChange: (List<Map<String, String>>) -> Unit) {
+private fun ListField(s: PluginSetting, entries: List<Map<String, String>>, modifier: Modifier, firstFocus: FocusRequester?, isTv: Boolean, onChange: (List<Map<String, String>>) -> Unit) {
     // -1 = adding, >= 0 = editing that entry, null = closed.
     var editing by remember { mutableStateOf<Int?>(null) }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -157,6 +170,8 @@ private fun ListField(s: PluginSetting, entries: List<Map<String, String>>, modi
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(s.fields.mapNotNull { f -> e[f.key]?.takeIf { it.isNotBlank() } }.joinToString("  ·  "), color = Color.White, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                 TextButton(onClick = { editing = i }, modifier = Modifier.focusRing()) { Text("Editar") }
+                // The TV's entry dialog is the generic keyboard, which has no "Quitar": it sits next to "Editar" instead.
+                if (isTv) TextButton(onClick = { onChange(entries.filterIndexed { j, _ -> j != i }) }, modifier = Modifier.focusRing()) { Text("Quitar") }
             }
         }
         val full = entries.size >= s.max
@@ -164,7 +179,21 @@ private fun ListField(s: PluginSetting, entries: List<Map<String, String>>, modi
         Button(onClick = { editing = -1 }, enabled = !full, modifier = Modifier.focusRing().let { if (firstFocus != null) it.focusRequester(firstFocus) else it }) { Text("+ Agregar") }
     }
     editing?.let { index ->
-        ListEntryDialog(
+        if (isTv) {
+            val entry = entries.getOrNull(index)
+            TvTextInputDialog(
+                title = if (index < 0) "Agregar a ${s.label}" else "Editar",
+                fields = s.fields.map { f ->
+                    TvTextInput(f.label, entry?.get(f.key).orEmpty(), f.type == SettingType.PASSWORD, if (f.type == SettingType.URL) TvTextKind.URL else TvTextKind.TEXT, f.required, f.hint)
+                },
+                saveLabel = if (index < 0) "Agregar" else "Guardar",
+                onDismiss = { editing = null },
+                onSave = { v ->
+                    val next = s.fields.mapIndexed { i, f -> f.key to v[i] }.toMap()
+                    onChange(if (index < 0) entries + next else entries.mapIndexed { i, e -> if (i == index) next else e })
+                },
+            )
+        } else ListEntryDialog(
             s, entries.getOrNull(index), adding = index < 0,
             onSave = { entry -> onChange(if (index < 0) entries + entry else entries.mapIndexed { i, e -> if (i == index) entry else e }); editing = null },
             onRemove = { onChange(entries.filterIndexed { i, _ -> i != index }); editing = null },
