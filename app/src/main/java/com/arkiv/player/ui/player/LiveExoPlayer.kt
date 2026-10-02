@@ -35,7 +35,9 @@ import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.common.util.StuckPlayerException
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.ExoTimeoutException
 import androidx.media3.exoplayer.hls.playlist.HlsPlaylistTracker
 import androidx.media3.exoplayer.source.BehindLiveWindowException
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -48,6 +50,7 @@ import com.arkiv.player.playback.LiveDecoderMemory
 import com.arkiv.player.playback.LiveErrorKind
 import com.arkiv.player.playback.LiveLog
 import com.arkiv.player.playback.LiveQualityMonitor
+import com.arkiv.player.playback.stuckSwitchesDecoder
 import com.arkiv.player.playback.liveRenderers
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.Dispatchers
@@ -68,10 +71,28 @@ internal fun liveErrorKind(error: PlaybackException): LiveErrorKind {
             is BehindLiveWindowException -> return LiveErrorKind.BEHIND_LIVE_WINDOW
             is HlsPlaylistTracker.PlaylistResetException -> return LiveErrorKind.PLAYLIST_RESET
             is HlsPlaylistTracker.PlaylistStuckException -> return LiveErrorKind.PLAYLIST_STUCK
+            is StuckPlayerException ->
+                if (cause.stuckType == StuckPlayerException.STUCK_PLAYING_NO_PROGRESS) return LiveErrorKind.STUCK_PLAYING
         }
         cause = cause.cause
     }
     return LiveErrorKind.OTHER
+}
+
+/**
+ * ExoPlayer gave up waiting for its playback thread to let go of the surface (ERRORES-AKG: a slow
+ * software decoder on WayDroid, a MediaTek one on a phone). It only detaches when our TextureView is
+ * destroyed, i.e. the screen or the channel is going away: nothing to recover, nothing to report.
+ */
+@androidx.annotation.OptIn(UnstableApi::class)
+internal fun isSurfaceDetachTimeout(error: PlaybackException): Boolean {
+    var cause: Throwable? = error.cause
+    var depth = 0
+    while (cause != null && depth++ < 8) {
+        if (cause is ExoTimeoutException) return cause.timeoutOperation == ExoTimeoutException.TIMEOUT_OPERATION_DETACH_SURFACE
+        cause = cause.cause
+    }
+    return false
 }
 
 /**
@@ -121,6 +142,8 @@ internal fun LiveExoPlayer(
     onPlayerReady: (Player?) -> Unit = {},
     onTextureViewReady: (TextureView?) -> Unit = {},
     onError: (String) -> Unit = {},
+    /** The stream's video is beyond every decoder on the device and has no smaller variant: no reopen will help. */
+    onUnsupportedFormat: () -> Unit = {},
     onFirstFrame: (Boolean) -> Unit = {},
     zoom: Float = 1f,
 ) {
@@ -167,6 +190,10 @@ internal fun LiveExoPlayer(
     // Per channel, not per player: a feed that keeps falling behind must run out of tries even though every try
     // is a new player.
     val inPlaceBudget = remember(channelCode) { InPlaceRecoveryBudget() }
+    // Per channel too: a second stuck-playing error on it swaps the hardware decoder (see stuckSwitchesDecoder).
+    val stuckBefore = remember(channelCode) { AtomicBoolean(false) }
+    // Set when this player is disposed: an error it raises while its view goes away is no longer anyone's.
+    val disposed = remember(exoPlayer) { AtomicBoolean(false) }
 
     // Hoisted out of the watchdog LaunchedEffect below so `onPlayerError` can call it too (a decoder that
     // REJECTS the format outright throws before the watchdog's frozen-picture check would ever fire).
@@ -234,6 +261,8 @@ internal fun LiveExoPlayer(
         // reports from one bad box. Report only the FIRST error of this player session; the on-screen
         // error still shows every time. Reset per session (this effect re-runs per exoPlayer).
         var errorReported = false
+        // The max video size a capability failure already narrowed the selection to (ERRORES-AML).
+        var capabilityCap: Pair<Int, Int>? = null
 
         val listener = object : Player.Listener {
 
@@ -275,6 +304,37 @@ internal fun LiveExoPlayer(
             override fun onPlayerError(error: PlaybackException) {
                 val msg = error.message ?: "Error de reproducción (${error.errorCode})"
                 Log.e(TAG, "onPlayerError errorCode=${error.errorCode} msg=$msg", error)
+                // A video beyond the device's decoders (ERRORES-AML, 8K HEVC on a phone): a smaller variant of
+                // the same stream if it has one, else a clear message -- decoder fallback already tried them all.
+                val exceeded = com.arkiv.player.playback.DecoderCapability.exceededVideoFormat(error)
+                if (exceeded != null) {
+                    val variants = exoPlayer.currentTracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
+                        .flatMap { g -> (0 until g.length).map { g.getTrackFormat(it) } }
+                    val cap = com.arkiv.player.playback.DecoderCapability.capBelow(exceeded, variants, capabilityCap)
+                    if (cap != null) {
+                        capabilityCap = cap
+                        LiveLog.w("video ${exceeded.width}x${exceeded.height} beyond the decoders -> variants up to ${cap.first}x${cap.second}")
+                        exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon()
+                            .setMaxVideoSize(cap.first, cap.second).build()
+                        exoPlayer.prepare()
+                        exoPlayer.playWhenReady = true
+                        return
+                    }
+                    if (error.errorCode != PlaybackException.ERROR_CODE_DECODING_FAILED || software) {
+                        LiveLog.e("video ${exceeded.width}x${exceeded.height} ${exceeded.sampleMimeType} beyond every decoder, no smaller variant")
+                        if (!errorReported) {
+                            errorReported = true
+                            Crash.report(error, "live-format-unsupported", extras = mapOf(
+                                "channel" to channelCode,
+                                "video_codec" to (exceeded.codecs ?: exceeded.sampleMimeType ?: ""),
+                                "video_size" to "${exceeded.width}x${exceeded.height}",
+                                "software_forced" to software.toString(),
+                            ))
+                        }
+                        onUnsupportedFormat()
+                        return
+                    }
+                }
                 // The hardware decoder rejected the stream's format outright (seen on MediaTek/Hisilicon/other
                 // chips against certain live channels since the Media3 1.11 upgrade): a playlist refresh or a
                 // plain reopen just hits the same wall again. Same rescue as the frozen-picture watchdog below,
@@ -285,10 +345,24 @@ internal fun LiveExoPlayer(
                     rescueInSoftware("decoder rejected the format", 0L)
                     return
                 }
-                // Fell behind the window, or the playlist reset / froze: a fresh look at the playlist at the live
-                // edge fixes it, no need to re-resolve the whole channel. Only a few tries a minute; then the
-                // full reopen (and its warning) takes over.
+                // The TextureView went away and the decoder was slow to let go of it (ERRORES-AKG): leaving the
+                // screen or zapping. Only if the view is still up once that settles is it a real failure.
+                if (isSurfaceDetachTimeout(error)) {
+                    LiveLog.w("surface detach timed out on ${quality.videoDecoder.ifEmpty { "?" }}")
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        if (!disposed.get() && textureView.isAttachedToWindow) onError(msg)
+                    }
+                    return
+                }
                 val kind = liveErrorKind(error)
+                val stuckRepeat = kind == LiveErrorKind.STUCK_PLAYING && stuckBefore.getAndSet(true)
+                if (stuckSwitchesDecoder(kind, stuckRepeat, software)) {
+                    rescueInSoftware("stuck playing", 10_000L)
+                    return
+                }
+                // Fell behind the window, the playlist reset / froze, or the player sat stuck: a fresh look at the
+                // playlist at the live edge fixes it, no need to re-resolve the whole channel. Only a few tries a
+                // minute; then the full reopen (and its warning) takes over.
                 if (kind.recoverableInPlace && inPlaceBudget.tryConsume(SystemClock.elapsedRealtime())) {
                     LiveLog.w("in-place recovery: $kind ($msg) -> seek to the live edge and prepare again")
                     // Once per recovery, not per retry: a stuck playlist keeps hitting the same error while it's
@@ -333,7 +407,9 @@ internal fun LiveExoPlayer(
             quality.finish()
             exoPlayer.removeAnalyticsListener(quality)
             exoPlayer.removeListener(listener)
-            exoPlayer.clearVideoTextureView(textureView)
+            disposed.set(true)
+            // Released with the surface still attached: release() drops it along with the codec, where a
+            // clearVideoTextureView() first waited (on this thread) for a slow decoder to detach (ERRORES-AKG).
             exoPlayer.release()
             mirror.resetClock()
             mirror.syncTransport(buffering = false, playing = false, wantsToPlay = false)

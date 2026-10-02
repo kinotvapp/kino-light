@@ -233,7 +233,7 @@ class XuperEpisodesParityTest {
     private fun expectedFailure(fixture: JSONObject): Pair<String, String> {
         val error = fixture.getJSONObject("expected").getJSONObject("error")
         return when (val last = lastPortalAnswer(fixture)) {
-            is MagisResult.PortalError -> last.toPluginError()
+            is MagisResult.PortalError -> last.toPluginError(goneMessage = XUPER_SERIES_GONE)
             is MagisResult.RedError -> last.toPluginError()
             else -> PluginErrors.UNAVAILABLE to error.getString("message")
         }

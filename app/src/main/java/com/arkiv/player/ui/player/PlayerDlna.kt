@@ -258,6 +258,39 @@ internal class DlnaState(
     }
 
     /**
+     * The last option for a cast that gave up for good ([com.arkiv.player.cast.CastGaveUp]), while its
+     * question is up and it has one to offer ("Descargar y preparar para la TV"); null otherwise.
+     */
+    var gaveUp by mutableStateOf<DlnaController.Failure?>(null)
+        private set
+
+    fun dismissGaveUp() {
+        gaveUp = null
+    }
+
+    /**
+     * Follows the casts that give up for good ([DlnaController.failures]) while the screen is up. One
+     * that failed after its send had already returned true -- a fallback stage started by the monitor,
+     * or a TV that stopped before ever playing -- is told with [notify] and ended like "Detener" (the
+     * phone resumes); one that failed during its send was already told by the sender. Either may offer
+     * [gaveUp]'s last option.
+     */
+    suspend fun followFailures(notify: (String) -> Unit) {
+        dlna.failures.collect { f ->
+            if (f.lastResort != null) gaveUp = f
+            if (!f.async) return@collect
+            val dev = active ?: return@collect
+            notify(f.message)
+            withContext(Dispatchers.IO) { runCatching { dlna.stop(dev) } }
+            endedAtMs = dlna.knownTvPositionMs()
+            DlnaLog.diag("cast gave up after it was sent: the phone resumes at ${endedAtMs?.div(1000)}s")
+            active = null
+            preparingAudio = false
+            changingSubtitles = false
+        }
+    }
+
+    /**
      * Best-effort cutoff on leaving the screen: doesn't touch the state because it's already dying.
      *
      * Goes through [appScope] and NOT `scope`, and that isn't cosmetic: the caller is
@@ -329,9 +362,11 @@ private suspend fun sendToRendererNow(
         val ip = lan.lanIp()
         val liveUrl = ip?.let { lan.liveHlsProxy.lanUrl(it) }
         DlnaLog.i("sendToRenderer: kind=LIVE title='${ep.title.take(40)}' lanIp=${ip ?: "NONE"} liveProxyUrl=${DlnaXml.safeUrl(liveUrl)}")
-        if (liveUrl != null) {
+        if (ip != null && liveUrl != null) {
             withContext(Dispatchers.IO) {
-                dlna.playRawUrl(device, liveUrl, ep.title, "application/vnd.apple.mpegurl")
+                // The playlist to a renderer that lists HLS (or nothing); the channel as one continuous
+                // TS body to one that lists a TS type and no HLS (the Philips of ERRORES-AMF).
+                sendHlsRoute(dlna, device, ep, live = true, kind = "live-hls", playlist = liveUrl) { mime -> lan.liveHlsProxy.lanTsUrl(ip, mime) }
             }
         } else {
             // The proxy has no LAN URL to hand out (no WiFi/LAN address, or the live proxy isn't listening).
@@ -339,22 +374,23 @@ private suspend fun sendToRendererNow(
                 dlna.failedBeforeSending(
                     device, kind = "live-hls", stage = "no_lan_url",
                     userMessage = "No se pudo obtener la dirección de red del teléfono para enviar el canal",
-                    detail = "lanIp=${ip ?: "none"} proxyUrl=none",
+                    detail = "lanIp=${ip ?: "none"} proxyUrl=none", episodeId = ep.episodeId, live = true,
                 )
             }
             false
         }
     }
 
-    // A plugin title's HLS (PluginCastProxy's token playlist) and a direct one (an mp4/webm or HLS
-    // with no headers on an allowed host, see pluginCastModeFor): the renderer pulls it from
-    // PluginCastProxy on the LAN, like a live channel -- a direct one registered there first
-    // ([dlnaPluginUri]). A proxied plugin FILE falls to the branch below and goes through
-    // DlnaProxyServer from PluginCastProxy's loopback url, like Magis does from its proxy -- never
-    // a plugin URL fetched by DlnaProxyServer's own, ungated client.
-    SourceKind.PLUGIN ->
-        if (ep.mime == MIME_HLS || !ep.mediaUrl.startsWith("http://127.0.0.1:")) sendPluginHls(dlna, device, ep, lan, startMs)
-        else sendThroughProxy(dlna, device, ep, audio, startMs, followTv)
+    // A plugin title's HLS: PluginCastProxy's token playlist on the LAN, or its continuous TS twin
+    // ([sendPluginHls]). A plugin FILE goes through the whole VOD route chain ([sendPluginFile]):
+    // its own URL when the TV may fetch it, then PluginCastProxy's loopback url through
+    // DlnaProxyServer, like Magis does from its proxy -- never a plugin URL fetched by
+    // DlnaProxyServer's own, ungated client -- then, for a TS, the remux.
+    SourceKind.PLUGIN -> when {
+        ep.mime == MIME_HLS -> sendPluginHls(dlna, device, ep, lan, startMs)
+        !ep.mediaUrl.startsWith("http://127.0.0.1:") -> sendPluginFile(dlna, device, ep, lan, audio, startMs, followTv)
+        else -> sendThroughProxy(dlna, device, ep, audio, startMs, followTv)
+    }
 
     else -> sendThroughProxy(dlna, device, ep, audio, startMs, followTv)
 }
@@ -369,25 +405,113 @@ internal fun dlnaStartMs(ep: PlayerData?, livePositionMs: Long?): Long = when {
     else -> CastStart.resumePointMs(receiverMs = null, livePositionMs = livePositionMs, itemStartMs = ep.startPositionMs)
 }
 
-/** [ep]'s HLS, or its direct file, to [device] as a LAN url the renderer pulls itself (see [dlnaPluginUri]). */
+/** [ep]'s HLS to [device] as a LAN url the renderer pulls itself (see [dlnaPluginUri]), or its continuous TS twin. */
 private suspend fun sendPluginHls(dlna: DlnaController, device: DlnaDevice, ep: PlayerData, lan: DlnaLan, startMs: Long): Boolean {
     val ip = lan.lanIp()
     val url = dlnaPluginUri(ep, ip, lan.pluginProxy)
-    val shape = if (ep.mime == MIME_HLS) "hls" else "file"
-    DlnaLog.i(
-        "sendToRenderer: kind=PLUGIN $shape mime=${ep.mime.ifBlank { "?" }} title='${ep.title.take(40)}' lanIp=${ip ?: "NONE"} " +
-            "url=${DlnaXml.safeUrl(url)}" + if (!ep.mediaUrl.startsWith("http://127.0.0.1:")) " (direct ${DlnaXml.safeUrl(ep.mediaUrl)} via the LAN proxy)" else "",
-    )
-    if (url != null) return withContext(Dispatchers.IO) { dlna.playRawUrl(device, url, ep.title, ep.mime.ifBlank { MIME_HLS }, startMs) }
+    val live = com.arkiv.player.data.plugin.PluginIds.isLiveEpisode(ep.episodeId)
+    DlnaLog.i("sendToRenderer: kind=PLUGIN hls title='${ep.title.take(40)}' lanIp=${ip ?: "NONE"} url=${DlnaXml.safeUrl(url)}")
+    if (url != null) {
+        return withContext(Dispatchers.IO) {
+            sendHlsRoute(dlna, device, ep, live, kind = "plugin-hls", playlist = url, startMs = startMs) { mime ->
+                com.arkiv.player.playback.PluginCastProxy.continuousUrlOf(url, mime, if (live) 0L else startMs)
+            }
+        }
+    }
     withContext(Dispatchers.IO) {
         dlna.failedBeforeSending(
-            device, kind = "plugin-$shape", stage = "no_lan_url",
+            device, kind = "plugin-hls", stage = "no_lan_url",
             userMessage = "No se pudo obtener la dirección de red del teléfono para enviar el título",
-            detail = "lanIp=${ip ?: "none"}",
+            detail = "lanIp=${ip ?: "none"}", episodeId = ep.episodeId, live = live,
         )
     }
     return false
 }
+
+/**
+ * An HLS stream ([playlist], a LAN url) to [device] by the route its sink list allows
+ * ([DlnaRenderer.liveRoute]): the playlist itself to a renderer that lists HLS (or nothing), the
+ * same stream as one continuous MPEG-TS body ([continuous] gives its url for the TS type the
+ * renderer lists) to one that lists a TS type and no HLS, and to one that lists neither nothing at
+ * all, with [DlnaRenderer.noHlsMessage] (a playlist such a renderer answers with a 500, ERRORES-AMF).
+ * Blocking: on IO.
+ */
+private fun sendHlsRoute(
+    dlna: DlnaController,
+    device: DlnaDevice,
+    ep: PlayerData,
+    live: Boolean,
+    kind: String,
+    playlist: String,
+    startMs: Long = 0L,
+    continuous: (mime: String) -> String?,
+): Boolean {
+    val sink = dlna.sinkMimesOf(device)
+    return when (val route = com.arkiv.player.dlna.DlnaRenderer.liveRoute(sink)) {
+        com.arkiv.player.dlna.DlnaRenderer.HlsRoute.Playlist ->
+            dlna.playRawUrl(device, playlist, ep.title, MIME_HLS, if (live) 0L else startMs, ep.episodeId, live)
+        is com.arkiv.player.dlna.DlnaRenderer.HlsRoute.ContinuousTs -> {
+            val url = continuous(route.mime)
+            if (url != null) {
+                dlna.playContinuousTs(device, url, ep.title, route.mime, live, if (live) 0L else startMs, ep.episodeId)
+            } else {
+                dlna.failedBeforeSending(
+                    device, kind = kind, stage = "no_lan_url",
+                    userMessage = "No se pudo obtener la dirección de red del teléfono para enviar el video",
+                    detail = "continuous TS url unavailable", episodeId = ep.episodeId, live = live,
+                )
+                false
+            }
+        }
+        com.arkiv.player.dlna.DlnaRenderer.HlsRoute.None -> {
+            dlna.failedBeforeSending(
+                device, kind = kind, stage = "no_hls_route",
+                userMessage = com.arkiv.player.dlna.DlnaRenderer.noHlsMessage(live),
+                detail = "renderer ${com.arkiv.player.dlna.DlnaRenderer.summary(sink)}", episodeId = ep.episodeId, live = live,
+            )
+            false
+        }
+    }
+}
+
+/**
+ * A plugin's own FILE (an mp4, webm, TS... on the plugin's host) through the whole DLNA VOD route
+ * chain ([DlnaController.setUrlAndPlay]): its own URL first when the TV may fetch it ([dlnaDirectUrl]),
+ * then PluginCastProxy's loopback url through the phone's proxy, then, for a TS, the remux. The
+ * remux and the sniff read the loopback url: the plugin's gated client, never a plain fetch.
+ */
+private suspend fun sendPluginFile(
+    dlna: DlnaController,
+    device: DlnaDevice,
+    ep: PlayerData,
+    lan: DlnaLan,
+    audio: com.arkiv.player.cast.CastAudioChoice?,
+    startMs: Long,
+    followTv: (() -> Long)?,
+): Boolean = withContext(Dispatchers.IO) {
+    val loopback = if (ep.mediaUrl.startsWith("https://") || ep.mediaUrl.startsWith("http://")) lan.pluginProxy(ep) else null
+    DlnaLog.i("sendToRenderer: kind=PLUGIN file mime=${ep.mime.ifBlank { "?" }} title='${ep.title.take(40)}' via ${DlnaXml.safeUrl(loopback)}")
+    if (loopback == null) {
+        dlna.failedBeforeSending(
+            device, kind = "plugin-file", stage = "no_proxy_url",
+            userMessage = "No se pudo preparar el título para enviarlo a la TV",
+            detail = "source=${DlnaXml.safeUrl(ep.mediaUrl)}", episodeId = ep.episodeId,
+        )
+        return@withContext false
+    }
+    dlna.setUrlAndPlay(
+        device, loopback, ep.title, audio, startMs, remuxKeyUrl = ep.mediaUrl, followTv = followTv,
+        directUrl = dlnaDirectUrl(ep), episodeId = ep.episodeId,
+    )
+}
+
+/**
+ * A plugin file's own URL when a DLNA TV may fetch it itself: plain http (renderers take no https
+ * and follow no redirects), no header the TV could not send, and a host the plugin's rules allow
+ * ([directCastAllowed]); null otherwise -- then it always goes through the phone.
+ */
+internal fun dlnaDirectUrl(item: PlayerData): String? =
+    item.mediaUrl.takeIf { it.startsWith("http://") && !it.startsWith("http://127.0.0.1:") && item.requestHeaders.isEmpty() && directCastAllowed(item) }
 
 /**
  * What a DLNA renderer is handed for a castable plugin item: always a plain-http URL on the LAN.
@@ -419,18 +543,7 @@ internal class DlnaLan(
 internal fun dlnaLan(graph: com.arkiv.player.AppGraph): DlnaLan = DlnaLan(
     lanIp = { graph.lanIp() },
     liveHlsProxy = graph.liveHlsProxy,
-    pluginProxy = { item ->
-        val proxy = graph.pluginCastProxy
-        runCatching { proxy.start() }
-        proxy.register(
-            key = item.episodeId,
-            origin = item.mediaUrl,
-            headers = item.requestHeaders,
-            hosts = item.pluginHosts,
-            shape = com.arkiv.player.playback.PluginCastProxy.shapeFor(item.mime),
-            mime = item.mime.ifBlank { "video/mp4" },
-        )
-    },
+    pluginProxy = { item -> registerPluginCast(graph, item) },
 )
 
 /**
@@ -487,7 +600,7 @@ private suspend fun sendThroughProxy(
     // Magis is READ through the loopback proxy (it adds the CDN's headers) but its remux is FILED
     // under the CDN url, as the Chromecast's is: stable across token refreshes, and shared with it.
     val keyUrl = ep.castUrl?.takeIf { ep.kind == SourceKind.MAGIS && it.isNotBlank() } ?: source
-    return withContext(Dispatchers.IO) { dlna.setUrlAndPlay(device, source, ep.title, audio, startMs, keyUrl, followTv) }
+    return withContext(Dispatchers.IO) { dlna.setUrlAndPlay(device, source, ep.title, audio, startMs, keyUrl, followTv, episodeId = ep.episodeId) }
 }
 
 /** "Playing on <TV>" bar with pause/stop, visible while a renderer is active. */
@@ -536,13 +649,48 @@ internal fun BoxScope.ActiveDlnaBar(
 
 /**
  * Dialog of found devices. Doesn't know what's playing: choosing a renderer only notifies
- * [onChoose], which is the one that builds the URL and confirms with [DlnaState.markActive].
+ * [onChoose], which is the one that builds the URL and confirms with [DlnaState.markActive]
+ * (`atMs`: where the TV should start, null = where the phone's player is).
+ *
+ * Always composed with the player, so it also hosts what reaches the DLNA side from elsewhere:
+ * the casts that give up after they were sent ([DlnaState.followFailures]), their last option
+ * ([DlnaState.gaveUp]), and "Probar por DLNA en <TV>" from the Chromecast's trouble dialog
+ * ([CastToDlnaHandoff]), which is [onChoose] with the TV it found and the Chromecast's position.
+ * Also "Enviar a la TV" from outside the player ([SendToTvPrompt]); and a TV picked here for a title
+ * downloaded since this player opened it reopens it from the file first ([reopenLocalForDlna]).
  */
 @Composable
 internal fun DlnaDevicesDialog(
     state: DlnaState,
-    onChoose: (DlnaDevice) -> Unit,
+    onChoose: (DlnaDevice, Long?) -> Unit,
 ) {
+    val context = LocalContext.current
+    val choose by androidx.compose.runtime.rememberUpdatedState(onChoose)
+    LaunchedEffect(state) {
+        state.followFailures { android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_LONG).show() }
+    }
+    LaunchedEffect(Unit) {
+        CastToDlnaHandoff.requests.collect { r -> CastToDlnaHandoff.take(r)?.let { choose(it.device, it.atMs) } }
+    }
+    val graph = com.arkiv.player.ui.rememberGraph()
+    SendToTvPrompt(state, graph)
+    state.gaveUp?.let { f ->
+        val action = f.lastResort
+        if (action != null) {
+            AlertDialog(
+                onDismissRequest = { state.dismissGaveUp() },
+                title = { Text("No se pudo reproducir en la TV") },
+                text = {
+                    Column {
+                        Text(f.message)
+                        Text(action.explanation, color = ArkivTextSecondary, modifier = Modifier.padding(top = 12.dp))
+                    }
+                },
+                confirmButton = { TextButton(onClick = { state.dismissGaveUp(); action.start(f.exhausted) }) { Text(action.label) } },
+                dismissButton = { TextButton(onClick = { state.dismissGaveUp() }) { Text("Cerrar") } },
+            )
+        }
+    }
     if (!state.pickerOpen) return
     AlertDialog(
         onDismissRequest = { state.closePicker() },
@@ -570,7 +718,8 @@ internal fun DlnaDevicesDialog(
                                 .fillMaxWidth()
                                 .clickable {
                                     state.closePicker()
-                                    onChoose(device)
+                                    // Downloaded since this player opened it: the TV gets the file.
+                                    if (!reopenLocalForDlna(graph, device)) onChoose(device, null)
                                 }
                                 .padding(vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically,
@@ -656,5 +805,29 @@ internal fun DlnaTracksFollower(
         state.subtitleChanged(phoneMs()) {
             android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_LONG).show()
         }
+    }
+}
+
+/**
+ * "Probar por DLNA en <TV>" from the Chromecast's trouble dialog (`CastTroubleDialog`, at the app's
+ * root) to the player screen that shows the title ([DlnaDevicesDialog] takes it): the DLNA renderer
+ * found at the Chromecast's address, and where the Chromecast was. Taken once; a request older than
+ * [MAX_AGE_MS] (no player screen took it) is dropped.
+ */
+internal object CastToDlnaHandoff {
+    class Request(val device: DlnaDevice, val atMs: Long?, val createdAt: Long = System.currentTimeMillis())
+
+    val requests = kotlinx.coroutines.flow.MutableStateFlow<Request?>(null)
+
+    const val MAX_AGE_MS = 30_000L
+
+    fun offer(device: DlnaDevice, atMs: Long?) {
+        requests.value = Request(device, atMs)
+    }
+
+    /** [r] when it is still the pending one and fresh; it is never handed out twice. */
+    fun take(r: Request?, now: Long = System.currentTimeMillis()): Request? {
+        if (r == null || !requests.compareAndSet(r, null)) return null
+        return r.takeIf { now - it.createdAt <= MAX_AGE_MS }
     }
 }

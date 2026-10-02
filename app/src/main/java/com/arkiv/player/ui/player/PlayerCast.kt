@@ -15,9 +15,9 @@ import com.arkiv.player.playback.SourceKind
  *
  * A plugin title casts unless [pluginCastModeFor] says [PluginCastMode.None]: the official Xuper
  * plugin's VOD exactly as before ([castsAsXuper]), any other plugin's progressive file through
- * `PluginCastProxy` (the plugin's gated client, never a plain fetch), its HLS that needs headers there too
- * (playlists rewritten) and a header-free HLS straight to the receiver. DRM, DASH and formats nothing
- * tells apart stay without the buttons.
+ * `PluginCastProxy` (the plugin's gated client, never a plain fetch), its HLS there too (playlists
+ * rewritten, CORS added) and a header-free file straight to the receiver. DRM, DASH and formats
+ * nothing tells apart stay without the buttons.
  *
  * Orientation is deliberately not an input: the buttons live in the controls overlay, so they show
  * (portrait and landscape alike) only while the controls are up and hide with them.
@@ -69,7 +69,8 @@ internal fun castsAsXuper(item: PlayerData): Boolean =
  * - [PluginCastMode.ViaProxy]: `mediaUrl` = [pluginProxyUrl] (the loopback token URL of
  *   `PluginCastProxy.register`; null while the proxy isn't up, and then there is no cast), headers
  *   dropped (they stay in the proxy), `mime` = what the receiver is told;
- * - [PluginCastMode.Direct]: the stream's own url, `mime` = HLS.
+ * - [PluginCastMode.Direct]: the stream's own url (a file), `mime` = its container; the proxied
+ *   twin rides along as the request's fallback ([withPluginProxyFallback]).
  * `castUrl` is null for both, so nothing Magis-specific (remux, byte-range HLS) ever applies.
  * The phone keeps playing the plugin item itself (its own gated HTTP stack); only what is sent to
  * the TV changes.
@@ -161,6 +162,53 @@ internal fun pluginCastUri(item: PlayerData, lanIp: String?): String? =
         item.mediaUrl.takeIf { it.startsWith("http://") || it.startsWith("https://") }
     }
 
+/**
+ * [request] for a castable plugin item, labelled with its route and, for a DIRECT one (the
+ * receiver fetches the stream's own URL), given the same media through `PluginCastProxy` as its
+ * [com.arkiv.player.cast.CastRequest.fallback]: loaded once if the receiver fails the direct one
+ * before playing (ERRORES-AME: OK.ru mp4s idle at 0:00 on a Chromecast). [register] files [item]
+ * with the proxy and returns its loopback token URL (null when the proxy can't take it: no
+ * fallback then). Anything that is not a plugin item is returned as it is. Pure.
+ */
+internal fun withPluginProxyFallback(
+    request: com.arkiv.player.cast.CastRequest,
+    item: PlayerData,
+    lanIp: String?,
+    register: (PlayerData) -> String?,
+): com.arkiv.player.cast.CastRequest {
+    if (item.kind != SourceKind.PLUGIN) return request
+    if (item.mediaUrl.startsWith(LOOPBACK)) return request.copy(route = "proxy")
+    val viaProxy = register(item)?.let { pluginCastUri(item.copy(mediaUrl = it), lanIp) }
+        ?: return request.copy(route = "direct")
+    return request.copy(route = "direct", fallback = request.copy(uri = viaProxy, route = "proxy"))
+}
+
+/** [withPluginProxyFallback] wired to the app's `PluginCastProxy`. Out of `PlayerContent` (ART's verifier limit). */
+internal fun pluginCastFallback(
+    request: com.arkiv.player.cast.CastRequest,
+    item: PlayerData,
+    graph: com.arkiv.player.AppGraph,
+    lanIp: String?,
+): com.arkiv.player.cast.CastRequest = withPluginProxyFallback(request, item, lanIp) { registerPluginCast(graph, it) }
+
+/**
+ * Files a plugin [item]'s own stream with `PluginCastProxy` (started if it isn't) and returns its
+ * loopback token URL, or null when the proxy can't take it. The plugin's headers and hosts stay
+ * on the phone.
+ */
+internal fun registerPluginCast(graph: com.arkiv.player.AppGraph, item: PlayerData): String? {
+    val proxy = graph.pluginCastProxy
+    runCatching { proxy.start() }
+    return proxy.register(
+        key = item.episodeId,
+        origin = item.mediaUrl,
+        headers = item.requestHeaders,
+        hosts = item.pluginHosts,
+        shape = com.arkiv.player.playback.PluginCastProxy.shapeFor(item.mime),
+        mime = item.mime.ifBlank { "video/mp4" },
+    )
+}
+
 /** A castable plugin item is a live channel: the receiver starts at the live edge, not a saved position. */
 internal fun isPluginLiveCast(item: PlayerData): Boolean =
     item.kind == SourceKind.PLUGIN && PluginIds.isLiveEpisode(item.episodeId)
@@ -176,8 +224,10 @@ internal fun isPluginLiveCast(item: PlayerData): Boolean =
  */
 @androidx.compose.runtime.Composable
 internal fun CastScreenPresence(session: com.arkiv.player.cast.CastSessionManager?, episodeId: String) {
-    if (session == null) return
     val owner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    PlayerOnScreenPresence(owner, episodeId)
+    if (session == null) return
+    PreferDownloadOnChromecast(session, episodeId)
     androidx.compose.runtime.DisposableEffect(session, owner) {
         var foreground = false
         fun set(open: Boolean) {
@@ -201,6 +251,76 @@ internal fun CastScreenPresence(session: com.arkiv.player.cast.CastSessionManage
         }
     }
     androidx.compose.runtime.LaunchedEffect(session, episodeId) { session.onScreenTitle(episodeId) }
+}
+
+/**
+ * Whether the phone's audio menu can reach the TV while a download ([mediaUrl], `file://…`) is cast:
+ * an MPEG-TS is remuxed with the chosen audio anyway, and an MP4 with several audio tracks gets a
+ * single-audio copy per audio ([com.arkiv.player.playback.LocalMp4Audio]). Out of `PlayerContent`.
+ */
+internal fun localAudioReachesTv(mediaUrl: String): Boolean {
+    val file = java.io.File(mediaUrl.removePrefix("file://"))
+    val mime = runCatching { com.arkiv.player.playback.VideoContainer.ofFile(file).mime }.getOrNull()
+    return com.arkiv.player.playback.RemuxPolicy.needsRemux(mime) || com.arkiv.player.playback.LocalMp4Audio.switchable(file)
+}
+
+/** A download cast with audio [ordinal] needs its single-audio copy ([com.arkiv.player.playback.LocalMp4Audio.needsCopy]). */
+internal fun localAudioCopy(item: PlayerData, ordinal: Int?): Boolean =
+    item.kind == SourceKind.LOCAL &&
+        com.arkiv.player.playback.LocalMp4Audio.needsCopy(java.io.File(item.mediaUrl.removePrefix("file://")), ordinal)
+
+/** Whether the finished local remux filed under [key] is a faststart MP4, so the receiver can start it mid-title. */
+internal fun localRemuxSeeks(graph: com.arkiv.player.AppGraph, key: String): Boolean =
+    graph.tsRemuxer.alreadyDone(key)?.let { runCatching { com.arkiv.player.data.local.Mp4FastStart.isFastStart(it) }.getOrDefault(false) } ?: false
+
+/**
+ * [com.arkiv.player.cast.PlayerOnScreen]: which title the player screen in the foreground shows,
+ * with or without a cast session (a phone with no Play services still casts over DLNA).
+ */
+@androidx.compose.runtime.Composable
+private fun PlayerOnScreenPresence(owner: androidx.lifecycle.LifecycleOwner, episodeId: String) {
+    androidx.compose.runtime.DisposableEffect(owner, episodeId) {
+        val screen = com.arkiv.player.cast.PlayerOnScreen
+        screen.episodeId = episodeId
+        screen.foreground = owner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            when (event) {
+                androidx.lifecycle.Lifecycle.Event.ON_START -> { screen.episodeId = episodeId; screen.foreground = true }
+                androidx.lifecycle.Lifecycle.Event.ON_STOP -> if (screen.episodeId == episodeId) screen.foreground = false
+                else -> Unit
+            }
+        }
+        owner.lifecycle.addObserver(observer)
+        onDispose {
+            owner.lifecycle.removeObserver(observer)
+            if (screen.episodeId == episodeId) {
+                screen.foreground = false
+                screen.episodeId = null
+            }
+        }
+    }
+}
+
+/**
+ * A Chromecast session starting while the player shows a title that is on the phone but was opened
+ * from the network (the download finished after it opened): the player is reopened from the file,
+ * and the reopened player casts THAT to the session as it loads. See
+ * [com.arkiv.player.cast.DownloadForTvPolicy.reopenAsLocal]; once per title ([LocalReopens]).
+ */
+@androidx.compose.runtime.Composable
+private fun PreferDownloadOnChromecast(session: com.arkiv.player.cast.CastSessionManager, episodeId: String) {
+    val graph = com.arkiv.player.ui.rememberGraph()
+    val casting = session.casting.collectAsStateWithLifecycle().value
+    androidx.compose.runtime.LaunchedEffect(casting, episodeId) {
+        if (!casting) return@LaunchedEffect
+        // The player's own load may still be opening the file: give it a moment to say so.
+        kotlinx.coroutines.delay(1_000)
+        val downloaded = graph.downloadForTv.downloaded
+        if (!com.arkiv.player.cast.DownloadForTvPolicy.reopenAsLocal(episodeId, downloaded, com.arkiv.player.data.local.LocalFileUse.playingEpisode)) return@LaunchedEffect
+        if (!LocalReopens.once(episodeId)) return@LaunchedEffect
+        android.util.Log.w("ArkivCast", "casting a title that is downloaded but playing from the network → reopening it from the file")
+        com.arkiv.player.cast.PlayerReopen.request(episodeId)
+    }
 }
 
 /**

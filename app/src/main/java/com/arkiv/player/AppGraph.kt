@@ -464,6 +464,7 @@ class AppGraph(context: Context) {
             vodStore = com.arkiv.player.data.magis.VodSearchStore(database.vodSearchCacheDao()),
             streams = xuperStreams,
             homeCatalog = magisHomeCatalog,
+            hasAccountLinked = { magisSession.hasAccountLinked },
         )
     }
 
@@ -1099,6 +1100,7 @@ class AppGraph(context: Context) {
             tree = { root -> liveCatalog.tree(root) },
             store = com.arkiv.player.ui.home.HomeCatalogStore(database.homeCatalogCacheDao()),
             freshTree = { root -> liveCatalog.tree(root, force = true) },
+            emptyPassRetryDelaysMs = com.arkiv.player.ui.home.MagisHomeCatalog.EMPTY_PASS_RETRY_DELAYS_MS,
         )
     }
 
@@ -1142,7 +1144,7 @@ class AppGraph(context: Context) {
         val before = liveSeedRotation.activeSeed(channel)?.sn
         val current = before ?: magisSession.currentSn()
         val pool = magisSession.seedPool()
-        val moved = liveSeedRotation.onRefused(channel, current, pool, refusedKey = license)
+        val outcome = liveSeedRotation.refuse(channel, current, pool, refusedKey = license)
         liveController.invalidate(channel)
         val after = liveSeedRotation.activeSeed(channel)?.sn
         // How much room is left to rotate: whether the pool is the limit (tiny, or every seed already refused) is what
@@ -1150,28 +1152,41 @@ class AppGraph(context: Context) {
         val tried = liveSeedRotation.triedCount(channel)
         val budget = "pool=${pool.size} tried=$tried/${com.arkiv.player.data.magis.LiveSeedRotation.MAX_ROTATIONS + 1}"
         com.arkiv.player.playback.LiveLog.w(
-            if (moved) "seed rotation: 409 on $channel → the next open uses another seed (${after?.take(6)}…) · $budget"
-            else "seed rotation: 409 on $channel and no seed left to try → back to the device's own session · $budget",
+            when (outcome) {
+                com.arkiv.player.data.magis.LiveSeedRotation.Outcome.ROTATED ->
+                    "seed rotation: 409 on $channel → the next open uses another seed (${after?.take(6)}…) · $budget"
+                com.arkiv.player.data.magis.LiveSeedRotation.Outcome.EXHAUSTED ->
+                    "seed rotation: 409 on $channel and no seed left to try → back to the device's own session · $budget"
+                com.arkiv.player.data.magis.LiveSeedRotation.Outcome.ALREADY_EXHAUSTED ->
+                    "seed rotation: 409 on $channel, its budget is already spent for this window → stays on the device's own session"
+                com.arkiv.player.data.magis.LiveSeedRotation.Outcome.REPEATED -> "seed rotation: 409 on $channel again for the same license"
+            },
         )
-        // Telemetry only on a genuine state change: the player retries a stuck playlist for a while and every one
-        // of those retries reaches this same 409 (deduped by license inside LiveSeedRotation), which would report
-        // the SAME rotation again and again if this didn't check it actually moved.
-        if (after == before) return
+        // A successful rotation is the system working (0.9.45: 100 reports, one per channel a person zapped to, all
+        // rotated on the first try). Only running out of seeds is worth a report, once per channel per window.
+        if (outcome == com.arkiv.player.data.magis.LiveSeedRotation.Outcome.EXHAUSTED) reportSeedsExhausted(channel, pool.size, tried)
+    }
+
+    private fun reportSeedsExhausted(channel: String, poolSize: Int, tried: Int) {
         com.arkiv.player.crash.Crash.report(
-            com.arkiv.player.crash.LiveSeedRotated("live seed rotated after a conflict"),
+            com.arkiv.player.crash.LiveSeedRotated("live seed rotation exhausted"),
             "live-seed-rotation",
             extras = mapOf(
                 "channel" to channel,
-                "outcome" to if (moved) "rotated" else "exhausted",
-                "pool_size" to pool.size.toString(),
+                "outcome" to "exhausted",
+                "pool_size" to poolSize.toString(),
                 "tried" to tried.toString(),
             ),
+            local = false,
         )
     }
 
     /** Resolves a live channel with the seed it was rotated to, if any; a seed that cannot even resolve is skipped. */
     private suspend fun resolveLive(code: String): com.arkiv.player.data.gateway.LiveSession {
-        var seed = liveSeedRotation.activeSeed(code) ?: return magisLive.resolveOrThrow(code)
+        // Only a device on a shared seed ever rotates (see onLiveConflict): one that linked an account or minted its
+        // own since keeps its own session, whatever a rotation (or a carried seed) left behind.
+        var seed = liveSeedRotation.activeSeed(code)?.takeIf { magisSession.sessionKind() == "seed" }
+            ?: return magisLive.resolveOrThrow(code)
         com.arkiv.player.playback.LiveLog.i(
             "seed rotation: opening $code with seed ${seed.sn.take(6)}… (tried ${liveSeedRotation.triedCount(code)})",
         )
@@ -1182,16 +1197,13 @@ class AppGraph(context: Context) {
                 throw e
             } catch (e: Exception) {
                 com.arkiv.player.playback.LiveLog.w("seed rotation: seed ${seed.sn.take(6)}… could not resolve $code (${e.message}) → next")
-                val before = seed.sn
-                val moved = liveSeedRotation.onRefused(code, seed.sn, magisSession.seedPool(), refusedKey = "resolve:${seed.sn}")
-                val next = liveSeedRotation.activeSeed(code)
-                if (next?.sn != before) {
-                    com.arkiv.player.crash.Crash.report(
-                        com.arkiv.player.crash.LiveSeedRotated("live seed rotated after a conflict"),
-                        "live-seed-rotation",
-                        extras = mapOf("channel" to code, "outcome" to if (moved) "rotated_after_resolve_failure" else "exhausted"),
-                    )
+                val pool = magisSession.seedPool()
+                val outcome = liveSeedRotation.refuse(code, seed.sn, pool, refusedKey = "resolve:${seed.sn}")
+                val moved = outcome == com.arkiv.player.data.magis.LiveSeedRotation.Outcome.ROTATED
+                if (outcome == com.arkiv.player.data.magis.LiveSeedRotation.Outcome.EXHAUSTED) {
+                    reportSeedsExhausted(code, pool.size, liveSeedRotation.triedCount(code))
                 }
+                val next = liveSeedRotation.activeSeed(code)
                 seed = next ?: return magisLive.resolveOrThrow(code)
                 if (!moved) return magisLive.resolveOrThrow(code)
             }
@@ -1522,7 +1534,65 @@ class AppGraph(context: Context) {
     }
 
     val localLibrary: com.arkiv.player.data.local.LocalLibrary by lazy {
-        com.arkiv.player.data.local.LocalLibrary(database)
+        // Every download the player opens is in use, and an older one gets its MP4 lazily.
+        com.arkiv.player.data.local.LocalLibrary(database, onOpened = { id, path -> mp4Prep.onOpened(id, path) })
+    }
+
+    /** Finished downloads rewritten as faststart MP4 with every audio track and SRT sidecars. See `Mp4Prep`. */
+    val mp4Prep: com.arkiv.player.data.local.Mp4Prep by lazy {
+        val dao = database.downloadDao()
+        com.arkiv.player.data.local.Mp4Prep(
+            // Not `localLibrary.fileFor`: that one reports the file as opened by the player.
+            completedPath = { id -> localLibrary.pathFor(id) },
+            movePath = { old, new -> dao.movePath(old, new) },
+            completedIds = {
+                dao.getAll().filter { it.state == com.arkiv.player.data.local.LocalDownloadState.COMPLETED && it.source != "ditu" }
+                    .map { it.episodeId }
+            },
+            onlineSubtitles = { id -> runCatching { subtitlePrefs.onlineSubtitles(id) }.getOrDefault(emptyList()) },
+            audioLanguages = { subtitlePrefs.prefs.value.audioLangs },
+            pickedAudio = { id -> runCatching { subtitlePrefs.titleAudio(id) }.getOrNull() },
+            schedule = { ids -> com.arkiv.player.data.local.Mp4PrepWorker.enqueue(appContext, ids) },
+            isTelevision = { com.arkiv.player.DeviceType.isTelevision(appContext) },
+            freeSpace = { dir -> runCatching { android.os.StatFs(dir.absolutePath).availableBytes }.getOrDefault(0L) },
+            reportFailure = { id, reason ->
+                com.arkiv.player.crash.Crash.report(
+                    com.arkiv.player.crash.Mp4PrepFailed("a download could not be rewritten as MP4"),
+                    "mp4-prep",
+                    extras = mapOf("reason" to reason.take(300), "source" to com.arkiv.player.playback.PlayerSource.kindFor(id).name),
+                )
+            },
+            // A title prepared for a TV that gave up is ready for it.
+            onPrepared = { id, state -> downloadForTv.onPrepared(id, state) },
+        )
+    }
+
+    /**
+     * "Descargar y preparar para la TV" / "Enviar la descarga a la TV", the last option of an
+     * exhausted VOD cast (`CastGaveUp.lastResort`, set at startup). See `DownloadForTv`.
+     */
+    val downloadForTv: com.arkiv.player.cast.DownloadForTv by lazy {
+        val dao = database.downloadDao()
+        val main = android.os.Handler(android.os.Looper.getMainLooper())
+        com.arkiv.player.cast.DownloadForTv(
+            prefs = appContext.getSharedPreferences("kino_download_for_tv", android.content.Context.MODE_PRIVATE),
+            scope = applicationScope,
+            isTelevision = { com.arkiv.player.DeviceType.isTelevision(appContext) },
+            downloadable = { id -> com.arkiv.player.data.local.DownloadSource.canDownload(id, downloadStrategies.keys, ::isXuperPlugin, ::pluginDownloads) },
+            completedIds = dao.observeAll().map { rows ->
+                rows.filter { it.state == com.arkiv.player.data.local.LocalDownloadState.COMPLETED && it.source != "ditu" }
+                    .map { it.episodeId }.toSet()
+            },
+            keptAsIs = { id ->
+                mp4Prep.readMarker(localDownloads.targetDir(), id)?.state == com.arkiv.player.data.local.PrepState.UNSUPPORTED
+            },
+            enqueueDownload = { id ->
+                localDownloads.enqueue(id, com.arkiv.player.data.local.DownloadSource.sourceFor(id, ::isXuperPlugin, ::pluginDownloads))
+            },
+            requestPrep = { id -> mp4Prep.request(id) },
+            notifyReady = { id, title -> com.arkiv.player.cast.TvReadyNotice.post(appContext, id, title) },
+            say = { text -> main.post { android.widget.Toast.makeText(appContext, text, android.widget.Toast.LENGTH_LONG).show() } },
+        )
     }
 
     /**
@@ -1623,6 +1693,8 @@ class AppGraph(context: Context) {
             // A cast remux starts near the phone's position (TsStart) unless a device test turns
             // it off: `adb shell setprop debug.kino.remux_seek_start off` (back on: `on`).
             seekStartEnabled = { com.arkiv.player.cast.CastTextMedia.systemProperty("debug.kino.remux_seek_start") != "off" },
+            // What a TV is playing or about to: never evicted by the cache's ceiling.
+            servedKeys = { remuxHlsServer.keysInUse() },
         )
     }
 
@@ -2007,10 +2079,13 @@ class AppGraph(context: Context) {
                     onEnded = { intentional ->
                         if (intentional) {
                             remuxHlsServer.endCast(dlna = false)
+                            applicationScope.launch(kotlinx.coroutines.Dispatchers.IO) { tsRemuxer.trim() }
                         } else {
                             applicationScope.launch {
                                 kotlinx.coroutines.delay(CAST_REMUX_GRACE_MS)
                                 if (_castSession?.casting?.value != true) remuxHlsServer.endCast(dlna = false)
+                                // Back under the cache's ceiling once the cast is over (ERRORES-ALJ).
+                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { tsRemuxer.trim() }
                             }
                         }
                     },

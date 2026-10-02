@@ -454,7 +454,9 @@ internal class TracksState(
                 .build()
         }
         curAudio = id
-        promoteLanguage(nameOf(audioTracks, id) ?: return, audioTracks.realNames(), isAudio = true)
+        val name = nameOf(audioTracks, id) ?: return
+        runCatching { graph.subtitlePrefs.rememberTitleAudio(episodeId, name) }
+        promoteLanguage(name, audioTracks.realNames(), isAudio = true)
     }
 
     fun chooseSpu(id: Int) {

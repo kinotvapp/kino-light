@@ -1475,6 +1475,17 @@ class PlayerViewModel internal constructor(
     }
 
     /**
+     * The channel's video is beyond every decoder on this device, with no smaller variant
+     * ([com.arkiv.player.playback.DecoderCapability], ERRORES-AML): reopening it only fails again, so
+     * no reopen is scheduled and the person reads why. Zapping away clears it as any live error.
+     */
+    fun onLiveFormatUnsupported() {
+        Log.w(PLAY, "live: ${zapping?.current?.code} uses a format beyond this device's decoders")
+        reopenJob?.cancel()
+        _error.value = com.arkiv.player.playback.DecoderCapability.UNSUPPORTED_MESSAGE
+    }
+
+    /**
      * The player couldn't handle this episode.
      *
      * This didn't used to exist: a playback failure never reached [_error] --the only thing the

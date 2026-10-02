@@ -11,6 +11,13 @@ internal enum class LiveErrorKind {
     /** The playlist stopped advancing for longer than the player tolerates. */
     PLAYLIST_STUCK,
 
+    /**
+     * The player sat READY and playing with its clock frozen for 10 s (Media3's stuck-playing detector,
+     * ERRORES-AKD): the data is there, a renderer stopped taking it. A re-prepare at the live edge gets it
+     * moving; a repeat on the same channel swaps its hardware decoder for software ([stuckSwitchesDecoder]).
+     */
+    STUCK_PLAYING,
+
     /** Anything else: the CDN said no, the connection dropped, the data was garbage. */
     OTHER,
     ;
@@ -45,3 +52,11 @@ internal class InPlaceRecoveryBudget(private val max: Int = MAX, private val win
         const val WINDOW_MS = 60_000L
     }
 }
+
+/**
+ * A stuck-playing error ([LiveErrorKind.STUCK_PLAYING]) repeated on a channel ([repeated]) a hardware decoder
+ * plays: the re-prepare did not help, so the decoder is swapped for software, once (a software player never
+ * switches again; past that the in-place recovery and the reopen take over as for any other error).
+ */
+internal fun stuckSwitchesDecoder(kind: LiveErrorKind, repeated: Boolean, software: Boolean): Boolean =
+    kind == LiveErrorKind.STUCK_PLAYING && repeated && !software

@@ -105,6 +105,17 @@ class HomeViewModel(
      * [HomeFreshness.RESUME_STALE_AFTER_MS]. A TV left on Home for days refreshes by itself this way;
      * the portal is still only reached when the catalog's own TTL says so.
      */
+    /**
+     * The "No pudimos cargar el catálogo de Xuper" notice's retry ([xuperHomeFailed]): forgets the failed pass the
+     * catalog would otherwise serve for a few minutes (the same as coming back online) and asks again, never forced,
+     * so it isn't held to "Recargar"'s once-a-minute gate.
+     */
+    fun retryPluginHome() {
+        onBackOnline()
+        lastSettledAt = null
+        refreshes.tryEmit(false)
+    }
+
     fun refreshIfStale() {
         if (HomeFreshness.shouldReloadOnResume(lastSettledAt, clock())) {
             lastSettledAt = null

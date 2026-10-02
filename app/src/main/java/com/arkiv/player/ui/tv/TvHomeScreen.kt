@@ -107,6 +107,8 @@ import com.arkiv.player.ui.home.HomeViewModel
 import com.arkiv.player.ui.home.TvHomeLanding
 import com.arkiv.player.ui.home.emptyStateNeedsRefocus
 import com.arkiv.player.ui.home.homeEmptyCopy
+import com.arkiv.player.ui.home.XUPER_HOME_FAILED_TV
+import com.arkiv.player.ui.home.XUPER_HOME_RETRY
 import com.arkiv.player.ui.categoriesTabAvailable
 import com.arkiv.player.ui.home.homeShowsEmptyState
 import com.arkiv.player.ui.home.HOME_LOADING_LINE
@@ -239,6 +241,8 @@ internal fun homeCardsHold(cardKey: String, pluginCards: List<List<String>>): Bo
  */
 /** The rows list's key for the empty state ("Aún no tienes fuentes de contenido"). */
 private const val EMPTY_SOURCES_KEY = "empty_sources"
+/** The rows list's key for "No pudimos cargar el catálogo de Xuper" (see `xuperHomeFailed`). */
+private const val XUPER_FAILED_KEY = "xuper_home_failed"
 
 internal fun homeRowScrollTarget(rowIndex: Int): Int = (rowIndex - 1).coerceAtLeast(0)
 
@@ -520,6 +524,7 @@ fun TvHomeScreen(
     val installedPlugins by graph.pluginAdmin.plugins.collectAsStateWithLifecycle()
     val homeEmpty = homeShowsEmptyState(installedPlugins, pluginRows.size, liveSources)
     val emptyCopy = homeEmptyCopy(installedPlugins, isTv = true)
+    val xuperFailed = com.arkiv.player.ui.home.xuperHomeFailed(installedPlugins, pluginRows, pluginRowsSettled)
     val homeEmptyNow by rememberUpdatedState(homeEmpty)
     val emptySourcesFocus = remember { FocusRequester() }
     // Real focus on the "Agregar plugin" button: the default landing only counts it once this is true.
@@ -1235,6 +1240,23 @@ fun TvHomeScreen(
                                         .focusRequester(emptySourcesFocus)
                                         .onFocusChanged { emptySourcesFocused = it.hasFocus },
                                     onClick = onOpenSourcePicker,
+                                )
+                            }
+                        }
+                    }
+
+                    // Xuper's catalog came back empty (see xuperHomeFailed): say so, with a retry, instead of a silent gap.
+                    if (xuperFailed) {
+                        item(key = XUPER_FAILED_KEY) {
+                            Column(
+                                Modifier.fillMaxWidth().padding(horizontal = 48.dp, vertical = 12.dp).tracksRowFocus(XUPER_FAILED_KEY),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text(XUPER_HOME_FAILED_TV, style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary)
+                                TvCompactAction(
+                                    label = XUPER_HOME_RETRY,
+                                    icon = Icons.Default.Refresh,
+                                    onClick = { vm.retryPluginHome() },
                                 )
                             }
                         }

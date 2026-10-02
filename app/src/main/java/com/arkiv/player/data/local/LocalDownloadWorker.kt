@@ -134,6 +134,8 @@ class LocalDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
                 } else {
                     dao.markCompleted(entity.episodeId, outcome.file.absolutePath)
                     notifyDone(entity.episodeId)
+                    // Then it becomes a faststart MP4 with its SRT sidecars, in its own job (see Mp4Prep).
+                    graph.mp4Prep.request(entity.episodeId)
                 }
             }
             is DownloadOutcome.NeedsConfirmation -> {
