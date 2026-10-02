@@ -39,4 +39,13 @@ class LiveErrorRecoveryTest {
         assertFalse(b.tryConsume(900))
         assertTrue(b.tryConsume(1_100))
     }
+
+    @Test
+    fun `a stuck player re-prepares first and swaps a hardware decoder only when it repeats`() {
+        assertTrue(LiveErrorKind.STUCK_PLAYING.recoverableInPlace)
+        assertFalse("the first one re-prepares", stuckSwitchesDecoder(LiveErrorKind.STUCK_PLAYING, repeated = false, software = false))
+        assertTrue(stuckSwitchesDecoder(LiveErrorKind.STUCK_PLAYING, repeated = true, software = false))
+        assertFalse("already in software: never again", stuckSwitchesDecoder(LiveErrorKind.STUCK_PLAYING, repeated = true, software = true))
+        assertFalse(stuckSwitchesDecoder(LiveErrorKind.OTHER, repeated = true, software = false))
+    }
 }

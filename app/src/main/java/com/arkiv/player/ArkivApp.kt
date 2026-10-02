@@ -62,14 +62,28 @@ class ArkivApp : Application(), ImageLoaderFactory {
         // ones were: recents only store code and name, never the category. And it costs nothing —
         // the cloud ones were already cleaned up by hand, so the next sync repopulates the list
         // with the legitimate ones.
+        //
+        // On a device out of space the `databases/` dir may not even exist (ERRORES-AL6, SQLITE_CANTOPEN
+        // under DEVICE_STORAGE_LOW): the purge is skipped, unreported, and tried again on a later start.
         graph.applicationScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             runCatching {
                 if (!graph.settings.recentsPurged) {
+                    val free = runCatching { java.io.File(applicationInfo.dataDir).usableSpace }.getOrDefault(-1L)
+                    if (!com.arkiv.player.data.db.StorageFailure.roomFor(free)) {
+                        android.util.Log.w("ArkivAccount", "recents purge skipped: ${free / 1024} KB free")
+                        return@runCatching
+                    }
                     graph.database.liveRecentDao().deleteAll()
                     graph.settings.setRecentsPurged(true)
                     android.util.Log.w("ArkivAccount", "recent items purged (adult channel leak)")
                 }
-            }.onFailure { report(it, "startup: purge recents") }
+            }.onFailure {
+                if (com.arkiv.player.data.db.StorageFailure.isNoRoom(it)) {
+                    android.util.Log.w("ArkivAccount", "recents purge skipped, no room: ${it.javaClass.simpleName}")
+                } else {
+                    report(it, "startup: purge recents")
+                }
+            }
         }
 
         graph.startNetworkMonitor()
@@ -196,18 +210,29 @@ class ArkivApp : Application(), ImageLoaderFactory {
     private fun wireCompanionLifecycle() {
         val companion = graph.companion
         // Sync is symmetric (see CompanionSyncEngine's class KDoc): both host and controller push
-        // AND pull, so it starts/stops the same way on both branches below.
+        // AND pull, so it starts/stops the same way on both branches below. Its dependencies are
+        // built on IO: the plugin-secret table forces pluginRegistry's first reload() (ERRORES-AHE).
+        val sync = com.arkiv.player.companion.CompanionSyncStarter(
+            scope = graph.applicationScope,
+            main = kotlinx.coroutines.Dispatchers.Main.immediate,
+            io = kotlinx.coroutines.Dispatchers.IO,
+            resolve = { SyncDeps(graph.roomSyncSource, graph.syncApply, graph.syncCursorStore, graph.pluginSecretSync) },
+            fallback = { SyncDeps(graph.roomSyncSource, graph.syncApply, graph.syncCursorStore, null) },
+            start = { d -> companion.startSync(d.source, d.apply, d.cursors, d.secrets) },
+            stopSync = companion::stopSync,
+            onError = { report(it, "startup: companion sync plugin secrets") },
+        )
         val observer = if (DeviceType.isTelevision(this)) {
             val resolver = com.arkiv.player.companion.AndroidPlayResolver(this, graph)
             object : androidx.lifecycle.DefaultLifecycleObserver {
                 override fun onStart(owner: androidx.lifecycle.LifecycleOwner) {
                     companion.startHost()
                     companion.startReceiving(resolver, resolver::openPlayer)
-                    companion.startSync(graph.roomSyncSource, graph.syncApply, graph.syncCursorStore, graph.pluginSecretSync)
+                    sync.start()
                     graph.retryPluginSync()
                 }
                 override fun onStop(owner: androidx.lifecycle.LifecycleOwner) {
-                    companion.stopSync()
+                    sync.stop()
                     companion.stopReceiving()
                     companion.stopHost()
                 }
@@ -216,17 +241,24 @@ class ArkivApp : Application(), ImageLoaderFactory {
             object : androidx.lifecycle.DefaultLifecycleObserver {
                 override fun onStart(owner: androidx.lifecycle.LifecycleOwner) {
                     companion.startAutoConnect()
-                    companion.startSync(graph.roomSyncSource, graph.syncApply, graph.syncCursorStore, graph.pluginSecretSync)
+                    sync.start()
                     graph.retryPluginSync()
                 }
                 override fun onStop(owner: androidx.lifecycle.LifecycleOwner) {
-                    companion.stopSync()
+                    sync.stop()
                     companion.stopAutoConnect()
                 }
             }
         }
         androidx.lifecycle.ProcessLifecycleOwner.get().lifecycle.addObserver(observer)
     }
+
+    private class SyncDeps(
+        val source: com.arkiv.player.data.sync.RoomSyncSource,
+        val apply: com.arkiv.player.data.sync.SyncApply,
+        val cursors: com.arkiv.player.data.sync.SyncCursorStore,
+        val secrets: com.arkiv.player.companion.PeerScopedTable?,
+    )
 
     private fun report(error: Throwable, label: String) {
         android.util.Log.w("ArkivStartup", "$label: ${error.message}", error)

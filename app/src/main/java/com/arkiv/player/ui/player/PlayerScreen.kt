@@ -3175,6 +3175,7 @@ private fun PlayerContent(
                     gestures.setExoPlayer(player)
                 },
                 onError = { msg -> vm.onLiveExoError(msg) },
+                onUnsupportedFormat = vm::onLiveFormatUnsupported,
                 onFirstFrame = { got -> exoRenderedSomething = got },
                 zoom = gestures.zoomForExo,
             )
