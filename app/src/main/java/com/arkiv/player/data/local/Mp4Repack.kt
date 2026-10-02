@@ -32,8 +32,9 @@ import java.nio.ByteBuffer
  * Why not media3's Transformer, which `TsRemuxer` already uses for the cast remux: Transformer
  * writes exactly ONE audio track, and a download has to keep all of them (spa/spa/eng/ger…). So
  * this is a direct demux→mux: media3's own extractor ([DefaultExtractorsFactory], the same parsers
- * the player reads the file with) feeds media3's [Mp4Muxer] with every video and audio track, in
- * the order the container lists them, each with its language. Text and metadata tracks are left out
+ * the player reads the file with) feeds media3's [Mp4Muxer] with every video track and the audio
+ * ones to keep (all by default; a download keeps at most three, see [Mp4AudioKeep]), in the order
+ * the container lists them (or the order asked for), each with its language. Text and metadata tracks are left out
  * (the muxer has no text tracks; subtitles become SRT sidecars, see [Mp4SubtitleSidecars]).
  *
  * What [Mp4Muxer] cannot carry (AC-3, E-AC-3, MP2/MP3 audio, MPEG-2 video…) makes the whole file
@@ -79,18 +80,21 @@ class Mp4Repackager(
     /**
      * [input] as a faststart MP4 at [output]. [onlyAudio]: keep just the audio track at that ordinal
      * (among the container's audio tracks, in its order), for a Chromecast that plays one audio
-     * only; null keeps all. [onProgress] gets 0..100 as the input is read.
+     * only; null keeps all (or what [keepAudio] picks). [keepAudio]: which of the container's audio
+     * tracks (in its order) to keep, as indexes in the order they go in the MP4 -- see
+     * [Mp4AudioKeep]; ignored when [onlyAudio] is set. [onProgress] gets 0..100 as the input is read.
      */
     suspend fun repack(
         input: File,
         output: File,
         onlyAudio: Int? = null,
+        keepAudio: ((List<AudioTrackInfo>) -> List<Int>)? = null,
         onProgress: (Int) -> Unit = {},
     ): Result = withContext(Dispatchers.IO) {
         val partial = File(output.parentFile, output.name + ".part")
         val t0 = System.currentTimeMillis()
         try {
-            val result = run(input, partial, onlyAudio, onProgress) { coroutineContext.ensureActive() }
+            val result = run(input, partial, onlyAudio, keepAudio, onProgress) { coroutineContext.ensureActive() }
             if (result !is Result.Done) {
                 partial.delete()
                 return@withContext result
@@ -110,11 +114,11 @@ class Mp4Repackager(
         }
     }
 
-    private fun run(input: File, partial: File, onlyAudio: Int?, onProgress: (Int) -> Unit, checkCancelled: () -> Unit): Result {
+    private fun run(input: File, partial: File, onlyAudio: Int?, keepAudio: ((List<AudioTrackInfo>) -> List<Int>)?, onProgress: (Int) -> Unit, checkCancelled: () -> Unit): Result {
         val length = input.length()
         RandomAccessFile(input, "r").use { raf ->
             val extractor = pickExtractor(raf, length) ?: return Result.Unsupported("unknown container")
-            val writer = Writer(partial, onlyAudio, length)
+            val writer = Writer(partial, onlyAudio, keepAudio, length)
             val output = Collector(writer)
             extractor.init(output)
             val holder = PositionHolder()
@@ -247,7 +251,7 @@ class Mp4Repackager(
      * tracks long before each one's first frame tells its codec), then the muxer is built with all
      * of them and the held samples go first.
      */
-    private inner class Writer(private val partial: File, private val onlyAudio: Int?, private val inputLength: Long) {
+    private inner class Writer(private val partial: File, private val onlyAudio: Int?, private val keepAudio: ((List<AudioTrackInfo>) -> List<Int>)?, private val inputLength: Long) {
         val sinks = mutableListOf<Sink>()
         var tracksEnded = false
         var durationUs = C.TIME_UNSET
@@ -282,7 +286,11 @@ class Mp4Repackager(
             val known = sinks.filter { it.format != null }
             val video = known.filter { it.type == C.TRACK_TYPE_VIDEO }
             val audioAll = known.filter { it.type == C.TRACK_TYPE_AUDIO }
-            val audio = if (onlyAudio != null) listOfNotNull(audioAll.getOrNull(onlyAudio) ?: audioAll.firstOrNull()) else audioAll
+            val audio = when {
+                onlyAudio != null -> listOfNotNull(audioAll.getOrNull(onlyAudio) ?: audioAll.firstOrNull())
+                keepAudio != null -> keepAudio.invoke(audioAll.map { it.info() }).mapNotNull { audioAll.getOrNull(it) }
+                else -> audioAll
+            }
             if (video.isEmpty()) {
                 failure = Result.Unsupported("no video track")
                 return
@@ -322,6 +330,11 @@ class Mp4Repackager(
             held.clear()
             heldBytes = 0
             pending.forEach { write(m, it) }
+        }
+
+        private fun Sink.info(): AudioTrackInfo {
+            val f = format!!
+            return AudioTrackInfo(f.label, f.language, f.selectionFlags and C.SELECTION_FLAG_DEFAULT != 0)
         }
 
         /** Samples per second of [sink] over what was held, when there is enough of it to say. */

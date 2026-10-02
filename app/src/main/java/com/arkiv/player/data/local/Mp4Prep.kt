@@ -132,7 +132,7 @@ object LocalFileUse {
 data class PrepStatus(val state: PrepState?, val percent: Int? = null)
 
 /**
- * Turns finished downloads into faststart MP4s with every audio track (see [Mp4Repackager]) and SRT
+ * Turns finished downloads into faststart MP4s with up to three audio tracks (see [Mp4Repackager]) and SRT
  * sidecars (see [Mp4SubtitleSidecars]), the owner's rule for 0.9.46: whatever a download came as
  * (a progressive MPEG-TS from Xuper, a plugin's HLS joined into one `.ts`, a Matroska), it is kept
  * as MP4, which every TV and Chromecast plays without a remux and seeks in.
@@ -163,6 +163,10 @@ class Mp4Prep(
     private val onlineSubtitles: (episodeId: String) -> List<SavedOnlineSubtitle>,
     /** Schedules [Mp4PrepWorker] for these episodes. */
     private val schedule: (episodeIds: List<String>) -> Unit,
+    /** The person's preferred audio languages, first preference first ([Mp4AudioKeep]). */
+    private val audioLanguages: () -> List<com.arkiv.player.playback.TrackLang> = { emptyList() },
+    /** The menu label of the audio the person picked by hand for an episode, if any. */
+    private val pickedAudio: (episodeId: String) -> String? = { null },
     private val isTelevision: () -> Boolean = { false },
     private val repackager: Mp4Repackager = Mp4Repackager(),
     private val freeSpace: (File) -> Long = { it.usableSpace },
@@ -258,7 +262,9 @@ class Mp4Prep(
         val output = Mp4PrepPolicy.outputFor(original)
         _status.update { it + (episodeId to PrepStatus(marker?.state, 0)) }
         val result = try {
-            repackager.repack(original, output) { p ->
+            val preferred = audioLanguages()
+            val picked = pickedAudio(episodeId)
+            repackager.repack(original, output, keepAudio = { tracks -> Mp4AudioKeep.select(tracks, preferred, picked) }) { p ->
                 _status.update { it + (episodeId to PrepStatus(marker?.state, p)) }
                 onProgress(p)
             }

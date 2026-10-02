@@ -1538,6 +1538,8 @@ class AppGraph(context: Context) {
                     .map { it.episodeId }
             },
             onlineSubtitles = { id -> runCatching { subtitlePrefs.onlineSubtitles(id) }.getOrDefault(emptyList()) },
+            audioLanguages = { subtitlePrefs.prefs.value.audioLangs },
+            pickedAudio = { id -> runCatching { subtitlePrefs.titleAudio(id) }.getOrNull() },
             schedule = { ids -> com.arkiv.player.data.local.Mp4PrepWorker.enqueue(appContext, ids) },
             isTelevision = { com.arkiv.player.DeviceType.isTelevision(appContext) },
             freeSpace = { dir -> runCatching { android.os.StatFs(dir.absolutePath).availableBytes }.getOrDefault(0L) },
