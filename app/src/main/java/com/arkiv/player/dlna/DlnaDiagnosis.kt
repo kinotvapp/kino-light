@@ -22,6 +22,14 @@ internal object DlnaDiagnosis {
     const val STUCK_LOADING = "stuck_loading"
     const val POSITION_STALLED = "position_stalled"
 
+    /**
+     * Accepted and still not playing (never PLAYING, no position past 0:00) this long after `Play`,
+     * sitting STOPPED, NO_MEDIA_PRESENT or loading: a load that will not start. The stages above
+     * catch most of these sooner; this is the time limit behind them.
+     */
+    const val NEVER_PLAYED = "never_played"
+    const val NEVER_PLAYED_AFTER_MS = 60_000L
+
     /** Right after `Play` a renderer may still report the state it had before: don't judge until it settled. */
     const val SETTLE_MS = 3_000L
 
@@ -50,6 +58,8 @@ internal object DlnaDiagnosis {
         val userPaused: Boolean,
         /** How long a position the renderer DOES report hasn't advanced while PLAYING (0 when it doesn't report one). */
         val stalledMs: Long,
+        /** The renderer was PLAYING at some point, or reported a position past 0:00. */
+        val everPlayed: Boolean = true,
     )
 
     /** The failure stage, or null when nothing is wrong (yet). */
@@ -64,6 +74,9 @@ internal object DlnaDiagnosis {
         // A vendor may prefix it (an LG webOS reports LG_TRANSITIONING while it loads).
         if (state.endsWith("TRANSITIONING") && s.lanHits > 0 && s.sincePlayMs >= STUCK_LOADING_AFTER_MS) return STUCK_LOADING
         if (state == "PLAYING" && !s.userPaused && s.stalledMs >= STALL_AFTER_MS) return POSITION_STALLED
+        if (!s.everPlayed && !s.userPaused && s.sincePlayMs >= NEVER_PLAYED_AFTER_MS && (stopped || state.endsWith("TRANSITIONING"))) {
+            return NEVER_PLAYED
+        }
         return null
     }
 
@@ -81,6 +94,7 @@ internal object DlnaDiagnosis {
         STOPPED_EARLY -> "La TV pidió el video pero lo detuvo (formato no soportado)"
         STUCK_LOADING -> "La TV se quedó cargando el video"
         POSITION_STALLED -> "La reproducción en la TV se detuvo"
+        NEVER_PLAYED -> "La TV no logró empezar a reproducir el video"
         else -> "No se pudo reproducir en la TV"
     }
 }

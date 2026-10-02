@@ -22,8 +22,9 @@ internal sealed interface PluginCastMode {
     data class ViaProxy(val mime: String) : PluginCastMode
 
     /**
-     * The receiver fetches the stream's own URL: an HLS, MP4 or WebM stream that needs no header,
-     * on a host the plugin's rules allow. Nothing goes through the phone.
+     * The receiver fetches the stream's own URL: an MP4 or WebM file that needs no header, on a
+     * host the plugin's rules allow. Nothing goes through the phone unless the receiver fails it
+     * before playing: then it is loaded once more through the proxy (`CastRequest.fallback`).
      */
     data class Direct(val mime: String) : PluginCastMode
 
@@ -73,9 +74,9 @@ internal fun directCastAllowed(item: PlayerData): Boolean {
  * | official Xuper VOD                               | [PluginCastMode.Xuper] (unchanged) |
  * | official Xuper live channel                      | None (unchanged)        |
  * | DRM (Widevine or ClearKey)                       | None                    |
- * | mp4/webm/HLS (mkv…), no headers, host allowed    | Direct                  |
+ * | mp4/webm (mkv…), no headers, host allowed        | Direct (proxy fallback) |
  * | mp4/webm/mkv… that need headers (or can't go direct) | ViaProxy           |
- * | HLS that needs headers (or can't go direct)      | ViaProxy, playlists rewritten |
+ * | HLS, always (the receiver needs CORS on it)      | ViaProxy, playlists rewritten |
  * | progressive MPEG-TS                              | None: the receiver refuses it (LOAD_FAILED) |
  * | DASH, or a format nothing tells apart            | None                    |
  *
@@ -102,12 +103,11 @@ internal fun pluginCastModeFor(
             CastStrategy.Route.PROXY -> PluginCastMode.ViaProxy(mime)
             else -> PluginCastMode.None("progressive mpeg-ts: the receiver refuses it, and plugin titles have no remux")
         }
-        PluginStreamFormat.HLS -> when {
-            !needsHeaders && directAllowed(item) -> PluginCastMode.Direct(MIME_HLS)
-            // Headers (Referer, cookies...) the receiver can't send, or a host the TV must not be
-            // pointed at: every playlist, segment, key and map through the proxy's gated client.
-            else -> PluginCastMode.ViaProxy(MIME_HLS)
-        }
+        // Always through the proxy, headers or not: the receiver reads HLS with XHR, so every
+        // playlist and segment host must answer with CORS, and no plugin host is known to (an OK.ru,
+        // an iptv-org channel: idle at 0:00 on a Chromecast, ERRORES-AME). The proxy sends CORS and
+        // the plugin's headers, through its gated client. A progressive file needs no CORS.
+        PluginStreamFormat.HLS -> PluginCastMode.ViaProxy(MIME_HLS)
         PluginStreamFormat.DASH -> PluginCastMode.None("dash")
         PluginStreamFormat.UNKNOWN -> PluginCastMode.None("unknown format")
     }

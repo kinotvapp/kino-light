@@ -284,6 +284,7 @@ class PluginCastProxy(
                         passthrough(session, session.origin, req, out, session.mime)
                     session.shape == Shape.HLS && route == "/$HLS_ROUTE" ->
                         servePlaylist(token, session, session.origin, req, out)
+                    session.shape == Shape.HLS && route == "/$CONTINUOUS_ROUTE" -> serveContinuous(s, token, session, req, out)
                     session.shape == Shape.HLS && route.startsWith("/$DERIVED_ROUTE/") -> {
                         val n = route.removePrefix("/$DERIVED_ROUTE/").substringBefore('.').toIntOrNull()
                         val target = n?.let(session.derived::get)
@@ -401,6 +402,94 @@ class PluginCastProxy(
         out.flush()
     }
 
+    /**
+     * The HLS origin as ONE continuous MPEG-TS body ([ContinuousTsAssembler]) for a DLNA renderer
+     * that lists a TS type and no HLS: `/t/<token>/live.ts?m=<type index>&s=<ms>`. Same token, same
+     * gated client and headers as the playlist route; a master playlist follows one variant
+     * ([ContinuousTs.parse]); a live playlist starts near its edge, a finite one at `s`. Anything
+     * one TS body cannot carry (fMP4, encryption, a separate audio rendition) is a 502 before any
+     * header. Ends with the cast ([ContinuousTsStreams.stopAll]), the token or the proxy.
+     */
+    private fun serveContinuous(socket: Socket, token: String, session: Session, req: Incoming, out: OutputStream) {
+        val query = req.path.substringAfter('?', "").split('&')
+        fun param(name: String) = query.firstOrNull { it.startsWith("$name=") }?.substringAfter('=')
+        val mime = ContinuousTs.mimeAt(param("m")?.toIntOrNull())
+        if (req.method == "HEAD") {
+            out.write(ContinuousTs.responseHead(mime).toByteArray(Charsets.US_ASCII))
+            out.flush()
+            return
+        }
+        com.arkiv.player.dlna.DlnaLog.lanHit("plugin-proxy", socket.inetAddress?.hostAddress, "GET /$CONTINUOUS_ROUTE", req.range, null)
+        var mediaUrl = session.origin
+        var followedMaster = false
+        val assembler = ContinuousTsAssembler(
+            window = window@{
+                session.lastUsedAt = clock()
+                val (url, text) = fetchPlaylistText(session, mediaUrl) ?: return@window null
+                when (val p = ContinuousTs.parse(text, url)) {
+                    is ContinuousTs.Playlist.Media -> p
+                    is ContinuousTs.Playlist.Master -> {
+                        if (followedMaster) return@window null
+                        followedMaster = true
+                        mediaUrl = p.variantUrl
+                        val (vUrl, vText) = fetchPlaylistText(session, mediaUrl) ?: return@window null
+                        when (val v = ContinuousTs.parse(vText, vUrl)) {
+                            is ContinuousTs.Playlist.Media -> v
+                            is ContinuousTs.Playlist.Unusable -> null.also { log("continuous: ${v.reason} (${hostOf(vUrl)})") }
+                            is ContinuousTs.Playlist.Master -> null
+                        }
+                    }
+                    is ContinuousTs.Playlist.Unusable -> null.also { log("continuous: ${p.reason} (${hostOf(url)})") }
+                }
+            },
+            openSegment = { url -> openSegment(session, url) },
+            fromMs = param("s")?.toLongOrNull()?.coerceAtLeast(0L) ?: 0L,
+            log = log,
+        )
+        val outcome = ContinuousTsStreams.serve(socket, out, mime, assembler) { server != null && sessions[token] === session }
+        if (outcome.end == ContinuousTsAssembler.End.NO_PLAYLIST) {
+            writeEmpty(out, 502, "Bad Gateway")
+            return
+        }
+        log("continuous: ended ${outcome.end} · ${outcome.written} segments, ${outcome.skipped} skipped, ${outcome.bytes / 1024}KB")
+    }
+
+    /** [url]'s playlist text and the url it finally came from, through the gated client; null when not served. */
+    private fun fetchPlaylistText(session: Session, url: String): Pair<String, String>? = try {
+        session.client.newCall(upstream(session, url).build()).execute().use { resp ->
+            val source = resp.body?.source()
+            when {
+                resp.code !in 200..299 -> null.also { log("continuous: playlist answered ${resp.code} (${hostOf(url)})") }
+                source == null || source.request(MAX_PLAYLIST_BYTES + 1L) -> null
+                else -> resp.request.url.toString() to source.readUtf8()
+            }
+        }
+    } catch (e: java.io.IOException) {
+        log("continuous: playlist failed: ${e.javaClass.simpleName} (${hostOf(url)})")
+        null
+    }
+
+    /** One segment's bytes through the gated client (closing them closes the response), retried once; null when not served. */
+    private fun openSegment(session: Session, url: String): java.io.InputStream? {
+        repeat(SEGMENT_ATTEMPTS) { attempt ->
+            val resp = runCatching {
+                session.client.newCall(upstream(session, url).header("Accept-Encoding", "identity").build()).execute()
+            }.getOrNull()
+            if (resp != null && resp.code in 200..299) {
+                val body = resp.body ?: return null.also { resp.close() }
+                return object : java.io.FilterInputStream(body.byteStream()) {
+                    override fun close() {
+                        runCatching { super.close() }
+                        resp.close()
+                    }
+                }
+            }
+            resp?.close()
+            if (attempt < SEGMENT_ATTEMPTS - 1) Thread.sleep(SEGMENT_RETRY_MS)
+        }
+        return null
+    }
+
     /** A GET of [url] with the stream's headers (never anything the renderer sent but its Range). */
     /**
      * What [url] is, from its first bytes, for a cast decision that has nothing else to go on
@@ -473,6 +562,24 @@ class PluginCastProxy(
 
         /** What an HLS origin's playlists named: `/t/<token>/r/<n>.<ext>`. */
         private const val DERIVED_ROUTE = "r"
+
+        /** An HLS origin as one continuous MPEG-TS body: `/t/<token>/live.ts`. */
+        private const val CONTINUOUS_ROUTE = "live.ts"
+
+        /** A segment at the live edge may not be published yet: asked twice, this far apart. */
+        private const val SEGMENT_ATTEMPTS = 2
+        private const val SEGMENT_RETRY_MS = 800L
+
+        /**
+         * [hlsUrl] (this proxy's `/t/<token>/index.m3u8`, on loopback or the LAN) as the same
+         * stream's continuous TS body, labelled [mime] and starting at [fromMs] when it is finite;
+         * null for any other url.
+         */
+        fun continuousUrlOf(hlsUrl: String, mime: String, fromMs: Long): String? {
+            val path = hlsUrl.substringBefore('?')
+            if (!path.endsWith("/$HLS_ROUTE") || !path.contains(TOKEN_PREFIX)) return null
+            return path.removeSuffix(HLS_ROUTE) + "$CONTINUOUS_ROUTE?m=${ContinuousTs.indexOf(mime)}&s=${fromMs.coerceAtLeast(0L)}"
+        }
 
         const val MIME_HLS = "application/vnd.apple.mpegurl"
 

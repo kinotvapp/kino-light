@@ -90,6 +90,8 @@ class TsRemuxer(
      * runtime switch `debug.kino.remux_seek_start` (anything but `off` = yes), read off the main thread.
      */
     private val seekStartEnabled: () -> Boolean = { true },
+    /** The remux keys a cast still serves or has staged (`RemuxHlsServer`): never evicted ([trim]). */
+    private val servedKeys: () -> Collection<String> = { emptyList() },
 ) {
 
     private val folder = File(cacheDir, RemuxPolicy.FOLDER)
@@ -392,8 +394,17 @@ class TsRemuxer(
      */
     private fun makeRoom() {
         val files = folder.listFiles().orEmpty().filter { it.isFile }
+        val held = files.sumOf { it.length() }
+        val cap = RemuxPolicy.capFor(runCatching { folder.usableSpace }.getOrDefault(0L), held)
+        // What is being written (every export in flight), served or staged for a TV, and any file a
+        // LAN file server is handing out: never evicted, even past the ceiling.
+        val served = LocalFileServer.servedPaths()
+        val keep = RemuxPolicy.namesOf(activeExports.keys + runCatching { servedKeys() }.getOrDefault(emptyList())) +
+            files.filter { it.absolutePath in served }.map { it.name }
         val toDelete = RemuxPolicy.toDelete(
             files.map { Triple(it.name, it.length(), it.lastModified()) },
+            cap = cap,
+            keep = keep,
         )
         if (toDelete.isEmpty()) return
         var freed = 0L
@@ -402,7 +413,16 @@ class TsRemuxer(
             val bytes = f.length()
             if (runCatching { f.delete() }.getOrDefault(false)) freed += bytes
         }
-        Log.w(TAG, "cache over its ceiling: dropped ${toDelete.size} file(s), freed ${freed}B")
+        Log.w(TAG, "cache over its ceiling (${cap / 1_048_576L}MB): dropped ${toDelete.size} file(s), freed ${freed}B")
+    }
+
+    /**
+     * Brings the cache back under its ceiling ([RemuxPolicy.capFor]), oldest first, never touching
+     * what is being written or served. Called after every cast (Chromecast and DLNA); a new remux
+     * does it before it starts. Blocking file work: off the main thread.
+     */
+    fun trim() {
+        runCatching { makeRoom() }.onFailure { Log.w(TAG, "trim failed: $it") }
     }
 
     /** The finished chunk [index] of [key], or null. */

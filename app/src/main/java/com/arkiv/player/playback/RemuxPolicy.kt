@@ -209,13 +209,35 @@ object RemuxPolicy {
     /**
      * Ceiling for everything remuxed, together. A two-hour title is around a gigabyte, and these
      * are derived copies of things the person can always fetch again -- filling their phone with
-     * them would be a poor trade for saving a few minutes of re-muxing.
+     * them would be a poor trade for saving a few minutes of re-muxing. It was 4 GB, and a phone
+     * reported 2743 MB of remuxes at startup (ERRORES-ALJ, 0.9.44).
      */
-    const val BYTE_CAP = 4L * 1024 * 1024 * 1024
+    const val BYTE_CAP = 1536L * 1024 * 1024
+
+    /** At most this share of the room the cache could have (free space plus what it holds). */
+    const val FREE_SHARE_PERCENT = 25
 
     /**
-     * Which files to drop, oldest first, so that what remains fits under [BYTE_CAP] alongside
-     * [incomingBytes].
+     * The ceiling on a disk with [usableBytes] free while the cache holds [cacheBytes]: [BYTE_CAP],
+     * or [FREE_SHARE_PERCENT] of what the cache could grow into, whichever is smaller. Counting the
+     * cache itself in keeps the ceiling from shrinking as the cache fills.
+     */
+    fun capFor(usableBytes: Long, cacheBytes: Long): Long =
+        minOf(BYTE_CAP, (usableBytes.coerceAtLeast(0L) + cacheBytes.coerceAtLeast(0L)) * FREE_SHARE_PERCENT / 100)
+
+    /**
+     * The cache files that belong to the remux [keys] (being written, served or staged): the
+     * finished file, its `.part` and the `.prev` leftover a cast may be serving. Never evicted.
+     */
+    fun namesOf(keys: Collection<String>): Set<String> = keys.flatMapTo(HashSet()) { key ->
+        val name = fileName(key)
+        listOf(name, "$name.part", "$name.prev")
+    }
+
+    /**
+     * Which files to drop, oldest first, so that what remains fits under [cap] alongside
+     * [incomingBytes]. A name in [keep] (being written or served, [namesOf]) is never dropped, even
+     * when that leaves the cache over its ceiling.
      *
      * Takes (name, size, lastModified) and returns the names to delete. Pure so the eviction order
      * can be pinned by test: getting it backwards would throw away what is being watched right now
@@ -224,12 +246,14 @@ object RemuxPolicy {
     fun toDelete(
         files: List<Triple<String, Long, Long>>,
         incomingBytes: Long = 0L,
+        cap: Long = BYTE_CAP,
+        keep: Set<String> = emptySet(),
     ): List<String> {
         val total = files.sumOf { it.second } + incomingBytes
-        if (total <= BYTE_CAP) return emptyList()
-        var over = total - BYTE_CAP
+        if (total <= cap) return emptyList()
+        var over = total - cap
         val out = ArrayList<String>()
-        files.sortedBy { it.third }.forEach { (name, bytes, _) ->
+        files.filter { it.first !in keep }.sortedBy { it.third }.forEach { (name, bytes, _) ->
             if (over <= 0L) return out
             out.add(name)
             over -= bytes

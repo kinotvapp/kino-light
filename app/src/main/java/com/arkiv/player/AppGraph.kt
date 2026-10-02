@@ -1623,6 +1623,8 @@ class AppGraph(context: Context) {
             // A cast remux starts near the phone's position (TsStart) unless a device test turns
             // it off: `adb shell setprop debug.kino.remux_seek_start off` (back on: `on`).
             seekStartEnabled = { com.arkiv.player.cast.CastTextMedia.systemProperty("debug.kino.remux_seek_start") != "off" },
+            // What a TV is playing or about to: never evicted by the cache's ceiling.
+            servedKeys = { remuxHlsServer.keysInUse() },
         )
     }
 
@@ -2007,10 +2009,13 @@ class AppGraph(context: Context) {
                     onEnded = { intentional ->
                         if (intentional) {
                             remuxHlsServer.endCast(dlna = false)
+                            applicationScope.launch(kotlinx.coroutines.Dispatchers.IO) { tsRemuxer.trim() }
                         } else {
                             applicationScope.launch {
                                 kotlinx.coroutines.delay(CAST_REMUX_GRACE_MS)
                                 if (_castSession?.casting?.value != true) remuxHlsServer.endCast(dlna = false)
+                                // Back under the cache's ceiling once the cast is over (ERRORES-ALJ).
+                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { tsRemuxer.trim() }
                             }
                         }
                     },

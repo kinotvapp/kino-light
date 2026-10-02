@@ -33,4 +33,19 @@ class DirectPlayFallbackTest {
         assertFalse(DirectPlayFallback.wholeFileAfterHls(upnpCode = null, http = 0))
         assertFalse(DirectPlayFallback.wholeFileAfterHls(upnpCode = 501, http = 200))
     }
+
+    /** ERRORES-AL7: an LG that listed video/mp2t fetched 39 MB of the TS and went STOPPED at 0:00. */
+    @Test
+    fun `a TS the TV gave up on before playing is retried remuxed`() {
+        assertTrue(DirectPlayFallback.remuxAfterEarlyStop(DlnaDiagnosis.STOPPED_EARLY, advanced = false))
+        assertTrue(DirectPlayFallback.remuxAfterEarlyStop(DlnaDiagnosis.TRANSPORT_ERROR, advanced = false))
+    }
+
+    @Test
+    fun `a file that played, or a stall or an unreachable TV, is not retried remuxed`() {
+        assertFalse(DirectPlayFallback.remuxAfterEarlyStop(DlnaDiagnosis.STOPPED_EARLY, advanced = true))
+        assertFalse(DirectPlayFallback.remuxAfterEarlyStop(DlnaDiagnosis.NEVER_FETCHED, advanced = false))
+        assertFalse(DirectPlayFallback.remuxAfterEarlyStop(DlnaDiagnosis.POSITION_STALLED, advanced = false))
+        assertFalse(DirectPlayFallback.remuxAfterEarlyStop(DlnaDiagnosis.STUCK_LOADING, advanced = false))
+    }
 }

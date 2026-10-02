@@ -291,6 +291,9 @@ class RemuxHlsServer(
     /** Is [key] the remux this server hands out? */
     fun isServing(key: String): Boolean = source?.key == key
 
+    /** The remux keys handed out or staged right now: the cache never evicts them ([TsRemuxer.trim]). */
+    fun keysInUse(): List<String> = listOfNotNull(source?.key, staged?.key)
+
     /** Seconds of [key]'s remux that can be played right now, or 0 if it is neither served nor staged. */
     fun availableSec(key: String): Double {
         val s = sourceOf(key) ?: return 0.0

@@ -28,6 +28,10 @@ class LocalFileServer(
     @Volatile private var server: ServerSocket? = null
     @Volatile private var current: File? = null
 
+    init {
+        synchronized(instances) { instances.add(this) }
+    }
+
     /**
      * Serve the file even while something else is still WRITING it.
      *
@@ -367,7 +371,17 @@ class LocalFileServer(
     private fun playlistFor(file: File): String =
         TsSegmenter.playlist(segmentsFor(file)) { "/seg?n=$it" }
 
-    private companion object {
+    companion object {
+
+        /** Every server alive, weakly: what [servedPaths] reads. */
+        private val instances: MutableSet<LocalFileServer> = java.util.Collections.newSetFromMap(java.util.WeakHashMap())
+
+        /**
+         * The files some server is handing out right now (absolute paths): the remux cache never
+         * evicts these ([TsRemuxer.trim]), whichever server (the Chromecast's or DLNA's) holds them.
+         */
+        fun servedPaths(): Set<String> = synchronized(instances) { instances.mapNotNull { it.current?.absolutePath }.toSet() }
+
         const val TAG = "ArkivLocalServer"
 
         /** How long the writer may produce nothing before a growing stream is considered over. */
