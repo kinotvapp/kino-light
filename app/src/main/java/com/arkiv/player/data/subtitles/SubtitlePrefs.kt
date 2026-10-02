@@ -137,8 +137,19 @@ class SubtitlePrefs(context: Context) {
         store.edit().putString(KEY_TITLES, TitleSubtitleMemory.encode(entries)).apply()
     }
 
+    /** The online subtitles [title] got ([OnlineSubtitleMemory]), oldest first. */
+    fun onlineSubtitles(title: String): List<SavedOnlineSubtitle> = synchronized(this) {
+        OnlineSubtitleMemory.of(OnlineSubtitleMemory.decode(store.getString(KEY_ONLINE, null)), title)
+    }
+
+    fun rememberOnlineSubtitle(title: String, sub: SavedOnlineSubtitle) = synchronized(this) {
+        val entries = OnlineSubtitleMemory.add(OnlineSubtitleMemory.decode(store.getString(KEY_ONLINE, null)), title, sub)
+        store.edit().putString(KEY_ONLINE, OnlineSubtitleMemory.encode(entries)).apply()
+    }
+
     private companion object {
         const val KEY = "subtitle_style"
         const val KEY_TITLES = "title_subtitles"
+        const val KEY_ONLINE = "title_online_subtitles"
     }
 }
