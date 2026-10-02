@@ -128,12 +128,13 @@ class ArkivApp : Application(), ImageLoaderFactory {
 
         // Phones: downloads become faststart MP4s (Mp4Prep). The daily pass over older ones while
         // charging, the originals a previous run could not delete yet (nothing holds them after a
-        // restart).
+        // restart), and the last option of a cast that gave up ("Descargar y preparar para la TV").
         if (com.arkiv.player.data.local.DownloadAvailability.allowed(com.arkiv.player.DeviceType.isTelevision(this))) {
             runCatching { com.arkiv.player.data.local.Mp4PrepWorker.scheduleSweep(this) }
             graph.applicationScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 runCatching { graph.mp4Prep.deletePending(graph.localDownloads.targetDir()) }
             }
+            com.arkiv.player.cast.CastGaveUp.lastResort = graph.downloadForTv
         }
 
         // Proactive telemetry: the backup seed pool ran dry for a device that needs it -> the user

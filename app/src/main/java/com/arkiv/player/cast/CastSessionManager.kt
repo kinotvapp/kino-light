@@ -113,7 +113,7 @@ class CastSessionManager(
      *
      * [failures]: how many times the Chromecast failed this title ([episodeId]) so far, for
      * "Probar por DLNA" ([CastDlnaOffer]). [exhausted] and [lastResort]: the question is the last
-     * one, every Chromecast route spent ([CastGaveUp]); the last option it may offer (none today).
+     * one, every Chromecast route spent ([CastGaveUp]); the last option it may offer ("Descargar y preparar para la TV", or none).
      */
     data class Trouble(
         val title: String,
@@ -121,7 +121,7 @@ class CastSessionManager(
         val episodeId: String = "",
         val failures: Int = 0,
         val exhausted: CastGaveUp.Exhausted? = null,
-        val lastResort: CastGaveUp.LastResort? = null,
+        val lastResort: CastGaveUp.Offer? = null,
     )
 
     private val _trouble = MutableStateFlow<Trouble?>(null)

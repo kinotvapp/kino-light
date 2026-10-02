@@ -1548,9 +1548,38 @@ class AppGraph(context: Context) {
                     extras = mapOf("reason" to reason.take(300), "source" to com.arkiv.player.playback.PlayerSource.kindFor(id).name),
                 )
             },
+            // A title prepared for a TV that gave up is ready for it.
+            onPrepared = { id, state -> downloadForTv.onPrepared(id, state) },
         )
     }
 
+    /**
+     * "Descargar y preparar para la TV" / "Enviar la descarga a la TV", the last option of an
+     * exhausted VOD cast (`CastGaveUp.lastResort`, set at startup). See `DownloadForTv`.
+     */
+    val downloadForTv: com.arkiv.player.cast.DownloadForTv by lazy {
+        val dao = database.downloadDao()
+        val main = android.os.Handler(android.os.Looper.getMainLooper())
+        com.arkiv.player.cast.DownloadForTv(
+            prefs = appContext.getSharedPreferences("kino_download_for_tv", android.content.Context.MODE_PRIVATE),
+            scope = applicationScope,
+            isTelevision = { com.arkiv.player.DeviceType.isTelevision(appContext) },
+            downloadable = { id -> com.arkiv.player.data.local.DownloadSource.canDownload(id, downloadStrategies.keys, ::isXuperPlugin, ::pluginDownloads) },
+            completedIds = dao.observeAll().map { rows ->
+                rows.filter { it.state == com.arkiv.player.data.local.LocalDownloadState.COMPLETED && it.source != "ditu" }
+                    .map { it.episodeId }.toSet()
+            },
+            keptAsIs = { id ->
+                mp4Prep.readMarker(localDownloads.targetDir(), id)?.state == com.arkiv.player.data.local.PrepState.UNSUPPORTED
+            },
+            enqueueDownload = { id ->
+                localDownloads.enqueue(id, com.arkiv.player.data.local.DownloadSource.sourceFor(id, ::isXuperPlugin, ::pluginDownloads))
+            },
+            requestPrep = { id -> mp4Prep.request(id) },
+            notifyReady = { id, title -> com.arkiv.player.cast.TvReadyNotice.post(appContext, id, title) },
+            say = { text -> main.post { android.widget.Toast.makeText(appContext, text, android.widget.Toast.LENGTH_LONG).show() } },
+        )
+    }
 
     /**
      * On-disk folder for the frame JPEGs, a single point so that whoever writes

@@ -259,7 +259,7 @@ internal class DlnaState(
 
     /**
      * The last option for a cast that gave up for good ([com.arkiv.player.cast.CastGaveUp]), while its
-     * question is up; null otherwise (always, until 0.9.46 sets `CastGaveUp.lastResort`).
+     * question is up and it has one to offer ("Descargar y preparar para la TV"); null otherwise.
      */
     var gaveUp by mutableStateOf<DlnaController.Failure?>(null)
         private set
@@ -656,6 +656,8 @@ internal fun BoxScope.ActiveDlnaBar(
  * the casts that give up after they were sent ([DlnaState.followFailures]), their last option
  * ([DlnaState.gaveUp]), and "Probar por DLNA en <TV>" from the Chromecast's trouble dialog
  * ([CastToDlnaHandoff]), which is [onChoose] with the TV it found and the Chromecast's position.
+ * Also "Enviar a la TV" from outside the player ([SendToTvPrompt]); and a TV picked here for a title
+ * downloaded since this player opened it reopens it from the file first ([reopenLocalForDlna]).
  */
 @Composable
 internal fun DlnaDevicesDialog(
@@ -670,13 +672,20 @@ internal fun DlnaDevicesDialog(
     LaunchedEffect(Unit) {
         CastToDlnaHandoff.requests.collect { r -> CastToDlnaHandoff.take(r)?.let { choose(it.device, it.atMs) } }
     }
+    val graph = com.arkiv.player.ui.rememberGraph()
+    SendToTvPrompt(state, graph)
     state.gaveUp?.let { f ->
         val action = f.lastResort
         if (action != null) {
             AlertDialog(
                 onDismissRequest = { state.dismissGaveUp() },
                 title = { Text("No se pudo reproducir en la TV") },
-                text = { Text(f.message) },
+                text = {
+                    Column {
+                        Text(f.message)
+                        Text(action.explanation, color = ArkivTextSecondary, modifier = Modifier.padding(top = 12.dp))
+                    }
+                },
                 confirmButton = { TextButton(onClick = { state.dismissGaveUp(); action.start(f.exhausted) }) { Text(action.label) } },
                 dismissButton = { TextButton(onClick = { state.dismissGaveUp() }) { Text("Cerrar") } },
             )
@@ -709,7 +718,8 @@ internal fun DlnaDevicesDialog(
                                 .fillMaxWidth()
                                 .clickable {
                                     state.closePicker()
-                                    onChoose(device, null)
+                                    // Downloaded since this player opened it: the TV gets the file.
+                                    if (!reopenLocalForDlna(graph, device)) onChoose(device, null)
                                 }
                                 .padding(vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically,

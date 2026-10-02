@@ -140,9 +140,9 @@ class DlnaController(
     /**
      * A cast that gave up for good (every route it had was tried, [CastGaveUp]): its message, whether
      * it happened [async] (after the send already returned true: the UI shows nothing unless told),
-     * and the last option [CastGaveUp] offers for it (null today).
+     * and the last option [CastGaveUp] offers for it (null: none).
      */
-    class Failure(val message: String, val async: Boolean, val exhausted: CastGaveUp.Exhausted, val lastResort: CastGaveUp.LastResort?)
+    class Failure(val message: String, val async: Boolean, val exhausted: CastGaveUp.Exhausted, val lastResort: CastGaveUp.Offer?)
 
     private val _failures = MutableSharedFlow<Failure>(extraBufferCapacity = 4)
 
@@ -1275,7 +1275,7 @@ class DlnaController(
     private fun gaveUp(c: Cast, userMessage: String) {
         if (c.advanced) return
         val e = CastGaveUp.Exhausted(
-            CastGaveUp.Receiver.DLNA, c.stage.episodeId, c.title, c.stage.live, c.stage.trail.summary(),
+            CastGaveUp.Receiver.DLNA, c.stage.episodeId, c.title, c.stage.live, c.stage.trail.summary(), dlnaDevice = c.device,
             positionMs = (c.lastPositionMs ?: 0L) + c.offsetMs,
         )
         val lastResort = CastGaveUp.exhausted(e)

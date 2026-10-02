@@ -1,6 +1,8 @@
 package com.arkiv.player.ui.player
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.unit.dp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -59,7 +61,7 @@ fun rememberUpdatePromptWaitsForCast(graph: AppGraph): Boolean {
  * found, the question also offers "Probar por DLNA en <TV>": one tap ends the Chromecast session
  * and the player screen casts the title over DLNA from where the Chromecast was
  * ([CastToDlnaHandoff]). With no such TV, the question carries what [com.arkiv.player.cast.CastGaveUp]
- * offers once every route is spent (nothing today; 0.9.46's "Descargar y preparar para la TV").
+ * offers once every route is spent ("Descargar y preparar para la TV", with its explanation).
  */
 @Composable
 fun CastTroubleDialog(graph: AppGraph) {
@@ -109,6 +111,7 @@ fun CastTroubleDialog(graph: AppGraph) {
                     val last = t.lastResort
                     val exhausted = t.exhausted
                     if (last != null && exhausted != null) {
+                        Text(last.explanation, modifier = androidx.compose.ui.Modifier.padding(top = 12.dp))
                         TextButton(onClick = { s.dismissTrouble(); last.start(exhausted) }) { Text(last.label) }
                     }
                 }

@@ -50,16 +50,18 @@ class CastRouteTrailTest {
     @Test fun `an exhausted VOD cast gets the last option once one exists, a live one never`() {
         val vod = CastGaveUp.Exhausted(CastGaveUp.Receiver.DLNA, "magis:123", "Título", live = false, routes = "proxy=stopped_early")
         val live = vod.copy(episodeId = "live:rcn", live = true)
-        assertNull("nothing is built yet (0.9.46)", CastGaveUp.exhausted(vod))
+        assertNull("nothing set, nothing offered", CastGaveUp.exhausted(vod))
         assertSame(vod, CastGaveUp.last)
-        val download = object : CastGaveUp.LastResort {
-            override val label = "Descargar y preparar para la TV"
-            override fun start(exhausted: CastGaveUp.Exhausted) {}
-        }
-        CastGaveUp.lastResort = download
+        val download = CastGaveUp.Offer("Descargar y preparar para la TV", "…") {}
+        CastGaveUp.lastResort = CastGaveUp.LastResort { download }
         assertSame(download, CastGaveUp.exhausted(vod))
         assertSame(download, CastGaveUp.exhausted(vod.copy(receiver = CastGaveUp.Receiver.CHROMECAST)))
         assertNull(CastGaveUp.exhausted(live))
         assertNull("a cast that does not say which title cannot be prepared", CastGaveUp.exhausted(vod.copy(episodeId = "")))
+        // The last option decides per title (null: not downloadable), and one that throws offers nothing.
+        CastGaveUp.lastResort = CastGaveUp.LastResort { null }
+        assertNull(CastGaveUp.exhausted(vod))
+        CastGaveUp.lastResort = CastGaveUp.LastResort { error("boom") }
+        assertNull(CastGaveUp.exhausted(vod))
     }
 }

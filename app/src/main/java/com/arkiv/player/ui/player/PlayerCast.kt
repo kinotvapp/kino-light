@@ -224,8 +224,10 @@ internal fun isPluginLiveCast(item: PlayerData): Boolean =
  */
 @androidx.compose.runtime.Composable
 internal fun CastScreenPresence(session: com.arkiv.player.cast.CastSessionManager?, episodeId: String) {
-    if (session == null) return
     val owner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    PlayerOnScreenPresence(owner, episodeId)
+    if (session == null) return
+    PreferDownloadOnChromecast(session, episodeId)
     androidx.compose.runtime.DisposableEffect(session, owner) {
         var foreground = false
         fun set(open: Boolean) {
@@ -249,6 +251,56 @@ internal fun CastScreenPresence(session: com.arkiv.player.cast.CastSessionManage
         }
     }
     androidx.compose.runtime.LaunchedEffect(session, episodeId) { session.onScreenTitle(episodeId) }
+}
+
+/**
+ * [com.arkiv.player.cast.PlayerOnScreen]: which title the player screen in the foreground shows,
+ * with or without a cast session (a phone with no Play services still casts over DLNA).
+ */
+@androidx.compose.runtime.Composable
+private fun PlayerOnScreenPresence(owner: androidx.lifecycle.LifecycleOwner, episodeId: String) {
+    androidx.compose.runtime.DisposableEffect(owner, episodeId) {
+        val screen = com.arkiv.player.cast.PlayerOnScreen
+        screen.episodeId = episodeId
+        screen.foreground = owner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            when (event) {
+                androidx.lifecycle.Lifecycle.Event.ON_START -> { screen.episodeId = episodeId; screen.foreground = true }
+                androidx.lifecycle.Lifecycle.Event.ON_STOP -> if (screen.episodeId == episodeId) screen.foreground = false
+                else -> Unit
+            }
+        }
+        owner.lifecycle.addObserver(observer)
+        onDispose {
+            owner.lifecycle.removeObserver(observer)
+            if (screen.episodeId == episodeId) {
+                screen.foreground = false
+                screen.episodeId = null
+            }
+        }
+    }
+}
+
+/**
+ * A Chromecast session starting while the player shows a title that is on the phone but was opened
+ * from the network (the download finished after it opened): the player is reopened from the file,
+ * and the reopened player casts THAT to the session as it loads. See
+ * [com.arkiv.player.cast.DownloadForTvPolicy.reopenAsLocal]; once per title ([LocalReopens]).
+ */
+@androidx.compose.runtime.Composable
+private fun PreferDownloadOnChromecast(session: com.arkiv.player.cast.CastSessionManager, episodeId: String) {
+    val graph = com.arkiv.player.ui.rememberGraph()
+    val casting = session.casting.collectAsStateWithLifecycle().value
+    androidx.compose.runtime.LaunchedEffect(casting, episodeId) {
+        if (!casting) return@LaunchedEffect
+        // The player's own load may still be opening the file: give it a moment to say so.
+        kotlinx.coroutines.delay(1_000)
+        val downloaded = graph.downloadForTv.downloaded
+        if (!com.arkiv.player.cast.DownloadForTvPolicy.reopenAsLocal(episodeId, downloaded, com.arkiv.player.data.local.LocalFileUse.playingEpisode)) return@LaunchedEffect
+        if (!LocalReopens.once(episodeId)) return@LaunchedEffect
+        android.util.Log.w("ArkivCast", "casting a title that is downloaded but playing from the network → reopening it from the file")
+        com.arkiv.player.cast.PlayerReopen.request(episodeId)
+    }
 }
 
 /**

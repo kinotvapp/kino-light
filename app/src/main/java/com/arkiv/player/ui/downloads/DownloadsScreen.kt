@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -68,6 +69,8 @@ import com.arkiv.player.ui.theme.ArkivTextSecondary
 fun DownloadsScreen(
     contentPadding: PaddingValues,
     onPlayEpisode: (String) -> Unit,
+    /** "Enviar a la TV" on a finished download: the player of that title, asking which TV. */
+    onSendToTv: (String) -> Unit = {},
 ) {
     val graph = rememberGraph()
     val vm: DownloadsViewModel = viewModel(
@@ -127,6 +130,7 @@ fun DownloadsScreen(
                     group = group,
                     prep = prep,
                     onPlay = onPlayEpisode,
+                    onSendToTv = onSendToTv,
                     onConfirm = vm::confirm,
                     onRetry = vm::retry,
                     onCancel = vm::cancel,
@@ -162,6 +166,7 @@ private fun DownloadGroupSection(
     group: DownloadGroup,
     prep: Map<String, PrepStatus>,
     onPlay: (String) -> Unit,
+    onSendToTv: (String) -> Unit,
     onConfirm: (String) -> Unit,
     onRetry: (String) -> Unit,
     onCancel: (String) -> Unit,
@@ -180,6 +185,7 @@ private fun DownloadGroupSection(
             row = row,
             prep = prep[row.episodeId],
             onPlay = { if (row.state == LocalDownloadState.COMPLETED) onPlay(row.episodeId) },
+            onSendToTv = { onSendToTv(row.episodeId) },
             onConfirm = { onConfirm(row.episodeId) },
             onRetry = { onRetry(row.episodeId) },
             onCancel = { onCancel(row.episodeId) },
@@ -210,6 +216,7 @@ private fun DownloadGroupSection(
                             row = status.row,
                             prep = prep[status.row.episodeId],
                             onPlay = { if (status.row.state == LocalDownloadState.COMPLETED) onPlay(status.row.episodeId) },
+                            onSendToTv = { onSendToTv(status.row.episodeId) },
                             onConfirm = { onConfirm(status.row.episodeId) },
                             onRetry = { onRetry(status.row.episodeId) },
                             onCancel = { onCancel(status.row.episodeId) },
@@ -357,6 +364,7 @@ private fun DownloadItem(
     row: DownloadRow,
     prep: PrepStatus?,
     onPlay: () -> Unit,
+    onSendToTv: () -> Unit,
     onConfirm: () -> Unit,
     onRetry: () -> Unit,
     onCancel: () -> Unit,
@@ -466,6 +474,14 @@ private fun DownloadItem(
                 // partial, so "Retry" resumes) or REMOVED (stops and deletes everything).
                 LocalDownloadState.QUEUED, LocalDownloadState.STAGING, LocalDownloadState.DOWNLOADING -> {
                     TextButton(onClick = onCancel) { Text("Cancelar") }
+                    TextButton(onClick = onRemove) { Text("Quitar") }
+                }
+                LocalDownloadState.COMPLETED -> {
+                    TextButton(onClick = onSendToTv) {
+                        Icon(Icons.Default.Tv, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Enviar a la TV")
+                    }
                     TextButton(onClick = onRemove) { Text("Quitar") }
                 }
                 else -> TextButton(onClick = onRemove) { Text("Quitar") }

@@ -229,6 +229,14 @@ fun ArkivRoot(
             onDeepLinkConsumed()
         }
     }
+    // A title whose download is ready for the TV (`DownloadForTv`, "Listo para la TV"): its player is
+    // opened again, replacing the one on top, so it loads the file instead of the network.
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        com.arkiv.player.cast.PlayerReopen.requests.collect { id ->
+            if (id == null || !com.arkiv.player.cast.PlayerReopen.take(id)) return@collect
+            navController.navigate("player/${Uri.encode(id)}") { popUpTo("player/{episodeId}") { inclusive = true } }
+        }
+    }
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
     // The En vivo screen's buttons live in the app bar (guide, Recargar, "+"); this is what they share with the screen.
@@ -557,6 +565,12 @@ fun ArkivRoot(
                 DownloadsScreen(
                     contentPadding = padding,
                     onPlayEpisode = { playEpisode(it) },
+                    // "Enviar a la TV": straight to the player (no "Ver en el TV / celular" question),
+                    // which loads the file and asks which TV.
+                    onSendToTv = { id ->
+                        com.arkiv.player.cast.SendToTv.offer(id)
+                        navigateToPlayer(id)
+                    },
                 )
             }
             composable("settings") {
