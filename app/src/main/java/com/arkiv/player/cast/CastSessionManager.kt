@@ -285,6 +285,21 @@ class CastSessionManager(
      * receiver then) and a receiver that ignored the queue item's active ids. One request per queue item
      * (a new one per load) and choice. Main thread.
      */
+    /**
+     * The phone turned on a subtitle the TV's load lacks (an online one added mid-cast, see
+     * [CastSubtitles.needsReload]): the same media is loaded again from where the TV is, now with
+     * it. True when that reload went out. Main thread.
+     */
+    private fun reloadForNewSubtitle(): Boolean {
+        val subs = subtitles ?: return false
+        val r = pending ?: return false
+        if (!_casting.value || player.currentMediaItem?.mediaId != r.episodeId) return false
+        if (!subs.needsReload(r.episodeId)) return false
+        textSyncKey = ""
+        reload(r, idleWatch.lastKnownMs(r.episodeId))
+        return true
+    }
+
     private fun syncTextTracks() {
         val subs = subtitles ?: return
         val r = pending ?: return
@@ -310,7 +325,7 @@ class CastSessionManager(
     }
 
     init {
-        subtitles?.onChoiceChanged = { mainHandler.post { syncTextTracks() } }
+        subtitles?.onChoiceChanged = { mainHandler.post { if (!reloadForNewSubtitle()) syncTextTracks() } }
         // The same choice picked again: asked of the receiver again, whatever was asked before.
         subtitles?.onReapply = { mainHandler.post { textSyncKey = ""; syncTextTracks() } }
         player.addListener(diagnostics)
