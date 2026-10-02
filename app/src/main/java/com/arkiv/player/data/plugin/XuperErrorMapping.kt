@@ -1,6 +1,7 @@
 package com.arkiv.player.data.plugin
 
 import com.arkiv.player.data.magis.MagisResult
+import com.arkiv.player.data.magis.MagisSession
 
 /**
  * Collapses Magis's portal-error surface down to the 5 standard plugin codes ([PluginErrors]) --
@@ -38,9 +39,37 @@ import com.arkiv.player.data.magis.MagisResult
  */
 private const val CONTENT_GONE_MARKER = "不存在"
 
-internal fun MagisResult.PortalError.toPluginError(): Pair<String, String> {
+/** `portal100006` ("剧集不存在"): the series behind a chapter is gone (0.9.45, ERRORES-AO3: a "Seguir viendo" card). */
+internal const val XUPER_EPISODE_GONE = "Este capítulo ya no está disponible."
+
+/** [XUPER_EPISODE_GONE] when what was asked is the series' chapter list rather than one chapter. */
+internal const val XUPER_SERIES_GONE = "Esta serie ya no está disponible."
+
+/**
+ * The sentences this mapping writes for the person, not the portal's own text: `PluginCalls.typed` shows one of these as
+ * it is (in the "No se puede reproducir" dialog) instead of the code's generic line ("No se encontró en Xuper",
+ * "Configura Xuper…"), which said nothing about a gone chapter or a linked account the portal keeps logging out.
+ */
+internal val XUPER_HOST_SENTENCES: Set<String> = setOfNotNull(
+    XUPER_EPISODE_GONE,
+    XUPER_SERIES_GONE,
+    MagisSession.accountProblemMessage("aaa100028"),
+    MagisSession.accountProblemMessage(MagisSession.ACCOUNT_IN_USE_ELSEWHERE),
+)
+
+/**
+ * [accountLinked]: a linked account's session that is still dead after `withValidSession`'s re-logins, or logged in
+ * on another device (`aaa100083`), gets [MagisSession.accountProblemMessage] (re-link it) instead of the portal's text.
+ * [goneMessage] is what a `portal100006` says: [XUPER_EPISODE_GONE] for a playback, [XUPER_SERIES_GONE] for a listing.
+ */
+internal fun MagisResult.PortalError.toPluginError(
+    accountLinked: Boolean = false,
+    goneMessage: String = XUPER_EPISODE_GONE,
+): Pair<String, String> {
     val message = msg.orEmpty()
+    if (accountLinked) MagisSession.accountProblemMessage(code)?.let { return PluginErrors.AUTH_REQUIRED to it }
     return when {
+        code == "portal100006" -> PluginErrors.NOT_FOUND to goneMessage
         code == "portal100004" -> PluginErrors.NOT_FOUND to message
         code == "portal100024" -> PluginErrors.GEO_BLOCKED to message
         code == "aaa100027" || code == "aaa100028" -> PluginErrors.AUTH_REQUIRED to message
