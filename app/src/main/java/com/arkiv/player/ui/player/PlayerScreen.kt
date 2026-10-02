@@ -3066,6 +3066,7 @@ private fun PlayerContent(
                 // A VOD that lost its connection after playing gets a fresh Stream on its second
                 // attempt (the VM decides whether this title has a source to ask). See VodNetworkRecovery.
                 onNetworkReResolve = vm::onVodNetworkReResolve,
+                networkUi = vm.vodNetworkUi,
                 startPlaying = !mItem.startPaused,
                 onUndeclaredHost = if (mItem.kind == SourceKind.PLUGIN && vm.asksAboutPlaybackHosts) {
                     { host, positionMs -> vm.onPluginHostRefused(host, positionMs) }
@@ -3391,9 +3392,11 @@ private fun PlayerContent(
                         Text("Vincular cuenta", color = Color(0xFFB00020))
                     }
                 }
+                NetworkRetryAction(vm, isTv)
                 OtherSourcesAction(vm, isTv)
             }
         }
+        OfflineWaitNote(vm, Modifier.align(Alignment.TopCenter))
 
         // The on-demand link prompt itself, floated over the player (not a full-screen replace --
         // the video underneath stays composed). Same screen Settings uses for voluntary linking
@@ -4705,6 +4708,57 @@ internal fun resolvingText(sourceName: String, elapsedMs: Long): String {
 private const val RESOLVING_QUIET_SECONDS = 5L
 
 /**
+ * "Reintentar" on a VOD's network error ([VodNetworkUi.canRetry]): reopens the player where it was.
+ * Its own composable for the same reason as [OtherSourcesAction] (`PlayerContent`'s size). On TV it
+ * takes the focus, as nothing else on screen can while the error shows.
+ */
+@Composable
+private fun NetworkRetryAction(vm: PlayerViewModel, isTv: Boolean) {
+    val canRetry by vm.vodNetworkUi.canRetry.collectAsStateWithLifecycle()
+    if (!canRetry) return
+    val focus = remember { FocusRequester() }
+    var focused by remember { mutableStateOf(false) }
+    LaunchedEffect(isTv) {
+        if (!isTv) return@LaunchedEffect
+        retryFocus(
+            isAlreadyFocused = { focused },
+            wait = { delay(WAIT_BETWEEN_FOCUS_ATTEMPTS_MS) },
+            request = { focus.requestFocus() },
+        )
+    }
+    Button(
+        onClick = { vm.vodNetworkUi.retry() },
+        modifier = Modifier
+            .padding(top = 12.dp)
+            .focusRequester(focus)
+            .onFocusChanged { focused = it.isFocused },
+        colors = ButtonDefaults.buttonColors(containerColor = Color.White),
+    ) {
+        Text(NETWORK_RETRY_LABEL, color = Color(0xFFB00020))
+    }
+}
+
+internal const val NETWORK_RETRY_LABEL = "Reintentar"
+internal const val NETWORK_WAITING_TEXT = "Sin conexión, esperando la red…"
+
+/** While a VOD's network recovery waits for the device to have a network again ([VodNetworkUi.waiting]). */
+@Composable
+private fun OfflineWaitNote(vm: PlayerViewModel, modifier: Modifier) {
+    val waiting by vm.vodNetworkUi.waiting.collectAsStateWithLifecycle()
+    if (!waiting) return
+    Text(
+        NETWORK_WAITING_TEXT,
+        color = Color.White,
+        style = MaterialTheme.typography.labelLarge,
+        modifier = modifier
+            .padding(top = 56.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color.Black.copy(alpha = 0.7f))
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+    )
+}
+
+/**
  * "Ver otras fuentes" on the player's error, when a plugin title's source didn't play
  * ([PlayerViewModel.otherSources]). Its own composable, and its destination in
  * [LocalOpenOtherSources], on purpose: `PlayerContent` is at the size where one more parameter or a
@@ -4721,7 +4775,8 @@ private fun OtherSourcesAction(vm: PlayerViewModel, isTv: Boolean) {
     val focus = remember { FocusRequester() }
     var focused by remember { mutableStateOf(false) }
     LaunchedEffect(title, isTv) {
-        if (!isTv) return@LaunchedEffect
+        // "Reintentar" ([NetworkRetryAction]) is the one that takes focus when it shows.
+        if (!isTv || vm.vodNetworkUi.canRetry.value) return@LaunchedEffect
         retryFocus(
             isAlreadyFocused = { focused },
             wait = { delay(WAIT_BETWEEN_FOCUS_ATTEMPTS_MS) },

@@ -111,4 +111,65 @@ class VodNetworkRecoveryTest {
         assertTrue(later.first() > VodNetworkRecovery.delayMs(1))
         assertEquals(500L + VodNetworkRecovery.MAX_BACKOFF_MS, later.last())
     }
+
+    // The Redmi (2026-10-01): the Wi-Fi dropped after a resume and three attempts ran out in ~15 s.
+    @Test fun `with no network an attempt waits for one first, bounded overall`() {
+        assertEquals(VodNetworkRecovery.MAX_OFFLINE_WAIT_MS, VodNetworkRecovery.offlineWaitMs(networkUp = false, waitedMs = 0))
+        assertEquals(VodNetworkRecovery.MAX_OFFLINE_WAIT_MS - 40_000, VodNetworkRecovery.offlineWaitMs(networkUp = false, waitedMs = 40_000))
+        assertEquals(0L, VodNetworkRecovery.offlineWaitMs(networkUp = false, waitedMs = VodNetworkRecovery.MAX_OFFLINE_WAIT_MS + 1))
+        assertEquals(0L, VodNetworkRecovery.offlineWaitMs(networkUp = true, waitedMs = 0))
+        assertTrue(VodNetworkRecovery.MAX_OFFLINE_WAIT_MS in 120_000L..180_000L)
+    }
+
+    @Test fun `a VOD's network error offers Reintentar, a live channel's or another error does not`() {
+        assertTrue(VodNetworkRecovery.offersRetry(failed, live = false))
+        assertFalse(VodNetworkRecovery.offersRetry(failed, live = true))
+        assertFalse(VodNetworkRecovery.offersRetry(PlaybackException.ERROR_CODE_DECODER_INIT_FAILED, live = false))
+    }
+
+    @Test fun `the network coming back fires once, after a drop`() {
+        val back = NetworkReturn()
+        assertFalse(back.onState(false))
+        assertTrue(back.onState(true))
+        assertFalse(back.onState(false))
+        assertFalse(back.onState(true))
+    }
+
+    @Test fun `a network that was up when the error showed only counts after it drops and returns`() {
+        val back = NetworkReturn()
+        assertFalse(back.onState(true))
+        assertFalse(back.onState(true))
+        assertFalse(back.onState(false))
+        assertTrue(back.onState(true))
+    }
+
+    @Test fun `Reintentar clears the error and reopens the player once`() {
+        var cleared = 0
+        var reopened = 0
+        val ui = VodNetworkUi(onRetry = { cleared++ })
+        val player = Any()
+        ui.setWaiting(player, true)
+        assertTrue(ui.waiting.value)
+        ui.offerRetry(player) { reopened++ }
+        assertFalse(ui.waiting.value)
+        assertTrue(ui.canRetry.value)
+        assertTrue(ui.retry())
+        assertFalse(ui.retry())
+        assertEquals(1, cleared)
+        assertEquals(1, reopened)
+        assertFalse(ui.canRetry.value)
+    }
+
+    @Test fun `a rebuilt player takes over and the old one's late reset is ignored`() {
+        val ui = VodNetworkUi()
+        val old = Any()
+        val rebuilt = Any()
+        ui.offerRetry(old) {}
+        ui.setWaiting(rebuilt, true)
+        assertFalse(ui.canRetry.value)
+        ui.reset(old)
+        assertTrue(ui.waiting.value)
+        ui.reset(rebuilt)
+        assertFalse(ui.waiting.value)
+    }
 }
