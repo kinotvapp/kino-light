@@ -23,6 +23,8 @@ data class SubtitleQuery(
     val season: Int? = null,
     val episode: Int? = null,
     val languages: List<String> = listOf("es", "en"),
+    /** The playing file's OpenSubtitles hash, when it could be computed (OpenSubtitles only). */
+    val movieHash: String? = null,
 ) {
     /** Nothing to search by: no id and no title. */
     val isEmpty: Boolean get() = imdbId.isNullOrBlank() && (tmdbId ?: 0) <= 0 && title.isBlank()
@@ -42,6 +44,8 @@ data class OnlineSubtitle(
     val release: String,
     val downloads: Int = 0,
     val hearingImpaired: Boolean = false,
+    /** The provider says this subtitle was made for the exact file being played (OpenSubtitles `moviehash_match`). */
+    val hashMatch: Boolean = false,
 )
 
 /** Why a provider call failed, each with the sentence the person reads. */
@@ -100,11 +104,27 @@ object OnlineSubtitleRules {
         return (codes + "es" + "en").distinct()
     }
 
-    /** [results] in the menu's order: preferred language first, then the most downloaded, capped. */
-    fun sort(results: List<OnlineSubtitle>, languages: List<String>, cap: Int = MAX_RESULTS): List<OnlineSubtitle> {
+    /**
+     * [results] in the menu's order: a hash match first, then the closest release name to [file]
+     * (in tenths, so a tiny difference never outranks the person's language), then the preferred
+     * language, then the most downloaded; capped at [cap], but a hash match is never cut.
+     */
+    fun sort(results: List<OnlineSubtitle>, languages: List<String>, cap: Int = MAX_RESULTS, file: FileHint? = null): List<OnlineSubtitle> {
         fun rank(lang: String) = languages.indexOf(lang).let { if (it < 0) languages.size else it }
-        return results.sortedWith(compareBy<OnlineSubtitle> { rank(it.language) }.thenByDescending { it.downloads }).take(cap)
+        val hint = file?.takeUnless { it.isBlank }
+        fun similarity(s: OnlineSubtitle) = if (hint == null) 0 else Math.round(ReleaseMatch.score(s.release, hint) * 10).toInt()
+        val sorted = results.sortedWith(
+            compareByDescending<OnlineSubtitle> { it.hashMatch }
+                .thenByDescending { similarity(it) }
+                .thenBy { rank(it.language) }
+                .thenByDescending { it.downloads },
+        )
+        return sorted.take(maxOf(cap, sorted.count { it.hashMatch }))
     }
+
+    /** The provider groups with a hash match first; the rest keep the person's order. */
+    fun orderGroups(groups: List<ProviderResults>): List<ProviderResults> =
+        groups.sortedByDescending { g -> g.results.any { it.hashMatch } }
 
     /** A language code as the menu names it, in Spanish. */
     fun languageName(code: String): String = when (code.lowercase()) {

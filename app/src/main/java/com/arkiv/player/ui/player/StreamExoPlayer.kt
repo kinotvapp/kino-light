@@ -437,6 +437,12 @@ internal fun StreamExoPlayer(
         built
     }
     val exoPlayer = prepared.player
+    // What the online subtitle menu may know of this stream: its file name and, for a stable plain
+    // remote file only, a range reader through the SAME gated client and headers as the player.
+    DisposableEffect(prepared) {
+        graph.playingFile = playingFileFor(graph, mediaUrl, mimeType.orEmpty(), http, requestHeaders, live = onLiveError != null, drm = drm != null || clearKey != null)
+        onDispose { graph.playingFile = null }
+    }
     // The subtitles the player's item has now; an appended one is added in place, where it is.
     var appliedSubtitles by remember(prepared) { mutableStateOf(subtitleConfigs) }
     // The tracks actually still merged in for THIS player: starts as [audioTracks] and only ever
@@ -1246,3 +1252,17 @@ internal fun playbackFailureText(error: Throwable): String =
 
 /** How many times a stuck VOD player is re-prepared in place before its error reaches the person. */
 private const val MAX_STUCK_RETRIES = 2
+
+/** The [PlayingFile] the subtitle menu reads: hashable only when [SubtitleHashPolicy] allows it. */
+private fun playingFileFor(
+    graph: com.arkiv.player.AppGraph, url: String, mime: String, http: StreamHttp, headers: Map<String, String>, live: Boolean, drm: Boolean,
+): com.arkiv.player.data.subtitles.PlayingFile {
+    val gated = http as? StreamHttp.PluginGated
+    val skip = com.arkiv.player.data.subtitles.SubtitleHashPolicy.skipReason(
+        url, mime, live = live, xuper = gated?.xuper == true, proxied = gated == null, drm = drm,
+    )
+    val name = com.arkiv.player.data.subtitles.SubtitleHashPolicy.fileNameOf(url)
+    if (skip != null || gated == null) return com.arkiv.player.data.subtitles.PlayingFile(name, null)
+    // Never askable (no askAboutFor): a host the person has not approved is simply not read.
+    return com.arkiv.player.data.subtitles.PlayingFile(name, com.arkiv.player.data.subtitles.HttpRangeReader(graph.pluginStreamClient(gated.hosts, false), url, headers))
+}

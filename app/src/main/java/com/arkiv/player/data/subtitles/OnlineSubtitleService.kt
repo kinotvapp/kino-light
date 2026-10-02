@@ -6,6 +6,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /** One provider's part of a search: its results, or why it failed. */
@@ -22,6 +24,12 @@ sealed interface OnlineSearchOutcome {
     /** Each usable provider's answer, in the person's order. */
     data class Found(val groups: List<ProviderResults>) : OnlineSearchOutcome
 }
+
+/**
+ * The stream playing now, as far as a subtitle search cares: its [fileName] (from the URL, never
+ * the URL) and, only when it is a stable plain file worth a hash, a [reader] for it.
+ */
+class PlayingFile(val fileName: String?, val reader: MovieHash.RangeReader?)
 
 /** A downloaded subtitle, ready to be added as a track: a UTF-8 SRT on disk. */
 data class DownloadedSubtitle(val lang: String, val label: String, val path: String)
@@ -46,16 +54,39 @@ class OnlineSubtitleService(
     /** Is there any provider to search with? Off the main thread. */
     fun available(): Boolean = runCatching { keys.usable().isNotEmpty() }.getOrDefault(false)
 
-    suspend fun search(episodeId: String): OnlineSearchOutcome = withContext(Dispatchers.IO) {
+    private val hashes = object : LinkedHashMap<String, String?>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String?>?) = size > 32
+    }
+    private val hashLock = Mutex()
+
+    /**
+     * The playing file's hash, at most once per title and file (failures included, so reopening the
+     * menu never repeats the reads); null when [file] has no reader, or the hash fails or times out.
+     */
+    suspend fun hashFor(episodeId: String, file: PlayingFile?): String? {
+        val reader = file?.reader ?: return null
+        val key = "$episodeId|${file.fileName.orEmpty()}"
+        return hashLock.withLock {
+            synchronized(hashes) { if (hashes.containsKey(key)) return@withLock hashes[key] }
+            val hash = withContext(Dispatchers.IO) { MovieHash.compute(reader) }
+            synchronized(hashes) { hashes[key] = hash }
+            hash
+        }
+    }
+
+    suspend fun search(episodeId: String, file: PlayingFile? = null): OnlineSearchOutcome = withContext(Dispatchers.IO) {
         val usable = keys.usable()
         if (usable.isEmpty()) return@withContext OnlineSearchOutcome.NoKey
-        val query = queryFor(episodeId) ?: return@withContext OnlineSearchOutcome.Unidentified
+        val base = queryFor(episodeId) ?: return@withContext OnlineSearchOutcome.Unidentified
+        val hash = hashFor(episodeId, file)
+        val query = base.copy(movieHash = hash)
+        val hint = FileHint(hash, file?.fileName, query.title, query.year)
         val langs = query.languages
         val groups = coroutineScope {
             usable.mapNotNull { (id, key) -> providerOf(id)?.let { it to key } }.map { (provider, key) ->
                 async {
                     when (val r = provider.search(query, key.auth)) {
-                        is SubtitleResult.Ok -> ProviderResults(provider.id, OnlineSubtitleRules.sort(r.value, langs))
+                        is SubtitleResult.Ok -> ProviderResults(provider.id, OnlineSubtitleRules.sort(r.value, langs, file = hint))
                         is SubtitleResult.Failed -> {
                             Log.w(TAG, "${provider.id} search failed: ${r.failure} (key ${key.source} ${OnlineSubtitleRules.mask(key.auth.apiKey)})")
                             ProviderResults(provider.id, emptyList(), r.failure)
@@ -65,8 +96,9 @@ class OnlineSubtitleService(
             }.awaitAll()
         }
         Log.i(TAG, "search: ${groups.joinToString { "${it.provider}=${it.results.size}${it.failure?.let { f -> "/$f" } ?: ""}" }} " +
-            "(imdb=${query.imdbId != null} tmdb=${query.tmdbId != null} episode=${query.isEpisode})")
-        OnlineSearchOutcome.Found(groups)
+            "(imdb=${query.imdbId != null} tmdb=${query.tmdbId != null} episode=${query.isEpisode} hash=${hash != null} " +
+            "hashMatches=${groups.sumOf { g -> g.results.count { it.hashMatch } }})")
+        OnlineSearchOutcome.Found(OnlineSubtitleRules.orderGroups(groups))
     }
 
     /** Downloads [subtitle] for [episodeId]: the subtitle to add, or why not. */

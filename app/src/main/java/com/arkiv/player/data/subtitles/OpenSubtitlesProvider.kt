@@ -124,11 +124,16 @@ class OpenSubtitlesProvider(
         /**
          * The search URL for [q]: the strongest id (IMDb, then TMDB, then the title as `query`), the
          * series' (`parent_…`) plus season and episode for an episode; every parameter lowercase and
-         * sorted by name, the canonical form the API does not redirect.
+         * sorted by name, the canonical form the API does not redirect. A file hash adds `moviehash` and
+         * `moviehash_match=include` (matches first, the rest still come).
          */
         fun searchUrl(base: String, q: SubtitleQuery): String {
             val p = sortedMapOf<String, String>()
             p["languages"] = q.languages.map { it.lowercase() }.distinct().sorted().joinToString(",")
+            q.movieHash?.lowercase()?.takeIf { Regex("[0-9a-f]{16}").matches(it) }?.let {
+                p["moviehash"] = it
+                p["moviehash_match"] = "include"
+            }
             val imdb = q.imdbNumber
             val tmdb = q.tmdbId?.takeIf { it > 0 }
             val prefix = if (q.isEpisode) "parent_" else ""
@@ -166,6 +171,7 @@ class OpenSubtitlesProvider(
                     release = release,
                     downloads = attr.optInt("download_count", 0),
                     hearingImpaired = attr.optBoolean("hearing_impaired", false),
+                    hashMatch = attr.optBoolean("moviehash_match", false),
                 )
             }
         }.getOrDefault(emptyList())

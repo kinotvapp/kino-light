@@ -1867,6 +1867,9 @@ class AppGraph(context: Context) {
         )
     }
 
+    /** The stream the in-screen player plays now, for the online subtitle search (set by StreamExoPlayer). */
+    @Volatile var playingFile: com.arkiv.player.data.subtitles.PlayingFile? = null
+
     /** "Buscar subtítulos en línea" (the player's audio and subtitles menu). See [com.arkiv.player.data.subtitles.OnlineSubtitleService]. */
     val onlineSubtitles: com.arkiv.player.data.subtitles.OnlineSubtitleService by lazy {
         com.arkiv.player.data.subtitles.OnlineSubtitleService(

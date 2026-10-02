@@ -39,6 +39,7 @@ internal object OnlineSubtitlesCopy {
     const val ADDED = "Subtítulo agregado"
     const val NO_RESULTS = "Sin resultados"
     const val NO_KEY = "Para buscar subtítulos en línea agrega tu llave de OpenSubtitles o SubDL en Ajustes → Subtítulos."
+    const val HASH_BADGE = "Coincide con tu archivo"
     const val UNIDENTIFIED = "No pudimos identificar este título para buscar sus subtítulos."
 
     /** One result's line: language, release and how many downloaded it. */
@@ -78,6 +79,8 @@ internal fun OnlineSubtitlesSection(state: TracksState, onAdded: (String, Resolv
     var note by remember(title) { mutableStateOf<String?>(null) }
     LaunchedEffect(title) {
         available = withContext(Dispatchers.IO) { graph.onlineSubtitles.available() }
+        // Lazily, once the section is open: the file's hash (cached per title), so a search finds it ready.
+        if (available == true) runCatching { graph.onlineSubtitles.hashFor(title, graph.playingFile) }
     }
 
     SectionTitle(OnlineSubtitlesCopy.TITLE)
@@ -100,7 +103,7 @@ internal fun OnlineSubtitlesSection(state: TracksState, onAdded: (String, Resolv
                 busy = OnlineSubtitlesCopy.SEARCHING
                 note = null
                 scope.launch {
-                    outcome = runCatching { graph.onlineSubtitles.search(title) }.getOrNull() ?: OnlineSearchOutcome.Unidentified
+                    outcome = runCatching { graph.onlineSubtitles.search(title, graph.playingFile) }.getOrNull() ?: OnlineSearchOutcome.Unidentified
                     busy = null
                 }
             }) { Text(if (outcome == null) OnlineSubtitlesCopy.SEARCH else OnlineSubtitlesCopy.SEARCH_AGAIN, color = Color.White) }
@@ -139,10 +142,19 @@ internal fun OnlineSubtitlesSection(state: TracksState, onAdded: (String, Resolv
                             busy = null
                         }
                     }) {
-                        Text(
-                            OnlineSubtitlesCopy.resultLine(sub),
-                            color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                        )
+                        Column {
+                            if (sub.hashMatch) {
+                                Text(
+                                    OnlineSubtitlesCopy.HASH_BADGE,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color(0xFF7BD88F),
+                                )
+                            }
+                            Text(
+                                OnlineSubtitlesCopy.resultLine(sub),
+                                color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                     }
                 }
             }
