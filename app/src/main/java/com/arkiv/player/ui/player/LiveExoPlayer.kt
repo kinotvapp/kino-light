@@ -121,6 +121,8 @@ internal fun LiveExoPlayer(
     onPlayerReady: (Player?) -> Unit = {},
     onTextureViewReady: (TextureView?) -> Unit = {},
     onError: (String) -> Unit = {},
+    /** The stream's video is beyond every decoder on the device and has no smaller variant: no reopen will help. */
+    onUnsupportedFormat: () -> Unit = {},
     onFirstFrame: (Boolean) -> Unit = {},
     zoom: Float = 1f,
 ) {
@@ -234,6 +236,8 @@ internal fun LiveExoPlayer(
         // reports from one bad box. Report only the FIRST error of this player session; the on-screen
         // error still shows every time. Reset per session (this effect re-runs per exoPlayer).
         var errorReported = false
+        // The max video size a capability failure already narrowed the selection to (ERRORES-AML).
+        var capabilityCap: Pair<Int, Int>? = null
 
         val listener = object : Player.Listener {
 
@@ -275,6 +279,37 @@ internal fun LiveExoPlayer(
             override fun onPlayerError(error: PlaybackException) {
                 val msg = error.message ?: "Error de reproducción (${error.errorCode})"
                 Log.e(TAG, "onPlayerError errorCode=${error.errorCode} msg=$msg", error)
+                // A video beyond the device's decoders (ERRORES-AML, 8K HEVC on a phone): a smaller variant of
+                // the same stream if it has one, else a clear message -- decoder fallback already tried them all.
+                val exceeded = com.arkiv.player.playback.DecoderCapability.exceededVideoFormat(error)
+                if (exceeded != null) {
+                    val variants = exoPlayer.currentTracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
+                        .flatMap { g -> (0 until g.length).map { g.getTrackFormat(it) } }
+                    val cap = com.arkiv.player.playback.DecoderCapability.capBelow(exceeded, variants, capabilityCap)
+                    if (cap != null) {
+                        capabilityCap = cap
+                        LiveLog.w("video ${exceeded.width}x${exceeded.height} beyond the decoders -> variants up to ${cap.first}x${cap.second}")
+                        exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon()
+                            .setMaxVideoSize(cap.first, cap.second).build()
+                        exoPlayer.prepare()
+                        exoPlayer.playWhenReady = true
+                        return
+                    }
+                    if (error.errorCode != PlaybackException.ERROR_CODE_DECODING_FAILED || software) {
+                        LiveLog.e("video ${exceeded.width}x${exceeded.height} ${exceeded.sampleMimeType} beyond every decoder, no smaller variant")
+                        if (!errorReported) {
+                            errorReported = true
+                            Crash.report(error, "live-format-unsupported", extras = mapOf(
+                                "channel" to channelCode,
+                                "video_codec" to (exceeded.codecs ?: exceeded.sampleMimeType ?: ""),
+                                "video_size" to "${exceeded.width}x${exceeded.height}",
+                                "software_forced" to software.toString(),
+                            ))
+                        }
+                        onUnsupportedFormat()
+                        return
+                    }
+                }
                 // The hardware decoder rejected the stream's format outright (seen on MediaTek/Hisilicon/other
                 // chips against certain live channels since the Media3 1.11 upgrade): a playlist refresh or a
                 // plain reopen just hits the same wall again. Same rescue as the frozen-picture watchdog below,
