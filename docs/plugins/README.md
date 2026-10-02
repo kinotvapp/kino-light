@@ -565,7 +565,7 @@ host-and-https check, the `kino.crypto` restrictions and redaction. `--record` n
 value to a fixtures file either — a canonical placeholder stands in for it, so a committed recording
 never carries a secret however it is replayed later. See [section 7](#7-test-it-locally).
 
-### Signed plugins (apiVersion 5, Kino 0.9.46+)
+### Signed plugins (apiVersion 5, Kino 0.9.45+)
 
 Strictly optional: you may **sign** your plugin with your own author key, so the people who install
 it know every update comes from you. Your code stays plain, readable JavaScript — signing hides

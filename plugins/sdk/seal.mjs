@@ -6,7 +6,7 @@
 //
 //   node sdk/seal.mjs --repo owner/repo[/path] --name apiKey
 //
-// Signed plugins (apiVersion 5's `signature`, Kino 0.9.46+): the entry script stays plain, readable
+// Signed plugins (apiVersion 5's `signature`, Kino 0.9.45+): the entry script stays plain, readable
 // JavaScript, signed with the author's own Ed25519 key; the signature goes into the manifest:
 //   node sdk/seal.mjs --keygen [--key kino-author-key.pem]          (once; keep the key, never commit it)
 //   node sdk/seal.mjs --sign --repo owner/repo[/path] [--manifest kino-plugin.json] [--key kino-author-key.pem]
