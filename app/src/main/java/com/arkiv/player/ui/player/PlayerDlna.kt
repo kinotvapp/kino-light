@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ClosedCaption
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -20,6 +21,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -29,11 +31,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.mediarouter.app.MediaRouteButton
 import com.arkiv.player.cast.CastStart
+import com.arkiv.player.cast.CastAudioSwitch
+import com.arkiv.player.dlna.DlnaAudioSwitch
 import com.arkiv.player.dlna.DlnaController
 import com.arkiv.player.dlna.DlnaDevice
 import com.arkiv.player.dlna.DlnaLog
@@ -107,9 +112,83 @@ internal class DlnaState(
     }
 
     /** The renderer accepted the video: from here on the controls drive the TV, not the local one. */
-    fun markActive(device: DlnaDevice) {
+    /** A new audio is being remuxed and re-sent ([audioChanged]): the bar says so instead of the TV's name. */
+    var preparingAudio by mutableStateOf(false)
+        private set
+
+    /** What was sent to [active] and with which audio, for [audioChanged] to send it again. */
+    private var sentEp: PlayerData? = null
+    private var audioOnTv: Int? = null
+    private var spuOnPhone: Int? = null
+
+    fun markActive(device: DlnaDevice, ep: PlayerData? = null, audio: com.arkiv.player.cast.CastAudioChoice? = null) {
         active = device
         paused = false
+        preparingAudio = false
+        sentEp = ep
+        audioOnTv = audio?.ordinal
+        spuOnPhone = null
+    }
+
+    /**
+     * Another audio picked in the phone's menu while the TV plays ([DlnaAudioSwitch]): on a remux
+     * route the TV is paused where it is, the title remuxed again with [choice] and sent again from
+     * there (the same `sendToRendererNow` as the first cast); on any other route only the phone
+     * changes, and [notify] says so. The first audio seen after an audio-less send is only recorded:
+     * tracks arriving after the cast began are not a choice the person made.
+     */
+    fun audioChanged(
+        choice: com.arkiv.player.cast.CastAudioChoice?,
+        phoneMs: Long?,
+        lanIp: () -> String?,
+        liveHlsProxy: LiveHlsProxy,
+        notify: (String) -> Unit,
+    ) {
+        val dev = active ?: return
+        val previous = audioOnTv
+        audioOnTv = choice?.ordinal
+        val ep = sentEp
+        if (previous == null || ep == null) return
+        val kind = dlna.activeKind()
+        val action = DlnaAudioSwitch.onChoiceChanged(kind, previous, choice?.ordinal)
+        DlnaLog.diag("audio while casting: #$previous → #${choice?.ordinal} on $kind · $action")
+        when (action) {
+            CastAudioSwitch.NONE -> Unit
+            CastAudioSwitch.PHONE_ONLY ->
+                notify("El audio cambió solo en el teléfono: la TV reproduce este video tal cual y suena el audio que trae por defecto")
+            CastAudioSwitch.REMUX_AND_RELOAD -> {
+                preparingAudio = true
+                notify("Preparando el nuevo audio… sigue donde iba la TV")
+                scope.launch {
+                    val tvMs = withContext(Dispatchers.IO) { dlna.tvPositionMs().also { dlna.pause(dev) } }
+                    val at = DlnaAudioSwitch.startMs(tvMs, phoneMs, ep.startPositionMs)
+                    val ok = sendToRendererNow(dlna, dev, ep, lanIp, liveHlsProxy, choice, at)
+                    // Stopped (or another audio picked) meanwhile: whoever did that owns the bar now.
+                    if (active !== dev || audioOnTv != choice?.ordinal) return@launch
+                    preparingAudio = false
+                    // A failed re-send leaves the TV paused on the old audio: "Reanudar" plays it on.
+                    paused = !ok
+                    if (!ok) notify(dlna.lastError ?: "No se pudo cambiar el audio en la TV")
+                }
+            }
+        }
+    }
+
+    /** The menu's line about the TV while it is open during a DLNA cast ([castTracksNote]); null otherwise. */
+    fun tracksNote(menuOpen: Boolean): String? =
+        if (menuOpen && active != null) castTracksNote(true, DlnaAudioSwitch.routeOf(dlna.activeKind())) else null
+
+    /**
+     * Another subtitle picked in the phone's menu while the TV plays. The choice is the phone's
+     * (TracksState already applied it there); the TV gets no subtitles yet. THE hook for sending
+     * them: re-send the cast with [spuId] at the TV's position (`dlna.tvPositionMs()`), as
+     * [audioChanged] does for the audio. The first value seen is only recorded.
+     */
+    fun subtitleChanged(spuId: Int) {
+        val previous = spuOnPhone
+        spuOnPhone = spuId
+        if (active == null || previous == null || previous == spuId) return
+        DlnaLog.i("subtitle while casting: #$previous → #$spuId (phone only: the TV gets no subtitles yet)")
     }
 
     fun togglePause() {
@@ -125,6 +204,7 @@ internal class DlnaState(
         scope.launch {
             withContext(Dispatchers.IO) { dlna.stop(dev) }
             active = null
+            preparingAudio = false
         }
     }
 
@@ -282,7 +362,11 @@ private suspend fun sendThroughProxy(
 
 /** "Playing on <TV>" bar with pause/stop, visible while a renderer is active. */
 @Composable
-internal fun BoxScope.ActiveDlnaBar(state: DlnaState) {
+internal fun BoxScope.ActiveDlnaBar(
+    state: DlnaState,
+    /** Opens the phone's "Audio y subtítulos" menu: the controls overlay, where it lives, is hidden while casting. */
+    onOpenTracks: () -> Unit,
+) {
     val active = state.active ?: return
     Surface(
         modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().systemBarsPadding().padding(16.dp),
@@ -293,14 +377,21 @@ internal fun BoxScope.ActiveDlnaBar(state: DlnaState) {
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(Icons.Default.Tv, contentDescription = null, tint = ArkivRed)
+            if (state.preparingAudio) {
+                CircularProgressIndicator(strokeWidth = 2.dp, color = ArkivRed, modifier = Modifier.size(20.dp))
+            } else {
+                Icon(Icons.Default.Tv, contentDescription = null, tint = ArkivRed)
+            }
             Text(
-                "Reproduciendo en ${active.friendlyName}",
+                if (state.preparingAudio) "Preparando el nuevo audio…" else "Reproduciendo en ${active.friendlyName}",
                 modifier = Modifier.weight(1f).padding(start = 12.dp),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            TextButton(onClick = { state.togglePause() }) {
+            IconButton(onClick = onOpenTracks) {
+                Icon(Icons.Default.ClosedCaption, contentDescription = "Subtítulos y audio", tint = Color.White)
+            }
+            TextButton(onClick = { state.togglePause() }, enabled = !state.preparingAudio) {
                 Text(if (state.paused) "Reanudar" else "Pausar")
             }
             TextButton(onClick = { state.stop() }) { Text("Detener") }
@@ -393,5 +484,34 @@ internal fun DlnaCastButtons(
                 }
             },
         )
+    }
+}
+
+/**
+ * Follows the phone's "Audio y subtítulos" menu while a DLNA cast plays: another audio goes to
+ * [DlnaState.audioChanged], another subtitle to [DlnaState.subtitleChanged]. Its own composable so
+ * PlayerContent's frame does not grow.
+ */
+@Composable
+internal fun DlnaTracksFollower(
+    state: DlnaState,
+    tracks: TracksState,
+    /** The phone player's position: where the cast began, the fallback when the TV cannot say where it is. */
+    phoneMs: () -> Long?,
+    lanIp: () -> String?,
+    liveHlsProxy: LiveHlsProxy,
+) {
+    val context = LocalContext.current
+    val active = state.active
+    val audio = tracks.castAudioChoice
+    LaunchedEffect(active, audio?.ordinal) {
+        if (active == null) return@LaunchedEffect
+        state.audioChanged(audio, phoneMs(), lanIp, liveHlsProxy) {
+            android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
+    val spu = tracks.curSpu
+    LaunchedEffect(active, spu) {
+        if (active != null) state.subtitleChanged(spu)
     }
 }

@@ -4376,7 +4376,7 @@ private fun PlayerContent(
         }
 
         // "Playing on <TV>" bar (DLNA active).
-        ActiveDlnaBar(dlnaState)
+        ActiveDlnaBar(dlnaState, onOpenTracks = tracksState::openPicker)
 
         // Goes LAST inside the Box so it sits above the rest of the overlays. Never under the
         // blocked dialog: with the Xuper plugin switched off the drawer's channels can't open.
@@ -4500,9 +4500,11 @@ private fun PlayerContent(
         val livePositionMs = runCatching { activePlayer.currentPosition }.getOrNull()
         controller.pause()
         scope.launch {
-            val ok = sendToRenderer(dlna, device, ep, { graph.lanIp() }, graph.liveHlsProxy, tracksState.castAudioChoice, livePositionMs)
+            // The audio sent, not the one on when the TV took it: one picked meanwhile is then a change.
+            val audio = tracksState.castAudioChoice
+            val ok = sendToRenderer(dlna, device, ep, { graph.lanIp() }, graph.liveHlsProxy, audio, livePositionMs)
             if (ok) {
-                dlnaState.markActive(device)
+                dlnaState.markActive(device, ep, audio)
             } else {
                 // The specific reason when we have one (the TV's UPnP error, an unsupported local file, no WiFi
                 // address...): "check your WiFi" was what it said for EVERY failure, whatever the cause.
@@ -4523,8 +4525,10 @@ private fun PlayerContent(
         isMagis = PlayerSource.kindFor(episodeId) == SourceKind.MAGIS,
         declaredLanguages = webExtras?.subtitles?.map { it.lang }.orEmpty(),
         // Only while the menu is open and casting: the route may read a downloaded file's header.
-        castNote = if (casting && tracksState.pickerOpen) castTracksNote(true, castAudioRoute()) else null,
+        castNote = if (casting && tracksState.pickerOpen) castTracksNote(true, castAudioRoute()) else dlnaState.tracksNote(tracksState.pickerOpen),
     )
+    // The same menu, opened from the DLNA bar: what a choice there does on the TV.
+    DlnaTracksFollower(dlnaState, tracksState, { runCatching { activePlayer.currentPosition }.getOrNull() }, { graph.lanIp() }, graph.liveHlsProxy)
 }
 
 @Composable

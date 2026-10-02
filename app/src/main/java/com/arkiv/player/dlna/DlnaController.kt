@@ -452,6 +452,12 @@ class DlnaController(
         // Keyed and remuxed with the phone's audio: a remux carries ONE audio track, and
         // without this it was Transformer's pick, whatever the phone's menu said.
         val key = RemuxPolicy.keyFrom(remuxKeyUrl, 0L, audio?.ordinal)
+        // Another audio picked while casting: the remux of the one the TV had stops (it covers the whole
+        // title, and nothing will play it any more). What it wrote is kept, so switching back is quick.
+        cast?.takeIf { it.remuxKey != null && it.remuxKey != key }?.let {
+            DlnaLog.diag("cast: another audio → stopping the remux of the previous one")
+            releaseRemux(it)
+        }
         tsRemuxer.alreadyDone(key)?.let { file ->
             DlnaLog.diag("remux already whole on disk: sending the MP4 file")
             val c = beginCast(device, kind = "vod-remux", mime = com.arkiv.player.playback.Container.MP4.mime, title = title, source = archiveUrl, startMs = startMs)
@@ -474,6 +480,12 @@ class DlnaController(
             if (waitingRemuxKey == key) waitingRemuxKey = null
             if (attempt != mine) {
                 DlnaLog.i("cast: superseded while the remux was getting ready")
+                // Stopped (no cast at all, as [stop] leaves it), not replaced: nothing will play this
+                // remux, which no cast owns yet for [releaseRemux] to find. A newer cast keeps it.
+                if (cast == null) {
+                    tsRemuxer.stop(key)
+                    if (remuxHls.isServing(key)) remuxHls.stop()
+                }
                 return false
             }
             val ready = start
@@ -689,6 +701,22 @@ class DlnaController(
             }
         }
         DlnaLog.w("cast: renderer still not idle after Stop; sending anyway")
+    }
+
+    /** What the cast in progress is ([beginCast]'s kind: `vod-remux-hls`, `vod-proxy`...), null with none. */
+    fun activeKind(): String? = cast?.kind
+
+    /**
+     * Where the TV is right now, for a re-send to continue there ([DlnaAudioSwitch.tvPositionMs]):
+     * asks it (`GetPositionInfo`), falling back on what the monitor last read. Blocking; null with no cast.
+     */
+    fun tvPositionMs(): Long? {
+        val c = cast ?: return null
+        val p = soap(c.device.controlUrl, "GetPositionInfo", "<u:GetPositionInfo xmlns:u=\"$AVT\"><InstanceID>0</InstanceID></u:GetPositionInfo>")
+        val reported = DlnaXml.positionInfo(p.body)?.relTimeMs
+        val at = DlnaAudioSwitch.tvPositionMs(reported, c.lastPositionMs, c.startMs, c.seekSettled)
+        DlnaLog.diag("position: TV says ${reported?.div(1000)}s, last read ${c.lastPositionMs?.div(1000)}s, sent at ${c.startMs / 1000}s → ${at?.div(1000)}s")
+        return at
     }
 
     fun play(device: DlnaDevice): Boolean {
