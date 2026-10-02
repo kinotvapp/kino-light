@@ -709,9 +709,11 @@ private fun PlayerContent(
         val local = runCatching {
             (magisPlayer ?: controller).duration.takeIf { it > 0 } ?: 0L
         }.getOrDefault(0L)
-        if (casting && local > 0L && remuxOffset() >= 0L && magisItem != null) return local
+        // Any remux on the TV too (a downloaded TS on the service player): the receiver's figure,
+        // when it gives one, counts from where the remux begins, not from the title's top.
+        if (casting && local > 0L && (magisItem != null || castAsRemux != null)) return local
         val fromReceiver = CastProgress.contentDuration(activePlayer.duration)
-        if (fromReceiver > 0L) return fromReceiver
+        if (fromReceiver > 0L) return fromReceiver + remuxOffset()
         return local
     }
 
@@ -2143,7 +2145,10 @@ private fun PlayerContent(
             // after one.
             if (ready && activePlayer.isPlaying) vm.onPlaybackHealthy()
             tick++
-            val pos = activePlayer.currentPosition
+            // Under a DLNA cast the phone's player sits paused where the cast began: the TV's
+            // position is the progress (null otherwise).
+            val tvMs = dlnaState.progressMs()
+            val pos = tvMs ?: activePlayer.currentPosition
             val dur = activePlayer.duration
             // mediaId is read TOGETHER with position and duration: it says who those numbers
             // belong to. While casting, the local index already points at the new chapter as soon
@@ -2164,7 +2169,7 @@ private fun PlayerContent(
             // what broke Magis VOD (see LiveController's KDoc).
             // ExoPlayer doesn't expose mediaId matching the episodeId → the comparison is skipped for isExo.
             if (!isLive && tick % 10 == 0 && epId != null &&
-                (isExo || mediaId == epId) && ready && activePlayer.isPlaying &&
+                (isExo || mediaId == epId) && (tvMs != null || ready && activePlayer.isPlaying) &&
                 dur > 0 && pos in 0 until dur
             ) {
                 vm.saveProgress(epId, pos, dur)
@@ -2175,7 +2180,7 @@ private fun PlayerContent(
                 // TextureView is still the LOCAL one, which at that point isn't painting what's on
                 // the TV. Capturing it would save an image that doesn't match that position (and
                 // it would repeat on every trigger for as long as the cast lasts).
-                if (tick % 600 == 0 && !casting) vm.captureFrame(epId, pos, videoTextureView())
+                if (tick % 600 == 0 && !casting && tvMs == null) vm.captureFrame(epId, pos, videoTextureView())
             }
             // Heartbeat while casting: says whether the receiver is REALLY advancing. A position
             // stuck with state=ready means it accepted the media but isn't decoding it.
@@ -2413,15 +2418,11 @@ private fun PlayerContent(
                 }
             }
 
-            runCatching { controller.pause() }
-            // `controller` is the service player; Magis plays on its own ExoPlayer, so pausing the
-            // former did nothing for it. That gap was harmless while Magis could not cast at all
-            // (it was noted as accepted in the resume branch below) -- now that it does cast,
-            // leaving it out means the phone and the TV play the same title at once.
-            if (magisPlayer != null) {
-                android.util.Log.i("ArkivCast", "pausing the local Magis player so it doesn't play over the cast")
-                runCatching { magisPlayer?.pause() }
-            }
+            // `controller` is the service player; Magis/plugins, live and Caracol play on their own
+            // ExoPlayers, and pausing only the former left them playing under the TV. One rule for
+            // all of them, live included (stopped, not paused): see CastLocalHold.
+            android.util.Log.i("ArkivCast", "silencing the local players so they don't play over the cast (live=$isLive)")
+            CastLocalHold.hold(controller, magisPlayer, livePlayer, dituPlayer, isLive)
         } else if (wasCasting) {
             // The receiver counted from where its remux began: the phone resumes on the title's clock.
             val endedOffset = castAsRemux?.let { graph.tsRemuxer.startMsOf(it) } ?: 0L
@@ -2445,22 +2446,19 @@ private fun PlayerContent(
             // casting started (branch above) — resuming it would be exactly the opposite of what
             // that button asked for. Consumed only once: the next disconnect (the cast button's,
             // not the stop one's) resumes normally again.
-            if (graph.castSession?.consumeIntentionalStop() != true) {
+            if (graph.castSession?.consumeIntentionalStop() == true) {
+                // Silence asked for, but a stopped live player has nothing loaded: primed at the
+                // edge, paused, so "play" works.
+                if (isLive) CastLocalHold.resumeLive(magisPlayer, livePlayer, dituPlayer, play = false)
+            } else {
                 if (isLive) {
                     // Live (Task 18): no "where you were" to resume -- it would be the position
                     // the receiver reports over a live HLS, which means nothing as an offset
-                    // within the local proxy (see castRequestFor/CastRequestBuilder's KDoc).
-                    // Live via ExoPlayer (Task 1, light-magis pruning): `livePlayer` was never
-                    // paused on starting to cast (same gap already accepted for `magisPlayer`, see
-                    // the `controller.pause()` in the `if (casting)` branch above), so there's
-                    // nothing to resume here -- it keeps playing locally just as it did during the
-                    // cast. This `controller.prepare()/play()` is on the local player, which isn't
-                    // the one playing live.
-                    // `isLive` with no `liveItem` is a Caracol channel, which plays on DituExoPlayer:
-                    // for it this branch ends in the same controller `prepare()/play()` as VOD's
-                    // below, which with no playlist (`loadDitu` leaves it null) also resumes nothing.
-                    runCatching { controller.prepare() }
-                    runCatching { controller.play() }
+                    // within the local proxy (see castRequestFor/CastRequestBuilder's KDoc). The
+                    // channel's player (LiveExoPlayer, a plugin's StreamExoPlayer or Caracol's) was
+                    // stopped when the cast began (CastLocalHold): it comes back at the live edge.
+                    android.util.Log.i("ArkivCast", "live ← cast · back to the live edge on the phone")
+                    CastLocalHold.resumeLive(magisPlayer, livePlayer, dituPlayer, play = true)
                     wasCasting = casting
                     return@LaunchedEffect
                 }
@@ -2530,6 +2528,8 @@ private fun PlayerContent(
         }
         wasCasting = casting
     }
+    // A player built while a cast plays (a zap, a reopen) stays silent too.
+    CastLocalHoldEffect(casting || dlnaState.active != null, controller, magisPlayer, livePlayer, dituPlayer, isLive)
 
     // On marking (archive): pause and place the slider at the already-saved value (if any).
     // Resuming (play) ONLY applies on LEAVING marking mode — not on the initial composition:
@@ -2595,7 +2595,7 @@ private fun PlayerContent(
             // target is in CONTENT time and `currentPosition` is the receiver's, which with a
             // window carries a different origin — there the usual behavior is kept.
             val pending = seek.pendingMs?.takeIf { !casting }
-            val pos = pending ?: currentPlayer.currentPosition
+            val pos = pending ?: dlnaState.progressMs() ?: currentPlayer.currentPosition
             val dur = currentPlayer.duration
             // Who those numbers belong to: same problem as polling. Exiting the screen right after
             // jumping chapters wrote the OLD chapter's position (the receiver hadn't switched
@@ -2652,7 +2652,8 @@ private fun PlayerContent(
             if (event == androidx.lifecycle.Lifecycle.Event.ON_START) {
                 val stopped = stoppedLiveStream
                 stoppedLiveStream = null
-                if (stopped != null && stopped === currentPlayer) {
+                // Not under a DLNA cast: the TV has the channel, and the cast's end primes it (DlnaLocalHandBack).
+                if (stopped != null && stopped === currentPlayer && dlnaState.active == null) {
                     val onReturn = onReturnToLive(wasPlayingOnExit)
                     android.util.Log.w("ArkivPlay", "app back in foreground → the live stream primes at the edge · $onReturn")
                     runCatching {
@@ -2671,7 +2672,7 @@ private fun PlayerContent(
                     currentDituPlay != null -> currentDituPlay?.episodeId
                     else -> playlistRef.value?.items?.getOrNull(currentPlayer.currentMediaItemIndex)?.episodeId
                 }
-                val pos = currentPlayer.currentPosition
+                val pos = dlnaState.progressMs() ?: currentPlayer.currentPosition
                 val dur = currentPlayer.duration
                 val mediaId = currentPlayer.currentMediaItem?.mediaId
                 if (!isLive && epId != null && (isExoStop || mediaId == epId) && dur > 0 && pos in 0 until dur) {
@@ -4521,14 +4522,18 @@ private fun PlayerContent(
             ?: liveItem
         // Where the person is, for the TV to start there (dlnaStartMs): never 0:00 when elsewhere.
         val livePositionMs = runCatching { activePlayer.currentPosition }.getOrNull()
-        controller.pause()
+        // Silent from now on, as under a Chromecast (CastLocalHold): it used to pause only `controller`,
+        // and a Magis/plugin title or a live channel played on under the TV.
+        CastLocalHold.hold(controller, magisPlayer, livePlayer, dituPlayer, isLive)
         scope.launch {
             // The audio sent, not the one on when the TV took it: one picked meanwhile is then a change.
             val audio = tracksState.castAudioChoice
-            val ok = sendToRenderer(dlna, device, ep, { graph.lanIp() }, graph.liveHlsProxy, audio, livePositionMs)
+            val ok = sendToRenderer(dlna, device, ep, dlnaLan(graph), audio, livePositionMs)
             if (ok) {
                 dlnaState.markActive(device, ep, audio)
             } else {
+                // Nothing went to the TV: a live channel comes back (a video stays paused, as before).
+                if (isLive) CastLocalHold.resumeLive(magisPlayer, livePlayer, dituPlayer, play = true)
                 // The specific reason when we have one (the TV's UPnP error, an unsupported local file, no WiFi
                 // address...): "check your WiFi" was what it said for EVERY failure, whatever the cause.
                 android.widget.Toast.makeText(
@@ -4552,7 +4557,9 @@ private fun PlayerContent(
         else dlnaState.tracksNote(tracksState.pickerOpen, webExtras?.subtitles),
     )
     // The same menu, opened from the DLNA bar: what a choice there does on the TV.
-    DlnaTracksFollower(dlnaState, tracksState, { runCatching { activePlayer.currentPosition }.getOrNull() }, { graph.lanIp() }, graph.liveHlsProxy)
+    DlnaTracksFollower(dlnaState, tracksState, { runCatching { activePlayer.currentPosition }.getOrNull() }, dlnaLan(graph))
+    // The phone's player back where the TV got to when a DLNA cast is stopped (live: at the edge).
+    DlnaLocalHandBack(dlnaState, activePlayer, isLive, magisPlayer, livePlayer, dituPlayer)
 }
 
 @Composable

@@ -151,8 +151,7 @@ internal class DlnaState(
     fun audioChanged(
         choice: com.arkiv.player.cast.CastAudioChoice?,
         phoneMs: Long?,
-        lanIp: () -> String?,
-        liveHlsProxy: LiveHlsProxy,
+        lan: DlnaLan,
         notify: (String) -> Unit,
     ) {
         val dev = active ?: return
@@ -174,7 +173,7 @@ internal class DlnaState(
                     // Where the TV is, asked again at every step of the wait: it keeps playing meanwhile.
                     val follow = { DlnaAudioSwitch.startMs(dlna.tvPositionMs(), phoneMs, ep.startPositionMs) }
                     val (before, at) = withContext(Dispatchers.IO) { dlna.activeCastId() to follow() }
-                    val ok = sendToRendererNow(dlna, dev, ep, lanIp, liveHlsProxy, choice, at, followTv = follow)
+                    val ok = sendToRendererNow(dlna, dev, ep, lan, choice, at, followTv = follow)
                     // Stopped (or another audio picked) meanwhile: whoever did that owns the bar now.
                     if (active !== dev || audioOnTv != choice?.ordinal) return@launch
                     preparingAudio = false
@@ -235,10 +234,23 @@ internal class DlnaState(
         }
     }
 
+    /**
+     * Where the TV is, on the title's clock, while a renderer is [active]: the progress to save and
+     * the phone's position for everything that needs one -- the phone's own player sits paused
+     * where the cast began ([CastLocalHold]). Null with no DLNA cast. Non-blocking.
+     */
+    fun progressMs(): Long? = if (active != null) dlna.knownTvPositionMs() else null
+
+    /** Where the TV was when the bar's "Detener" ended the cast, for the phone to resume there; null before. */
+    var endedAtMs: Long? = null
+        private set
+
     fun stop() {
         val dev = active ?: return
         scope.launch {
             withContext(Dispatchers.IO) { dlna.stop(dev) }
+            endedAtMs = dlna.knownTvPositionMs()
+            DlnaLog.diag("cast stopped from the phone: it resumes at ${endedAtMs?.div(1000)}s")
             active = null
             preparingAudio = false
             changingSubtitles = false
@@ -285,8 +297,7 @@ internal suspend fun sendToRenderer(
     dlna: DlnaController,
     device: DlnaDevice,
     ep: PlayerData?,
-    lanIp: () -> String?,
-    liveHlsProxy: LiveHlsProxy,
+    lan: DlnaLan,
     /**
      * The audio the phone has on. Only a remuxed MPEG-TS can honour it (the remux carries exactly
      * one audio track); a renderer handed the file as-is plays its own default.
@@ -294,7 +305,7 @@ internal suspend fun sendToRenderer(
     audio: com.arkiv.player.cast.CastAudioChoice? = null,
     /** The phone player's position when the cast was asked for; see [dlnaStartMs]. */
     livePositionMs: Long? = null,
-): Boolean = sendToRendererNow(dlna, device, ep, lanIp, liveHlsProxy, audio, dlnaStartMs(ep, livePositionMs)).also { accepted ->
+): Boolean = sendToRendererNow(dlna, device, ep, lan, audio, dlnaStartMs(ep, livePositionMs)).also { accepted ->
     // The TV plays it now: the chapter's attempt started, even if the paused local player never does.
     if (accepted && ep != null) CastStarts.accepted(ep.episodeId)
 }
@@ -303,8 +314,7 @@ private suspend fun sendToRendererNow(
     dlna: DlnaController,
     device: DlnaDevice,
     ep: PlayerData?,
-    lanIp: () -> String?,
-    liveHlsProxy: LiveHlsProxy,
+    lan: DlnaLan,
     audio: com.arkiv.player.cast.CastAudioChoice?,
     startMs: Long,
     /** Another audio for what the TV plays: see [DlnaController.setUrlAndPlay]. */
@@ -316,12 +326,12 @@ private suspend fun sendToRendererNow(
     }
 
     SourceKind.LIVE -> {
-        val ip = lanIp()
-        val lan = ip?.let { liveHlsProxy.lanUrl(it) }
-        DlnaLog.i("sendToRenderer: kind=LIVE title='${ep.title.take(40)}' lanIp=${ip ?: "NONE"} liveProxyUrl=${DlnaXml.safeUrl(lan)}")
-        if (lan != null) {
+        val ip = lan.lanIp()
+        val liveUrl = ip?.let { lan.liveHlsProxy.lanUrl(it) }
+        DlnaLog.i("sendToRenderer: kind=LIVE title='${ep.title.take(40)}' lanIp=${ip ?: "NONE"} liveProxyUrl=${DlnaXml.safeUrl(liveUrl)}")
+        if (liveUrl != null) {
             withContext(Dispatchers.IO) {
-                dlna.playRawUrl(device, lan, ep.title, "application/vnd.apple.mpegurl")
+                dlna.playRawUrl(device, liveUrl, ep.title, "application/vnd.apple.mpegurl")
             }
         } else {
             // The proxy has no LAN URL to hand out (no WiFi/LAN address, or the live proxy isn't listening).
@@ -336,13 +346,14 @@ private suspend fun sendToRendererNow(
         }
     }
 
-    // A plugin title's HLS (PluginCastProxy's token playlist, or a direct url) and a direct file (an
-    // mp4/webm with no headers on an allowed host, see pluginCastModeFor): the renderer fetches it
-    // itself, like a live channel. A proxied plugin FILE falls to the branch below and goes through
+    // A plugin title's HLS (PluginCastProxy's token playlist) and a direct one (an mp4/webm or HLS
+    // with no headers on an allowed host, see pluginCastModeFor): the renderer pulls it from
+    // PluginCastProxy on the LAN, like a live channel -- a direct one registered there first
+    // ([dlnaPluginUri]). A proxied plugin FILE falls to the branch below and goes through
     // DlnaProxyServer from PluginCastProxy's loopback url, like Magis does from its proxy -- never
     // a plugin URL fetched by DlnaProxyServer's own, ungated client.
     SourceKind.PLUGIN ->
-        if (ep.mime == MIME_HLS || !ep.mediaUrl.startsWith("http://127.0.0.1:")) sendPluginHls(dlna, device, ep, lanIp, startMs)
+        if (ep.mime == MIME_HLS || !ep.mediaUrl.startsWith("http://127.0.0.1:")) sendPluginHls(dlna, device, ep, lan, startMs)
         else sendThroughProxy(dlna, device, ep, audio, startMs, followTv)
 
     else -> sendThroughProxy(dlna, device, ep, audio, startMs, followTv)
@@ -358,20 +369,99 @@ internal fun dlnaStartMs(ep: PlayerData?, livePositionMs: Long?): Long = when {
     else -> CastStart.resumePointMs(receiverMs = null, livePositionMs = livePositionMs, itemStartMs = ep.startPositionMs)
 }
 
-/** [ep]'s HLS, or its direct file, to [device] as a raw url the renderer pulls itself (see [pluginCastUri]). */
-private suspend fun sendPluginHls(dlna: DlnaController, device: DlnaDevice, ep: PlayerData, lanIp: () -> String?, startMs: Long): Boolean {
-    val ip = lanIp()
-    val url = pluginCastUri(ep, ip)
-    DlnaLog.i("sendToRenderer: kind=PLUGIN hls title='${ep.title.take(40)}' lanIp=${ip ?: "NONE"} url=${DlnaXml.safeUrl(url)}")
+/** [ep]'s HLS, or its direct file, to [device] as a LAN url the renderer pulls itself (see [dlnaPluginUri]). */
+private suspend fun sendPluginHls(dlna: DlnaController, device: DlnaDevice, ep: PlayerData, lan: DlnaLan, startMs: Long): Boolean {
+    val ip = lan.lanIp()
+    val url = dlnaPluginUri(ep, ip, lan.pluginProxy)
+    val shape = if (ep.mime == MIME_HLS) "hls" else "file"
+    DlnaLog.i(
+        "sendToRenderer: kind=PLUGIN $shape mime=${ep.mime.ifBlank { "?" }} title='${ep.title.take(40)}' lanIp=${ip ?: "NONE"} " +
+            "url=${DlnaXml.safeUrl(url)}" + if (!ep.mediaUrl.startsWith("http://127.0.0.1:")) " (direct ${DlnaXml.safeUrl(ep.mediaUrl)} via the LAN proxy)" else "",
+    )
     if (url != null) return withContext(Dispatchers.IO) { dlna.playRawUrl(device, url, ep.title, ep.mime.ifBlank { MIME_HLS }, startMs) }
     withContext(Dispatchers.IO) {
         dlna.failedBeforeSending(
-            device, kind = "plugin-hls", stage = "no_lan_url",
+            device, kind = "plugin-$shape", stage = "no_lan_url",
             userMessage = "No se pudo obtener la dirección de red del teléfono para enviar el título",
             detail = "lanIp=${ip ?: "none"}",
         )
     }
     return false
+}
+
+/**
+ * What a DLNA renderer is handed for a castable plugin item: always a plain-http URL on the LAN.
+ * A remote url is never sent as it is: renderers take no https and follow no redirects -- an LG
+ * webOS answered `SetAVTransportURI` with 716 "Resource not found" for an Internet Archive mp4
+ * whose https link 302s to a `dnNNN.us.archive.org` mirror (2026-10-01). [register] files it with
+ * PluginCastProxy (the plugin's gated client, which follows the redirect upstream under the
+ * plugin's host rules; null when the proxy can't take it) and the TV gets that token URL on
+ * [lanIp]. A loopback token URL is only respelled ([pluginCastUri]).
+ */
+internal fun dlnaPluginUri(item: PlayerData, lanIp: String?, register: (PlayerData) -> String?): String? {
+    if (lanIp == null) return null
+    if (item.mediaUrl.startsWith("http://127.0.0.1:")) return pluginCastUri(item, lanIp)
+    if (!item.mediaUrl.startsWith("https://") && !item.mediaUrl.startsWith("http://")) return null
+    return register(item)?.let { pluginCastUri(item.copy(mediaUrl = it), lanIp) }
+}
+
+/**
+ * What a DLNA send needs from the app beyond the renderer: the phone's LAN address, the live
+ * channel's proxy and a way to put a direct plugin stream behind PluginCastProxy ([dlnaPluginUri]).
+ */
+internal class DlnaLan(
+    val lanIp: () -> String?,
+    val liveHlsProxy: LiveHlsProxy,
+    val pluginProxy: (PlayerData) -> String?,
+)
+
+/** [DlnaLan] wired to [graph]. Out of `PlayerContent`, which is at ART's verifier limit. */
+internal fun dlnaLan(graph: com.arkiv.player.AppGraph): DlnaLan = DlnaLan(
+    lanIp = { graph.lanIp() },
+    liveHlsProxy = graph.liveHlsProxy,
+    pluginProxy = { item ->
+        val proxy = graph.pluginCastProxy
+        runCatching { proxy.start() }
+        proxy.register(
+            key = item.episodeId,
+            origin = item.mediaUrl,
+            headers = item.requestHeaders,
+            hosts = item.pluginHosts,
+            shape = com.arkiv.player.playback.PluginCastProxy.shapeFor(item.mime),
+            mime = item.mime.ifBlank { "video/mp4" },
+        )
+    },
+)
+
+/**
+ * The phone's player when the bar's "Detener" ends a DLNA cast ([DlnaState.stop]): a video seeks
+ * to where the TV got to ([DlnaState.endedAtMs]) and plays; a live channel primes at its edge and
+ * plays ([CastLocalHold.resumeLive]). During the cast it sat silent ([CastLocalHold.hold]).
+ */
+@Composable
+internal fun DlnaLocalHandBack(state: DlnaState, player: androidx.media3.common.Player, isLive: Boolean, magis: androidx.media3.common.Player?, live: androidx.media3.common.Player?, ditu: androidx.media3.common.Player?) {
+    val active = state.active
+    var had by remember { mutableStateOf(false) }
+    val current by androidx.compose.runtime.rememberUpdatedState(player)
+    LaunchedEffect(active) {
+        if (active != null) {
+            had = true
+            return@LaunchedEffect
+        }
+        if (!had) return@LaunchedEffect
+        had = false
+        if (isLive) {
+            DlnaLog.diag("cast ended: the live channel comes back at its edge on the phone")
+            CastLocalHold.resumeLive(magis, live, ditu, play = true)
+            return@LaunchedEffect
+        }
+        val at = state.endedAtMs
+        DlnaLog.diag("cast ended: the phone resumes at ${at?.div(1000)}s (where the TV was)")
+        runCatching {
+            if (at != null && at > 0L) current.seekTo(at)
+            current.play()
+        }
+    }
 }
 
 /** Everything else: [DlnaController.setUrlAndPlay] re-serves [ep] to the TV through DlnaProxyServer. */
@@ -548,15 +638,14 @@ internal fun DlnaTracksFollower(
     tracks: TracksState,
     /** The phone player's position: where the cast began, the fallback when the TV cannot say where it is. */
     phoneMs: () -> Long?,
-    lanIp: () -> String?,
-    liveHlsProxy: LiveHlsProxy,
+    lan: DlnaLan,
 ) {
     val context = LocalContext.current
     val active = state.active
     val audio = tracks.castAudioChoice
     LaunchedEffect(active, audio?.ordinal) {
         if (active == null) return@LaunchedEffect
-        state.audioChanged(audio, phoneMs(), lanIp, liveHlsProxy) {
+        state.audioChanged(audio, phoneMs(), lan) {
             android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_LONG).show()
         }
     }
