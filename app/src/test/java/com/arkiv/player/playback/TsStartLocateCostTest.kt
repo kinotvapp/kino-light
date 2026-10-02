@@ -124,8 +124,8 @@ class TsStartLocateCostTest {
         val (run, _) = current(2_100_000L)
         assertEquals(2, run.cdn.rounds.first().size)
         val (hinted, _) = current(2_100_000L, ts.durationMs)
-        // The first probe with them when the duration is known.
-        assertEquals(3, hinted.cdn.rounds.first().size)
+        // The first probes with them when the duration is known.
+        assertEquals(2 + TsStartLocator.EARLY_PROBES, hinted.cdn.rounds.first().size)
     }
 
     @Test
