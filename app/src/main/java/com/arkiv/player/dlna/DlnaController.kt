@@ -951,6 +951,8 @@ class DlnaController(
             runCatching { remuxHls.unstage(key) }
         }
         DlnaCastService.stop(appContext)
+        // The remux cache back under its ceiling once the cast is over (ERRORES-ALJ).
+        remuxScope.launch { tsRemuxer.trim() }
     }
 
     /**
@@ -1315,6 +1317,7 @@ class DlnaController(
         proxy.stop()
         releaseRemux(c)
         DlnaCastService.stop(appContext)
+        remuxScope.launch { tsRemuxer.trim() }
     }
 
     private fun didlLiteFor(url: String, title: String, mime: String, subs: DlnaSidecar? = null): String =

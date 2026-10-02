@@ -98,8 +98,8 @@ class ArkivApp : Application(), ImageLoaderFactory {
         }
 
         // Reclaim the Chromecast remux cache (cacheDir/remux/*.mp4) on every cold start: those files
-        // reach gigabytes and are otherwise only evicted when a NEW remux pushes over the 4 GB cap,
-        // so between casts they just sit and fill the disk (the reported storage bloat + the
+        // reach gigabytes and, between starts, are only held under RemuxPolicy.capFor (at most 1.5 GB,
+        // trimmed after every cast); before that a 4 GB cap let them fill the disk (the reported storage bloat + the
         // SQLiteFullException crashes). A cold start = fresh process = no cast in flight, so every
         // file is a regenerable leftover; wiping them all here keeps steady-state usage near zero.
         // Off the main thread; a fresh install is a no-op.
@@ -107,9 +107,9 @@ class ArkivApp : Application(), ImageLoaderFactory {
             runCatching {
                 val bytes = graph.tsRemuxer.bytesOnDisk()
                 graph.tsRemuxer.clear()
-                // Telemetry: how big the remux cache actually got before we swept it. A large value
-                // is the storage-bloat / SQLITE_FULL risk made visible.
-                if (bytes >= 1_073_741_824L) { // 1 GB
+                // Telemetry: how big the remux cache actually got before we swept it. Past the
+                // ceiling is the storage-bloat / SQLITE_FULL risk made visible: the cap failed.
+                if (bytes > com.arkiv.player.playback.RemuxPolicy.BYTE_CAP + 64L * 1_048_576L) {
                     com.arkiv.player.crash.Crash.report(
                         com.arkiv.player.crash.StoragePressure("remux cache was ${bytes / 1_048_576L}MB at startup"),
                         "storage-pressure",

@@ -126,7 +126,7 @@ class RemuxPolicyTest {
     @Test
     fun `under the ceiling nothing is dropped`() {
         val f = listOf(Triple("a.mp4", GB, 1L), Triple("b.mp4", GB, 2L))
-        assertTrue(RemuxPolicy.toDelete(f).isEmpty())
+        assertTrue(RemuxPolicy.toDelete(f, cap = 4 * GB).isEmpty())
     }
 
     /** Oldest first. Backwards would evict what is playing and keep what nobody has opened. */
@@ -139,7 +139,7 @@ class RemuxPolicyTest {
             Triple("middle.mp4", 3 * GB / 2, 2000L),
             Triple("recent.mp4", 3 * GB / 2, 3000L),
         )
-        assertEquals(listOf("old.mp4", "middle.mp4"), RemuxPolicy.toDelete(f))
+        assertEquals(listOf("old.mp4", "middle.mp4"), RemuxPolicy.toDelete(f, cap = 4 * GB))
     }
 
     /** Only as many as needed: evicting more than the excess throws away work for nothing. */
@@ -150,15 +150,48 @@ class RemuxPolicyTest {
             Triple("middle.mp4", 2 * GB, 2000L),
             Triple("new.mp4", 2 * GB, 3000L),
         )
-        assertEquals(listOf("old.mp4"), RemuxPolicy.toDelete(f))
+        assertEquals(listOf("old.mp4"), RemuxPolicy.toDelete(f, cap = 4 * GB))
     }
 
     /** What is about to be written counts too, or the ceiling is only respected after busting it. */
     @Test
     fun `what is about to be written counts against the ceiling`() {
         val f = listOf(Triple("a.mp4", 3 * GB, 1L))
-        assertTrue(RemuxPolicy.toDelete(f).isEmpty())
-        assertEquals(listOf("a.mp4"), RemuxPolicy.toDelete(f, incomingBytes = 2 * GB))
+        assertTrue(RemuxPolicy.toDelete(f, cap = 4 * GB).isEmpty())
+        assertEquals(listOf("a.mp4"), RemuxPolicy.toDelete(f, incomingBytes = 2 * GB, cap = 4 * GB))
+    }
+
+    /** ERRORES-ALJ: 2743 MB of remuxes at startup under the old 4 GB cap. */
+    @Test
+    fun `the ceiling is 1_5 GB, or a quarter of the room the cache could have, whichever is smaller`() {
+        assertEquals(1536L * 1024 * 1024, RemuxPolicy.BYTE_CAP)
+        assertEquals(RemuxPolicy.BYTE_CAP, RemuxPolicy.capFor(usableBytes = 40 * GB, cacheBytes = 0L))
+        assertEquals(GB, RemuxPolicy.capFor(usableBytes = 3 * GB, cacheBytes = GB))
+        // The cache itself counts as room: filling it does not shrink the ceiling under it.
+        assertEquals(RemuxPolicy.capFor(4 * GB, 0L), RemuxPolicy.capFor(3 * GB, GB))
+        assertEquals(0L, RemuxPolicy.capFor(-1L, 0L))
+    }
+
+    @Test
+    fun `the default ceiling evicts what a 4 GB one kept, oldest first`() {
+        val f = listOf(Triple("a.mp4", GB, 1L), Triple("b.mp4", GB, 2L))
+        assertEquals(listOf("a.mp4"), RemuxPolicy.toDelete(f))
+    }
+
+    /** Never the file being written or served, even when that leaves the cache over its ceiling. */
+    @Test
+    fun `what is written or served is never evicted`() {
+        val key = RemuxPolicy.keyFrom("https://cdn.example/x_media.ts", 0L)
+        val name = RemuxPolicy.fileName(key)
+        val keep = RemuxPolicy.namesOf(listOf(key))
+        assertEquals(setOf(name, "$name.part", "$name.prev"), keep)
+        val f = listOf(
+            Triple("$name.prev", 2 * GB, 1L),
+            Triple("other.mp4", GB, 2L),
+            Triple("$name.part", GB, 3L),
+        )
+        assertEquals(listOf("other.mp4"), RemuxPolicy.toDelete(f, cap = GB, keep = keep))
+        assertTrue(RemuxPolicy.toDelete(f.filter { it.first in keep }, cap = GB, keep = keep).isEmpty())
     }
 
     @Test
