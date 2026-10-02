@@ -72,7 +72,6 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import coil.compose.AsyncImage
 import com.arkiv.player.data.RecentTitle
-import com.arkiv.player.data.local.DownloadSource
 import com.arkiv.player.data.plugin.PluginIds
 import com.arkiv.player.ui.catalog.PlaySource
 import com.arkiv.player.ui.catalog.accent
@@ -80,7 +79,6 @@ import com.arkiv.player.ui.catalog.SourceRow
 import com.arkiv.player.ui.catalog.posterFor
 import com.arkiv.player.ui.catalog.SourceCard
 import com.arkiv.player.ui.catalog.SourceSectionHeader
-import com.arkiv.player.ui.catalog.ArkivCaracolVerde
 import com.arkiv.player.ui.catalog.isSeries
 import com.arkiv.player.ui.catalog.MetaChip
 import com.arkiv.player.ui.home.buildRowSpecs
@@ -97,8 +95,8 @@ import com.arkiv.player.ui.titleinfo.titleTap
 import kotlinx.coroutines.launch
 
 /**
- * Unified search wizard: QUERY phase (search box + TMDB/anime cards) and RESULTS phase (multi-source search in Caracol
- * and the installed plugins for the chosen card, by name alone: for a series that surfaces the whole-season/series
+ * Unified search wizard: QUERY phase (search box + TMDB/anime cards) and RESULTS phase (multi-source search
+ * in the installed plugins for the chosen card, by name alone: for a series that surfaces the whole-season/series
  * packs).
  */
 @Composable
@@ -153,11 +151,6 @@ fun SearchScreen(
     val playback = remember { SearchPlayback(graph) }
     var preparing by remember { mutableStateOf(false) }
     var playError by remember { mutableStateOf<String?>(null) }
-    val caracolDownloadable = remember { DownloadSource.hasStrategy("ditu", graph.downloadStrategies.keys) }
-    // Open Caracol series: chapters are picked before playing (a plugin title opens its info page
-    // instead, see `openTitleResult`). What's tapped in its window only ever reaches
-    // `playback.playDituSeason`.
-    var dituSeason by remember { mutableStateOf<com.arkiv.player.data.gateway.GatewayResult?>(null) }
 
     // Shortcut from the home: enters already positioned on a title. Fires only once per arg
     // combination (LaunchedEffect doesn't re-run on recompositions with no changes), and
@@ -196,15 +189,7 @@ fun SearchScreen(
         }
     }
 
-    fun playDituResult(source: PlaySource.Ditu) {
-        // Series → open its chapters. Movie → play directly (and it stays in the library).
-        if (source.isSeries()) { dituSeason = source.result; return }
-        preparing = true; playError = null
-        scope.launch { applyResult(playback.playDitu(source.result)) }
-    }
-
     fun playResult(source: PlaySource) = when (source) {
-        is PlaySource.Ditu -> playDituResult(source)
         is PlaySource.Plugin -> openTitleResult(source.result)
     }
 
@@ -292,39 +277,7 @@ fun SearchScreen(
         }
     }
 
-    dituSeason?.let { caracolSeries ->
-        com.arkiv.player.ui.catalog.MagisSeasonDialog(
-            season = caracolSeries,
-            // The composite source: with a Caracol ref, `episodesWithSeries` reaches `DituSource`.
-            client = graph.contentSource,
-            onDismiss = { dituSeason = null },
-            // Saves to the library every chapter the window already loaded, and plays the tapped one.
-            onPlay = { chapters, chapter, series ->
-                dituSeason = null
-                preparing = true; playError = null
-                scope.launch { applyResult(playback.playDituSeason(caracolSeries, chapters, chapter, series)) }
-            },
-            // Caracol CAN be downloaded, since 2026-09-13: what stays on the device are its
-            // encrypted segments, and opening them still needs a network license (a few
-            // KB). See `CaracolStore`. Only offered if a strategy is registered, the same gate the
-            // rest of the app uses.
-            onSave = if (!caracolDownloadable) null else { all, chosen, series ->
-                askNotifications()
-                scope.launch {
-                    val queued = playback.enqueueCaracolDownload(caracolSeries, all, chosen, series)
-                    playError = when {
-                        queued == 0 -> "Esos capítulos ya estaban guardados."
-                        queued == chosen.size -> null
-                        else -> "Se encolaron $queued de ${chosen.size} (el resto ya estaba)."
-                    }
-                }
-            },
-            sourceLabel = "Caracol",
-            accent = ArkivCaracolVerde,
-        )
     }
-
-}
 
 /**
  * QUERY phase: search box + TMDB/anime title grid. Shows the history instead of an empty results
@@ -596,9 +549,9 @@ private fun ResultsContent(
     pluginMore: Map<String, com.arkiv.player.ui.plugin.PluginMoreTarget> = emptyMap(),
     onBrowsePlugin: ((com.arkiv.player.ui.plugin.PluginMoreTarget) -> Unit)? = null,
 ) {
-    // Caracol's section starts open: a section that starts collapsed looks empty even if it brings results.
-    var expandedSections by remember { mutableStateOf(setOf("CARACOL")) }
-    fun toggle(k: String) { expandedSections = if (k in expandedSections) expandedSections - k else expandedSections + k }
+    // Plugin sections start open like the fixed ones; this remembers the ones the person closed.
+    var collapsedPlugins by rememberSaveable { mutableStateOf(setOf<String>()) }
+    fun toggle(k: String) { collapsedPlugins = if (k in collapsedPlugins) collapsedPlugins - k else collapsedPlugins + k }
     // `rememberSaveable` and not `remember`: this screen gets destroyed when the player opens, and
     // with `remember` the chosen origin was lost -- you'd come back from watching something via
     // a plugin and the list was back on "Todo", with the item you'd just tapped buried among dozens of results.
@@ -608,10 +561,7 @@ private fun ResultsContent(
     val announced = announcedTabs(sourcesState)
     val tabs = tabsFor(sources, announced = announced)
     val tab = tabs.firstOrNull { it.key == tabKey } ?: SourceTab.ALL
-    // Plugin sections start open like the fixed ones; this remembers the ones the person closed.
-    var collapsedPlugins by rememberSaveable { mutableStateOf(setOf<String>()) }
 
-    val caracol = sources.filterIsInstance<PlaySource.Ditu>()
     val anyLoading = searchingSources.any
     val counts = countsByTab(sources, announced = announced)
     // Each chip spins while its source is still searching, and "Todo" while any one is missing:
@@ -652,10 +602,7 @@ private fun ResultsContent(
                 )
             }
         } else if (tab == SourceTab.ALL) {
-            // "Todo": a collapsible section per origin, in [SourceTab]'s order.
-            // Not while Caracol is hidden (CaracolVisibility): it isn't searched, so no section.
-            if (com.arkiv.player.data.ditu.CaracolVisibility.visible) sourceSection(this, "CARACOL", ArkivCaracolVerde, caracol, searchingSources.isSearching(SourceTab.CARACOL), "CARACOL" in expandedSections, { toggle("CARACOL") }, enabled, onPlay, emptySectionText(SourceTab.CARACOL, sourcesState))
-            // Then one section per plugin that brought results, in [tabsFor]'s order.
+            // "Todo": one section per plugin that brought results, in [tabsFor]'s order.
             tabs.filter { PluginIds.pluginIdOfSource(it.key) != null }.forEach { t ->
                 sourceSection(
                     this, t.label.uppercase(), t.accent, filterByTab(sources, t), searchingSources.isSearching(t),
@@ -877,8 +824,6 @@ private fun sourceSection(
 /** A source's stable identity, for the LazyColumn's keys (two different results with the same
  *  name would break the list if they shared a key). Same criterion the TV search uses. */
 private fun sourceKey(s: PlaySource): String = when (s) {
-    // Caracol's ref is already unique per content: `ditu1:<contentType>:<contentId>`.
-    is PlaySource.Ditu -> "d-${s.result.ref}"
     // The plugin item id is stable and unique within its plugin; the source keeps plugins apart.
     is PlaySource.Plugin -> "p-${s.result.source}-${s.result.extra["pluginItemId"] ?: s.result.ref}"
 }

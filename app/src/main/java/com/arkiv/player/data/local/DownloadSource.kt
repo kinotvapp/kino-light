@@ -58,7 +58,7 @@ object DownloadSource {
     }
 
     /**
-     * [sourceFor] for a library row's `items.source` (`"magis"`, `"ditu"`, `"plugin:<id>"`…): a
+     * [sourceFor] for a library row's `items.source` (`"magis"`, `"plugin:<id>"`…): a
      * plugin item is routed by the same two predicates; anything else is returned as-is.
      */
     fun sourceForItem(
@@ -87,11 +87,6 @@ object DownloadSource {
      */
     fun sourceFor(episodeId: String): String = when (PlayerSource.kindFor(episodeId)) {
         SourceKind.MAGIS -> "magis"
-        // Caracol isn't downloadable: its video comes Widevine-encrypted. "ditu" has no strategy
-        // in `AppGraph.downloadStrategies`, so [canDownload] doesn't offer it (and a row that made
-        // it into the queue anyway gets marked FAILED by `LocalDownloadWorker` with "Fuente no
-        // soportada: ditu"). Sending it to "archive" would say it's from archive.org, which it isn't.
-        SourceKind.DITU -> "ditu"
         // "plugin" has no strategy in `AppGraph.downloadStrategies`, so [canDownload] hides every
         // download button for it. Which plugins DO download ([XUPER], [PLUGIN_DOWNLOAD]) is decided
         // by the overload with the plugin predicates.
@@ -120,8 +115,8 @@ object DownloadSource {
 
     /**
      * [canDownload] for a library row's `items.source` (a Downloads group's): its item's chapters
-     * route by [sourceForItem] and are offered only when a strategy takes them -- never for Caracol
-     * or a plugin without the `download` capability, whose chapter would be queued only to fail.
+     * route by [sourceForItem] and are offered only when a strategy takes them -- never for a
+     * plugin without the `download` capability, whose chapter would be queued only to fail.
      */
     fun canDownloadItem(
         itemSource: String,

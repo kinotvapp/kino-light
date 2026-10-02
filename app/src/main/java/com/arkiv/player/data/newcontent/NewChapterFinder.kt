@@ -2,7 +2,6 @@ package com.arkiv.player.data.newcontent
 
 import android.util.Log
 import com.arkiv.player.data.ArkivRepository
-import com.arkiv.player.data.DituEntities
 import com.arkiv.player.data.db.ItemDao
 import com.arkiv.player.data.gateway.ContentSource
 import kotlinx.coroutines.Dispatchers
@@ -43,7 +42,6 @@ class NewChapterFinder(
             newCount += runCatching {
                 when (series.source) {
                     "magis" -> checkMagis(series)
-                    "ditu" -> checkDitu(series)
                     else -> 0
                 }
             }.getOrElse { e ->
@@ -107,68 +105,6 @@ class NewChapterFinder(
             if (id != null) added++
         }
         if (added > 0) Log.i(TAG, "magis ${series.itemId}: +$added")
-        return added
-    }
-
-    /**
-     * Caracol chapters, the same shape as [checkMagis] but season-aware: `gateway.episodesWithSeries`
-     * (routed to `DituSource` by `CompositeSource`, since [ref] is a Caracol ref) lists what's on
-     * the source today, and [MissingChapters.toFetchBySeason] decides what's actually new.
-     *
-     * Season-aware on purpose, unlike [checkMagis]'s plain [MissingChapters.toFetch]: Caracol
-     * numbers chapters PER SEASON, so comparing against the highest NUMBER stored would make season
-     * 2's chapter 1 look like it's already covered by a season 1 with ten chapters.
-     *
-     * Filters through [DituEntities.saveableChapters] before comparing: a chapter Caracol lists
-     * with number 0 can never be saved ([DituEntities.itemContentId] rejects it), so it must
-     * never count as missing -- that would retry it forever for nothing.
-     *
-     * Each missing chapter is saved with [ArkivRepository.addDituSource], which upserts just that
-     * one chapter and does NOT re-seal `episodiosVistosEnLista` (unlike `addDituSeason`), so the
-     * item's new-chapter badge picks it up -- same as a chapter [checkMagis] adds.
-     */
-    private suspend fun checkDitu(series: SeriesCandidate): Int {
-        val item = itemDao.getItem(series.itemId) ?: return 0
-        val ref = item.torrentData.orEmpty()
-        if (ref.isBlank()) return 0
-        val (atSource, gatewaySeries) = gateway.episodesWithSeries(ref)
-        if (atSource.isEmpty()) {
-            Log.i(TAG, "ditu ${series.itemId}: no chapters (stale ref?)")
-            return 0
-        }
-
-        // Same season rule the save path uses, so a chapter is keyed here exactly as it would be
-        // once saved.
-        val candidates = atSource.map { ep -> DituEntities.caracolChapter(ep, gatewaySeries) }
-        val saveable = DituEntities.saveableChapters(ref, candidates)
-        if (saveable.isEmpty()) return 0
-
-        // Both sides keyed through DituEntities.savedSeason: the stored `season` column is
-        // always written through it (null/0 -> 1), so comparing the raw source season directly
-        // would miss a chapter whose source season is null or 0 -- its key would land on `0`,
-        // never past a stored high-water mark that's really `1`.
-        val have = itemDao.getEpisodesOf(series.itemId)
-            .mapNotNull { ep -> ep.episode?.let { DituEntities.savedSeason(ep.season) to it } }
-        val inSource = saveable.map { DituEntities.savedSeason(it.season) to it.number }
-        val missing = MissingChapters.toFetchBySeason(have, inSource).toSet()
-        if (missing.isEmpty()) return 0
-
-        var added = 0
-        for (cap in saveable) {
-            if (DituEntities.savedSeason(cap.season) to cap.number !in missing) continue
-            val id = repo.addDituSource(
-                ref = cap.ref,
-                title = item.title,
-                episode = cap.number,
-                posterUrl = item.thumbnailUrl,
-                episodeTitle = cap.title,
-                seriesRef = ref,
-                season = cap.season,
-                tmdbId = gatewaySeries?.tmdbId?.takeIf { it > 0 },
-            )
-            if (id != null) added++
-        }
-        if (added > 0) Log.i(TAG, "ditu ${series.itemId}: +$added")
         return added
     }
 

@@ -72,7 +72,6 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.arkiv.player.ui.catalog.AnimeShowDetailScreen
-import com.arkiv.player.ui.catalog.CaracolScreen
 import com.arkiv.player.ui.catalog.CineCatalogScreen
 import com.arkiv.player.ui.catalog.CineDetailScreen
 import com.arkiv.player.ui.detail.DetailScreen
@@ -108,28 +107,23 @@ private val TABS = listOf(
     Tab("library", "Biblioteca") { Icon(Icons.Default.VideoLibrary, contentDescription = "Biblioteca") },
     Tab("downloads", "Descargas") { Icon(Icons.Default.Download, contentDescription = "Descargas") },
     Tab("live", "En vivo") { Icon(Icons.Default.LiveTv, contentDescription = "En vivo") },
-    Tab("caracol", "Caracol") { Icon(Icons.Default.Theaters, contentDescription = "Caracol") },
     // The phone's Plugins is a drawer item of its own; the TV keeps it as a tab of Ajustes.
     Tab(com.arkiv.player.ui.plugin.PLUGINS_ROUTE, "Plugins") { Icon(Icons.Default.Extension, contentDescription = "Plugins") },
     Tab("settings", "Ajustes") { Icon(Icons.Default.Settings, contentDescription = "Ajustes") },
 )
 
 /**
- * The tabs this device shows: Caracol only in Colombia ([isColombia]), "En vivo" only while the
- * live module has at least one provider ([liveModule], see `AppGraph.liveModule.available`):
- * Xuper while its plugin is on, plus any installed plugin with `channels`. Pure for the test.
+ * The tabs this device shows: "En vivo" only while the live module has at least one provider
+ * ([liveModule], see `AppGraph.liveModule.available`): Xuper while its plugin is on, plus any
+ * installed plugin with `channels`. Pure for the test.
  */
 internal fun visibleTabRoutes(
     isColombia: Boolean,
     liveModule: Boolean,
     categoriesModule: Boolean = true,
-    caracolVisible: Boolean = com.arkiv.player.data.ditu.CaracolVisibility.visible,
 ): List<String> =
     TABS.map { it.route }.filter { route ->
         when (route) {
-            // Off while Caracol is hidden (CaracolVisibility: it's getting rebuilt as a plugin);
-            // flipping the switch back restores the Colombia-only tab.
-            "caracol" -> caracolVisible && isColombia
             "live" -> liveModule
             "categorias_home" -> categoriesModule
             else -> true
@@ -168,19 +162,14 @@ fun ArkivRoot(
     val navController = rememberNavController()
     val graph = rememberGraph()
     val scope = rememberCoroutineScope()
-    // Caracol Streaming (Ditu) only carries Colombian content, and its tab led plenty of people
-    // outside Colombia into a catalog with nothing for them. `deviceCountry` is the same free,
-    // no-permission, no-network signal `countryChannelsForHome` already uses for the live channels
-    // row -- SIM, then time zone, then locale.
     val context = androidx.compose.ui.platform.LocalContext.current
-    val isColombia = remember { com.arkiv.player.ui.live.deviceCountry(context) == "CO" }
     // "En vivo" follows the live module (Xuper or any plugin with channels), without a restart.
     val liveOn by graph.liveModule.available.collectAsStateWithLifecycle()
     val installedForTabs by graph.pluginRegistry.plugins.collectAsStateWithLifecycle()
     val genreTiles by graph.genreTiles.collectAsStateWithLifecycle()
     val categoriesOn = categoriesTabAvailable(installedForTabs, genreTiles.isNotEmpty())
-    val tabs = remember(isColombia, liveOn, categoriesOn) {
-        val routes = visibleTabRoutes(isColombia, liveOn, categoriesOn)
+    val tabs = remember(liveOn, categoriesOn) {
+        val routes = visibleTabRoutes(false, liveOn, categoriesOn)
         TABS.filter { it.route in routes }
     }
 
@@ -546,12 +535,6 @@ fun ArkivRoot(
                     onOpenChannel = { liveCode -> goToLiveChannel(liveCode) },
                     contentPadding = padding,
                     chrome = liveChrome,
-                )
-            }
-            composable("caracol") {
-                CaracolScreen(
-                    onPlay = { id -> playEpisode(id) },
-                    contentPadding = padding,
                 )
             }
             composable("library") {

@@ -28,16 +28,15 @@ class CastLocalHoldTest {
     }
 
     @Test fun `a video cast pauses every local player where it is, none stopped`() {
-        val service = Recorder(); val magis = Recorder(); val ditu = Recorder()
-        CastLocalHold.hold(service.player, magis.player, null, ditu.player, isLive = false)
+        val service = Recorder(); val magis = Recorder()
+        CastLocalHold.hold(service.player, magis.player, null, isLive = false)
         assertEquals(listOf("pause"), service.calls)
         assertEquals(listOf("pause"), magis.calls)
-        assertEquals(listOf("pause"), ditu.calls)
     }
 
     @Test fun `a live cast stops the channel's player, no second connection to its CDN`() {
         val service = Recorder(); val live = Recorder(); val plugin = Recorder()
-        CastLocalHold.hold(service.player, plugin.player, live.player, null, isLive = true)
+        CastLocalHold.hold(service.player, plugin.player, live.player, isLive = true)
         // The service player holds no channel: only paused.
         assertEquals(listOf("pause"), service.calls)
         assertEquals(listOf("pause", "stop"), live.calls)
@@ -46,16 +45,16 @@ class CastLocalHoldTest {
 
     @Test fun `the service player passed twice is only paused, never stopped`() {
         val service = Recorder()
-        CastLocalHold.hold(service.player, service.player, null, null, isLive = true)
+        CastLocalHold.hold(service.player, service.player, null, isLive = true)
         assertEquals(listOf("pause"), service.calls)
     }
 
     @Test fun `a live channel comes back at its edge, playing unless silence was asked`() {
         val live = Recorder()
-        CastLocalHold.resumeLive(null, live.player, null, play = true)
+        CastLocalHold.resumeLive(null, live.player, play = true)
         assertEquals(listOf("seekToDefaultPosition", "prepare", "play"), live.calls)
         val stopped = Recorder()
-        CastLocalHold.resumeLive(stopped.player, null, null, play = false)
+        CastLocalHold.resumeLive(stopped.player, null, play = false)
         assertEquals(listOf("seekToDefaultPosition", "prepare"), stopped.calls)
     }
 }

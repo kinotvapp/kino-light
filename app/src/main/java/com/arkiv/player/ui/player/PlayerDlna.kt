@@ -552,7 +552,7 @@ internal fun dlnaLan(graph: com.arkiv.player.AppGraph): DlnaLan = DlnaLan(
  * plays ([CastLocalHold.resumeLive]). During the cast it sat silent ([CastLocalHold.hold]).
  */
 @Composable
-internal fun DlnaLocalHandBack(state: DlnaState, player: androidx.media3.common.Player, isLive: Boolean, magis: androidx.media3.common.Player?, live: androidx.media3.common.Player?, ditu: androidx.media3.common.Player?) {
+internal fun DlnaLocalHandBack(state: DlnaState, player: androidx.media3.common.Player, isLive: Boolean, magis: androidx.media3.common.Player?, live: androidx.media3.common.Player?) {
     val active = state.active
     var had by remember { mutableStateOf(false) }
     val current by androidx.compose.runtime.rememberUpdatedState(player)
@@ -565,7 +565,7 @@ internal fun DlnaLocalHandBack(state: DlnaState, player: androidx.media3.common.
         had = false
         if (isLive) {
             DlnaLog.diag("cast ended: the live channel comes back at its edge on the phone")
-            CastLocalHold.resumeLive(magis, live, ditu, play = true)
+            CastLocalHold.resumeLive(magis, live, play = true)
             return@LaunchedEffect
         }
         val at = state.endedAtMs

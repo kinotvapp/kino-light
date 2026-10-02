@@ -157,10 +157,6 @@ fun TvSearchScreen(
     var askModeFor by remember { mutableStateOf<TitleCard?>(null) }
     var preparing by remember { mutableStateOf(false) }
     var playError by remember { mutableStateOf<String?>(null) }
-    // Chosen Caracol series: opens its chapters (a plugin title opens its info page instead, see
-    // `openTitle`). Its chapter list only calls `playback.playDituSeason`.
-    var dituSeasonFor by remember { mutableStateOf<com.arkiv.player.data.gateway.GatewayResult?>(null) }
-
     // The chosen card's "enriched" metadata, to save the real title/poster — same criterion as
     // SearchScreen (phone).
     val resultTitle = vmDetail?.title ?: vmAnimeShow?.title ?: selected?.title ?: ""
@@ -183,18 +179,7 @@ fun TvSearchScreen(
         }
     }
 
-    fun playDituResult(r: com.arkiv.player.data.gateway.GatewayResult) {
-        preparing = true; playError = null
-        scope.launch { applyResult(playback.playDitu(r)) }
-    }
-
     fun playResult(source: PlaySource) = when (source) {
-        is PlaySource.Ditu ->
-            if (source.isSeries()) {
-                dituSeasonFor = source.result
-            } else {
-                playDituResult(source.result)
-            }
         is PlaySource.Plugin -> openTitle(source.result)
     }
 
@@ -309,7 +294,6 @@ fun TvSearchScreen(
     // list first (doesn't exit the phase).
     BackHandler {
         when {
-            phase == SearchPhase.RESULTS && dituSeasonFor != null -> dituSeasonFor = null
             phase != SearchPhase.QUERY -> vm.back()
             else -> onBack()
         }
@@ -474,20 +458,7 @@ fun TvSearchScreen(
             // chapter list (TvMagisSeasonContent) instead of playing, and a plugin title its
             // info page.
             SearchPhase.RESULTS -> {
-                val currentDitu = dituSeasonFor
-                if (currentDitu != null) {
-                    TvCaracolChapters(
-                        series = currentDitu,
-                        posterUrl = currentDitu.extra["poster"].orEmpty().ifBlank { resultPoster },
-                        preparing = preparing,
-                        onChoose = { save ->
-                            dituSeasonFor = null
-                            preparing = true; playError = null
-                            scope.launch { applyResult(save()) }
-                        },
-                    )
-                } else {
-                    TvResultsContent(
+                TvResultsContent(
                         title = resultTitle,
                         posterUrl = resultPoster,
                         season = refineSeason,
@@ -501,7 +472,6 @@ fun TvSearchScreen(
                         pluginMore = pluginMore,
                         onBrowsePlugin = onBrowsePlugin,
                     )
-                }
             }
         }
     }
@@ -916,46 +886,10 @@ private fun TvResultsContent(
  *  Caracol: its `ref`, already unique per content (`ditu1:<contentType>:<contentId>`). A plugin:
  *  its source plus its item id. */
 internal fun sourceKey(s: PlaySource): String = when (s) {
-    is PlaySource.Ditu -> "ditu-${s.result.ref}"
     is PlaySource.Plugin -> "plugin-${s.result.source}-${s.result.extra["pluginItemId"] ?: s.result.ref}"
 }
 
-/**
- * A Caracol series' chapters, to choose which one to watch. Opened by search and by Caracol's
- * section ([TvCaracolScreen]), and it's a single one on purpose: tapping a chapter always saves
- * via [SearchPlayback.playDituSeason] —the whole series, `ditu:` id, never Magis's save path— and
- * plays the tapped one. No "Guardar toda la temporada": there, saving means downloading to the
- * device, and Caracol doesn't download (Widevine, see `DownloadSource`). It enters the library on
- * playing.
- *
- * [onChoose] receives that save already built and runs it in the calling screen's scope: both
- * close this list on picking, so it can't run in one from inside here.
- */
-@Composable
-internal fun TvCaracolChapters(
-    series: com.arkiv.player.data.gateway.GatewayResult,
-    posterUrl: String,
-    preparing: Boolean,
-    onChoose: (save: suspend () -> PlaybackResult) -> Unit,
-) {
-    val graph = rememberGraph()
-    val playback = remember { SearchPlayback(graph) }
-    TvMagisSeasonContent(
-        season = series,
-        // The composed source: with a Caracol ref, `episodesWithSeries` reaches `DituSource`.
-        client = graph.contentSource,
-        posterUrl = posterUrl,
-        preparing = preparing,
-        // With the whole list the screen already loaded: all get saved, the tapped one plays.
-        onPlayOne = { chapters, chapter, data ->
-            onChoose { playback.playDituSeason(series, chapters, chapter, data) }
-        },
-        onSaveAll = null,
-        label = "Caracol",
-    )
-}
-
-/** Navigable row for a Magis or Caracol chapter ("E3 · Title"). */
+/** Navigable row for a Magis chapter ("E3 · Title"). */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 internal fun TvMagisEpisodeRow(

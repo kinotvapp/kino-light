@@ -343,7 +343,7 @@ internal fun StreamExoPlayer(
             // relaxed either: live "any" and broad video both stop short of the license.
             val licenseClient = when {
                 it.hosts.anyPublicStreamHost -> graph.pluginStreamClient(licenseHostsFor(it.hosts), it.xuper)
-                it.pluginId != null -> graph.pluginStreamClient(it.hosts, it.xuper)
+                it.pluginId != null -> graph.pluginStreamClient(licenseHostsFor(it.hosts), it.xuper)
                 else -> streamClient
             }
             pluginHttpFactories(streamClient, requestHeaders, drm?.licenseHeaders.orEmpty(), licenseClient)
@@ -1187,7 +1187,11 @@ internal fun strictSideUrls(hosts: com.arkiv.player.data.plugin.EffectiveHosts, 
     if (hosts.sideTracks == hosts) emptyList() else subtitles + audio
 
 /** The hosts a plugin stream's DRM license client is gated to: never relaxed, by live "any" or by broad video. */
-internal fun licenseHostsFor(hosts: com.arkiv.player.data.plugin.EffectiveHosts): com.arkiv.player.data.plugin.EffectiveHosts = hosts.strict
+internal fun licenseHostsFor(hosts: com.arkiv.player.data.plugin.EffectiveHosts): com.arkiv.player.data.plugin.EffectiveHosts =
+    hosts.strict.let { it.copy(declared = it.declared + WIDEVINE_PROVISIONING_HOST) }
+
+/** Where the system's Widevine fetches a device certificate the first time L3 is used on a device (the license client only). */
+internal const val WIDEVINE_PROVISIONING_HOST = "www.googleapis.com"
 
 /** Only a PLUGIN stream is gated; an empty host list is still gated (it reaches nothing). */
 /**

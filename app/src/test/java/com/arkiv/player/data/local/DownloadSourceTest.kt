@@ -22,13 +22,15 @@ class DownloadSourceTest {
     }
 
     @Test
-    fun `a caracol chapter doesn't fall into the archive strategy`() {
-        assertEquals("ditu", DownloadSource.sourceFor("ditu:12345::e1"))
+    fun `a legacy caracol chapter has no download strategy`() {
+        // After the migration, an unmigrated `ditu:…` id is no longer a known source: the player
+        // answers "no longer available" (UNREACHABLE) and Caracol never had a way to download.
+        assertEquals("archive", DownloadSource.sourceFor("ditu:12345::e1"))
     }
 
     @Test fun `a plugin chapter has its own download source, and no strategy offers it`() {
         assertEquals("plugin", DownloadSource.sourceFor("plugin:demo:m1::0"))
-        assertFalse(DownloadSource.canDownload("plugin:demo:m1::0", setOf("magis", "ditu"), noXuper))
+        assertFalse(DownloadSource.canDownload("plugin:demo:m1::0", setOf("magis"), noXuper))
     }
 
     /** No installed plugin is the recognized Xuper install. */
@@ -63,8 +65,7 @@ class DownloadSourceTest {
         assertTrue(DownloadSource.canDownloadItem("magis", all, xuper, demoDownloads))
         assertTrue(DownloadSource.canDownloadItem("plugin:xuper", all, xuper, demoDownloads))
         assertTrue(DownloadSource.canDownloadItem("plugin:demo", all, xuper, demoDownloads))
-        // Caracol (no strategy) and a plugin that never declared `download`: no button, nothing queued to fail.
-        assertFalse(DownloadSource.canDownloadItem("ditu", all, xuper, demoDownloads))
+        // A plugin that never declared `download`: no button, nothing queued to fail.
         assertFalse(DownloadSource.canDownloadItem("plugin:other", all, xuper, demoDownloads))
         // A plugin that stopped offering downloads since (disabled, uninstalled, needs setup).
         assertFalse(DownloadSource.canDownloadItem("plugin:demo", all, xuper) { false })
@@ -90,7 +91,7 @@ class DownloadSourceTest {
     @Test fun `non-plugin sources ignore both plugin predicates`() {
         val always: (String) -> Boolean = { true }
         assertEquals("magis", DownloadSource.sourceFor("magis:2AD2591D4242471D96B68FF04FFD2784::e6", always, always))
-        assertEquals("ditu", DownloadSource.sourceFor("ditu:12345::e1", always, always))
+        assertEquals("archive", DownloadSource.sourceFor("ditu:12345::e1", always, always))
         assertEquals("archive", DownloadSource.sourceFor("dragon-ball-gt_s01e01", always, always))
     }
 
@@ -100,12 +101,11 @@ class DownloadSourceTest {
         assertTrue(DownloadSource.hasStrategy("magis", strategies))
     }
 
-    /** Widevine: there's nothing to download it with, so the option stays hidden instead of failing later. */
+    /** A legacy Caracol id has no strategy and no button (Caracol went to the plugin). */
     @Test
-    fun `caracol is not offered for download`() {
+    fun `legacy caracol id has no download strategy`() {
         assertFalse(DownloadSource.canDownload("ditu:12345::e1", strategies, noXuper))
         assertFalse(DownloadSource.canDownload("ditu:P1::0", strategies, noXuper))
-        assertFalse(DownloadSource.hasStrategy("ditu", strategies))
     }
 
     /** The rule is "has a strategy", not a list of names: a future source is covered on its own. */

@@ -29,13 +29,15 @@ class CompanionPlayMappingTest {
         assertEquals("http://p", item.poster)
     }
 
-    @Test fun `ditu keeps the ref but derives its own contentId (blank here)`() {
-        val item = buildCompanionPlayItem(
-            "ditu:x", ref = "dref", itemIdentifier = "ditu:x", title = "T", season = null, episode = null, poster = "",
-        )!!
-        assertEquals(CompanionPlayItem.KIND_DITU, item.kind)
-        assertEquals("dref", item.ref)
-        assertEquals("", item.contentId)
+    @Test fun `a legacy ditu id no longer maps to a known kind`() {
+        // Ditu is no longer a source Kino understands: a saved library row with a `ditu:` id
+        // (from before the migration) doesn't reach playPlugin; it falls through to the unknown
+        // branch. The paired device therefore can't replay it.
+        assertNull(
+            buildCompanionPlayItem(
+                "ditu:x", ref = "dref", itemIdentifier = "ditu:x", title = "T", season = null, episode = null, poster = "",
+            )
+        )
     }
 
     @Test fun `a magis id with no ref cannot be reproduced elsewhere`() {

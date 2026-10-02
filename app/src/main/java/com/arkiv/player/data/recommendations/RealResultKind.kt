@@ -1,6 +1,5 @@
 package com.arkiv.player.data.recommendations
 
-import com.arkiv.player.data.ditu.DituRef
 import com.arkiv.player.data.gateway.GatewayResult
 import com.arkiv.player.data.magis.MagisRef
 
@@ -11,12 +10,11 @@ import com.arkiv.player.data.magis.MagisRef
  * labeled "tv", and the prompt's rule "if I searched a series, a movie does NOT count" can never
  * apply. This fixes it before the referee sees the list.
  *
- * `null` when the ref isn't understood (neither Magis's nor Caracol's): in that case the caller
+ * `null` when the ref isn't understood (neither Magis's nor a plugin's): in that case the caller
  * leaves `kind` as it came.
  */
 internal fun realKindOfRef(ref: String): String? {
     MagisRef.decode(ref)?.let { return if (it.isSeries) "tv" else "movie" }
-    DituRef.decode(ref)?.let { return if (it.isSeries) "tv" else "movie" }
     return null
 }
 

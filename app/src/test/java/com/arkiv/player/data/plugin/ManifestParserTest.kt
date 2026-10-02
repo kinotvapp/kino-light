@@ -27,7 +27,7 @@ class ManifestParserTest {
     }
 
     @Test fun `id rules`() {
-        listOf("A", "a", "-abc", "has_underscore", "x".repeat(41), "magis", "ditu", "live", "local", "unknown", "plugin", "own")
+        listOf("A", "a", "-abc", "has_underscore", "x".repeat(41), "magis", "live", "local", "unknown", "plugin", "own")
             .forEach { assertEquals(it, "id", invalidField(base().put("id", it))) }
     }
 

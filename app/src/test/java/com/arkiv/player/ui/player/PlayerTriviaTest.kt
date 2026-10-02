@@ -56,14 +56,12 @@ class PlayerTriviaTest {
     // ---- wantsFacts: when it's worth requesting a fun fact ----
 
     @Test
-    fun `a movie or chapter from Magis or Caracol carries facts`() {
+    fun `a movie or chapter from Magis carries facts`() {
         assertTrue(PlayerTrivia.wantsFacts("magis:C42::e3", SourceKind.MAGIS))
-        assertTrue(PlayerTrivia.wantsFacts("ditu:99::e1", SourceKind.DITU))
     }
 
     @Test
     fun `a live stream, adults content, or another source carries no facts`() {
-        assertFalse(PlayerTrivia.wantsFacts("ditu:vivo:canal1", SourceKind.DITU))
         assertFalse(PlayerTrivia.wantsFacts("magis:efimero:C42", SourceKind.MAGIS))
         assertFalse(PlayerTrivia.wantsFacts("live:1", SourceKind.LIVE))
         assertFalse(PlayerTrivia.wantsFacts("algo", SourceKind.UNKNOWN))

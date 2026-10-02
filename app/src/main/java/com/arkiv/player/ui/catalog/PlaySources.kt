@@ -44,20 +44,12 @@ import com.arkiv.player.ui.theme.ArkivSurfaceHigh
 import com.arkiv.player.ui.theme.ArkivTextSecondary
 
 /**
- * A playable source: Caracol Streaming (Ditu) or an installed plugin.
- *
- * Up until this branch's pruning (light-magis) there was also an `Archive` variant, deleted along
- * with the rest of archive.org. Ditu was deleted in that same pruning and came back with a direct
- * client, no server of its own (`com.arkiv.player.data.ditu`). A native `Magis` variant existed
- * until Xuper moved to its plugin: Xuper results arrive as [Plugin] now.
+ * A playable source: any installed plugin. Caracol used to live here as a native `Ditu` variant;
+ * it became the `caracol-tv` plugin in this branch and arrives as [Plugin] now.
  */
 sealed interface PlaySource {
-    /** Result from Caracol Streaming. Its `ref` CAN be saved to the library: it encodes Caracol
-     *  ids, which are stable (see `DituRef`). */
-    data class Ditu(val result: com.arkiv.player.data.gateway.GatewayResult) : PlaySource
-
     /**
-     * Result from an installed plugin. Like Caracol, its ref CAN be saved to the library: a
+     * Result from an installed plugin. Like every plugin, its ref CAN be saved to the library: a
      * plugin item's id is stable by contract (see `PluginEntities`). [color] is opaque ARGB from
      * the manifest (`PluginColors.parse`).
      */
@@ -72,9 +64,6 @@ sealed interface PlaySource {
 /** Magis blue: the default accent of the season dialog (`MagisSeasonDialog`). */
 val ArkivMagisBlue = Color(0xFF64B5F6)
 
-/** Caracol green: the accent color of its row, its section and its filter chip. */
-val ArkivCaracolVerde = Color(0xFF66BB6A)
-
 /** A plugin's accent: its manifest color, or the neutral default. */
 val PlaySource.Plugin.accent: Color get() = Color(color)
 
@@ -82,16 +71,8 @@ val PlaySource.Plugin.accent: Color get() = Color(color)
 fun PlaySource.Plugin.isSeries(): Boolean = result.kind == "series"
 
 fun accentOf(source: PlaySource): Color = when (source) {
-    is PlaySource.Ditu -> ArkivCaracolVerde
     is PlaySource.Plugin -> source.accent
 }
-
-/**
- * Whether a Caracol result is a series --a chapter has to be chosen before playing-- or a movie.
- * `DituSource` sets `kind = "series"` on everything that isn't a `VOD` (a `BUNDLE` or a
- * `GROUP_OF_BUNDLES`). A single rule for the phone and the TV.
- */
-fun PlaySource.Ditu.isSeries(): Boolean = result.kind == "series"
 
 /** A source's loose datum (quality, language, seeds, size) as a pill. Reading a run-on line like
  *  "Latino · 1080p · 12 seeds · 4.2 GB" costs effort; separated they scan at a glance. */
@@ -163,7 +144,7 @@ fun SourceRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.width(3.dp).fillMaxHeight().background(accent))
-        // Caracol and plugins bring a cover per result ([posterFor]). With no poster, nothing gets drawn.
+        // Plugins bring a cover per result ([posterFor]). With no poster, nothing gets drawn.
         val thumbnail = posterFor(source)
         if (thumbnail.isNotBlank()) {
             AsyncImage(
@@ -180,22 +161,6 @@ fun SourceRow(
         )
         Column(Modifier.weight(1f).padding(vertical = 10.dp, horizontal = 2.dp)) {
             when (source) {
-                is PlaySource.Ditu -> {
-                    val r = source.result
-                    Text(
-                        r.title, color = Color.White, style = MaterialTheme.typography.bodyMedium,
-                        maxLines = 2, overflow = TextOverflow.Ellipsis,
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        MetaChip("Caracol", ArkivCaracolVerde)
-                        if (source.isSeries()) MetaChip("Serie")
-                        if (r.year.isNotBlank()) MetaChip(r.year)
-                    }
-                }
                 is PlaySource.Plugin -> {
                     val r = source.result
                     Text(
@@ -222,10 +187,8 @@ fun SourceRow(
     }
 }
 
-/** A source's cover, or "" if that source has none. Caracol and plugins bring it in
- *  `extra["poster"]`. */
+/** A source's cover, or "" if that source has none. Plugins bring it in `extra["poster"]`. */
 fun posterFor(source: PlaySource): String = when (source) {
-    is PlaySource.Ditu -> source.result.extra["poster"].orEmpty()
     is PlaySource.Plugin -> source.result.extra["poster"].orEmpty()
 }
 
@@ -269,11 +232,6 @@ fun SourceCard(source: PlaySource, enabled: Boolean, onClick: () -> Unit) {
             modifier = Modifier.padding(start = 8.dp, end = 8.dp, top = 4.dp),
         ) {
             when (source) {
-                is PlaySource.Ditu -> {
-                    MetaChip("Caracol", ArkivCaracolVerde)
-                    if (source.isSeries()) MetaChip("Serie")
-                    if (source.result.year.isNotBlank()) MetaChip(source.result.year)
-                }
                 is PlaySource.Plugin -> {
                     MetaChip(source.pluginName, source.accent)
                     if (source.result.isLiveChannel()) MetaChip(LIVE_BADGE, ArkivRed, strong = true) else if (source.isSeries()) MetaChip("Serie")
@@ -285,6 +243,5 @@ fun SourceCard(source: PlaySource, enabled: Boolean, onClick: () -> Unit) {
 }
 
 private fun titleOf(source: PlaySource): String = when (source) {
-    is PlaySource.Ditu -> source.result.title
     is PlaySource.Plugin -> source.result.title
 }

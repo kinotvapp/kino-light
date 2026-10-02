@@ -42,12 +42,6 @@ internal class AndroidPlayResolver(
                     season = item.season.takeIf { it > 0 },
                 )
             }
-            CompanionPlayItem.KIND_DITU -> graph.repository.addDituSource(
-                ref = item.ref, title = item.title, episode = item.episode,
-                posterUrl = item.poster, backdropUrl = item.backdrop,
-                episodeTitle = item.episodeTitle, seriesRef = item.seriesRef,
-                season = item.season.takeIf { it > 0 },
-            )
             else -> return CompanionPlayReceiver.PlayOutcome.Fail("unknown_kind")
         }
         return episodeId?.let { CompanionPlayReceiver.PlayOutcome.Open(it, item.title) }

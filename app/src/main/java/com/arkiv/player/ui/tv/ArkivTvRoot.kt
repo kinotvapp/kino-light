@@ -170,7 +170,6 @@ fun ArkivTvRoot(
                 onOpenSearch = { navController.navigate("search") },
                 onOpenLibrary = { navController.navigate("library") },
                 onOpenLive = { navController.navigate("live") },
-                onOpenCaracol = { navController.navigate("caracol") },
                 onOpenCategorias = { navController.navigate("categorias") },
                 onOpenCategoriasHome = { navController.navigate("categorias_home") },
                 onOpenTitleRoute = { route -> navController.navigate(route) { launchSingleTop = true } },
@@ -303,11 +302,6 @@ fun ArkivTvRoot(
                 onWatchChannel = { channel -> goToLiveChannel(channel.liveCode) },
                 onBack = { navController.popBackStack() },
             )
-        }
-        composable("caracol") {
-            // What arrives is the episodeId to navigate with: a title's that got saved the same
-            // way as from search, or a live channel's that travels via `DituLive`.
-            TvCaracolScreen(onPlay = { goToPlayer(it) })
         }
         composable("detail/{itemId}") { entry ->
             val itemId = Uri.decode(entry.arguments?.getString("itemId").orEmpty())

@@ -67,14 +67,13 @@ object PlayerTrivia {
     fun hasButton(texts: List<String>): Boolean = texts.isNotEmpty()
 
     /**
-     * Whether this episode carries a fun fact: movies and chapters from Magis or Caracol. A live
-     * channel isn't a work (what's on changes every half hour), and Magis's ephemeral content is
-     * the adults one, which has no library row to name it by. Downloaded files don't reach here:
+     * Whether this episode carries a fun fact: movies and chapters from Magis. A live channel isn't
+     * a work (what's on changes every half hour), and Magis's ephemeral content is the adults one,
+     * which has no library row to name it by. Downloaded files don't reach here:
      * [PlayerViewModel.load] routes them to `loadLocal` earlier.
      */
     fun wantsFacts(episodeId: String, kind: com.arkiv.player.playback.SourceKind): Boolean = when (kind) {
         com.arkiv.player.playback.SourceKind.MAGIS -> !com.arkiv.player.playback.MagisEphemeral.isEphemeral(episodeId)
-        com.arkiv.player.playback.SourceKind.DITU -> !com.arkiv.player.playback.DituLive.isLive(episodeId)
         // No fun facts for plugin titles in v1: nothing guarantees the title is a real work Kilo knows.
         com.arkiv.player.playback.SourceKind.PLUGIN -> false
         else -> false

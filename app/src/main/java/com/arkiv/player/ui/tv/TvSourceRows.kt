@@ -80,7 +80,6 @@ fun LazyListScope.tvSourceRow(
                 }
                 // Every source here brings a cover, so all go as a poster.
                 val (title, poster) = when (s) {
-                    is PlaySource.Ditu -> s.result.title to s.result.extra["poster"]
                     is PlaySource.Plugin -> s.result.title to s.result.extra["poster"]
                 }
                 TvPosterCard(

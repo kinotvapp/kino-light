@@ -34,7 +34,6 @@ data class CompanionPlayItem(
 
     companion object {
         const val KIND_MAGIS = "magis"
-        const val KIND_DITU = "ditu"
         const val KIND_LIVE = "live"
 
         /** Null on a payload with no `kind` (a malformed/foreign message). */

@@ -1,7 +1,5 @@
 package com.arkiv.player.data.newcontent
 
-import com.arkiv.player.data.ditu.DituSource
-
 /**
  * A library series with just enough to decide whether it's worth checking.
  *
@@ -10,7 +8,7 @@ import com.arkiv.player.data.ditu.DituSource
  */
 data class SeriesCandidate(
     val itemId: String,
-    /** "magis" | "ditu" today; legacy rows can still carry "archive" | "web" | "torrent". */
+    /** "magis" today; legacy rows can still carry "archive" | "web" | "torrent". */
     val source: String,
     /** When something of this series last played. 0 = never. */
     val lastWatchedMs: Long,
@@ -43,12 +41,12 @@ object SeriesToCheck {
     private const val DAY_MS = 24 * 60 * 60 * 1000L
 
     /**
-     * Sources this check lets through. "magis" and "ditu" (Caracol) both lead somewhere today
-     * (`NewChapterFinder.checkMagis`/`checkDitu`). "archive" and "web" were removed in this
-     * branch's pruning and are left out on purpose: keeping them here only cost a real series a
-     * slot, since `NewChapterFinder` no-ops on both. Torrent stays out too (see the spec).
+     * Sources this check lets through. Only "magis" today (`NewChapterFinder.checkMagis`):
+     * plugins handle their own new chapter logic on their own. "archive" and "web" were removed in
+     * this branch's pruning and are left out on purpose: keeping them here only cost a real series
+     * a slot, since `NewChapterFinder` no-ops on both. Torrent stays out too (see the spec).
      */
-    private val SOURCES = setOf("magis", DituSource.SOURCE)
+    private val SOURCES = setOf("magis")
 
     fun choose(candidates: List<SeriesCandidate>, nowMs: Long): List<SeriesCandidate> {
         val floor = nowMs - WINDOW_DAYS * DAY_MS

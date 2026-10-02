@@ -11,9 +11,8 @@ import java.net.UnknownHostException
 class DownSourcesTest {
 
     private val demo = "plugin:demo"
-    private val noErrors = SourcesState(responded = setOf(demo, "ditu")).withLabel(demo, "Demo")
-    private val caracolDown = SourcesState().withLabel(demo, "Demo").withResponse(demo).withFailure("ditu", "sin red")
-    private val everythingDown = SourcesState().withLabel(demo, "Demo").withFailure(demo, "timeout").withFailure("ditu", "sin red")
+    private val noErrors = SourcesState(responded = setOf(demo)).withLabel(demo, "Demo")
+    private val everythingDown = SourcesState().withLabel(demo, "Demo").withFailure(demo, "timeout").withFailure("plugin:other", "sin red")
     private val demoTab = tabForSource(demo, mapOf(demo to "Demo"))!!
 
     /** With no errors, a plugin looks exactly as before: no notice and the usual texts. */
@@ -21,24 +20,9 @@ class DownSourcesTest {
         for (state in listOf(SourcesState(), noErrors)) {
             assertTrue(downSourceNotices(state, SourceTab.ALL).isEmpty())
             assertEquals(NO_SOURCES_TEXT, noSourcesText(state))
-            assertEquals("Sin resultados en Caracol.", emptyTabText(SourceTab.CARACOL, false, state))
             assertEquals("Buscando en Demo…", emptyTabText(demoTab, true, state))
             assertEquals("Sin resultados", emptySectionText(demoTab, state))
         }
-    }
-
-    @Test fun `caracol down leaves its line without covering a plugin`() {
-        // "sin red" says nothing understandable: the line is the generic one, without the raw text.
-        assertEquals(listOf("Caracol no respondió"), downSourceNotices(caracolDown, SourceTab.ALL))
-        assertEquals(listOf("Caracol no respondió"), downSourceNotices(caracolDown, SourceTab.CARACOL))
-        assertTrue(downSourceNotices(caracolDown, demoTab).isEmpty())
-        // Caracol's tab doesn't say "Buscando…" or "Sin resultados": its line already explains it.
-        assertNull(emptyTabText(SourceTab.CARACOL, true, caracolDown))
-        assertEquals("Sin resultados en Demo.", emptyTabText(demoTab, false, caracolDown))
-        assertEquals("No respondió", emptySectionText(SourceTab.CARACOL, caracolDown))
-        assertEquals("Sin resultados", emptySectionText(demoTab, caracolDown))
-        // The plugin did respond, with nothing: the usual advice is still the right one.
-        assertEquals(NO_SOURCES_TEXT, noSourcesText(caracolDown))
     }
 
     /** With everything down the problem isn't the season: the text can't advise changing it. */
@@ -46,21 +30,8 @@ class DownSourcesTest {
         assertEquals(NO_RESPONSE_TEXT, noSourcesText(everythingDown))
         assertFalse(noSourcesText(everythingDown).contains("temporada"))
         assertEquals(
-            listOf("Demo no respondió: timeout", "Caracol no respondió"),
+            listOf("Demo no respondió: timeout", "other no respondió: sin red"),
             downSourceNotices(everythingDown, SourceTab.ALL),
-        )
-    }
-
-    /** Caracol's line is written by `CaracolFailure`, with the exception the source sent. */
-    @Test fun `caracol's line is in plain human words`() {
-        val state = SourcesState().withResponse(demo).withFailure(
-            "ditu",
-            "Caracol no responde: Unable to resolve host \"middleware.ditu.caracoltv.com\"",
-            UnknownHostException("Unable to resolve host \"middleware.ditu.caracoltv.com\""),
-        )
-        assertEquals(
-            listOf("Caracol no respondió: sin conexión a internet"),
-            downSourceNotices(state, SourceTab.CARACOL),
         )
     }
 
@@ -81,15 +52,13 @@ class DownSourcesTest {
     @Test fun `an unnamed source still gets a notice`() {
         val state = SourcesState().withFailure("desconocida", "boom")
         assertEquals(listOf("Una fuente no respondió: boom"), downSourceNotices(state, SourceTab.ALL))
-        assertTrue(downSourceNotices(state, SourceTab.CARACOL).isEmpty())
     }
 
     @Test fun `a plugin that did not respond is named by its label`() {
-        val state = SourcesState().withLabel("plugin:demo", "Demo").withResponse("ditu").withFailure("plugin:demo", "no respondió a tiempo")
+        val state = SourcesState().withLabel("plugin:demo", "Demo").withFailure("plugin:demo", "no respondió a tiempo")
         assertEquals(listOf("Demo no respondió: no respondió a tiempo"), downSourceNotices(state, SourceTab.ALL))
         val tab = tabForSource("plugin:demo", state.labels)!!
         assertEquals(listOf("Demo no respondió: no respondió a tiempo"), downSourceNotices(state, tab))
-        assertEquals(emptyList<String>(), downSourceNotices(state, SourceTab.CARACOL))
         assertNull(emptyTabText(tab, false, state))
         assertEquals("No respondió", emptySectionText(tab, state))
     }

@@ -33,7 +33,6 @@ fun buildCompanionPlayItem(
     }
     val kind = when (PlayerSource.kindFor(episodeId)) {
         SourceKind.MAGIS -> CompanionPlayItem.KIND_MAGIS
-        SourceKind.DITU -> CompanionPlayItem.KIND_DITU
         // The paired device can't be assumed to have the same plugin installed: not offered, except
         // for the official Xuper plugin, whose titles travel as the Magis ref they wrap.
         SourceKind.PLUGIN -> return if (officialXuper) xuperPluginPlayItem(ref, title, season, poster) else null

@@ -26,15 +26,9 @@ class RecommendationAggregator(
 
     /**
      * Saves [rec] and returns the item id to navigate to, or null if there's nothing to navigate to.
-     *
-     * Almost always null lines up with "nothing ended up saved", but not always: at
-     * [addFromCaracol]'s edge where not even the chosen episode could be saved on its own, the
-     * series may have still landed in the library (`addDituSeason` wrote it before failing on the
-     * chosen one), just without that episode ready to play.
      */
     suspend fun add(rec: RecommendationEntity): String? = when (val target = RecommendationSaving.targetFor(rec)) {
         is RecommendationTarget.Magis -> addFromMagis(rec, target)
-        is RecommendationTarget.Caracol -> addFromCaracol(rec, target)
     }
 
     private suspend fun addFromMagis(rec: RecommendationEntity, target: RecommendationTarget.Magis): String? {
@@ -62,69 +56,6 @@ class RecommendationAggregator(
             ) != null
         }
         return if (saved) RecommendationSaving.itemIdFor(target) else null
-    }
-
-    /**
-     * Caracol decides by its ref and not by `rec.tipo`: a `BUNDLE`/`GROUP_OF_BUNDLES` is listed and
-     * saved whole, like in search (`SearchPlayback.playDituSeason`); a `VOD` is saved alone.
-     * The chosen one is the first episode: nobody picked one, and `addDituSeason` needs some.
-     */
-    private suspend fun addFromCaracol(rec: RecommendationEntity, target: RecommendationTarget.Caracol): String? {
-        val tmdbId = rec.tmdbId.takeIf { it > 0 }
-        val isSeries = com.arkiv.player.data.ditu.DituRef.decode(rec.ref)?.isSeries == true
-        val episodeId = if (isSeries) {
-            val (chapters, series) = chaptersOf(rec) ?: return null
-            val list = chapters.map { com.arkiv.player.data.DituEntities.caracolChapter(it, series) }
-            val chosen = list.firstOrNull() ?: return null
-            repo.addDituSeason(
-                seriesRef = rec.ref,
-                title = rec.titulo,
-                chapters = list,
-                chosen = chosen,
-                posterUrl = rec.posterUrl.ifBlank { series?.posterUrl.orEmpty() },
-                backdropUrl = series?.backdropUrl.orEmpty(),
-                tmdbId = tmdbId,
-                // `rec.titulo` is TMDB's (the cascade confirmed it), i.e. the canonical one.
-                tituloCanonico = rec.titulo.takeIf { tmdbId != null },
-            ) ?: run {
-                // `addDituSeason` already wrote the item and its episodes as soon as it found a
-                // valid contentId (see its KDoc): the null here is NOT "nothing got saved", it's
-                // that [chosen] -the first of the list- didn't match its own ref among what was
-                // just saved. Same as `SearchPlayback.playDituSeason`, it falls back to saving JUST
-                // that episode before giving up.
-                repo.addDituSource(
-                    ref = chosen.ref,
-                    seriesRef = rec.ref,
-                    title = rec.titulo,
-                    episode = chosen.number,
-                    episodeTitle = chosen.title,
-                    posterUrl = rec.posterUrl.ifBlank { series?.posterUrl.orEmpty() },
-                    backdropUrl = series?.backdropUrl.orEmpty(),
-                    season = chosen.season,
-                    tmdbId = tmdbId,
-                    tituloCanonico = rec.titulo.takeIf { tmdbId != null },
-                )
-            }
-        } else {
-            repo.addDituSource(
-                ref = rec.ref,
-                title = rec.titulo,
-                posterUrl = rec.posterUrl,
-                tmdbId = tmdbId,
-                tituloCanonico = rec.titulo.takeIf { tmdbId != null },
-            )
-        }
-        return episodeId?.let { RecommendationSaving.itemIdFor(target) }
-    }
-
-    /** A Caracol series' episodes, or null if they couldn't be listed. */
-    private suspend fun chaptersOf(rec: RecommendationEntity) = try {
-        gateway.episodesWithSeries(rec.ref)
-    } catch (e: CancellationException) {
-        throw e
-    } catch (e: Exception) {
-        Log.w(TAG, "chapters from Caracol for \"${rec.titulo}\": ${e.javaClass.simpleName}: ${e.message}")
-        null
     }
 
     /**

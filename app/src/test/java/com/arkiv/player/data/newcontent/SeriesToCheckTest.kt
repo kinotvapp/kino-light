@@ -60,20 +60,9 @@ class SeriesToCheckTest {
         assertTrue(chosen.isEmpty())
     }
 
-    @Test fun both_sources_qualify() {
-        val chosen = SeriesToCheck.choose(
-            listOf(
-                series("m", source = "magis", watchedAgo = DAY),
-                series("d", source = "ditu", watchedAgo = DAY),
-            ),
-            NOW,
-        )
-        assertEquals(2, chosen.size)
-    }
-
-    @Test fun a_recently_watched_ditu_series_qualifies() {
-        val chosen = SeriesToCheck.choose(listOf(series("d", source = "ditu", watchedAgo = DAY)), NOW)
-        assertEquals(listOf("d"), chosen.map { it.itemId })
+    @Test fun a_recently_watched_magis_series_qualifies() {
+        val chosen = SeriesToCheck.choose(listOf(series("m", source = "magis", watchedAgo = DAY)), NOW)
+        assertEquals(listOf("m"), chosen.map { it.itemId })
     }
 
     @Test fun archive_is_no_longer_checked() {

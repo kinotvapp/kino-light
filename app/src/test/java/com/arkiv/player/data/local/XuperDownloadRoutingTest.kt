@@ -29,7 +29,7 @@ class XuperDownloadRoutingTest {
     private lateinit var registry: PluginRegistry
 
     /** `AppGraph.downloadStrategies`' keys. */
-    private val strategies = setOf("magis", "ditu", DownloadSource.XUPER)
+    private val strategies = setOf("magis", DownloadSource.XUPER)
 
     @Before fun setUp() {
         store = PluginStore(File(tmp.root, "plugins"), File(tmp.root, "plugin-data"))
@@ -72,11 +72,10 @@ class XuperDownloadRoutingTest {
         assertEquals("plugin", DownloadSource.sourceFor(xuperEpisode, registry::isXuper))
     }
 
-    @Test fun `legacy Magis and Caracol chapters keep their own sources`() {
+    @Test fun `legacy Magis chapters keep their own source`() {
         install("xuper", XuperPrivilege.SOURCE_REPO)
         assertEquals("magis", DownloadSource.sourceFor("magis:7CE83F59C51B4F2E80EC9ECBE49EADC0::e3", registry::isXuper))
         assertTrue(DownloadSource.canDownload("magis:7CE83F59C51B4F2E80EC9ECBE49EADC0::e3", strategies, registry::isXuper))
-        assertEquals("ditu", DownloadSource.sourceFor("ditu:12345::e1", registry::isXuper))
     }
 
     @Test fun `the one-argument sourceFor fails closed, Xuper included`() {

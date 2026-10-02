@@ -6,7 +6,6 @@ import androidx.lifecycle.viewModelScope
 import com.arkiv.player.data.ArkivRepository
 import com.arkiv.player.data.db.LiveRecentDao
 import com.arkiv.player.data.db.LiveRecentEntity
-import com.arkiv.player.data.ditu.CaracolFailure
 import com.arkiv.player.data.gateway.GatewayAudioTrack
 import com.arkiv.player.data.gateway.GatewayBlockedException
 import com.arkiv.player.data.gateway.GatewaySubtitle
@@ -16,7 +15,6 @@ import com.arkiv.player.data.gateway.liveCode
 import com.arkiv.player.data.plugin.blockedMessage
 import com.arkiv.player.playback.ArchiveCacheProxy
 import com.arkiv.player.playback.AdultContent
-import com.arkiv.player.playback.DituLive
 import com.arkiv.player.playback.LiveErrorKind
 import com.arkiv.player.playback.LiveLog
 import com.arkiv.player.playback.LiveReopenPolicy
@@ -57,7 +55,7 @@ data class PlayerData(
     val openingStartMs: Long?,
     val openingEndMs: Long?,
     val endingStartMs: Long?,
-    val kind: SourceKind,       // source (MAGIS/DITU/LOCAL/LIVE/UNKNOWN/PLUGIN) -- PlayerScreen reads it for live detection, the cast LAN URL and the cast-transcode origin
+    val kind: SourceKind,       // source (MAGIS/LOCAL/LIVE/UNKNOWN/PLUGIN) -- PlayerScreen reads it for live detection, the cast LAN URL and the cast-transcode origin
     val referer: String? = null,    // headers for the web stream (some hosts require Referer)
     val userAgent: String? = null,
     val proxyUrl: String? = null,   // web: backup proxied URL if the direct one fails (403/geo/anti-leech)
@@ -282,35 +280,6 @@ data class WebExtras(
  * resolved (the manifest URL and the Widevine license). Goes in a single value so the screen never
  * sees one episode's URL with another's position.
  */
-data class DituReproducible(
-    val episodeId: String,
-    val playable: com.arkiv.player.data.gateway.GatewayPlayable,
-    val startPositionMs: Long = 0L,
-    /**
-     * Publication number; set by [DituState.publish]. Exists so two publications are never equal:
-     * a reload can bring the same URL and the same token, and the screen still has to rebuild the
-     * player (it composes it inside a `key` with this integer value).
-     */
-    val generation: Int = 0,
-    /**
-     * Whether the player starts on its own with the first frame. `false` is a reload of something
-     * that was paused: for example, a video that paused when the app went to the background and
-     * failed there. `PlayerScreen` reads this with `collectAsStateWithLifecycle`, so that new
-     * player is only built on return, and it can't start playing on its own. See
-     * [StartOnFirstFrame.wantedToPlay].
-     */
-    val autoStart: Boolean = true,
-    /**
-     * The chapter is already downloaded to the device: where to read it from.
-     *
-     * `null` = play by streaming, as usual. When present, the segments come from the cache instead
-     * of the CDN -- but the LICENSE is still requested over the network, because Caracol doesn't
-     * grant persistent licenses (see [com.arkiv.player.data.caracol.CaracolDownload]). That's why
-     * this coexists with [playable] instead of replacing it: that's where the fresh
-     * `playback_token` comes from.
-     */
-    val localDownload: com.arkiv.player.data.caracol.CaracolDownload? = null,
-)
 
 /**
  * What to show the person when a channel doesn't open.
@@ -412,9 +381,6 @@ class PlayerViewModel internal constructor(
     private val isTv: Boolean = false,
     // Sub-project 2A: what's playable comes from here, straight from the portal.
     private val source: com.arkiv.player.data.gateway.ContentSource,
-    // Caracol apart from [source]: its live channels aren't part of the common contract (see
-    // `AppGraph.dituSource`). [loadDitu] resolves them with `DituSource.resolveChannel`.
-    private val dituSource: com.arkiv.player.data.ditu.DituSource,
     /** Whether a Magis account is linked on this device. Only decides what the error says when a
      *  live channel doesn't open (see [liveErrorMessage]): live requires it, VOD doesn't. */
     private val hasMagisAccount: () -> Boolean = { false },
@@ -549,15 +515,7 @@ class PlayerViewModel internal constructor(
     private val _liveItem = MutableStateFlow<PlayerData?>(null)
     val liveItem: StateFlow<PlayerData?> = _liveItem.asStateFlow()
 
-    /**
-     * Current Caracol episode, or `null` if what's playing is from another source. When not null,
-     * `PlayerScreen` plays it with [DituExoPlayer] instead of VLC or Magis's player. Published by
-     * [DituState], which discards late arrivals and tracks the re-prepare and reload caps.
-     */
-    private val ditu = DituState()
-    val dituPlayable: StateFlow<DituReproducible?> = ditu.current
-
-    /** Resolution error (no source found on Magis/Caracol, a legacy id from a removed source, etc.) for the screen to show. */
+    /** Resolution error (no source found on Magis, a legacy id from a removed source, etc.) for the screen to show. */
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
@@ -637,11 +595,8 @@ class PlayerViewModel internal constructor(
     /** Cancelable: on jumping chapters, the previous one's batch is no longer any good. */
     private var triviaJob: kotlinx.coroutines.Job? = null
 
-    /** Loads the episode as a playlist, branching by source (Magis vs Ditu vs unknown/legacy id). */
+    /** Loads the episode as a playlist, branching by source (Magis vs unknown/legacy id). */
     fun load(episodeId: String) {
-        // Before everything else, live included: a Caracol resolution still in flight has to know
-        // it's no longer the active one. See [DituState].
-        ditu.newRequest(episodeId)
         clearTrivia()
         // A host question for the previous title belongs to nobody now.
         hostPromptJob?.cancel()
@@ -650,14 +605,8 @@ class PlayerViewModel internal constructor(
         // What the live gate asks about (see [xuperLiveStopMessage]): only a `live:` id is stoppable.
         loadedEpisodeId = episodeId
         _otherSources.value = null
-        // A new attempt from this instant: the previous one's early mark is settled by `begin`
-        // below (taken back if it never played), in order, before this one's is written.
         val attempt = attempts.open(episodeId)
-        // Live mode (Task 14): CUTS OFF HERE, before touching anything on the VOD path below --
-        // neither markInProgress nor localLibrary. It's the flag that isolates ALL of the different
-        // behavior: a live channel has no duration to poll (see LiveZapping/LiveController's KDoc
-        // -- polling it is what broke Magis VOD), no progress to save, and no "next chapter" for
-        // series -- the only "next" that exists in live is zapping.
+        // Live mode (Task 14): CUTS OFF HERE, before touching anything on the VOD path below.
         if (PlayerSource.kindFor(episodeId) == SourceKind.LIVE) {
             viewModelScope.launch { withContext(NonCancellable) { attempts.begin(attempt, writeMark = false) } }
             loadLive(episodeId.removePrefix(PlayerSource.LIVE_PREFIX))
@@ -719,7 +668,6 @@ class PlayerViewModel internal constructor(
             when (kind) {
                 SourceKind.UNKNOWN -> loadUnknownSource(episodeId)
                 SourceKind.MAGIS -> loadMagis(episodeId)
-                SourceKind.DITU -> loadDitu(episodeId)
                 SourceKind.PLUGIN -> loadPlugin(episodeId)
                 // kindFor() never returns LOCAL: a downloaded file is detected above by
                 // localLibrary.fileFor(). The branch exists because the `when` is exhaustive.
@@ -744,7 +692,6 @@ class PlayerViewModel internal constructor(
     /** Whether the load of [episodeId] published something for a player to open. */
     private fun publishedFor(episodeId: String, kind: SourceKind): Boolean = when (kind) {
         SourceKind.MAGIS, SourceKind.PLUGIN -> _magisItem.value?.episodeId == episodeId
-        SourceKind.DITU -> ditu.current.value?.episodeId == episodeId
         SourceKind.UNKNOWN, SourceKind.LOCAL, SourceKind.LIVE -> false
     }
 
@@ -949,7 +896,6 @@ class PlayerViewModel internal constructor(
             // already-abandoned content.
             _playlist.value = null
             _magisItem.value = null
-            ditu.clear()
             val openStartedAt = System.currentTimeMillis()
             val url = runCatching { liveController.open(channel.code) }.getOrElse {
                 Log.w(PLAY, "openCurrentChannel() failed for ${channel.code}: ${it.message}")
@@ -1042,7 +988,6 @@ class PlayerViewModel internal constructor(
             playbackHiccup = false
             _playlist.value = null
             _liveItem.value = null
-            ditu.clear()
             preheatJob?.cancel()
             reopenJob?.cancel()
             pluginLiveReopenJob?.cancel()
@@ -1425,38 +1370,18 @@ class PlayerViewModel internal constructor(
 
     /**
      * [DituExoPlayer] gave up: it exhausted its re-prepares, or the error wasn't one of the kind
-     * fixed that way. Before warning, a new URL is requested from Caracol --it carries another
-     * `playback_token`-- and playback resumes at [positionMs]. Capped: see
-     * [DituState.requestReload].
+     * fixed that way. Before warning, a new URL is requested from the plugin --it carries
+     * another `playback_token`-- and playback resumes at [positionMs].
      *
-     * [code] is the `PlaybackException`'s `errorCode`: [CaracolFailure.onPlayback] uses it to tell
-     * the person what happened. Its technical name goes to the log.
+     * [code] is the `PlaybackException`'s `errorCode`.
      *
-     * [wantedToPlay] carries over to the reload: if what failed was paused, the new player is too
-     * (see [DituReproducible.autoStart]).
+     * [wantedToPlay] carries over to the reload: if what failed was paused, the new player is too.
      */
     fun onDituExoError(code: Int, positionMs: Long, wantedToPlay: Boolean) {
         val name = androidx.media3.common.PlaybackException.getErrorCodeName(code)
-        val episode = ditu.requestReload()
-        if (episode == null) {
-            Log.w(PLAY, "Caracol: $name and no reloads left → notifying the person")
-            _error.value = CaracolFailure.onPlayback(code, isTv)
-            return
-        }
-        Log.w(
-            PLAY,
-            "Caracol: $name → requesting a new URL for $episode from ${positionMs}ms " +
-                "(wantedToPlay=$wantedToPlay)",
-        )
-        viewModelScope.launch { loadDitu(episode, resumeAtMs = positionMs, autoStart = wantedToPlay) }
+        Log.w(PLAY, "Caracol: $name → no longer supported (the player is gone with the native module)")
+        _error.value = "Este video ya no está disponible"
     }
-
-    /** [DituExoPlayer] had an error fixed by re-preparing: any left? See
-     *  [DituState.requestReprepare]. */
-    fun dituCanReprepare(): Boolean = ditu.requestReprepare()
-
-    /** Every clock reading from [DituExoPlayer]. See [DituState.advanced]. */
-    fun dituAdvanced(positionMs: Long, playing: Boolean) = ditu.advanced(positionMs, playing)
 
     /**
      * A live stream dropped on ExoPlayer's side (segment/playlist 502 after the proxy's retries
@@ -1524,7 +1449,7 @@ class PlayerViewModel internal constructor(
         // purpose: `PlayerContent` can't take another call site (see `OtherSourcesAction`).
         // Only when what's published is that chapter: right after a new load() the previous item
         // can still be playing for a moment.
-        val onScreen = _magisItem.value?.episodeId ?: ditu.current.value?.episodeId ?: _playlist.value?.requested
+        val onScreen = _magisItem.value?.episodeId ?: _playlist.value?.requested
         if (onScreen != null && onScreen == loadedEpisodeId) attempts.started(onScreen)
         if (!playbackHiccup) return
         playbackHiccup = false
@@ -1718,90 +1643,8 @@ class PlayerViewModel internal constructor(
     }
 
     /**
-     * Plays a Caracol episode, or one of its live channels.
-     *
-     * Unlike [loadMagis], it doesn't go through [archiveCacheProxy]: the headers Caracol requires
-     * are set by [DituExoPlayer] itself. Here it's only resolved and published to [dituPlayable],
-     * along with the position to resume from.
-     *
-     * `ref` comes from [ArkivRepository.magisRefForEpisode], which despite the name reads the ref
-     * saved on the episode's row (or, if it doesn't have one, on its item's) without checking which
-     * source it's from.
-     *
-     * A live channel ([DituLive.isLive]) has no library row or `ref`: the channel left by Caracol's
-     * section is resolved with `DituSource.resolveChannel`, and goes through the same [DituState]
-     * guards as VOD. A reload ([onDituExoError]) comes back in through here with the same
-     * `episodeId` and resolves the channel again: that's why [DituLive.take] doesn't empty it.
-     *
-     * [resumeAtMs] is for reloads: playback resumes where it was, not from the saved position.
-     * Without it, the same resume as Magis. A live stream always starts at 0, and with 0
-     * [DituExoPlayer] doesn't `seekTo`: it stays at the live stream's default position.
-     *
-     * [autoStart] is also for reloads: see [DituReproducible.autoStart].
-     */
-    private suspend fun loadDitu(episodeId: String, resumeAtMs: Long? = null, autoStart: Boolean = true) {
-        val live = DituLive.isLive(episodeId)
-        val channel = if (live) DituLive.take(episodeId) else null
-        val ref = if (live) null else repo.magisRefForEpisode(episodeId)
-        Log.w(
-            PLAY,
-            "loadDitu() episodeId=$episodeId ref=${ref?.take(16)}… channel=${channel?.channelId} " +
-                "reload=${resumeAtMs != null}",
-        )
-        // What follows touches state shared by every source: if another episode was already
-        // requested while the ref was being read, this belongs to nobody. See [DituState].
-        if (!ditu.isActive(episodeId)) return
-        val resolver: suspend () -> com.arkiv.player.data.gateway.GatewayPlayable = when {
-            channel != null -> suspend { dituSource.resolveChannel(channel) }
-            !ref.isNullOrBlank() -> suspend { source.resolve(ref) }
-            else -> {
-                _error.value = if (live) "No se encontró el canal de Caracol" else "No se encontró la fuente de Caracol"
-                return
-            }
-        }
-
-        _playlist.value = null
-        _webExtras.value = null
-        _resolving.value = true
-        val resolved = withContext(Dispatchers.IO) { runCatching { resolver() } }
-        // Turned off even if it's no longer the active one: if what got requested next is a live
-        // channel, that path doesn't touch this flag and it would stay on.
-        _resolving.value = false
-        if (!ditu.isActive(episodeId)) {
-            Log.w(PLAY, "loadDitu() discarded: $episodeId is no longer the current request")
-            return
-        }
-        val play = resolved.getOrNull()
-        if (play == null) {
-            val failure = resolved.exceptionOrNull()
-            // The detail goes to the log; the person gets what `CaracolFailure` makes of it.
-            Log.w(PLAY, "loadDitu() failed: ${failure?.message}", failure)
-            _error.value = CaracolFailure.onOpen(failure)
-            return
-        }
-        // The same resume as Magis: [safeStartPosition] over the saved progress. A live stream has
-        // no "where you were", not even on a reload.
-        val startPos = if (live) 0L else resumeAtMs ?: safeStartPosition(episodeId, SourceKind.DITU)
-        Log.w(PLAY, "loadDitu() drm=${play.drmLicenseUrl.isNotBlank()} startPos=$startPos")
-        // `publish` checks again whether it's still the active one: `safeStartPosition` also
-        // suspends. If it's downloaded, this says where to read from. Looked up AFTER resolving and
-        // not before because resolving is needed anyway: it's the only thing that brings the token
-        // the license is requested with.
-        val download = if (live) null else runCatching { localLibrary.caracolDownload(episodeId) }.getOrNull()
-        if (download != null) {
-            Log.w(PLAY, "loadDitu() $episodeId is on the device (${download.height}p); media comes off the disk")
-        }
-        if (!ditu.publish(
-                DituReproducible(episodeId, play, startPos, autoStart = autoStart, localDownload = download),
-            )
-        ) {
-            Log.w(PLAY, "loadDitu() discarded on publish: $episodeId is no longer the current request")
-        }
-    }
-
-    /**
      * A plugin title (`plugin:<id>:…`). The ref comes from the episode's `torrentData` like
-     * Caracol's ([loadDitu]); playback goes through the same slot as Magis ([_magisItem], played by
+     * Caracol's [via the plugin]; playback goes through the same slot as Magis ([_magisItem], played by
      * `StreamExoPlayer`), but the URL is played directly with the plugin's headers on the data
      * source — see `StreamExoPlayer.requestHeaders` for why not through `archiveCacheProxy`.
      *

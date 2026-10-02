@@ -10,8 +10,11 @@ class PlayerSourceTest {
         assertEquals(SourceKind.UNKNOWN, PlayerSource.kindFor("some-old-archive-identifier"))
     }
 
-    @Test fun ditu_prefix_is_ditu() {
-        assertEquals(SourceKind.DITU, PlayerSource.kindFor("ditu:12345::e1"))
+    @Test fun old_ditu_prefix_is_unknown_after_plugin_migration() {
+        // The plugin migration rewrites library rows from `ditu:…` to `plugin:caracol-tv:…`. An id
+        // that wasn't migrated (or was kept in some forgotten cache) is no longer a known source:
+        // the player answers it with "no longer available", which `kindFor` calls `unmapped`.
+        assertEquals(SourceKind.UNKNOWN, PlayerSource.kindFor("ditu:12345::e1"))
     }
 
     @Test fun magis_prefix_is_still_magis() {
@@ -38,13 +41,13 @@ class PlayerSourceTest {
         assertTrue(PlayerSource.isLiveChannel("${PlayerSource.LIVE_PREFIX}caracoltv"))
     }
 
-    /** The case that was missing: a Caracol channel came out with a movie's progress bar. */
-    @Test fun caracol_live_is_a_live_channel() {
-        assertTrue(PlayerSource.isLiveChannel("${DituLive.PREFIX}12345"))
+    /** Plugin live channels still go through [PluginLive], which keeps the legacy id shape alive. */
+    @Test fun plugin_live_is_a_live_channel() {
+        assertTrue(PlayerSource.isLiveChannel("${PlayerSource.LIVE_PREFIX}12345"))
     }
 
-    @Test fun caracol_vod_is_not_a_live_channel() {
-        assertFalse(PlayerSource.isLiveChannel("ditu:12345::e1"))
+    @Test fun plugin_vod_is_not_a_live_channel() {
+        assertFalse(PlayerSource.isLiveChannel("plugin:caracol-tv:cditu1:VOD:12345"))
     }
 
     @Test fun magis_vod_is_not_a_live_channel() {

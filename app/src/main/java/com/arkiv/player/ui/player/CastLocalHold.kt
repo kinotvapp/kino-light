@@ -22,11 +22,11 @@ internal object CastLocalHold {
 
     /**
      * Silences the phone for a cast: [service] (the `controller`) is paused, each in-screen player
-     * ([magis], [live], [ditu]; null when absent) paused or, on a [isLive] channel, stopped.
+     * ([magis], [live]; null when absent) paused or, on a [isLive] channel, stopped.
      */
-    fun hold(service: Player?, magis: Player?, live: Player?, ditu: Player?, isLive: Boolean) {
+    fun hold(service: Player?, magis: Player?, live: Player?, isLive: Boolean) {
         service?.let { runCatching { it.pause() } }
-        for (p in listOf(magis, live, ditu)) {
+        for (p in listOf(magis, live)) {
             if (p == null || p === service) continue
             runCatching {
                 p.pause()
@@ -40,8 +40,8 @@ internal object CastLocalHold {
      * edge, and plays when [play] (false: the person pressed the bar's stop and asked for silence;
      * primed anyway, or "play" would find nothing loaded).
      */
-    fun resumeLive(magis: Player?, live: Player?, ditu: Player?, play: Boolean) {
-        for (p in listOf(magis, live, ditu)) {
+    fun resumeLive(magis: Player?, live: Player?, play: Boolean) {
+        for (p in listOf(magis, live)) {
             if (p == null) continue
             runCatching {
                 p.seekToDefaultPosition()
@@ -60,11 +60,11 @@ internal object CastLocalHold {
  * A composable of its own: `PlayerContent` is at ART's verifier limit.
  */
 @Composable
-internal fun CastLocalHoldEffect(on: Boolean, service: Player, magis: Player?, live: Player?, ditu: Player?, isLive: Boolean) {
+internal fun CastLocalHoldEffect(on: Boolean, service: Player, magis: Player?, live: Player?, isLive: Boolean) {
     val casting by rememberUpdatedState(on)
-    LaunchedEffect(magis, live, ditu) {
+    LaunchedEffect(magis, live) {
         if (!casting) return@LaunchedEffect
         android.util.Log.i("ArkivCast", "a player appeared while casting: silenced (live=$isLive)")
-        CastLocalHold.hold(service, magis, live, ditu, isLive)
+        CastLocalHold.hold(service, magis, live, isLive)
     }
 }

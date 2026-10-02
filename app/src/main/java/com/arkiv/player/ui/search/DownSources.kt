@@ -1,7 +1,6 @@
 package com.arkiv.player.ui.search
 
 import androidx.compose.ui.graphics.Color
-import com.arkiv.player.data.ditu.CaracolFailure
 import com.arkiv.player.data.plugin.PluginColors
 import com.arkiv.player.data.plugin.PluginIds
 
@@ -10,13 +9,13 @@ import com.arkiv.player.data.plugin.PluginIds
  * went down, with their error.
  *
  * Exists because the spec asks for a source's error to show without covering up what the other
- * ones did bring. Before, `SourceError` only went to the log: with Caracol down, its tab said "Sin
- * resultados en Caracol." as if there were nothing, and with everything down the screen suggested
+ * ones did bring. Before, `SourceError` only went to the log: with one source down, its tab said
+ * "Sin resultados en X." as if there were nothing, and with everything down the screen suggested
  * trying another season.
  *
- * Sources go by the name they travel under in search events (`"ditu"`, `"plugin:<id>"`), the
+ * Sources go by the name they travel under in search events (`"plugin:<id>"`), the
  * same one `GatewayResult.toPlaySource` sorts them by. [labels]: source → human name, from
- * `SourceStart.label` (plugins announce theirs; Caracol's is fixed).
+ * `SourceStart.label` (plugins announce theirs).
  */
 data class SourcesState(
     val responded: Set<String> = emptySet(),
@@ -44,7 +43,7 @@ data class SourcesState(
  * The tab of every plugin that was searched ([SourcesState.announced]), results or not. Without
  * these, a plugin that answered with nothing simply wasn't on screen (no chip, no section, no line),
  * which looked like it was never searched -- e.g. Internet Archive or a Nuvio scraper on a "deadpool"
- * typed search. Built-in Caracol isn't here: it has its own fixed tab ([SourceTab.fixed]).
+ * typed search.
  */
 fun announcedTabs(state: SourcesState): List<SourceTab> =
     state.announced
@@ -64,12 +63,10 @@ fun quietSourcesText(sources: List<com.arkiv.player.ui.catalog.PlaySource>, stat
 }
 
 /** A source's tab by its name in the events, or null if it isn't known which one it is. */
-internal fun tabForSource(source: String, labels: Map<String, String> = emptyMap()): SourceTab? = when {
-    source == SourceTab.CARACOL.key -> SourceTab.CARACOL
-    else -> PluginIds.pluginIdOfSource(source)?.let { id ->
+internal fun tabForSource(source: String, labels: Map<String, String> = emptyMap()): SourceTab? =
+    PluginIds.pluginIdOfSource(source)?.let { id ->
         SourceTab.plugin(source, labels[source] ?: id, Color(PluginColors.DEFAULT))
     }
-}
 
 /**
  * How a source is named in notices. "Una fuente" covers the name `CompositeSource` uses when a
@@ -89,19 +86,17 @@ private fun isTypedPluginError(cause: Throwable?): Boolean =
 
 /**
  * One line per down source matching [tab] ("Todo" shows them all). They go above the list, with
- * or without results: if Caracol goes down and a plugin responds, the plugin's results show along
- * with Caracol's line. With no errors the list is empty and the screen stays as it was before.
+ * or without results: if a plugin goes down and another responds, the second's results show along
+ * with the first's line. With no errors the list is empty and the screen stays as it was before.
  *
- * Caracol's line is written by [CaracolFailure], in plain human words. A plugin's (by its
- * announced label) and an unnamed source's stay as before: the name and the error text.
+ * A plugin's (by its announced label) and an unnamed source's stay as before: the name and the
+ * error text.
  */
 fun downSourceNotices(state: SourcesState, tab: SourceTab): List<String> =
     state.failed
         .filter { (source, _) -> tab == SourceTab.ALL || source == tab.key }
         .map { (source, error) ->
-            if (source == SourceTab.CARACOL.key) {
-                CaracolFailure.inSearch(state.causes[source], error)
-            } else if (isTypedPluginError(state.causes[source]) && error.isNotBlank()) {
+            if (isTypedPluginError(state.causes[source]) && error.isNotBlank()) {
                 // A plugin's TYPED error is already a whole sentence ("Configura X en Ajustes ▸
                 // Plugins"). An untyped/unknown code (spec §3.6: "Any other error keeps today's
                 // generic handling") falls through instead -- otherwise a plugin's raw text would

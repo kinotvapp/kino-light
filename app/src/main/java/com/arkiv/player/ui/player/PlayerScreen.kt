@@ -390,7 +390,6 @@ private fun resolvingSourceName(episodeId: String, registry: com.arkiv.player.da
         if (pluginId == com.arkiv.player.data.live.OwnLive.PLUGIN_ID) com.arkiv.player.data.live.OwnLive.NAME else registry.nameOf(pluginId)
     return when (PlayerSource.kindFor(episodeId)) {
         SourceKind.MAGIS -> "de Xuper"
-        SourceKind.DITU -> "de Caracol"
         SourceKind.PLUGIN -> "de " + (pluginLabel(com.arkiv.player.data.plugin.PluginIds.pluginIdOfEpisode(episodeId)) ?: "un plugin")
         // An En vivo channel of a plugin (`live:plugin:<id>:<code>`): only its opens resolve.
         SourceKind.LIVE -> com.arkiv.player.data.gateway.LiveChannelKeys.parse(episodeId.removePrefix(PlayerSource.LIVE_PREFIX))
@@ -441,7 +440,6 @@ private fun PlayerContent(
                     graph.liveController, graph.database.liveRecentDao(),
                     isTv = isTv,
                     source = graph.contentSource,
-                    dituSource = graph.dituSource,
                     hasMagisAccount = { graph.magisSession.hasAccountLinked },
                     triviaFacts = graph.triviaFacts,
                     funFactsEnabled = { graph.settings.funFactsEnabled.value },
@@ -472,9 +470,6 @@ private fun PlayerContent(
     // Task 1 (light-magis pruning): live channel, same pattern as magisItem/magisPlayer.
     val liveItem by vm.liveItem.collectAsStateWithLifecycle()
     var livePlayer by remember { mutableStateOf<Player?>(null) }
-    // Caracol: same pattern as magisItem/magisPlayer. Played by DituExoPlayer (DASH + Widevine).
-    val dituPlay by vm.dituPlayable.collectAsStateWithLifecycle()
-    var dituPlayer by remember { mutableStateOf<Player?>(null) }
     /**
      * Whether the ExoPlayer already put a frame on screen.
      *
@@ -645,7 +640,6 @@ private fun PlayerContent(
         casting -> castPlayer ?: controller
         magisItem != null && magisPlayer != null -> magisPlayer!!
         liveItem != null && livePlayer != null -> livePlayer!!
-        dituPlay != null && dituPlayer != null -> dituPlayer!!
         else -> controller
     }
 
@@ -688,7 +682,6 @@ private fun PlayerContent(
     fun positionBelongsToThisScreen(): Boolean =
         magisItem != null ||
         liveItem != null ||
-        dituPlay != null ||
         loaded || runCatching { controller.currentMediaItem?.mediaId }.getOrNull() == episodeId
 
     /**
@@ -749,10 +742,6 @@ private fun PlayerContent(
     }
     LaunchedEffect(liveItem?.episodeId) {
         val epId = liveItem?.episodeId ?: return@LaunchedEffect
-        NowPlaying.episodeId = epId
-    }
-    LaunchedEffect(dituPlay?.episodeId) {
-        val epId = dituPlay?.episodeId ?: return@LaunchedEffect
         NowPlaying.episodeId = epId
     }
 
@@ -834,9 +823,6 @@ private fun PlayerContent(
      */
     fun videoTextureView(): android.view.TextureView? = when {
         magisItem != null -> magisTextureView
-        // Caracol paints on PlayerView's SurfaceView, not on a TextureView (see DituExoPlayer):
-        // nothing to capture from.
-        dituPlay != null -> null
         else -> videoView
     }
 
@@ -897,7 +883,7 @@ private fun PlayerContent(
                 // Only the local player's own picture counts: with an in-screen player on, the
                 // service player has nothing loaded.
                 hadVideo = localVideo.renderedFirstFrame &&
-                    magisItem == null && liveItem == null && dituPlay == null
+                    magisItem == null && liveItem == null
                 android.util.Log.w("ArkivVout", "DETACH ON_STOP#$screenId hadVideo=$hadVideo")
                 videoView?.let { serviceExo.clearVideoTextureView(it) }
                 localVideo.onSurfaceDetached()
@@ -1627,9 +1613,9 @@ private fun PlayerContent(
     // startup with sound is exactly the instant when `mirror.buffering` is already false and
     // there's still no picture, so none of the old signals gives it away. With `noImage` you can
     // see whether the spinner covered that gap or the screen was left black.
-    LaunchedEffect(playlist == null, magisItem == null, liveItem == null, dituPlay == null, mirror.buffering, noFirstFrame, waitingForVideo, casting) {
+    LaunchedEffect(playlist == null, magisItem == null, liveItem == null, mirror.buffering, noFirstFrame, waitingForVideo, casting) {
         val spinner = shouldShowSpinner(
-            noPlaylist = playlist == null && magisItem == null && liveItem == null && dituPlay == null,
+            noPlaylist = playlist == null && magisItem == null && liveItem == null,
             buffering = mirror.buffering,
             noFirstFrame = noFirstFrame,
             lostVideoOutput = waitingForVideo,
@@ -1638,7 +1624,7 @@ private fun PlayerContent(
         android.util.Log.w(
             "ArkivSpinner",
             "spinner=$spinner " +
-                "· noPlaylist=${playlist == null && magisItem == null && liveItem == null && dituPlay == null} buffering=${mirror.buffering} noImage=$noFirstFrame " +
+                "· noPlaylist=${playlist == null && magisItem == null && liveItem == null} buffering=${mirror.buffering} noImage=$noFirstFrame " +
                 "lostVideo=$waitingForVideo",
         )
     }
@@ -1915,8 +1901,7 @@ private fun PlayerContent(
     // the cast, the effect relaunches itself and the listener re-hooks to the right one.
     val isMagis = magisItem != null   // StreamExoPlayer handles its own errors.
     val isLiveExo = liveItem != null  // LiveExoPlayer maneja sus propios errores (→ reopenLiveAfterCut).
-    val isDitu = dituPlay != null     // DituExoPlayer maneja sus propios errores (→ onDituExoError).
-    val isExo = isMagis || isLiveExo || isDitu     // Any in-screen ExoPlayer (vs the local player behind `controller`).
+    val isExo = isMagis || isLiveExo     // Any in-screen ExoPlayer (vs the local player behind `controller`).
     // The local player's picture, tracks and cues, from the controller. Apart from the transport
     // listener below on purpose: that one follows `activePlayer` (the Chromecast while casting), and
     // these belong to the local player whatever is active.
@@ -1951,7 +1936,7 @@ private fun PlayerContent(
     // in this case, so this Crash.report is the only signal; it carries the codec/resolution so we
     // can see WHICH content fails. Gated on playWhenReady (a silent decoder can hold BUFFERING with
     // audio running or a frozen clock -- either way the user wanted to play and sees no picture).
-    LaunchedEffect(isExo, magisItem, dituPlay, liveItem, casting) {
+    LaunchedEffect(isExo, magisItem, liveItem, casting) {
         if (!isExo || casting) return@LaunchedEffect
         kotlinx.coroutines.delay(com.arkiv.player.playback.DecoderWatchdog.NO_VIDEO_REPORT_MS)
         val p = activePlayer
@@ -1961,7 +1946,7 @@ private fun PlayerContent(
             val audio = p.currentTracks.groups.count { it.type == C.TRACK_TYPE_AUDIO }
             com.arkiv.player.crash.StableReports.reportNoVideoFrame(
                 com.arkiv.player.crash.StableReports.noVideoFrame(
-                    "in-screen ${if (isMagis) "magis" else if (isDitu) "ditu" else "live"}",
+                    "in-screen ${if (isMagis) "magis" else "live"}",
                     com.arkiv.player.playback.DecoderWatchdog.NO_VIDEO_REPORT_MS,
                     f?.sampleMimeType, f?.width, f?.height, audio, p.playbackState,
                 ),
@@ -2178,7 +2163,6 @@ private fun PlayerContent(
             // For the other sources it's identified by the LOCAL playlist, not the active player.
             val epId = when {
                 isMagis -> magisItem?.episodeId
-                isDitu -> dituPlay?.episodeId
                 else -> playlistRef.value?.items?.getOrNull(controller.currentMediaItemIndex)?.episodeId
             }
             // !isLive (Task 14): live has no "where you were" to save -- no "continue watching",
@@ -2237,7 +2221,6 @@ private fun PlayerContent(
         val mediaId = activePlayer.currentMediaItem?.mediaId
         val epId = when {
             isMagis -> magisItem?.episodeId
-            isDitu -> dituPlay?.episodeId
             else -> playlistRef.value?.items?.getOrNull(controller.currentMediaItemIndex)?.episodeId
         }
         if (epId != null && (isExo || mediaId == epId) && dur > 0 && pos in 0 until dur) {
@@ -2351,7 +2334,7 @@ private fun PlayerContent(
                 "ArkivCast",
                 "casting=true · pl=${playlistRef.value != null} loaded=$loaded casteado=$castToReceiver " +
                     "castSession=${castSession != null} magis=${magisItem?.episodeId} " +
-                    "live=${liveItem?.episodeId} ditu=${dituPlay?.episodeId}",
+                    "live=${liveItem?.episodeId}",
             )
             // Connecting the Chromecast to the chapter ALREADY playing on the phone is the action
             // the whole feature starts from, and this effect is the only one that sees it:
@@ -2439,7 +2422,7 @@ private fun PlayerContent(
             // ExoPlayers, and pausing only the former left them playing under the TV. One rule for
             // all of them, live included (stopped, not paused): see CastLocalHold.
             android.util.Log.i("ArkivCast", "silencing the local players so they don't play over the cast (live=$isLive)")
-            CastLocalHold.hold(controller, magisPlayer, livePlayer, dituPlayer, isLive)
+            CastLocalHold.hold(controller, magisPlayer, livePlayer, isLive)
         } else if (wasCasting) {
             // The receiver counted from where its remux began: the phone resumes on the title's clock.
             val endedOffset = castAsRemux?.let { graph.tsRemuxer.startMsOf(it) } ?: 0L
@@ -2466,16 +2449,16 @@ private fun PlayerContent(
             if (graph.castSession?.consumeIntentionalStop() == true) {
                 // Silence asked for, but a stopped live player has nothing loaded: primed at the
                 // edge, paused, so "play" works.
-                if (isLive) CastLocalHold.resumeLive(magisPlayer, livePlayer, dituPlayer, play = false)
+                if (isLive) CastLocalHold.resumeLive(magisPlayer, livePlayer, play = false)
             } else {
                 if (isLive) {
                     // Live (Task 18): no "where you were" to resume -- it would be the position
                     // the receiver reports over a live HLS, which means nothing as an offset
                     // within the local proxy (see castRequestFor/CastRequestBuilder's KDoc). The
-                    // channel's player (LiveExoPlayer, a plugin's StreamExoPlayer or Caracol's) was
-                    // stopped when the cast began (CastLocalHold): it comes back at the live edge.
+                    // channel's player (LiveExoPlayer, a plugin's StreamExoPlayer) was stopped when
+                    // the cast began (CastLocalHold): it comes back at the live edge.
                     android.util.Log.i("ArkivCast", "live ← cast · back to the live edge on the phone")
-                    CastLocalHold.resumeLive(magisPlayer, livePlayer, dituPlayer, play = true)
+                    CastLocalHold.resumeLive(magisPlayer, livePlayer, play = true)
                     wasCasting = casting
                     return@LaunchedEffect
                 }
@@ -2546,7 +2529,7 @@ private fun PlayerContent(
         wasCasting = casting
     }
     // A player built while a cast plays (a zap, a reopen) stays silent too.
-    CastLocalHoldEffect(casting || dlnaState.active != null, controller, magisPlayer, livePlayer, dituPlayer, isLive)
+    CastLocalHoldEffect(casting || dlnaState.active != null, controller, magisPlayer, livePlayer, isLive)
 
     // On marking (archive): pause and place the slider at the already-saved value (if any).
     // Resuming (play) ONLY applies on LEAVING marking mode — not on the initial composition:
@@ -2595,7 +2578,6 @@ private fun PlayerContent(
     // onDispose and the lifecycle observer read the correct episodeId even while the screen is
     // already leaving.
     val currentMagisItem by rememberUpdatedState(magisItem)
-    val currentDituPlay by rememberUpdatedState(dituPlay)
     val currentIsLive by rememberUpdatedState(isLive)
 
     DisposableEffect(Unit) {
@@ -2620,11 +2602,10 @@ private fun PlayerContent(
             // `pos in 0 until dur` was also missing here.
             val mediaId = currentPlayer.currentMediaItem?.mediaId
             controller.pause()
-            val isExoOnDispose = currentMagisItem != null || currentDituPlay != null
+            val isExoOnDispose = currentMagisItem != null
             // ExoPlayer: empty local playlist; the episodeId comes straight from the item.
             val epId = when {
                 currentMagisItem != null -> currentMagisItem?.episodeId
-                currentDituPlay != null -> currentDituPlay?.episodeId
                 else -> playlistRef.value?.items?.getOrNull(currentIndex)?.episodeId
             }
             // !isLive (Task 14): exiting a live channel has no "position" to save.
@@ -2683,10 +2664,9 @@ private fun PlayerContent(
                 }
             }
             if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) {
-                val isExoStop = currentMagisItem != null || currentDituPlay != null
+                val isExoStop = currentMagisItem != null
                 val epId = when {
                     currentMagisItem != null -> currentMagisItem?.episodeId
-                    currentDituPlay != null -> currentDituPlay?.episodeId
                     else -> playlistRef.value?.items?.getOrNull(currentPlayer.currentMediaItemIndex)?.episodeId
                 }
                 val pos = dlnaState.progressMs() ?: currentPlayer.currentPosition
@@ -2892,7 +2872,6 @@ private fun PlayerContent(
             // restarts), the position is saved and doesn't get lost.
             val epId = when {
                 isMagis -> magisItem?.episodeId
-                isDitu -> dituPlay?.episodeId
                 else -> playlistRef.value?.items?.getOrNull(currentIndex)?.episodeId
             }
             val pos = activePlayer.currentPosition
@@ -2917,7 +2896,7 @@ private fun PlayerContent(
     // that creates the local player's TextureView, and that factory never runs again in the screen's lifetime. Without
     // this bridge, the listener's lambda would keep the FIRST composition's `togglePlayPause`/`seekBy`,
     // which read that moment's `activePlayer` (the local `controller`, because
-    // `magisPlayer`/`livePlayer`/`dituPlayer` hadn't been published yet) and not the player that's
+    // `magisPlayer`/`livePlayer` hadn't been published yet) and not the player that's
     // genuinely playing anymore. Same pattern as `currentPlayer` above.
     val currentTogglePlayPause by rememberUpdatedState { togglePlayPause() }
     // TV, an En vivo channel on screen: the right arrow asks whether to star/unstar it
@@ -3126,40 +3105,6 @@ private fun PlayerContent(
             )
         }
 
-        // Caracol: DASH with Widevine, no local proxy (see DituExoPlayer). Resumes from the same
-        // position Magis would use: `safeStartPosition`, computed in PlayerViewModel.loadDitu.
-        // Inside `key(dPlay)`: every publication brings a new `generation`, so a reload rebuilds
-        // the player even if Caracol returns the same URL.
-        val dPlay = dituPlay
-        if (dPlay != null) key(dPlay) {
-            DituExoPlayer(
-                mediaUrl = dPlay.playable.url,
-                drmLicenseUrl = dPlay.playable.drmLicenseUrl,
-                drmLicenseHeaders = dPlay.playable.drmLicenseHeaders,
-                localDownload = dPlay.localDownload,
-                store = graph.caracolStore,
-                mirror = mirror,
-                startPositionMs = dPlay.startPositionMs,
-                autoStart = dPlay.autoStart,
-                onPlayerReady = { player ->
-                    dituPlayer = player
-                    tracksState.setExoPlayer(player)
-                    gestures.setExoPlayer(player)
-                },
-                onError = { code, wantedToPlay ->
-                    // Where to resume from if the ViewModel requests a new URL. Asked to the
-                    // player and not the mirror, which only catches up on the half-second polling.
-                    val pos = dituPlayer?.currentPosition?.coerceAtLeast(0L) ?: dPlay.startPositionMs
-                    vm.onDituExoError(code, pos, wantedToPlay)
-                },
-                requestReprepare = { vm.dituCanReprepare() },
-                onPosition = { pos, playing -> vm.dituAdvanced(pos, playing) },
-                onTracksChanged = { tracks -> tracksState.updateExoTracks(tracks) },
-                onFirstFrame = { got -> exoRenderedSomething = got },
-                zoom = gestures.zoomForExo,
-            )
-        }
-
         // Live channel (Task 1, light-magis pruning): ExoPlayer plays the local proxy's HLS
         // (LiveHlsProxy, headers already injected against the CDN), without VLC -- same pattern as
         // Magis. No subtitles or resume: a live stream has none. The error goes to
@@ -3351,7 +3296,7 @@ private fun PlayerContent(
         if (
             loadError == null && dlnaState.active == null &&
             shouldShowSpinner(
-                noPlaylist = playlist == null && magisItem == null && liveItem == null && dituPlay == null,
+                noPlaylist = playlist == null && magisItem == null && liveItem == null,
                 buffering = mirror.buffering,
                 noFirstFrame = noFirstFrame,
                 lostVideoOutput = waitingForVideo,
@@ -4540,7 +4485,7 @@ private fun PlayerContent(
         val livePositionMs = atMs ?: runCatching { activePlayer.currentPosition }.getOrNull()
         // Silent from now on, as under a Chromecast (CastLocalHold): it used to pause only `controller`,
         // and a Magis/plugin title or a live channel played on under the TV.
-        CastLocalHold.hold(controller, magisPlayer, livePlayer, dituPlayer, isLive)
+        CastLocalHold.hold(controller, magisPlayer, livePlayer, isLive)
         scope.launch {
             // The audio sent, not the one on when the TV took it: one picked meanwhile is then a change.
             val audio = tracksState.castAudioChoice
@@ -4549,7 +4494,7 @@ private fun PlayerContent(
                 dlnaState.markActive(device, ep, audio)
             } else {
                 // Nothing went to the TV: a live channel comes back (a video stays paused, as before).
-                if (isLive) CastLocalHold.resumeLive(magisPlayer, livePlayer, dituPlayer, play = true)
+                if (isLive) CastLocalHold.resumeLive(magisPlayer, livePlayer, play = true)
                 // The specific reason when we have one (the TV's UPnP error, an unsupported local file, no WiFi
                 // address...): "check your WiFi" was what it said for EVERY failure, whatever the cause.
                 android.widget.Toast.makeText(
@@ -4576,7 +4521,7 @@ private fun PlayerContent(
     // The same menu, opened from the DLNA bar: what a choice there does on the TV.
     DlnaTracksFollower(dlnaState, tracksState, { runCatching { activePlayer.currentPosition }.getOrNull() }, dlnaLan(graph))
     // The phone's player back where the TV got to when a DLNA cast is stopped (live: at the edge).
-    DlnaLocalHandBack(dlnaState, activePlayer, isLive, magisPlayer, livePlayer, dituPlayer)
+    DlnaLocalHandBack(dlnaState, activePlayer, isLive, magisPlayer, livePlayer)
 }
 
 @Composable

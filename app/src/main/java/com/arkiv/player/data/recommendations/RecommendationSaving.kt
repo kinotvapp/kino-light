@@ -23,7 +23,6 @@ data class RecommendationSeason(
 internal sealed interface RecommendationTarget {
     val contentId: String
     data class Magis(override val contentId: String) : RecommendationTarget
-    data class Caracol(override val contentId: String) : RecommendationTarget
 }
 
 /**
@@ -31,15 +30,14 @@ internal sealed interface RecommendationTarget {
  * or network); the caller supplies the network and the write, see [RecommendationAggregator].
  *
  * First decides which SOURCE the recommendation is from ([targetFor], [targetForRef], [itemIdFor]:
- * Magis or Caracol, by its `ref`) and then, for Magis, how to save it:
+ * Magis, by its `ref`) and then, for Magis, how to save it:
  *
  * **A series recommendation is a SEASON, not an episode.** A Magis series' `ref` points at the
  * whole season (it carries `episode: 0` inside), so saving it as-is with `addMagisSource` left the
  * item with a single episode and marked as a movie — which is exactly how "My Hero Academia" came
  * in, with 1 of its 13 episodes. The episodes have to be requested from the portal
  * (`MagisCatalog.detail`) and saved with `addMagisSeason`, same as the season dialog's "Save"
- * button (`SearchPlayback.magisEpisodeIdFor`). Caracol resolves its own path in
- * `RecommendationAggregator.addFromCaracol`.
+ * button (`SearchPlayback.magisEpisodeIdFor`).
  */
 object RecommendationSaving {
 
@@ -47,27 +45,20 @@ object RecommendationSaving {
      * Whether this recommendation needs its episode list requested before saving it.
      *
      * Decided by [RecommendationEntity.tipo] —already matched against TMDB— and only applies to
-     * Magis: Caracol decides by its own `ref` (`DituRef.isSeries`, see
-     * `RecommendationAggregator.addFromCaracol`). Asking for a movie would pay a portal listing
-     * call for nothing.
+     * Magis: asking for a movie would pay a portal listing call for nothing.
      */
     fun needsChapters(rec: RecommendationEntity): Boolean = rec.tipo == "tv"
 
     /**
-     * Which source this `ref` is from, or null if it's from none known. Caracol is asked first,
-     * but the order doesn't matter: `DituRef.decode` and `MagisRef.decode` only accept
-     * their own (their prefix, or an old gateway ref with its own source inside).
+     * Which source this `ref` is from, or null if it's from none known. The Magis decoder only
+     * accepts its own (the prefix, or an old gateway ref with its own source inside).
      */
-    internal fun targetForRef(ref: String): RecommendationTarget? {
-        com.arkiv.player.data.ditu.DituRef.decode(ref)?.let { return RecommendationTarget.Caracol(it.contentId) }
-        com.arkiv.player.data.magis.MagisRef.decode(ref)?.let { return RecommendationTarget.Magis(it.contentId) }
-        return null
-    }
+    internal fun targetForRef(ref: String): RecommendationTarget? =
+        com.arkiv.player.data.magis.MagisRef.decode(ref)?.let { RecommendationTarget.Magis(it.contentId) }
 
     /**
-     * Which source [rec] is from. A Caracol ref can NEVER be saved as Magis (the player would send
-     * it to `loadMagis`). An old row with a ref that isn't understood falls back to Magis with its
-     * id, which is how it used to be saved.
+     * Which source [rec] is from. An old row with a ref that isn't understood falls back to Magis
+     * with its id, which is how it used to be saved.
      */
     internal fun targetFor(rec: RecommendationEntity): RecommendationTarget =
         targetForRef(rec.ref) ?: RecommendationTarget.Magis(rec.id)
@@ -75,7 +66,6 @@ object RecommendationSaving {
     /** The id of the item left in the library: the same one the search for that source builds. */
     internal fun itemIdFor(target: RecommendationTarget): String = when (target) {
         is RecommendationTarget.Magis -> com.arkiv.player.data.MagisEntities.itemIdFor(target.contentId)
-        is RecommendationTarget.Caracol -> com.arkiv.player.data.DituEntities.itemIdFor(target.contentId)
     }
 
     /**
@@ -84,8 +74,7 @@ object RecommendationSaving {
      *
      * Null for an empty list, not a season with zero chapters: the Magis portal listing can come
      * back empty, and `addMagisSeason` with an empty list writes nothing, so without this null the
-     * card would stay unsaved and never open its detail. Caracol refs never get here: `targetFor()`
-     * sends them to `RecommendationAggregator.addFromCaracol`.
+     * card would stay unsaved and never open its detail.
      *
      * A [GatewaySeries.tmdbId] of 0 is "didn't come" and not an identification: it comes from an
      * `optInt`, and that 0 would beat the `?:` `buildSeason` uses to preserve an already-saved tmdbId.

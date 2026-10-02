@@ -475,30 +475,10 @@ class AppGraph(context: Context) {
      */
     private val xuperStreams = XuperStreams()
 
-    // --- Direct Caracol (Ditu) -----------------------------------------------------------------
-    //
-    // The whole Caracol protocol lives in `data/ditu`. No account or session: the free content is
-    // requested and served as-is (see the KDoc on `DituClient`).
-
-    private val dituClient: com.arkiv.player.data.ditu.DituClientLike by lazy {
-        com.arkiv.player.data.ditu.DituClient()
-    }
-
-    /** Caracol as a title source. `internal` in addition to being inside [contentSource]:
-     *  the channels and the full catalog aren't part of the common contract. */
-    internal val dituSource: com.arkiv.player.data.ditu.DituSource by lazy {
-        com.arkiv.player.data.ditu.DituSource(
-            catalog = com.arkiv.player.data.ditu.DituCatalog(dituClient),
-            episodes = com.arkiv.player.data.ditu.DituEpisodes(dituClient),
-            resolver = com.arkiv.player.data.ditu.DituResolve(dituClient),
-            tmdb = tmdbApi,
-        )
-    }
-
     /**
-     * Where the titles the app searches and plays come from: Caracol and the installed plugins
-     * (Xuper among them) behind a single object. To resolve and list episodes it dispatches by
-     * `ref` (each source recognizes its own); to search, it merges them. See
+     * Where the titles the app searches and plays come from: the installed plugins (Xuper among
+     * them) behind a single object. To resolve and list episodes it dispatches by `ref` (each
+     * source recognizes its own); to search, it merges them. See
      * [com.arkiv.player.data.gateway.CompositeSource]. Xuper refs saved before Xuper became a
      * plugin are claimed by [LegacyXuperRefSource] and forwarded to the Xuper plugin.
      * Every usable installed plugin is read on EACH call: installing, disabling or
@@ -517,15 +497,7 @@ class AppGraph(context: Context) {
                 pluginRegistry.plugins.value,
                 com.arkiv.player.data.gateway.CompositeSource(pluginSources),
             )
-            // While Caracol is hidden (CaracolVisibility) it is never searched, but a saved `ditu…`
-            // ref (library, Continuar viendo, history) still resolves and plays through it.
-            val caracol: com.arkiv.player.data.gateway.ContentSource =
-                if (com.arkiv.player.data.ditu.CaracolVisibility.HIDDEN) {
-                    com.arkiv.player.data.gateway.ResolveOnlySource(dituSource)
-                } else {
-                    dituSource
-                }
-            listOf(legacyXuper, caracol) + pluginSources
+            listOf(legacyXuper) + pluginSources
         }
     }
 
@@ -1717,10 +1689,6 @@ class AppGraph(context: Context) {
      * against the branch rule). An old row with `source="archive"` falls into the same graceful path
      * as "web".
      *
-     * Nor for "ditu": Caracol came back with a direct client (`data/ditu`), but its video comes
-     * Widevine-encrypted and there's no way to download it; `DituDownloadStrategy` was deleted in
-     * the pruning and never came back. A row with `source="ditu"` falls into the same graceful path.
-     *
      * The screens don't offer downloading what has no entry here: that's decided by
      * `DownloadSource.canDownload`/`hasStrategy` using this map's keys.
      */
@@ -1748,26 +1716,6 @@ class AppGraph(context: Context) {
                     downloaderFor = ::pluginDownloaderFor,
                     offersDownloads = ::pluginDownloads,
                 ),
-            // Caracol. With this key present, `DownloadSource.canDownload` starts saying yes for
-            // its episodes and the UI shows the button on its own -- that's exactly the contract
-            // this documents: a source with no strategy stays hidden, one with a strategy shows up.
-            "ditu" to com.arkiv.player.data.local.DituDownloadStrategy(
-                repository, contentSource, caracolStore,
-            ),
-        )
-    }
-
-    /**
-     * Where downloaded Caracol episodes live. Only one per process: `SimpleCache` won't let the
-     * same folder be opened twice, and here it's shared between the download and the player.
-     *
-     * Hangs off the same directory as regular downloads so the free space `LocalDownloadManager`
-     * measures is the same disk that actually fills up.
-     */
-    val caracolStore: com.arkiv.player.data.caracol.CaracolStore by lazy {
-        com.arkiv.player.data.caracol.CaracolStore(
-            appContext,
-            java.io.File(localDownloads.targetDir(), "caracol"),
         )
     }
 
@@ -1944,7 +1892,7 @@ class AppGraph(context: Context) {
 
     /**
      * "For you", generated on the device with Kilo (sub-project 4). Verifies against TMDB and
-     * against the composite source (Magis and Caracol). Every network step catches its own
+     * against the composite source (Magis and the installed plugins). Every network step catches its own
      * failures so a broken candidate doesn't take down the others; cancellation is always rethrown.
      */
     internal val forYouGenerator: ForYouGenerator by lazy {
