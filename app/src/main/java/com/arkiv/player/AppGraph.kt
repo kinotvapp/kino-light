@@ -950,6 +950,14 @@ class AppGraph(context: Context) {
         com.arkiv.player.data.plugin.sync.PluginSecretSync(database.pluginInstallDao(), companion.peerKeys, pluginSyncHost, pluginSecretStamps)
     }
 
+    /** Plugin passwords and the person's own subtitle keys: the one peer-scoped table the companion engine syncs. */
+    val combinedSecretSync: com.arkiv.player.companion.PeerScopedTable by lazy {
+        com.arkiv.player.data.plugin.sync.CombinedSecretTable(
+            pluginSecretSync,
+            com.arkiv.player.data.plugin.sync.SubtitleKeySync(subtitleKeys, companion.peerKeys),
+        )
+    }
+
     /** "Tus repositorios de Nuvio": the Nuvio repos the person opened on any of their devices (synced). */
     val nuvioRepoList: com.arkiv.player.data.plugin.sync.NuvioRepoList by lazy {
         com.arkiv.player.data.plugin.sync.NuvioRepoList(database.nuvioRepoDao())

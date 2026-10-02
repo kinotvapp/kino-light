@@ -2,6 +2,9 @@ package com.arkiv.player.data.subtitles
 
 import android.content.Context
 import com.arkiv.player.data.plugin.SecretStore
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -89,6 +92,7 @@ class SubtitleKeys(
         val v = key.trim()
         if (v.isEmpty()) secrets.remove(keyName(id)) else secrets.put(keyName(id), v)
         _version.value++
+        touch()
     }
 
     /** OpenSubtitles' account (username, password), "" when none. Off the main thread. */
@@ -102,6 +106,50 @@ class SubtitleKeys(
             secrets.put(K_OS_USER, username.trim())
             secrets.put(K_OS_PASSWORD, password)
         }
+        _version.value++
+        touch()
+    }
+
+    // --- Sync between the person's devices (SubtitleKeySync): ONLY the person's own values, never the shared key ---
+
+    private var memoryStamp = 0L
+    private val _localChanges = MutableSharedFlow<Unit>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+
+    /** Fires after the person changes a key or the account HERE (not when a peer's values are applied). */
+    val localChanges: Flow<Unit> = _localChanges
+
+    /** The clock of the newest own values on this device (saved here, or applied from a peer); 0 when never set. */
+    fun stamp(): Long = prefs?.getLong(K_STAMP, 0L) ?: memoryStamp
+
+    private fun saveStamp(value: Long) {
+        memoryStamp = value
+        prefs?.edit()?.putLong(K_STAMP, value)?.apply()
+    }
+
+    private fun touch() {
+        saveStamp(maxOf(System.currentTimeMillis(), stamp() + 1))
+        _localChanges.tryEmit(Unit)
+    }
+
+    /** The person's own values by wire name, "" for one that is cleared. Off the main thread. */
+    fun ownValues(): Map<String, String> = mapOf(
+        WIRE_OPENSUBTITLES to userKey(SubtitleProviderId.OPENSUBTITLES),
+        WIRE_SUBDL to userKey(SubtitleProviderId.SUBDL),
+        WIRE_OS_USER to secrets.get(K_OS_USER).orEmpty(),
+        WIRE_OS_PASSWORD to secrets.get(K_OS_PASSWORD).orEmpty(),
+    )
+
+    /** Applies a peer's own values ([stamp] newer than ours): a "" clears. Does not fire [localChanges]. Off the main thread. */
+    fun applyRemote(values: Map<String, String>, stamp: Long) {
+        fun write(name: String, wire: String) {
+            val v = values[wire] ?: return
+            if (v.isEmpty()) secrets.remove(name) else secrets.put(name, v)
+        }
+        write(keyName(SubtitleProviderId.OPENSUBTITLES), WIRE_OPENSUBTITLES)
+        write(keyName(SubtitleProviderId.SUBDL), WIRE_SUBDL)
+        write(K_OS_USER, WIRE_OS_USER)
+        write(K_OS_PASSWORD, WIRE_OS_PASSWORD)
+        saveStamp(stamp)
         _version.value++
     }
 
@@ -123,6 +171,11 @@ class SubtitleKeys(
         const val SECRETS_FILE = "kino_subtitle_keys"
         private const val PREFS = "kino_online_subtitles"
         private const val K_PROVIDERS = "providers"
+        private const val K_STAMP = "own_values_stamp"
+        const val WIRE_OPENSUBTITLES = "opensubtitles"
+        const val WIRE_SUBDL = "subdl"
+        const val WIRE_OS_USER = "os_user"
+        const val WIRE_OS_PASSWORD = "os_password"
         private const val K_OS_USER = "subtitles.opensubtitles.username"
         private const val K_OS_PASSWORD = "subtitles.opensubtitles.password"
     }

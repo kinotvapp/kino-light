@@ -282,7 +282,10 @@ class CompanionManager(context: Context) {
      */
     fun startSync(source: RoomSyncSource, apply: SyncApply, cursors: SyncCursorStore, peerScoped: PeerScopedTable? = null) {
         if (syncEngine != null) return
-        syncEngine = CompanionSyncEngine(scope, incoming, ::send, source, apply, cursors, source.changes, peerScoped)
+        syncEngine = CompanionSyncEngine(
+            scope, incoming, ::send, source, apply, cursors,
+            kotlinx.coroutines.flow.merge(source.changes, peerScoped?.changes ?: kotlinx.coroutines.flow.emptyFlow()), peerScoped,
+        )
         syncEngine?.start(syncPeerId)
     }
 
