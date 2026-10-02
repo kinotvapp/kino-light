@@ -95,6 +95,14 @@ class ManifestParserTest {
         assertTrue(ManifestParser.parse(base().put("entry", "dist/plugin.js").toString()) is ManifestResult.Valid)
     }
 
+    @Test fun `a leading dot-slash on entry and icon names the same file`() {
+        // Seen in the wild (TrashPirate31/TPSports31): "./plugin.js" refused every install.
+        val m = (ManifestParser.parse(base().put("entry", "./plugin.js").put("icon", "./icon.png").toString()) as ManifestResult.Valid).manifest
+        assertEquals("plugin.js", m.entry)
+        assertEquals("icon.png", m.icon)
+        listOf("./../plugin.js", "././plugin.js", ".//plugin.js").forEach { assertEquals(it, "entry", invalidField(base().put("entry", it))) }
+    }
+
     @Test fun `hosts rules`() {
         assertEquals("hosts", invalidField(base().put("hosts", JSONArray())))
         assertEquals("hosts", invalidField(base().put("hosts", JSONArray(listOf("*")))))
