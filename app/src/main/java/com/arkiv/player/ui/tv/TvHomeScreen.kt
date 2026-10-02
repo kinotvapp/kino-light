@@ -517,6 +517,8 @@ fun TvHomeScreen(
     val homeEmpty = homeShowsEmptyState(installedPlugins, pluginRows.size, liveSources)
     val emptyCopy = homeEmptyCopy(installedPlugins, isTv = true)
     val xuperFailed = com.arkiv.player.ui.home.xuperHomeFailed(installedPlugins, pluginRows, pluginRowsSettled)
+    val pluginHomeFailures by vm.pluginHomeFailures.collectAsStateWithLifecycle()
+    val failedPluginLines = if (pluginRowsSettled) com.arkiv.player.ui.home.pluginHomeFailureLines(installedPlugins, pluginHomeFailures) else emptyList()
     val homeEmptyNow by rememberUpdatedState(homeEmpty)
     val emptySourcesFocus = remember { FocusRequester() }
     // Real focus on the "Agregar plugin" button: the default landing only counts it once this is true.
@@ -1251,6 +1253,21 @@ fun TvHomeScreen(
                                     onClick = { vm.retryPluginHome() },
                                 )
                             }
+                        }
+                    }
+
+                    // Another plugin's home() failed with nothing to show: its sentence, with a retry.
+                    items(failedPluginLines, key = { "plugin_home_failed-$it" }) { line ->
+                        Column(
+                            Modifier.fillMaxWidth().padding(horizontal = 48.dp, vertical = 12.dp).tracksRowFocus("plugin_home_failed-$line"),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text("$line.", style = MaterialTheme.typography.bodyMedium, color = ArkivTextSecondary)
+                            TvCompactAction(
+                                label = XUPER_HOME_RETRY,
+                                icon = Icons.Default.Refresh,
+                                onClick = { vm.retryPluginHome() },
+                            )
                         }
                     }
 

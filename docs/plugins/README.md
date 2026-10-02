@@ -1163,6 +1163,17 @@ Also `console.log`, `console.info`, `console.warn` and `console.error`: they all
 (tag `KinoPlugin` in `adb logcat`), objects are written as JSON, and a message is cut at 2000
 characters. Under the Node kit they go to stderr.
 
+When a call of a plugin that comes from Kino's recommended catalog **fails** (it throws, times out,
+returns something unusable), the lines it logged during that call — the last 30, each cut at 300
+characters — travel with the failure report to the maintainers' error tracker as `plugin_log`, so a
+`kino.log("home: status", r.status)` before the throw is how you see why it failed on someone else's
+phone. Nothing is sent for a call that succeeds, and nothing for any other plugin (one installed from
+a repo that is not in the catalog, your own, a converted Nuvio scraper). Before it leaves the device
+every line has URLs, hostnames, IPs, e-mails, long ids, long hex/base64 runs, credential-shaped text,
+the person's setting values and the text of their search or title removed, and the whole is capped at
+2 KB (the newest lines win). Still: log what happened (a status, a step, a count), never what the
+person typed or a secret, and never a setting's value. Works on every `apiVersion`.
+
 ### `kino.rank`
 
 For a search backend that only matches a loose bag of shared words rather than a title as a whole:
@@ -1236,12 +1247,12 @@ does anything with season numbers or ordering: how a backend spells "season 2" i
 | Loading the module (its top level) | 10 s |
 | Idle sandbox | closed after 5 minutes without calls |
 | Consecutive timeouts | 3 in a row and Kino disables the plugin ("No responde") |
-| `kino.fetch` | https only (or the person's own server as typed, or `http` on a host declared `insecureHttp`); 15 s default, 30 s maximum; response body at most 5 MB; the request (URL, headers and body) at most 1,048,576 characters; at most 60 requests per call, every hop counted, refused ones included (250 for a plugin converted from a Nuvio scraper); at most 6 fetches in flight at once; at most 3 host questions per call; at most 10 redirects per request |
+| `kino.fetch` | https only (or the person's own server as typed, or `http` on a host declared `insecureHttp`); 15 s default, 30 s maximum; response body at most 5 MB; the request (URL, headers and body) at most 1,048,576 characters; at most 60 requests per call; at most 10 redirects per request |
 | Cookies | 50 per domain, 64 KB in total per plugin |
 | `kino.storage` | 256 KB per plugin; an entry's optional `ttlMs` is 1..2,592,000,000 ms (30 days) |
 | `kino.sleep` | 0 to 5,000 ms per call |
 | `kino.crypto` | data at most 5 MB per call; PBKDF2 at most 100,000 iterations and 64-byte keys; `randomBytes` at most 1,024 |
-| `kino.log` / `console.*` | 2,000 characters per message |
+| `kino.log` / `console.*` | 2,000 characters per message; when a call of a recommended-catalog plugin fails, its last 30 lines (each cut at 300 characters, scrubbed, 2,048 characters in all) go with the failure report |
 | What a function returns | at most 2,000,000 characters once turned into JSON |
 | Results | `search` 100 items; `home` 20 rows of 60; `browse` 100 per page; `episodes` 5,000 (and 50 `seasons`); `ref` 4,096 characters; `next` 2,048 characters; `id` matches `^[A-Za-z0-9._~-]{1,128}$` |
 | Live channels (apiVersion 3) | `liveCategories` 200; `liveChannels` 500 per page and 10 pages per category; `guide` 50 channels and 24 h per call, 100 entries per channel; `number` 1..9999 |

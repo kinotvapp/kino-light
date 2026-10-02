@@ -91,6 +91,10 @@ class HomeViewModel(
     val pluginRows: StateFlow<List<com.arkiv.player.data.plugin.PluginHomeRow>> =
         pluginLoad.map { it.rows }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
+    /** Plugins whose `home()` failed with nothing to show (id -> sentence), see [com.arkiv.player.data.plugin.PluginHomeLoad.failed]. */
+    val pluginHomeFailures: StateFlow<Map<String, String>> =
+        pluginLoad.map { it.failed }.stateIn(viewModelScope, SharingStarted.Lazily, emptyMap())
+
     /**
      * Whether the current plugin Home pass is over: every plugin answered, failed or timed out. False
      * from the start (and again on a reload or plugin change) until then; drives Home's loading state

@@ -637,7 +637,7 @@ class AppGraph(context: Context) {
         // Outermost, so every failed call is seen once (search, Home, browse, resolve, episodes, live):
         // PluginTelemetry decides what is worth the owner's error board.
         com.arkiv.player.data.plugin.ReportingPluginCaller(
-            SetupGatedCaller({ id -> pluginRegistry.find(id)?.needsSetup == true }, pluginRuntimes),
+            delegate = SetupGatedCaller({ id -> pluginRegistry.find(id)?.needsSetup == true }, pluginRuntimes),
         )
     }
 
@@ -948,6 +948,14 @@ class AppGraph(context: Context) {
     /** Plugin passwords between the person's devices, sealed end-to-end with each peer's pairing key. */
     val pluginSecretSync: com.arkiv.player.data.plugin.sync.PluginSecretSync by lazy {
         com.arkiv.player.data.plugin.sync.PluginSecretSync(database.pluginInstallDao(), companion.peerKeys, pluginSyncHost, pluginSecretStamps)
+    }
+
+    /** Plugin passwords and the person's own subtitle keys: the one peer-scoped table the companion engine syncs. */
+    val combinedSecretSync: com.arkiv.player.companion.PeerScopedTable by lazy {
+        com.arkiv.player.data.plugin.sync.CombinedSecretTable(
+            pluginSecretSync,
+            com.arkiv.player.data.plugin.sync.SubtitleKeySync(subtitleKeys, companion.peerKeys),
+        )
     }
 
     /** "Tus repositorios de Nuvio": the Nuvio repos the person opened on any of their devices (synced). */

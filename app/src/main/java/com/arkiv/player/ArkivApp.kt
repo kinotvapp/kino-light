@@ -216,7 +216,7 @@ class ArkivApp : Application(), ImageLoaderFactory {
             scope = graph.applicationScope,
             main = kotlinx.coroutines.Dispatchers.Main.immediate,
             io = kotlinx.coroutines.Dispatchers.IO,
-            resolve = { SyncDeps(graph.roomSyncSource, graph.syncApply, graph.syncCursorStore, graph.pluginSecretSync) },
+            resolve = { SyncDeps(graph.roomSyncSource, graph.syncApply, graph.syncCursorStore, graph.combinedSecretSync) },
             fallback = { SyncDeps(graph.roomSyncSource, graph.syncApply, graph.syncCursorStore, null) },
             start = { d -> companion.startSync(d.source, d.apply, d.cursors, d.secrets) },
             stopSync = companion::stopSync,

@@ -47,6 +47,7 @@ import com.arkiv.player.playback.withAudioFocus
 import com.arkiv.player.playback.DecoderWatchdog
 import com.arkiv.player.playback.InPlaceRecoveryBudget
 import com.arkiv.player.playback.LiveDecoderMemory
+import com.arkiv.player.playback.LiveDecoderRescue
 import com.arkiv.player.playback.LiveErrorKind
 import com.arkiv.player.playback.LiveLog
 import com.arkiv.player.playback.LiveQualityMonitor
@@ -78,6 +79,13 @@ internal fun liveErrorKind(error: PlaybackException): LiveErrorKind {
     }
     return LiveErrorKind.OTHER
 }
+
+/** Whether a MediaCodec failure is somewhere in the causes. By type: R8 renames media3's own classes in release. */
+@androidx.annotation.OptIn(UnstableApi::class)
+internal fun decoderFailureInCauses(error: Throwable): Boolean =
+    generateSequence(error) { it.cause }.take(8).any {
+        it is android.media.MediaCodec.CodecException || it is androidx.media3.exoplayer.mediacodec.MediaCodecDecoderException
+    }
 
 /**
  * ExoPlayer gave up waiting for its playback thread to let go of the surface (ERRORES-AKG: a slow
@@ -339,10 +347,36 @@ internal fun LiveExoPlayer(
                 // chips against certain live channels since the Media3 1.11 upgrade): a playlist refresh or a
                 // plain reopen just hits the same wall again. Same rescue as the frozen-picture watchdog below,
                 // triggered here instead because the decoder throws before that watchdog would ever see it.
-                if (error.errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED &&
-                    msg.contains("NO_EXCEEDS_CAPABILITIES")
+                // Any decoder-level failure on a hardware decoder (Realtek's CodecException "Error 0x80001009",
+                // ERRORES-B29, among them) gets the same one-time software rescue; if software fails too, `software`
+                // is true, this is skipped and the error falls to the bounded reopen + its Spanish warning.
+                if (LiveDecoderRescue.shouldRescue(
+                        error.errorCode,
+                        decoderFailureInCauses(error),
+                        alreadySoftware = software,
+                        videoDecoder = quality.videoDecoder,
+                    )
                 ) {
-                    rescueInSoftware("decoder rejected the format", 0L)
+                    rescueInSoftware(
+                        if (msg.contains("NO_EXCEEDS_CAPABILITIES")) "decoder rejected the format" else "decoder failed: ${msg.take(80)}",
+                        0L,
+                    )
+                    return
+                }
+                // Software already, and the decoder still dies: reopening can't help; say it clearly, no loop.
+                if (software && (error.errorCode in 4001..4006 || decoderFailureInCauses(error))) {
+                    Crash.report(
+                        error,
+                        "live-playback-${PlaybackException.getErrorCodeName(error.errorCode)}",
+                        extras = mapOf(
+                            "channel" to channelCode,
+                            "session_kind" to LiveLog.sessionKind,
+                            "error_kind" to liveErrorKind(error).name,
+                            "video_decoder" to quality.videoDecoder,
+                            "software_forced" to "true",
+                        ),
+                    )
+                    onError(LiveDecoderRescue.GAVE_UP)
                     return
                 }
                 // The TextureView went away and the decoder was slow to let go of it (ERRORES-AKG): leaving the

@@ -60,6 +60,16 @@ internal const val XUPER_HOME_FAILED_TV = "No pudimos cargar el catálogo de Xup
 internal const val XUPER_HOME_RETRY = "Reintentar"
 
 /**
+ * The notices Home shows for OTHER plugins whose `home()` failed with nothing to show (Xuper has its own, see
+ * [xuperHomeFailed]): their sentence, for plugins still installed and usable, in a stable order. 0.9.46: Caracol
+ * threw on every device outside Colombia and its rows just never appeared.
+ */
+fun pluginHomeFailureLines(plugins: List<InstalledPlugin>, failed: Map<String, String>): List<String> =
+    plugins.filter { it.id in failed && it.isUsable && !it.needsSetup && !com.arkiv.player.data.plugin.XuperPrivilege.grants(it.record) }
+        .sortedBy { it.id }
+        .map { failed.getValue(it.id) }
+
+/**
  * Whether Home says the Xuper catalog failed (and offers to retry) instead of just leaving its rows out: the plugin
  * pass is over, the recognized Xuper plugin is installed, usable and has `home`, and not one of its rows came back
  * (not even the last good snapshot). Xuper's Home is never legitimately empty, unlike another plugin's, which may

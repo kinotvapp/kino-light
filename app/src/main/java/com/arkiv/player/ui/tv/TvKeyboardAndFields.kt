@@ -24,6 +24,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
@@ -31,6 +37,8 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.semantics.password
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Border
 import androidx.tv.material3.ClickableSurfaceDefaults
@@ -108,6 +116,8 @@ fun TvKeyboardAndFields(
     activeText: String,
     onActiveTextChange: (String) -> Unit,
     extras: List<Char> = emptyList(),
+    /** True while the active field is a hidden secret: the TV's own keyboard then types into a masked field. */
+    activeSecret: Boolean = false,
     fields: @Composable ColumnScope.(firstFieldFocus: FocusRequester) -> Unit,
 ) {
     val firstFieldFocus = remember { FocusRequester() }
@@ -141,6 +151,7 @@ fun TvKeyboardAndFields(
                         text = activeText,
                         onTextChange = onActiveTextChange,
                         onBack = { nativeKeyboardActive = false },
+                        secret = activeSecret,
                     )
                 } else {
                     TvKeyboard(
@@ -215,8 +226,9 @@ fun TvKeyboardWithNative(
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun TvNativeKeyboardField(text: String, onTextChange: (String) -> Unit, onBack: () -> Unit) {
+private fun TvNativeKeyboardField(text: String, onTextChange: (String) -> Unit, onBack: () -> Unit, secret: Boolean = false) {
     val focus = remember { FocusRequester() }
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
     LaunchedEffect(Unit) {
         repeat(20) {
             if (runCatching { focus.requestFocus(); true }.getOrDefault(false)) return@LaunchedEffect
@@ -241,10 +253,27 @@ private fun TvNativeKeyboardField(text: String, onTextChange: (String) -> Unit, 
                     .weight(1f)
                     .background(ArkivSurfaceHigh, RoundedCornerShape(10.dp))
                     .padding(horizontal = 14.dp, vertical = 12.dp)
-                    .focusRequester(focus),
+                    .focusRequester(focus)
+                    // A closed IME leaves the focus in this field with every key going to the caret, so the buttons beside it
+                    // (Guardar, Cancelar) were unreachable: Up, Down and Right always leave it (found on the KALLEY).
+                    .onPreviewKeyEvent { e ->
+                        val direction = if (e.type == KeyEventType.KeyDown) {
+                            when (e.key) {
+                                Key.DirectionUp -> FocusDirection.Up
+                                Key.DirectionDown -> FocusDirection.Down
+                                Key.DirectionRight -> FocusDirection.Right
+                                else -> null
+                            }
+                        } else null
+                        if (direction != null) { focusManager.moveFocus(direction); true } else false
+                    },
                 textStyle = TextStyle(color = Color.White, fontSize = MaterialTheme.typography.bodyLarge.fontSize),
                 cursorBrush = SolidColor(ArkivRed),
                 singleLine = true,
+                // The IME's own "Listo" (and Enter) is done typing: back to the on-screen keyboard, from where the buttons are reachable.
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Done),
+                keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = { onBack() }),
+                visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None,
             )
             Surface(
                 onClick = onBack,

@@ -28,7 +28,17 @@ data class PluginHomeRow(
  * One step of [PluginHomeRows.load]: the rows so far and whether every plugin has answered (with rows,
  * nothing or a failure). Home shows its loading state only while [settled] is false and [rows] is empty.
  */
-data class PluginHomeLoad(val rows: List<PluginHomeRow>, val settled: Boolean)
+data class PluginHomeLoad(
+    val rows: List<PluginHomeRow>,
+    val settled: Boolean,
+    /**
+     * Plugins (id -> a sentence for the person) whose `home()` FAILED and that have no rows to show, not even a
+     * cached pass: Home says so with a retry instead of leaving a silent gap. A plugin that answered with no rows is
+     * not here (it may simply have nothing to offer). 0.9.46: Caracol's `home` threw on ~15 devices abroad and its
+     * rows just never appeared.
+     */
+    val failed: Map<String, String> = emptyMap(),
+)
 
 /**
  * Home rows from every usable plugin with the `home` capability, asked in parallel. Each plugin's
@@ -131,8 +141,14 @@ class PluginHomeRows(
         }
         // null = the call failed or timed out: what was just painted stays (it passed the same
         // revision checks), so a slow portal pass never wipes a Home that was already showing.
-        emit(PluginHomeLoad(assemble(targets) { fresh[it.id] ?: painted[it.id].orEmpty() }, settled = true))
+        val shown = assemble(targets) { fresh[it.id] ?: painted[it.id].orEmpty() }
+        val failed = targets.filter { fresh[it.id] == null && painted[it.id].isNullOrEmpty() }
+            .associate { it.id to (failureSentence[it.id] ?: "No pudimos cargar ${it.manifest.name}") }
+        emit(PluginHomeLoad(shown, settled = true, failed = failed))
     }
+
+    /** The last failed `home()`'s sentence per plugin id, for [PluginHomeLoad.failed]. */
+    private val failureSentence = java.util.concurrent.ConcurrentHashMap<String, String>()
 
     /** The plugin's rows now, or null when its `home()` failed or timed out (see [load]). */
     private suspend fun refresh(p: InstalledPlugin, cached: Cached?, force: Boolean): List<PluginRow>? {
@@ -166,8 +182,15 @@ class PluginHomeRows(
             throw e
         } catch (e: Exception) {
             log("[${p.id}] home failed: ${e.message}")
+            failureSentence[p.id] = failureLine(p.manifest.name, e.message)
             null
         }
+    }
+
+    /** [message] (already a Spanish sentence from [PluginCalls.failureOf]) with the plugin named, capped; a generic line when there is none. */
+    private fun failureLine(name: String, message: String?): String {
+        val m = message?.trim()?.lineSequence()?.firstOrNull()?.take(160)?.takeIf { it.isNotEmpty() } ?: return "No pudimos cargar $name"
+        return if (m.contains(name, ignoreCase = true)) m else "$name: $m"
     }
 
     private fun parse(p: InstalledPlugin, json: String): List<PluginRow> =

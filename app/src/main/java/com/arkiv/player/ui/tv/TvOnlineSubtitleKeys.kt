@@ -105,83 +105,26 @@ private fun TvProviderKeyRows(graph: AppGraph, id: SubtitleProviderId, enabled: 
     note?.let { androidx.tv.material3.Text(it, style = MaterialTheme.typography.bodySmall, color = ArkivTextSecondary) }
 
     if (editing) {
-        TvTextDialog(
+        TvTextInputDialog(
             title = OnlineKeysCopy.title(id),
-            labels = listOf("Llave (API key)"),
-            secret = listOf(true),
+            fields = listOf(TvTextInput("Llave (API key)", secret = true, required = true)),
+            testLabel = OnlineKeysCopy.TEST,
+            saveLabel = OnlineKeysCopy.SAVE,
             onTest = { values -> testOnlineKey(graph, id, values[0]) },
             onSave = { values -> withContext(Dispatchers.IO) { graph.subtitleKeys.setUserKey(id, values[0]) } },
-            onClose = { editing = false },
+            onDismiss = { editing = false },
         )
     }
     if (account) {
-        TvTextDialog(
+        TvTextInputDialog(
             title = OnlineKeysCopy.ACCOUNT,
-            labels = listOf(OnlineKeysCopy.USER, OnlineKeysCopy.PASSWORD),
-            secret = listOf(false, true),
-            onTest = null,
+            fields = listOf(
+                TvTextInput(OnlineKeysCopy.USER, required = true),
+                TvTextInput(OnlineKeysCopy.PASSWORD, secret = true, required = true),
+            ),
+            saveLabel = OnlineKeysCopy.SAVE,
             onSave = { values -> withContext(Dispatchers.IO) { graph.subtitleKeys.setAccount(values[0], values[1]) } },
-            onClose = { account = false },
+            onDismiss = { account = false },
         )
-    }
-}
-
-/** A small dialog of text fields with "Probar llave" (when [onTest] is set), "Cancelar" and "Guardar". */
-@Composable
-private fun TvTextDialog(
-    title: String,
-    labels: List<String>,
-    secret: List<Boolean>,
-    onTest: (suspend (List<String>) -> String)?,
-    onSave: suspend (List<String>) -> Unit,
-    onClose: () -> Unit,
-) {
-    val scope = rememberCoroutineScope()
-    val focusManager = LocalFocusManager.current
-    val first = remember { FocusRequester() }
-    var values by remember { mutableStateOf(List(labels.size) { "" }) }
-    var note by remember { mutableStateOf<String?>(null) }
-    FocusWhenReady(first)
-    Dialog(onDismissRequest = onClose) {
-        Column(
-            modifier = Modifier.width(560.dp).clip(RoundedCornerShape(16.dp)).background(ArkivSurface)
-                .padding(horizontal = 32.dp, vertical = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text(title, color = Color.White)
-            labels.forEachIndexed { i, label ->
-                OutlinedTextField(
-                    value = values[i],
-                    onValueChange = { v -> values = values.toMutableList().also { it[i] = v } },
-                    label = { Text(label) },
-                    singleLine = true,
-                    visualTransformation = if (secret[i]) PasswordVisualTransformation() else VisualTransformation.None,
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = if (secret[i]) KeyboardType.Password else KeyboardType.Text,
-                        autoCorrectEnabled = false,
-                    ),
-                    modifier = Modifier.fillMaxWidth().dpadLeavesTheField(focusManager)
-                        .let { if (i == 0) it.focusRequester(first) else it },
-                )
-            }
-            note?.let { Text(it, color = ArkivTextSecondary) }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End)) {
-                if (onTest != null) {
-                    TvCompactAction(label = OnlineKeysCopy.TEST, enabled = values[0].isNotBlank()) {
-                        note = OnlineKeysCopy.TESTING
-                        val v = values
-                        scope.launch { note = onTest(v) }
-                    }
-                }
-                TvCompactAction(label = "Cancelar", onClick = onClose)
-                TvCompactAction(label = OnlineKeysCopy.SAVE, enabled = values.all { it.isNotBlank() }) {
-                    val v = values.map { it.trim() }
-                    scope.launch {
-                        onSave(v)
-                        onClose()
-                    }
-                }
-            }
-        }
     }
 }

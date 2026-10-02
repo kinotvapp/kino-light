@@ -146,6 +146,9 @@
     "idleCloseMs": 300000,
     "timeoutsBeforeUnresponsive": 3,
     "maxLogChars": 2000,
+    "reportLogLines": 30,
+    "reportLogLineChars": 300,
+    "reportLogChars": 2048,
     "maxErrorChars": 2000
   },
   "fetch": {

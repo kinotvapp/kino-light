@@ -374,29 +374,15 @@ private fun TvAdultsSection(store: SettingsStore) {
             color = ArkivTextSecondary,
         )
     }
-    OutlinedTextField(
+    // A button with the generic keyboard dialog: saving it applies the code, like Done did.
+    TvTextFieldEntry(
+        label = "Código",
         value = code,
-        onValueChange = { code = it; error = false },
-        singleLine = true,
-        // `Done` that APPLIES, not one that only closes the keyboard. On a TV, closing the IME
-        // leaves focus trapped in the field -- the D-pad won't release it and the button below is
-        // unreachable. This applies the code without having to leave the field, which is the
-        // natural path: finish typing and confirm on the same keyboard.
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Done),
-        keyboardActions = KeyboardActions(onDone = { attempt(); focusManager.moveFocus(FocusDirection.Down) }),
-        // And the emergency exit: down leaves the field even if the IME doesn't cooperate.
-        // Without this, a keyboard that closes without firing `onDone` leaves focus locked in
-        // with no way to reach the button with the remote.
-        modifier = Modifier
-            .fillMaxWidth(0.4f)
-            .onPreviewKeyEvent { e ->
-                if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionDown) {
-                    focusManager.moveFocus(FocusDirection.Down)
-                    true
-                } else {
-                    false
-                }
-            },
+        onSave = { code = it; error = false; attempt() },
+        modifier = Modifier.fillMaxWidth(0.4f),
+        secret = true,
+        kind = TvTextKind.NUMBER,
+        dialogTitle = "Código",
     )
     if (error) {
         Text("Código incorrecto", style = MaterialTheme.typography.bodySmall, color = ArkivRed)
@@ -443,24 +429,15 @@ private fun TvChangeAdultsCode(store: SettingsStore, onSave: (String) -> Unit) {
     }
 
     Text("Cambiar código", style = MaterialTheme.typography.titleMedium, color = Color.White)
-    OutlinedTextField(
+    TvTextFieldEntry(
+        label = "Código nuevo",
         value = newCode,
-        onValueChange = { newCode = it; message = null; done = false },
-        singleLine = true,
-        // Same focus treatment as the field above: `Done` applies and moves down, and D-pad down
-        // releases the field even if the IME doesn't fire `onDone`.
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Done),
-        keyboardActions = KeyboardActions(onDone = { save(); focusManager.moveFocus(FocusDirection.Down) }),
-        modifier = Modifier
-            .fillMaxWidth(0.4f)
-            .onPreviewKeyEvent { e ->
-                if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionDown) {
-                    focusManager.moveFocus(FocusDirection.Down)
-                    true
-                } else {
-                    false
-                }
-            },
+        onSave = { newCode = it; message = null; done = false; save() },
+        modifier = Modifier.fillMaxWidth(0.4f),
+        secret = true,
+        kind = TvTextKind.NUMBER,
+        dialogTitle = "Cambiar código",
+        dialogSubtitle = "4 dígitos",
     )
     message?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = ArkivRed) }
     if (done) {

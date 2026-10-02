@@ -34,6 +34,9 @@ interface SyncSource {
  */
 interface PeerScopedTable {
     val table: String
+
+    /** Fires when this table has something new to push that no database change signals (the engine pushes on it). */
+    val changes: kotlinx.coroutines.flow.Flow<Unit> get() = kotlinx.coroutines.flow.emptyFlow()
     fun ready(peerId: String): Boolean
     suspend fun changedSince(cursor: Long, peerId: String): List<JSONObject>
 

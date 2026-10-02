@@ -223,6 +223,8 @@ fun HomeScreen(
     val homeEmpty = homeShowsEmptyState(installedPlugins, pluginRows.size, liveSources)
     val emptyCopy = homeEmptyCopy(installedPlugins, isTv = false)
     val xuperFailed = xuperHomeFailed(installedPlugins, pluginRows, pluginRowsSettled)
+    val pluginHomeFailures by vm.pluginHomeFailures.collectAsStateWithLifecycle()
+    val failedPluginLines = if (pluginRowsSettled) pluginHomeFailureLines(installedPlugins, pluginHomeFailures) else emptyList()
     val liveTabs by graph.liveModule.tabs.collectAsStateWithLifecycle()
     // null = no row (empty module, or no channel to list yet); never just "Ver más canales".
     val liveRow = remember(recentChannels, countryChannels, liveOn, liveTabs) {
@@ -537,6 +539,19 @@ fun HomeScreen(
                         .padding(horizontal = 16.dp, vertical = 16.dp),
                 )
             }
+        }
+
+        // 5c. Another plugin's home() failed with nothing to show (see pluginHomeFailureLines): its own sentence, with a retry.
+        items(failedPluginLines, key = { "plugin_home_failed-$it" }) { line ->
+            Text(
+                "$line. Toca para reintentar",
+                style = MaterialTheme.typography.bodyMedium,
+                color = ArkivTextSecondary,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClickLabel = XUPER_HOME_RETRY) { vm.retryPluginHome() }
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+            )
         }
 
         // 6. Plugin rows (Xuper's among them): each titled by the plugin's row with the plugin as a chip.
