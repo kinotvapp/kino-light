@@ -15,6 +15,13 @@
       "description": "Ve el contenido de tu propio servidor de video. Necesita que escribas su dirección.",
       "tags": ["servidor", "propio"],
       "needsSetup": true
+    },
+    {
+      "id": "caracol-tv",
+      "repo": "xuper-plugin/kino-plugin-caracol-tv",
+      "name": "Caracol TV",
+      "description": "Series, películas y canales en vivo de Caracol Streaming. Solo funciona en Colombia.",
+      "tags": ["series", "películas", "colombia", "en vivo"]
     }
   ]
 }

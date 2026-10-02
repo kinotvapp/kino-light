@@ -17,8 +17,8 @@ class SeedCatalogTest {
         assertTrue(c.entries.first { it.id == "own-server" }.needsSetup)
     }
 
-    @Test fun `the seed lists only Internet Archive and Tu servidor, like the published catalog`() {
+    @Test fun `the seed lists only Internet Archive, Tu servidor and Caracol TV, like the published catalog`() {
         val ids = PluginCatalogParser.parse(seed, capabilities = setOf("xuper-bridge"))!!.entries.map { it.id }
-        assertEquals(listOf("internet-archive", "own-server"), ids)
+        assertEquals(listOf("internet-archive", "own-server", "caracol-tv"), ids)
     }
 }
