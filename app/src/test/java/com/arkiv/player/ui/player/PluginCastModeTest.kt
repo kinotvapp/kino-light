@@ -64,15 +64,18 @@ class PluginCastModeTest {
     @Test fun `a URL nothing describes casts by what a probe of its first bytes found`() {
         val unknown = plugin("https://cdn.example/stream/abc")
         assertTrue(pluginCastModeFor(unknown) is PluginCastMode.None)
-        assertEquals(PluginCastMode.Direct(MIME_HLS), pluginCastModeFor(unknown.copy(probedMime = MIME_HLS)))
+        assertEquals(PluginCastMode.ViaProxy(MIME_HLS), pluginCastModeFor(unknown.copy(probedMime = MIME_HLS)))
         assertEquals(PluginCastMode.Direct("video/mp4"), pluginCastModeFor(unknown.copy(probedMime = "video/mp4")))
         // The declared MIME wins over the probe.
         assertEquals(PluginCastMode.Direct("video/webm"), pluginCastModeFor(unknown.copy(mime = "video/webm", probedMime = "video/mp4")))
     }
 
-    @Test fun `a header-free HLS on a host the plugin's rules allow goes straight to the receiver`() {
-        assertEquals(PluginCastMode.Direct(MIME_HLS), pluginCastModeFor(plugin("https://cdn.example/hls/playlist.m3u8")))
-        assertEquals(PluginCastMode.Direct(MIME_HLS), pluginCastModeFor(plugin("https://cdn.example/play?id=1", mime = "application/x-mpegURL")))
+    /** ERRORES-AME: the receiver reads HLS with XHR and needs CORS, which no plugin host is known to send. */
+    @Test fun `a header-free HLS on a host the plugin's rules allow still goes through the proxy`() {
+        assertEquals(PluginCastMode.ViaProxy(MIME_HLS), pluginCastModeFor(plugin("https://cdn.example/hls/playlist.m3u8")))
+        assertEquals(PluginCastMode.ViaProxy(MIME_HLS), pluginCastModeFor(plugin("https://cdn.example/play?id=1", mime = "application/x-mpegURL")))
+        val live = plugin("https://cdn.example/live.m3u8", episodeId = PluginIds.liveEpisodeId("iptv-org", "ch-9"))
+        assertEquals(PluginCastMode.ViaProxy(MIME_HLS), pluginCastModeFor(live))
     }
 
     @Test fun `an HLS the receiver may not be pointed at directly goes through the proxy, playlists rewritten`() {

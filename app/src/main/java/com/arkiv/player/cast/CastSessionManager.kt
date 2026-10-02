@@ -195,6 +195,9 @@ class CastSessionManager(
                 "receiver_model" to (device?.modelName ?: ""),
                 "episode" to (pending?.episodeId ?: ""),
                 "requested_mime" to (pending?.mimeType ?: ""),
+                "route" to (pending?.route ?: ""),
+                "fallback_from" to fellBackFrom,
+                "host" to CastFallback.hostOf(pending?.uri),
                 "video_codec" to (videoFormat?.sampleMimeType ?: ""),
                 "video_size" to (videoFormat?.let { "${it.width}x${it.height}" } ?: ""),
                 "playback_state" to player.playbackState.toString(),
@@ -223,6 +226,7 @@ class CastSessionManager(
                 "the receiver failed: code=${error.errorCode} (${error.errorCodeName}) · ${error.message}",
                 error,
             )
+            if (tryFallback("player error ${error.errorCodeName}", failed = true)) return
             reportFailure("player_error: ${error.errorCodeName}", error)
         }
 
@@ -353,6 +357,7 @@ class CastSessionManager(
     /** Requests casting this. Loads right away if there's already a session; otherwise stays pending until there is one. */
     fun setMedia(request: CastRequest) {
         generation++
+        fellBackFrom = ""
         pending = request
         offsetOf = request.episodeId to request.offsetMs
         idleWatch.onNewMedia(request.episodeId, if (request.asLive) 0L else request.startPositionMs)
@@ -597,7 +602,32 @@ class CastSessionManager(
         }
     }
 
+    /**
+     * The load of [pending] failed on the receiver before it ever played ([loadSentAt] still set):
+     * when it has a [CastRequest.fallback] (a direct plugin file, see [CastFallback]), that one is
+     * loaded instead, once, before anything is reported or asked. True when it was. Main thread.
+     */
+    private fun tryFallback(why: String, failed: Boolean, neverPlayed: Boolean = loadSentAt != 0L): Boolean {
+        val r = pending ?: return false
+        val next = CastFallback.next(r, failed, neverPlayed) ?: return false
+        android.util.Log.w(
+            TAG,
+            "the ${r.route.ifBlank { "first" }} load never played ($why): loading it through the phone's proxy · " +
+                com.arkiv.player.dlna.DlnaXml.safeUrl(next.uri),
+        )
+        pending = next
+        fellBackFrom = r.route
+        idleWatch.onNewMedia(next.episodeId, if (next.asLive) 0L else next.startPositionMs)
+        retryingSince = 0L
+        scope.launch { load(next) }
+        return true
+    }
+
+    /** The route the current load fell back from ([tryFallback]), for the failure report; empty when none. */
+    @Volatile private var fellBackFrom = ""
+
     private fun onReceiverIdle(reason: CastIdleWatch.Idle, r: CastRequest?) {
+        if (reason == CastIdleWatch.Idle.ERROR && tryFallback("idle $reason", failed = true)) return
         val decision = idleWatch.onIdle(reason, r?.episodeId, r?.durationMs ?: 0L)
         android.util.Log.w(TAG, "receiver went IDLE by itself · reason=$reason · ep=${r?.episodeId} → $decision")
         if (r == null) return
@@ -656,6 +686,8 @@ class CastSessionManager(
         loadSentAt = 0L
         val r = pending ?: return
         if (player.isPlaying || retryingSince > 0L) return
+        // The watchdog only fires for a load that never played.
+        if (tryFallback("load stalled ${LOAD_STALL_MS}ms", failed = true, neverPlayed = true)) return
         val decision = idleWatch.onLoadStalled()
         android.util.Log.w(TAG, "the load never played · ${LOAD_STALL_MS}ms · ep=${r.episodeId} → $decision")
         if (decision is CastIdleWatch.Decision.Ask) {

@@ -15,9 +15,9 @@ import com.arkiv.player.playback.SourceKind
  *
  * A plugin title casts unless [pluginCastModeFor] says [PluginCastMode.None]: the official Xuper
  * plugin's VOD exactly as before ([castsAsXuper]), any other plugin's progressive file through
- * `PluginCastProxy` (the plugin's gated client, never a plain fetch), its HLS that needs headers there too
- * (playlists rewritten) and a header-free HLS straight to the receiver. DRM, DASH and formats nothing
- * tells apart stay without the buttons.
+ * `PluginCastProxy` (the plugin's gated client, never a plain fetch), its HLS there too (playlists
+ * rewritten, CORS added) and a header-free file straight to the receiver. DRM, DASH and formats
+ * nothing tells apart stay without the buttons.
  *
  * Orientation is deliberately not an input: the buttons live in the controls overlay, so they show
  * (portrait and landscape alike) only while the controls are up and hide with them.
@@ -69,7 +69,8 @@ internal fun castsAsXuper(item: PlayerData): Boolean =
  * - [PluginCastMode.ViaProxy]: `mediaUrl` = [pluginProxyUrl] (the loopback token URL of
  *   `PluginCastProxy.register`; null while the proxy isn't up, and then there is no cast), headers
  *   dropped (they stay in the proxy), `mime` = what the receiver is told;
- * - [PluginCastMode.Direct]: the stream's own url, `mime` = HLS.
+ * - [PluginCastMode.Direct]: the stream's own url (a file), `mime` = its container; the proxied
+ *   twin rides along as the request's fallback ([withPluginProxyFallback]).
  * `castUrl` is null for both, so nothing Magis-specific (remux, byte-range HLS) ever applies.
  * The phone keeps playing the plugin item itself (its own gated HTTP stack); only what is sent to
  * the TV changes.
@@ -160,6 +161,53 @@ internal fun pluginCastUri(item: PlayerData, lanIp: String?): String? =
     } else {
         item.mediaUrl.takeIf { it.startsWith("http://") || it.startsWith("https://") }
     }
+
+/**
+ * [request] for a castable plugin item, labelled with its route and, for a DIRECT one (the
+ * receiver fetches the stream's own URL), given the same media through `PluginCastProxy` as its
+ * [com.arkiv.player.cast.CastRequest.fallback]: loaded once if the receiver fails the direct one
+ * before playing (ERRORES-AME: OK.ru mp4s idle at 0:00 on a Chromecast). [register] files [item]
+ * with the proxy and returns its loopback token URL (null when the proxy can't take it: no
+ * fallback then). Anything that is not a plugin item is returned as it is. Pure.
+ */
+internal fun withPluginProxyFallback(
+    request: com.arkiv.player.cast.CastRequest,
+    item: PlayerData,
+    lanIp: String?,
+    register: (PlayerData) -> String?,
+): com.arkiv.player.cast.CastRequest {
+    if (item.kind != SourceKind.PLUGIN) return request
+    if (item.mediaUrl.startsWith(LOOPBACK)) return request.copy(route = "proxy")
+    val viaProxy = register(item)?.let { pluginCastUri(item.copy(mediaUrl = it), lanIp) }
+        ?: return request.copy(route = "direct")
+    return request.copy(route = "direct", fallback = request.copy(uri = viaProxy, route = "proxy"))
+}
+
+/** [withPluginProxyFallback] wired to the app's `PluginCastProxy`. Out of `PlayerContent` (ART's verifier limit). */
+internal fun pluginCastFallback(
+    request: com.arkiv.player.cast.CastRequest,
+    item: PlayerData,
+    graph: com.arkiv.player.AppGraph,
+    lanIp: String?,
+): com.arkiv.player.cast.CastRequest = withPluginProxyFallback(request, item, lanIp) { registerPluginCast(graph, it) }
+
+/**
+ * Files a plugin [item]'s own stream with `PluginCastProxy` (started if it isn't) and returns its
+ * loopback token URL, or null when the proxy can't take it. The plugin's headers and hosts stay
+ * on the phone.
+ */
+internal fun registerPluginCast(graph: com.arkiv.player.AppGraph, item: PlayerData): String? {
+    val proxy = graph.pluginCastProxy
+    runCatching { proxy.start() }
+    return proxy.register(
+        key = item.episodeId,
+        origin = item.mediaUrl,
+        headers = item.requestHeaders,
+        hosts = item.pluginHosts,
+        shape = com.arkiv.player.playback.PluginCastProxy.shapeFor(item.mime),
+        mime = item.mime.ifBlank { "video/mp4" },
+    )
+}
 
 /** A castable plugin item is a live channel: the receiver starts at the live edge, not a saved position. */
 internal fun isPluginLiveCast(item: PlayerData): Boolean =

@@ -1234,7 +1234,8 @@ private fun PlayerContent(
             // its pacing stays anchored to a TV that left and holds the export paused forever.
             if (remuxMagis == null) graph.remuxHlsServer.endCast(dlna = false, alsoStaged = false)
         }
-        return request
+        // A direct plugin file carries its proxied twin, loaded once if the receiver fails it.
+        return request?.let { pluginCastFallback(it, item, graph, lanIp) }
     }
 
     /**

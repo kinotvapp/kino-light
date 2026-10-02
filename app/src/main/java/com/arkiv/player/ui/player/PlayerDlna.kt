@@ -443,18 +443,7 @@ internal class DlnaLan(
 internal fun dlnaLan(graph: com.arkiv.player.AppGraph): DlnaLan = DlnaLan(
     lanIp = { graph.lanIp() },
     liveHlsProxy = graph.liveHlsProxy,
-    pluginProxy = { item ->
-        val proxy = graph.pluginCastProxy
-        runCatching { proxy.start() }
-        proxy.register(
-            key = item.episodeId,
-            origin = item.mediaUrl,
-            headers = item.requestHeaders,
-            hosts = item.pluginHosts,
-            shape = com.arkiv.player.playback.PluginCastProxy.shapeFor(item.mime),
-            mime = item.mime.ifBlank { "video/mp4" },
-        )
-    },
+    pluginProxy = { item -> registerPluginCast(graph, item) },
 )
 
 /**
