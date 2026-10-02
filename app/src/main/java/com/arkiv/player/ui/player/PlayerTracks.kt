@@ -434,6 +434,9 @@ internal class TracksState(
     }
 
     fun chooseSpu(id: Int) {
+        // The one already on, picked again: nothing changes here, but a TV that didn't take it gets
+        // asked again (the Chromecast keeps no other way to retry short of picking another and back).
+        if (id == curSpu || (id < 0 && curSpu < 0)) runCatching { graph.castSubtitles.reapply() }
         val exo = exoRef ?: return
         if (id < 0) {
             exo.trackSelectionParameters = exo.trackSelectionParameters

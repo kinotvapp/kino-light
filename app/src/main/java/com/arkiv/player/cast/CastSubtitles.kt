@@ -35,6 +35,19 @@ class CastSubtitles(
     /** Called (any thread) when the phone's choice changes: the cast applies it to the receiver. */
     @Volatile var onChoiceChanged: () -> Unit = {}
 
+    /** Called (any thread) by [reapply]: the cast asks the receiver for the choice again, even unchanged. */
+    @Volatile var onReapply: () -> Unit = {}
+
+    /**
+     * The person picked the subtitle that is already on (or "off" again): nothing changed on the
+     * phone, but the TV may not show it (a receiver that ignored the last request). Before this the
+     * only way out was picking another one and back.
+     */
+    fun reapply() {
+        CastDiag.i("subtitle picked again on the phone: asking the receiver again")
+        onReapply()
+    }
+
     /**
      * The title on screen and its subtitles, fetched with [fetch] (the phone's own client for that
      * source). Off the main thread. The same title keeps its choice; another one starts with none

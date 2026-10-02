@@ -311,6 +311,8 @@ class CastSessionManager(
 
     init {
         subtitles?.onChoiceChanged = { mainHandler.post { syncTextTracks() } }
+        // The same choice picked again: asked of the receiver again, whatever was asked before.
+        subtitles?.onReapply = { mainHandler.post { textSyncKey = ""; syncTextTracks() } }
         player.addListener(diagnostics)
         player.setSessionAvailabilityListener(object : SessionAvailabilityListener {
             override fun onCastSessionAvailable() {
@@ -320,6 +322,9 @@ class CastSessionManager(
                     castContext.sessionManager.currentCastSession?.castDevice?.friendlyName
                 }.getOrNull()
                 android.util.Log.i(TAG, "session available · receiver=${device ?: "?"} · pending=${pending?.episodeId}")
+                // A new receiver session numbers its queue items from scratch: the last session's key
+                // would match the new load's and its text track would never be asked for.
+                textSyncKey = ""
                 keepAlive(true, device ?: "el Chromecast")
                 watchReceiverStatus()
                 replayOnConnect()
@@ -443,6 +448,10 @@ class CastSessionManager(
 
     private suspend fun load(r: CastRequest) = withContext(Dispatchers.Main) {
         idleWatch.onOwnLoad()
+        // Every load (first cast, re-cast, reconnect replay, audio reload) asks the receiver for
+        // the phone's subtitle again once it reports its tracks: a re-cast of the same title in a
+        // new session got item id 1 again, matched the old key, and the TV stayed without text.
+        textSyncKey = ""
         loadedUri = r.uri
         loadSentAt = System.currentTimeMillis()
         android.util.Log.i(
