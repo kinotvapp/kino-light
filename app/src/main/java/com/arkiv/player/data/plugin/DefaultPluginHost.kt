@@ -38,6 +38,8 @@ class DefaultPluginHost(
     private val allowInsecureLocalhost: Boolean = false,
     private val logger: (String) -> Unit = { android.util.Log.i("KinoPlugin", it) },
     private val secrets: PluginSecrets? = null,
+    /** Where `kino.log` / `console.*` lines are also kept (the app's [PluginLogBuffer.shared]); null keeps none. */
+    private val logBuffer: PluginLogBuffer? = PluginLogBuffer.shared,
 ) : PluginHost {
     override fun secret(name: String): String? = secrets?.marker(name)
 
@@ -247,7 +249,12 @@ class DefaultPluginHost(
     override fun storageSet(key: String, value: String, ttlMs: Long?) = storage.set(key, value, ttlMs)
     override fun storageRemove(key: String) = storage.remove(key)
     override fun storageKeys(): String = JSONArray(storage.keys()).toString()
-    override fun log(level: String, message: String) = logger("[$pluginId] $level: ${redact(message).take(2000)}")
+    override fun log(level: String, message: String) {
+        val text = redact(message).take(2000)
+        logger("[$pluginId] $level: $text")
+        // The same redacted text, for a failed call's report (see PluginLogBuffer): sealed secrets are already markers.
+        logBuffer?.record(pluginId, "$level: $text")
+    }
     override fun config(): String = config.toJson()
 
     override fun cookieGet(url: String, name: String): String? {

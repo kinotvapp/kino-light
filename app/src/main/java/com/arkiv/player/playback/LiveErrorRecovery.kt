@@ -60,3 +60,43 @@ internal class InPlaceRecoveryBudget(private val max: Int = MAX, private val win
  */
 internal fun stuckSwitchesDecoder(kind: LiveErrorKind, repeated: Boolean, software: Boolean): Boolean =
     kind == LiveErrorKind.STUCK_PLAYING && repeated && !software
+
+/**
+ * Which live playback errors mean "the HARDWARE decoder is the problem" and so call for the one-time software rescue.
+ *
+ * ERRORES-B29: a Realtek TV (`OMX.realtek.video.decoder`, the KALLEY's family) threw `MediaCodec$CodecException:
+ * Error 0x80001009` on a live TS channel. Only the `NO_EXCEEDS_CAPABILITIES` text used to trigger the rescue, so a
+ * decoder that dies on the stream with any other message went straight to the reopen loop and hit the same wall
+ * every time. Any decoder-level error (the `ERROR_CODE_DECODER_*` / `DECODING_*` codes, or a `CodecException`
+ * somewhere in the causes) on a decoder that is not already software is that same case.
+ */
+internal object LiveDecoderRescue {
+
+    private val SOFTWARE_PREFIXES = listOf("omx.google.", "c2.android.", "omx.ffmpeg.", "c2.google.")
+
+    /** True for a software decoder's name (an unknown name is assumed hardware). */
+    fun isSoftwareDecoder(name: String): Boolean = name.lowercase().let { n -> SOFTWARE_PREFIXES.any { n.startsWith(it) } }
+
+    /**
+     * @param errorCode the `PlaybackException` code.
+     * @param decoderFailureInCauses whether a `MediaCodec.CodecException` / `MediaCodecDecoderException` is in the causes.
+     * @param alreadySoftware this channel already opened in software (the rescue fires once per channel).
+     * @param videoDecoder the video decoder's name when known, "" otherwise.
+     */
+    fun shouldRescue(errorCode: Int, decoderFailureInCauses: Boolean, alreadySoftware: Boolean, videoDecoder: String = ""): Boolean {
+        if (alreadySoftware || isSoftwareDecoder(videoDecoder)) return false
+        return errorCode in DECODER_CODES || decoderFailureInCauses
+    }
+
+    /**
+     * What `LiveExoPlayer` hands `onError` when even the software decoder failed: the view model shows [message]
+     * at once instead of reopening (a reopen hits the same wall).
+     */
+    const val GAVE_UP = "decoder failed in software too"
+
+    fun message(channelName: String): String =
+        "Este aparato no puede reproducir $channelName. Prueba con otro canal."
+
+    // ERROR_CODE_DECODER_INIT_FAILED (4001) .. ERROR_CODE_DECODING_RESOURCES_RECLAIMED (4006).
+    private val DECODER_CODES = 4001..4006
+}

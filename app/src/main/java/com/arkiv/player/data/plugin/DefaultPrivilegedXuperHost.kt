@@ -23,7 +23,7 @@ class DefaultPrivilegedXuperHost internal constructor(
     /** `AppGraph`'s one [MagisPluginBridge]: every Magis call goes through it. Lazy, so opening a
      *  runtime never forces the credential-gated Magis objects; only a `kino.xuper.*` call does. */
     private val magis: Lazy<MagisPluginBridge>,
-) : PluginHost by DefaultPluginHost(id, http, storage, config, cookies), PrivilegedXuperHost {
+) : PluginHost by DefaultPluginHost(id, http, storage, config, cookies, logBuffer = null), PrivilegedXuperHost { // no log lines kept: this one handles accounts
 
     /**
      * Argument: a [GatewaySearchQuery]'s fields, `{"q", "type", "season", "episode", "tmdbId"}`, with

@@ -107,6 +107,15 @@ class PluginTelemetryTest {
         assertNull(event.extras["host"])
     }
 
+    @Test fun `a thrown call carries the HTTP status and host of the fetch that failed, even when its sentence is dropped`() {
+        val trace = PluginCallTrace().apply { answered("middleware.ditu.caracoltv.com", 403) }
+        val e = thrown("Caracol respondió 403 en TRAY/SEARCH/VOD").also { it.trace = trace }
+        val event = telemetry().eventOf(PluginTelemetry.failureOf("caracol-tv", "home", e)!!)
+        assertEquals("403", event.extras["http_status"])
+        assertEquals("middleware.ditu.caracoltv.com", event.extras["host"])
+        assertNull("a path-shaped sentence is still dropped as code", event.extras["reason"])
+    }
+
     @Test fun `benign outcomes are not reported`() {
         assertNull(PluginTelemetry.failureOf("p", "search", CancellationException("gone")))
         assertNull(PluginTelemetry.failureOf("p", "resolve", PluginErrorException(PluginErrors.NOT_FOUND, "no está")))

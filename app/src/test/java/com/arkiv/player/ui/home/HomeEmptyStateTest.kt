@@ -87,6 +87,13 @@ class HomeEmptyStateTest {
         assertFalse("a plugin with no rows is not a failure", xuperHomeFailed(listOf(plugin(true)), emptyList(), settled = true))
     }
 
+    @Test fun `another plugin's failed home is listed with its sentence, Xuper's is left to its own notice`() {
+        val failed = mapOf("demo" to "Demo: el sitio respondió con error 403", "xuper" to "Xuper: x", "gone" to "Gone: y")
+        assertEquals(listOf("Demo: el sitio respondió con error 403"), pluginHomeFailureLines(listOf(plugin(true), xuper()), failed))
+        assertEquals("a disabled plugin has no notice", emptyList<String>(), pluginHomeFailureLines(listOf(plugin(false)), failed))
+        assertEquals(emptyList<String>(), pluginHomeFailureLines(listOf(plugin(true)), emptyMap()))
+    }
+
     @Test fun `the Xuper notice copy`() {
         assertEquals("No pudimos cargar el catálogo de Xuper, toca para reintentar", XUPER_HOME_FAILED_PHONE)
         assertEquals("Reintentar", XUPER_HOME_RETRY)

@@ -637,7 +637,7 @@ class AppGraph(context: Context) {
         // Outermost, so every failed call is seen once (search, Home, browse, resolve, episodes, live):
         // PluginTelemetry decides what is worth the owner's error board.
         com.arkiv.player.data.plugin.ReportingPluginCaller(
-            SetupGatedCaller({ id -> pluginRegistry.find(id)?.needsSetup == true }, pluginRuntimes),
+            delegate = SetupGatedCaller({ id -> pluginRegistry.find(id)?.needsSetup == true }, pluginRuntimes),
         )
     }
 
