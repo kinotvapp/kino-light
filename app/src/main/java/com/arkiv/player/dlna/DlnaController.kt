@@ -153,8 +153,14 @@ class DlnaController(
         @Volatile var startMs = 0L
         @Volatile var seekAttempts = 0
         @Volatile var seekSettled = false
-        /** A `Seek` was accepted: the next position read is logged, to see whether the TV really went there. */
+        /**
+         * A `Seek` was accepted: the next position read checks whether the TV really went there,
+         * and corrects it when it did not ([DlnaSeek.correction]).
+         */
         @Volatile var seekVerify = false
+        /** What the last accepted `Seek` asked for (the TV's clock), and the corrections sent after the first. */
+        @Volatile var seekSentMs = 0L
+        @Volatile var seekCorrections = 0
         /** The remux this cast plays while it grows (the HLS route): stopped with the cast. */
         @Volatile var remuxKey: String? = null
         /**
@@ -729,6 +735,7 @@ class DlnaController(
         monitorTask?.cancel(false)
         val c = Cast(DlnaLog.newSession(), device, kind, mime)
         c.startMs = startMs
+        lastTvMs = null
         c.source = source
         cast = c
         lastError = null
@@ -866,13 +873,30 @@ class DlnaController(
         val c = cast ?: return null
         val p = soap(c.device.controlUrl, "GetPositionInfo", "<u:GetPositionInfo xmlns:u=\"$AVT\"><InstanceID>0</InstanceID></u:GetPositionInfo>")
         val reported = DlnaXml.positionInfo(p.body)?.relTimeMs
-        val at = DlnaAudioSwitch.tvPositionMs(reported, c.lastPositionMs, c.startMs, c.seekSettled)?.plus(c.offsetMs)
+        val at = DlnaAudioSwitch.tvPositionMs(reported, c.lastPositionMs, c.startMs, settled(c))?.plus(c.offsetMs)
+        if (at != null) lastTvMs = at
         DlnaLog.diag(
             "position: TV says ${reported?.div(1000)}s, last read ${c.lastPositionMs?.div(1000)}s, sent at ${c.startMs / 1000}s" +
                 (if (c.offsetMs > 0L) " + its remux's start ${c.offsetMs / 1000}s" else "") + " → ${at?.div(1000)}s",
         )
         return at
     }
+
+    /** The start point is where the TV is: no Seek pending, and none waiting to be checked or corrected. */
+    private fun settled(c: Cast): Boolean = c.seekSettled && !c.seekVerify
+
+    private fun knownPositionOf(c: Cast): Long? =
+        DlnaAudioSwitch.tvPositionMs(null, c.lastPositionMs, c.startMs, settled(c))?.plus(c.offsetMs)
+
+    /**
+     * Where the TV was at the last read, on the title's clock, without asking it (main thread safe):
+     * the cast in progress', else the last one's as it ended ([stop] reads it once more first). What
+     * the phone saves as progress during a DLNA cast and resumes from when it ends: the phone's own
+     * player is paused the whole time, so its position says nothing. Null before any cast.
+     */
+    fun knownTvPositionMs(): Long? = cast?.let(::knownPositionOf) ?: lastTvMs
+
+    @Volatile private var lastTvMs: Long? = null
 
     fun play(device: DlnaDevice): Boolean {
         cast?.userPaused = false
@@ -890,6 +914,8 @@ class DlnaController(
     fun stop(device: DlnaDevice) {
         attempt++
         monitorTask?.cancel(false)
+        // Where the TV got to, asked BEFORE the Stop (after it a renderer reports 0): the phone resumes there.
+        if (cast != null) runCatching { tvPositionMs() }
         soap(device.controlUrl, "Stop", "<u:Stop xmlns:u=\"$AVT\"><InstanceID>0</InstanceID></u:Stop>")
         DlnaLog.diag("cast: stopped · TV made ${DlnaLog.lanHits.get()} request(s) to our servers, ${DlnaLog.lanBytes.get()} bytes")
         val ended = cast
@@ -1096,7 +1122,8 @@ class DlnaController(
             return
         }
         // After the first minute, one poll in five: enough to catch a late freeze without hammering the TV.
-        if (sincePlay > 60_000L && c.polls % 5 != 0) return
+        // A Seek waiting to be checked is read on the next poll whatever the pace: the TV keeps playing meanwhile.
+        if (sincePlay > 60_000L && c.polls % 5 != 0 && !c.seekVerify) return
 
         val t = soap(c.device.controlUrl, "GetTransportInfo", TRANSPORT_INFO_BODY)
         val info = DlnaXml.transportInfo(t.body)
@@ -1126,6 +1153,7 @@ class DlnaController(
         val stalledMs = if (info.state.equals("PLAYING", true) && position != null) now - c.positionSince else 0L
 
         positionTv(c, info.state, position, sincePlay)
+        lastTvMs = knownPositionOf(c)
 
         if (c.polls % 5 == 1) {
             DlnaLog.i("monitor: state=${info.state} position=${position?.div(1000)}s duration=${pos?.durationMs?.div(1000)}s stalled=${stalledMs}ms requests=${DlnaLog.lanHits.get()} bytes=${DlnaLog.lanBytes.get()}")
@@ -1164,6 +1192,7 @@ class DlnaController(
         if (c.seekVerify && positionMs != null && state.equals("PLAYING", true)) {
             c.seekVerify = false
             DlnaLog.diag("start: after the Seek the TV reports ${positionMs / 1000}s (wanted ${c.startMs / 1000}s)")
+            DlnaSeek.correction(c.startMs, c.seekSentMs, positionMs, c.seekCorrections)?.let { next -> correctSeek(c, positionMs, next) }
         }
         if (c.seekSettled) return
         when (DlnaSeek.next(c.startMs, state, positionMs, sincePlayMs, c.seekAttempts)) {
@@ -1187,6 +1216,7 @@ class DlnaController(
                 if (r.ok) {
                     c.seekSettled = true
                     c.seekVerify = true
+                    c.seekSentMs = c.startMs
                     DlnaLog.diag("start: Seek to $target accepted (attempt ${c.seekAttempts}, TV was ${state} at ${positionMs?.div(1000)}s)")
                 } else {
                     val last = c.seekAttempts >= DlnaSeek.MAX_ATTEMPTS
@@ -1198,6 +1228,34 @@ class DlnaController(
                     )
                 }
             }
+        }
+    }
+
+    /**
+     * A `Seek` that landed [reportedMs] instead of the start point: asks for [nextMs] instead (see
+     * [DlnaSeek.correction]) and checks again on the next poll. A refusal leaves the TV where it is.
+     */
+    private fun correctSeek(c: Cast, reportedMs: Long, nextMs: Long) {
+        c.seekCorrections++
+        val target = DlnaSeek.relTime(nextMs)
+        val missed = (c.startMs - reportedMs) / 1000
+        val r = soap(
+            c.device.controlUrl, "Seek",
+            "<u:Seek xmlns:u=\"$AVT\"><InstanceID>0</InstanceID><Unit>REL_TIME</Unit><Target>$target</Target></u:Seek>",
+            readTimeoutSec = 20,
+        )
+        if (r.ok) {
+            c.seekSentMs = nextMs
+            c.seekVerify = true
+            DlnaLog.diag(
+                "start: the TV landed ${kotlin.math.abs(missed)}s ${if (missed > 0) "early" else "late"} → corrective Seek to $target " +
+                    "(correction ${c.seekCorrections}/${DlnaSeek.MAX_CORRECTIONS}, wanted ${c.startMs / 1000}s)",
+            )
+        } else {
+            DlnaLog.diagW(
+                "start: corrective Seek to $target REFUSED (http=${r.http} upnp=${r.fault?.code} error=${r.error}): " +
+                    "it keeps playing from ${reportedMs / 1000}s",
+            )
         }
     }
 

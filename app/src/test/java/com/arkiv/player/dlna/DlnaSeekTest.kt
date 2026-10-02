@@ -60,6 +60,35 @@ class DlnaSeekTest {
     }
 
     @Test
+    fun `a Seek that lands short is corrected by what it missed, the LG's 77 s included`() {
+        // 2026-10-01, LG OLED55C1 on a direct TS: 977 s asked, 900 s reported.
+        assertEquals(1_054_000L, DlnaSeek.correction(977_000, 977_000, 900_000, 0))
+        assertEquals(1_023_000L, DlnaSeek.correction(950_000, 950_000, 877_000, 0))
+        // One that overshoots is pulled back the same way.
+        assertEquals(560_000L, DlnaSeek.correction(600_000, 600_000, 640_000, 0))
+    }
+
+    @Test
+    fun `the second correction moves what was asked last by the miss left`() {
+        // First correction asked 1054 s and the TV landed at 970 s: 7 s short now, close enough.
+        assertEquals(null, DlnaSeek.correction(977_000, 1_054_000, 970_000, 1))
+        // Landed at 960 s: 17 s short, asked again 17 s further on.
+        assertEquals(1_071_000L, DlnaSeek.correction(977_000, 1_054_000, 960_000, 1))
+    }
+
+    @Test
+    fun `a Seek within ten seconds is left alone, and corrections stop after two`() {
+        assertEquals(null, DlnaSeek.correction(977_000, 977_000, 970_000, 0))
+        assertEquals(null, DlnaSeek.correction(977_000, 977_000, 987_000, 0))
+        assertEquals(null, DlnaSeek.correction(977_000, 1_100_000, 900_000, 2))
+    }
+
+    @Test
+    fun `a correction never asks for a negative position`() {
+        assertEquals(0L, DlnaSeek.correction(20_000, 20_000, 120_000, 0))
+    }
+
+    @Test
     fun `a renderer that never plays is given up on`() {
         assertEquals(Step.GIVE_UP, DlnaSeek.next(600_000, "TRANSITIONING", null, 121_000, 0))
     }

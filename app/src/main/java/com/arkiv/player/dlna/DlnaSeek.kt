@@ -65,6 +65,27 @@ internal object DlnaSeek {
         return Step.SEEK
     }
 
+    /** A `Seek` that lands this close to its target is there: no correction. */
+    const val LANDED_WITHIN_MS = 10_000L
+
+    /** Corrective `Seek`s after the first one, at most. */
+    const val MAX_CORRECTIONS = 2
+
+    /**
+     * Where to `Seek` next after one landed at [reportedMs] (the renderer's first `RelTime` once it
+     * plays again) for [targetMs], having asked for [sentMs]; null when it is there (within
+     * [LANDED_WITHIN_MS]) or [corrections] ran out. Some renderers seek a file by a byte estimate
+     * or back to an earlier index point: an LG webOS on a direct MPEG-TS landed 75-77 s before every
+     * target (2026-10-01: 977 → 900, 979 → 902, 950 → 877). That miss is the renderer's, steady
+     * near one point, so asking for the target plus what it missed by lands on it; from the second
+     * correction on, what was asked last moves by the miss left, so it converges either way.
+     */
+    fun correction(targetMs: Long, sentMs: Long, reportedMs: Long, corrections: Int): Long? {
+        if (kotlin.math.abs(reportedMs - targetMs) <= LANDED_WITHIN_MS) return null
+        if (corrections >= MAX_CORRECTIONS) return null
+        return (sentMs + (targetMs - reportedMs)).coerceAtLeast(0L)
+    }
+
     /** [ms] as the `REL_TIME` target UPnP AVTransport takes: `H:MM:SS`, hours unpadded. */
     fun relTime(ms: Long): String {
         val total = ms.coerceAtLeast(0L) / 1000
