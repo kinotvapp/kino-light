@@ -453,6 +453,7 @@ private fun PlayerContent(
                     startPluginCastProxy = { graph.pluginCastProxy.start() },
                     probePluginMime = { url, headers, hosts -> graph.pluginCastProxy.probeMime(url, headers, hosts) },
                     castingNow = { graph.castSession?.casting?.value == true },
+                    onlineSubtitlesFor = { ep -> graph.onlineSubtitles.rememberedFor(ep).map(::onlineSub) },
                 )
             }
         },
@@ -4551,10 +4552,11 @@ private fun PlayerContent(
     AudioAndSubtitlesDialog(
         state = tracksState,
         isMagis = PlayerSource.kindFor(episodeId) == SourceKind.MAGIS,
-        declaredLanguages = webExtras?.subtitles?.map { it.lang }.orEmpty(),
+        declaredLanguages = webExtras?.declaredLanguages.orEmpty(),
         // Only while the menu is open and casting: the route may read a downloaded file's header.
         castNote = if (casting && tracksState.pickerOpen) castTracksNote(true, castAudioRoute(), webExtras?.subtitles)
         else dlnaState.tracksNote(tracksState.pickerOpen, webExtras?.subtitles),
+        onOnlineSubtitle = vm::addOnlineSubtitle,
     )
     // The same menu, opened from the DLNA bar: what a choice there does on the TV.
     DlnaTracksFollower(dlnaState, tracksState, { runCatching { activePlayer.currentPosition }.getOrNull() }, dlnaLan(graph))

@@ -1767,6 +1767,52 @@ class AppGraph(context: Context) {
     val subtitlePrefs: com.arkiv.player.data.subtitles.SubtitlePrefs by lazy {
         com.arkiv.player.data.subtitles.SubtitlePrefs(appContext)
     }
+
+    /**
+     * The online subtitle settings: the person's own keys (encrypted, their own file) over Kino's
+     * shared ones from the activation blob. Reading a key touches the Keystore: off the main thread.
+     */
+    val subtitleKeys: com.arkiv.player.data.subtitles.SubtitleKeys by lazy {
+        com.arkiv.player.data.subtitles.SubtitleKeys(
+            appContext,
+            com.arkiv.player.data.plugin.EncryptedSecretStore(appContext, com.arkiv.player.data.subtitles.SubtitleKeys.SECRETS_FILE),
+        ) { id ->
+            val c = credentialsStore.read()
+            when (id) {
+                com.arkiv.player.data.subtitles.SubtitleProviderId.OPENSUBTITLES -> c?.opensubtitlesApiKey
+                com.arkiv.player.data.subtitles.SubtitleProviderId.SUBDL -> c?.subdlApiKey
+            }
+        }
+    }
+
+    val subtitleProviders: List<com.arkiv.player.data.subtitles.SubtitleProvider> by lazy {
+        val http = com.arkiv.player.data.subtitles.SubtitleHttp.client()
+        listOf(
+            com.arkiv.player.data.subtitles.OpenSubtitlesProvider("Kino v${BuildConfig.VERSION_NAME}", http),
+            com.arkiv.player.data.subtitles.SubDlProvider(http),
+        )
+    }
+
+    /** "Buscar subtítulos en línea" (the player's audio and subtitles menu). See [com.arkiv.player.data.subtitles.OnlineSubtitleService]. */
+    val onlineSubtitles: com.arkiv.player.data.subtitles.OnlineSubtitleService by lazy {
+        com.arkiv.player.data.subtitles.OnlineSubtitleService(
+            keys = subtitleKeys,
+            providers = subtitleProviders,
+            resolver = com.arkiv.player.data.subtitles.SubtitleIdResolver(
+                imdbOf = { type, id -> tmdbApi.detail(type, id)?.imdbId },
+                searchTmdb = { type, title, year ->
+                    val hits = tmdbApi.search(type, title)
+                    (year?.let { y -> hits.firstOrNull { it.year == y.toString() } } ?: hits.firstOrNull())?.id
+                },
+            ),
+            subjectFor = { episodeId -> repository.subtitleSubjectFor(episodeId) },
+            languages = { com.arkiv.player.data.subtitles.OnlineSubtitleRules.languagesFor(subtitlePrefs.prefs.value.subtitleLangs) },
+            cache = com.arkiv.player.data.subtitles.OnlineSubtitleCache(
+                java.io.File(appContext.cacheDir, com.arkiv.player.data.subtitles.OnlineSubtitleCache.DIR),
+            ),
+            prefs = subtitlePrefs,
+        )
+    }
     /**
      * Watches for network changes so [archiveCacheProxy] abandons connections that stayed tied to
      * the previous network. The reference is kept even though nobody uses it: the watchdog lives

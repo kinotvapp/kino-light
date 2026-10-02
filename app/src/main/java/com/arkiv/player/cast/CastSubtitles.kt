@@ -120,6 +120,28 @@ class CastSubtitles(
         return l.load.tracks.firstOrNull { it.index == i }
     }
 
+    /** The last (title, subtitle, offer size) [needsReload] answered yes for: once each. */
+    @Volatile private var reloadAsked: String? = null
+
+    /**
+     * The phone has on, for [episodeId], a subtitle the TV's load does not carry: one added after
+     * that load (an online subtitle downloaded mid-cast). A Chromecast can only get a new text track
+     * with a new load, so the cast reloads where it is -- once per such subtitle, never in a loop
+     * (a load that still lacks it, e.g. past [CastTextTracks.MAX_TRACKS], is left as it is).
+     */
+    fun needsReload(episodeId: String): Boolean {
+        val i = choiceFor(episodeId) ?: return false
+        val count = server.sourcesFor(episodeId).size
+        if (i >= count || i >= CastTextTracks.MAX_TRACKS) return false
+        val l = loaded
+        if (l != null && l.episodeId == episodeId && l.load.tracks.any { it.index == i }) return false
+        val key = "$episodeId#$i#$count"
+        if (reloadAsked == key) return false
+        reloadAsked = key
+        CastDiag.i("subtitle #$i is not in the TV's load: reloading the cast with it")
+        return true
+    }
+
     /** Does the load in course for [episodeId] carry subtitles at all? */
     fun hasTracks(episodeId: String): Boolean = loaded?.episodeId == episodeId
 
