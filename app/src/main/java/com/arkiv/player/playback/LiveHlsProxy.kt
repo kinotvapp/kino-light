@@ -48,6 +48,8 @@ class LiveHlsProxy(
     private val onPlaylistConflict: (channel: String, license: String) -> Unit = { _, _ -> },
     /** How CDN hosts are resolved. DoH by default: see [OriginConnections]. Tests hand in the system resolver. */
     dns: okhttp3.Dns = com.arkiv.player.data.net.DohDns,
+    /** [serveContinuousTs] ends the body when the playlist brought nothing new for this long (the channel is off the air). */
+    private val continuousIdleMs: Long = ContinuousTsAssembler.IDLE_MS,
 ) {
 
     private val origin = OriginConnections(dns, CONNECT_TIMEOUT_MS, READ_TIMEOUT_MS)
@@ -214,6 +216,17 @@ class LiveHlsProxy(
         return "http://$ip:$port/live.m3u8?t=$t"
     }
 
+    /**
+     * The same channel as ONE continuous MPEG-TS body ([serveContinuousTs]) over the LAN, labelled
+     * [mime] (one of [ContinuousTs.MIMES], by index: the URL never carries a free-form type), for a
+     * renderer that lists a TS type and no HLS. `null` when there is nothing to cast, like [lanUrl].
+     */
+    fun lanTsUrl(ip: String, mime: String): String? {
+        if (port <= 0) return null
+        val t = token ?: return null
+        return "http://$ip:$port/live.ts?t=$t&m=${ContinuousTs.indexOf(mime)}"
+    }
+
     private fun handle(socket: Socket) = socket.use { s ->
         // Same as ArchiveCacheProxy.serve() (same package, same pattern): ANY exception here
         // -network, or a session that disappears mid-request because the user left the player
@@ -280,6 +293,11 @@ class LiveHlsProxy(
             }
             when {
                 path.startsWith("/live.m3u8") -> servePlaylist(output, myHost)
+                path.startsWith("/live.ts") -> {
+                    val mime = ContinuousTs.mimeAt(queryValue(path, "m")?.toIntOrNull())
+                    // A HEAD (some TVs probe first) gets the headers at once, with no work for the origin.
+                    if (method == "HEAD") output.write(ContinuousTs.responseHead(mime).toByteArray()) else serveContinuousTs(s, output, mime)
+                }
                 path.startsWith("/seg?") -> serveSegment(path, output)
                 else -> {
                     if (fromRenderer) com.arkiv.player.dlna.DlnaLog.w("live-proxy: 404 for unknown route ${com.arkiv.player.dlna.DlnaXml.safeUrl(path)}")
@@ -459,14 +477,18 @@ class LiveHlsProxy(
         output.write("HTTP/1.1 502 Bad Gateway\r\n${CORS_HEADERS}Content-Length: 0\r\n\r\n".toByteArray())
     }
 
-    private fun servePlaylist(output: java.io.OutputStream, myHost: String) {
-        // A single read of the volatile fields for the WHOLE request: if stop() (or a new
-        // urlFor()) changes `session`/`server` from another thread partway through, this request
-        // keeps going with whatever values it had at the start. See the note on [requestFromOrigin].
-        val t0 = System.currentTimeMillis()
-        val s = session ?: return error502(output, "no channel session")
-        val myPort = port
-        val myToken = token ?: return error502(output, "no proxy token")
+    /** What [fetchPlaylist] found: the CDN that served the playlist and its text, or why none did. */
+    private sealed interface PlaylistFetch {
+        class Ok(val cdn: ChannelCdn, val raw: String) : PlaylistFetch
+        class Failed(val reason: String) : PlaylistFetch
+    }
+
+    /**
+     * The channel's playlist, asked of the CDNs in order (the active one first) for up to [PLAYLIST_ATTEMPTS] rounds.
+     * Also what keeps [activeCdn] right and tells whoever plays that the session is dead or in conflict. Shared by
+     * the playlist route and the continuous TS one ([serveContinuousTs]).
+     */
+    private fun fetchPlaylist(s: LiveSession): PlaylistFetch {
         // `playCode`, NOT `channel`: that's what the signal is called on the CDN, and they aren't
         // always the same (see [LiveSession.playCode]'s KDoc -- `cyx-RCNHD` is served under
         // another name). With the channel's code here, the CDN received a request for a different
@@ -552,16 +574,32 @@ class LiveHlsProxy(
                 LiveLog.w("playlist: 409 Conflict from the CDN(s) for ${s.channel}: this session's license looks in use elsewhere")
                 runCatching { onPlaylistConflict(s.channel, s.license) }
             }
-            return error502(output, "no CDN served the playlist for ${s.channel} (last code $lastCode)")
+            return PlaylistFetch.Failed("no CDN served the playlist for ${s.channel} (last code $lastCode)")
         }
         if (activeCdn?.cflHost != chosen.cflHost) {
             LiveLog.w("active CDN → ${chosen.cflHost} (channel=${s.channel})")
             logAddresses(chosen.cflHost)
         }
         activeCdn = chosen
+        return PlaylistFetch.Ok(chosen, rawPlaylist ?: c.inputStream.bufferedReader().readText())
+    }
+
+    private fun servePlaylist(output: java.io.OutputStream, myHost: String) {
+        // A single read of the volatile fields for the WHOLE request: if stop() (or a new
+        // urlFor()) changes `session`/`server` from another thread partway through, this request
+        // keeps going with whatever values it had at the start. See the note on [requestFromOrigin].
+        val t0 = System.currentTimeMillis()
+        val s = session ?: return error502(output, "no channel session")
+        val myPort = port
+        val myToken = token ?: return error502(output, "no proxy token")
+        val fetched = when (val f = fetchPlaylist(s)) {
+            is PlaylistFetch.Failed -> return error502(output, f.reason)
+            is PlaylistFetch.Ok -> f
+        }
+        val chosen = fetched.cdn
         val playlistUrl = "http://${chosen.cflHost}/live/${s.playCode}.m3u8"
         val base = URL(playlistUrl)
-        val raw = rawPlaylist ?: c.inputStream.bufferedReader().readText()
+        val raw = fetched.raw
         val body = raw.lineSequence()
             .joinToString("\n") { ln -> rewriteLine(ln, base, myHost, myPort, myToken) } + "\n"
         val bytes = body.toByteArray()
@@ -590,6 +628,45 @@ class LiveHlsProxy(
                 "Content-Length: ${bytes.size}\r\n\r\n").toByteArray()
         )
         output.write(bytes)
+    }
+
+    /**
+     * The channel as one continuous MPEG-TS body ([ContinuousTsAssembler]): the playlist walked here,
+     * with the same CDN fallback and signed requests as [servePlaylist] and [serveSegment], and each
+     * segment written right after the last. Ends when the TV hangs up, the cast stops
+     * ([ContinuousTsStreams.stopAll]), the proxy stops or another channel opens, or the playlist
+     * brings nothing new for a while. No playlist at all: a 502, before any header.
+     */
+    private fun serveContinuousTs(socket: Socket, output: java.io.OutputStream, mime: String) {
+        val s = session ?: return error502(output, "continuous stream with no channel session")
+        val assembler = ContinuousTsAssembler(
+            window = {
+                when (val f = fetchPlaylist(s)) {
+                    is PlaylistFetch.Failed -> null.also { LiveLog.w("continuous: ${f.reason}") }
+                    is PlaylistFetch.Ok ->
+                        when (val p = ContinuousTs.parse(f.raw, "http://${f.cdn.cflHost}/live/${s.playCode}.m3u8")) {
+                            is ContinuousTs.Playlist.Media -> p
+                            is ContinuousTs.Playlist.Master -> null.also { LiveLog.w("continuous: the channel answered a master playlist") }
+                            is ContinuousTs.Playlist.Unusable -> null.also { LiveLog.w("continuous: ${p.reason}") }
+                        }
+                }
+            },
+            openSegment = { url ->
+                getSegment(url, s)?.let { c ->
+                    object : java.io.FilterInputStream(c.inputStream) {
+                        override fun close() {
+                            runCatching { super.close() }
+                            c.disconnect()
+                        }
+                    }
+                }
+            },
+            idleMs = continuousIdleMs,
+            log = { LiveLog.w(it) },
+        )
+        val outcome = ContinuousTsStreams.serve(socket, output, mime, assembler) { running && session === s }
+        if (outcome.end == ContinuousTsAssembler.End.NO_PLAYLIST) return error502(output, "continuous stream: no playlist for ${s.channel}")
+        LiveLog.w("continuous: ended ${outcome.end} · ${outcome.written} segments, ${outcome.skipped} skipped, ${outcome.bytes / 1024}KB")
     }
 
     /**
