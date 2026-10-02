@@ -344,6 +344,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handleIntent(intent: Intent?) {
+        if (intent?.action == ACTION_OPEN_PLAYER && intent.getBooleanExtra(com.arkiv.player.cast.TvReadyNotice.EXTRA_SEND_TO_TV, false)) {
+            // "Listo para la TV": the player is reopened (even if it shows this title from the
+            // network) so it loads the file, and asks which TV to send it to.
+            val id = intent.getStringExtra(EXTRA_EPISODE_ID) ?: return
+            com.arkiv.player.cast.SendToTv.offer(id)
+            com.arkiv.player.cast.PlayerReopen.request(id)
+            return
+        }
         if (intent?.action == ACTION_OPEN_PLAYER) {
             // The extra takes priority when present (a "download complete" notice, which points to
             // a specific episode); without it, the one currently playing opens, which is what the

@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -52,6 +53,8 @@ import com.arkiv.player.data.local.DownloadGroupPolicy
 import com.arkiv.player.data.local.DownloadSource
 import com.arkiv.player.data.local.EpisodeDownloadStatus
 import com.arkiv.player.data.local.LocalDownloadState
+import com.arkiv.player.data.local.PrepState
+import com.arkiv.player.data.local.PrepStatus
 import com.arkiv.player.data.local.FileSizeFormat
 import com.arkiv.player.data.model.Episode
 import com.arkiv.player.data.plugin.PluginIds
@@ -66,12 +69,27 @@ import com.arkiv.player.ui.theme.ArkivTextSecondary
 fun DownloadsScreen(
     contentPadding: PaddingValues,
     onPlayEpisode: (String) -> Unit,
+    /** "Enviar a la TV" on a finished download: the player of that title, asking which TV. */
+    onSendToTv: (String) -> Unit = {},
 ) {
     val graph = rememberGraph()
     val vm: DownloadsViewModel = viewModel(
         factory = viewModelFactory { initializer { DownloadsViewModel(graph.localDownloads, graph.repository) } },
     )
     val groups by vm.groups.collectAsStateWithLifecycle()
+    // Where each finished download stands on its way to MP4 ("Preparando para la TV… NN%").
+    val prep by graph.mp4Prep.status.collectAsStateWithLifecycle()
+    // Keyed by the finished ids, not by `groups`: a download in progress republishes the groups
+    // every second, and the markers only change when a download finishes or is prepared.
+    val done = androidx.compose.runtime.remember(groups) {
+        groups.flatMap { g -> g.episodes.mapNotNull { (it.status as? EpisodeDownloadStatus.Tracked)?.row } }
+            .filter { it.state == LocalDownloadState.COMPLETED }.map { it.episodeId }.toSet()
+    }
+    androidx.compose.runtime.LaunchedEffect(done) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching { graph.mp4Prep.refresh(graph.localDownloads.targetDir(), done) }
+        }
+    }
 
     // One-time notice from the ViewModel. It's the ONLY output this screen has when the queue
     // skips a download as a duplicate: in that case no row gets created, so the chapter keeps
@@ -114,7 +132,9 @@ fun DownloadsScreen(
             items(groups, key = { it.itemId }) { group ->
                 DownloadGroupSection(
                     group = group,
+                    prep = prep,
                     onPlay = onPlayEpisode,
+                    onSendToTv = onSendToTv,
                     onConfirm = vm::confirm,
                     onRetry = vm::retry,
                     onCancel = vm::cancel,
@@ -148,7 +168,9 @@ fun DownloadsScreen(
 @Composable
 private fun DownloadGroupSection(
     group: DownloadGroup,
+    prep: Map<String, PrepStatus>,
     onPlay: (String) -> Unit,
+    onSendToTv: (String) -> Unit,
     onConfirm: (String) -> Unit,
     onRetry: (String) -> Unit,
     onCancel: (String) -> Unit,
@@ -165,7 +187,9 @@ private fun DownloadGroupSection(
         val row = (group.episodes.firstOrNull()?.status as? EpisodeDownloadStatus.Tracked)?.row ?: return
         DownloadItem(
             row = row,
+            prep = prep[row.episodeId],
             onPlay = { if (row.state == LocalDownloadState.COMPLETED) onPlay(row.episodeId) },
+            onSendToTv = { onSendToTv(row.episodeId) },
             onConfirm = { onConfirm(row.episodeId) },
             onRetry = { onRetry(row.episodeId) },
             onCancel = { onCancel(row.episodeId) },
@@ -194,7 +218,9 @@ private fun DownloadGroupSection(
                     when (val status = grouped.status) {
                         is EpisodeDownloadStatus.Tracked -> DownloadItem(
                             row = status.row,
+                            prep = prep[status.row.episodeId],
                             onPlay = { if (status.row.state == LocalDownloadState.COMPLETED) onPlay(status.row.episodeId) },
+                            onSendToTv = { onSendToTv(status.row.episodeId) },
                             onConfirm = { onConfirm(status.row.episodeId) },
                             onRetry = { onRetry(status.row.episodeId) },
                             onCancel = { onCancel(status.row.episodeId) },
@@ -340,7 +366,9 @@ private fun NotDownloadedRow(
 @Composable
 private fun DownloadItem(
     row: DownloadRow,
+    prep: PrepStatus?,
     onPlay: () -> Unit,
+    onSendToTv: () -> Unit,
     onConfirm: () -> Unit,
     onRetry: () -> Unit,
     onCancel: () -> Unit,
@@ -425,6 +453,7 @@ private fun DownloadItem(
                     )
                     else -> Unit
                 }
+                if (row.state == LocalDownloadState.COMPLETED) PrepLine(prep)
             }
             if (row.state == LocalDownloadState.COMPLETED) {
                 Icon(Icons.Default.PlayArrow, contentDescription = "Reproducir", tint = ArkivRed)
@@ -451,10 +480,53 @@ private fun DownloadItem(
                     TextButton(onClick = onCancel) { Text("Cancelar") }
                     TextButton(onClick = onRemove) { Text("Quitar") }
                 }
+                LocalDownloadState.COMPLETED -> {
+                    TextButton(onClick = onSendToTv) {
+                        Icon(Icons.Default.Tv, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Enviar a la TV")
+                    }
+                    TextButton(onClick = onRemove) { Text("Quitar") }
+                }
                 else -> TextButton(onClick = onRemove) { Text("Quitar") }
             }
         }
     }
+}
+
+/**
+ * A finished download's way to MP4 ([com.arkiv.player.data.local.Mp4Prep]): the percentage and a bar
+ * while it converts, a word when it could not (no room yet, or it failed and plays as it is).
+ * Nothing once it is ready, or when it stays as it is for good: it plays the same either way.
+ */
+@Composable
+private fun PrepLine(prep: PrepStatus?) {
+    val text = prepLabel(prep) ?: return
+    Text(
+        text,
+        style = MaterialTheme.typography.bodySmall,
+        color = ArkivTextSecondary,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
+    val percent = prep?.percent ?: return
+    LinearProgressIndicator(
+        progress = { percent / 100f },
+        color = ArkivRed,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(4.dp)
+            .padding(top = 6.dp),
+    )
+}
+
+/** The words [PrepLine] shows, or null for nothing. */
+internal fun prepLabel(prep: PrepStatus?): String? = when {
+    prep == null -> null
+    prep.percent != null -> "Preparando para la TV… ${prep.percent}%"
+    prep.state == PrepState.NO_SPACE -> "Sin espacio para prepararlo para la TV"
+    prep.state == PrepState.FAILED -> "No se pudo preparar para la TV (se reproduce igual)"
+    else -> null
 }
 
 /** Text shown to the user for each queue state. */

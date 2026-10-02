@@ -28,6 +28,46 @@ internal object DlnaRenderer {
         playsHls = sinkMimes.any { it.lowercase() in HLS_MIMES },
     )
 
+    /**
+     * Whether an HLS playlist may go to a renderer that lists [sinkMimes]. Refused only when the
+     * list is KNOWN and names no HLS type: a Philips "NMR" listing only `video/mpeg`,
+     * `video/vnd.dlna.mpeg-tts` and the like answered `SetAVTransportURI` for a live channel's
+     * playlist with HTTP 500 / UPnP 716 (ERRORES-AMF, 0.9.45). A renderer that lists nothing is sent
+     * it as before: some that play HLS answer no `GetProtocolInfo`.
+     *
+     * One that refuses HLS may still take the stream as ONE continuous MPEG-TS body: [liveRoute].
+     */
+    fun takesHls(sinkMimes: List<String>): Boolean = sinkMimes.isEmpty() || receiverOf(sinkMimes).playsHls
+
+    /** How an HLS stream (a live channel, a plugin's playlist) reaches a renderer: [liveRoute]. */
+    sealed interface HlsRoute {
+        /** The playlist as it is: the renderer lists an HLS type, or lists nothing. */
+        data object Playlist : HlsRoute
+
+        /** One continuous MPEG-TS body labelled [mime], the TS type the renderer lists ([com.arkiv.player.playback.ContinuousTs]). */
+        data class ContinuousTs(val mime: String) : HlsRoute
+
+        /** Neither: [noHlsMessage]. */
+        data object None : HlsRoute
+    }
+
+    /**
+     * The route for an HLS stream to a renderer that lists [sinkMimes]. The playlist whenever
+     * [takesHls]: an LG answered the continuous body 501 and a Samsung stalled on it
+     * (`experiment/dlna-live-ts`), and both list HLS. The continuous TS ONLY for a renderer that
+     * lists no HLS type and does list a TS one (the Philips "NMR" of ERRORES-AMF); nothing for one
+     * that lists neither.
+     */
+    fun liveRoute(sinkMimes: List<String>): HlsRoute = when {
+        takesHls(sinkMimes) -> HlsRoute.Playlist
+        else -> com.arkiv.player.playback.ContinuousTs.mimeFor(sinkMimes)?.let { HlsRoute.ContinuousTs(it) } ?: HlsRoute.None
+    }
+
+    /** What the person is told when [takesHls] refuses: a [live] channel, or a title. */
+    fun noHlsMessage(live: Boolean): String =
+        if (live) "Este TV no puede reproducir canales en vivo por DLNA"
+        else "Este TV no puede reproducir este título por DLNA"
+
     /** One line for the log: how many types, and the ones the route depends on. */
     fun summary(sinkMimes: List<String>): String {
         if (sinkMimes.isEmpty()) return "lists nothing (no ConnectionManager or no answer)"

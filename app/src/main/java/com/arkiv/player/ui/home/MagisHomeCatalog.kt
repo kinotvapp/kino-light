@@ -4,6 +4,7 @@ import com.arkiv.player.data.gateway.CatalogSection
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.ConcurrentHashMap
@@ -40,6 +41,13 @@ class MagisHomeCatalog(
     private val now: () -> Long = System::currentTimeMillis,
     /** [tree] past its in-memory cache (`MagisLiveCatalog.tree(force = true)`), used after [invalidate]. */
     private val freshTree: suspend (root: String) -> List<CatalogSection> = tree,
+    /**
+     * When EVERY root came back empty, the pass asks them all again after each of these pauses, until one answers.
+     * 0.9.45 (ERRORES-AKR) showed whole-Home blanks on TVs coming back from the background under memory pressure,
+     * the kind of one-off a few seconds later clears. Empty (no retry) by default: the app passes
+     * [EMPTY_PASS_RETRY_DELAYS_MS]; the JVM tests keep their exact call counts.
+     */
+    private val emptyPassRetryDelaysMs: List<Long> = emptyList(),
 ) {
     private val passLock = Mutex()
 
@@ -86,7 +94,7 @@ class MagisHomeCatalog(
 
     private suspend fun loadLocked(): MagisHome = coroutineScope {
         val gen = generation
-        val roots = MagisKind.entries.map { kind ->
+        suspend fun askAll() = MagisKind.entries.map { kind ->
             async {
                 val force = (forcedGeneration[kind] ?: 0) < gen
                 val sections = runCatching { if (force) freshTree(kind.root) else tree(kind.root) }.getOrDefault(emptyList())
@@ -94,6 +102,14 @@ class MagisHomeCatalog(
                 kind to sections
             }
         }.awaitAll()
+        var roots = askAll()
+        var attempts = 1
+        for (pause in emptyPassRetryDelaysMs) {
+            if (roots.any { (_, sections) -> sections.isNotEmpty() }) break
+            delay(pause)
+            roots = askAll()
+            attempts++
+        }
         MagisHome(
             rows = MagisHomeClassifier.classify(roots.associate { (kind, sections) -> kind.root to sections }),
             missing = roots.filter { (_, sections) -> sections.isEmpty() }.mapTo(mutableSetOf()) { it.first },
@@ -108,6 +124,7 @@ class MagisHomeCatalog(
                 com.arkiv.player.crash.Crash.report(
                     com.arkiv.player.crash.EmptyCatalog("all ${MagisKind.entries.size} VOD roots empty"),
                     "empty-catalog",
+                    extras = mapOf("attempts" to attempts.toString()),
                 )
             }
         }
@@ -138,5 +155,8 @@ class MagisHomeCatalog(
          * Home older than a couple of hours is missing something. Matches the tree cache of `MagisLiveCatalog`.
          */
         const val TTL_MS = 2 * 60 * 60 * 1000L
+
+        /** The app's pauses before asking an all-empty pass again (see the constructor's `emptyPassRetryDelaysMs`). */
+        val EMPTY_PASS_RETRY_DELAYS_MS = listOf(1_500L, 4_000L)
     }
 }

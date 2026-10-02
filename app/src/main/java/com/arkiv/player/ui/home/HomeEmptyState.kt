@@ -54,3 +54,26 @@ fun tvHomeLandingHeld(landing: TvHomeLanding, requestSucceeded: Boolean, addSour
 /** The empty state's button left (a source became usable) and took focus with it: the top bar takes it. */
 fun emptyStateNeedsRefocus(wasEmpty: Boolean, isEmpty: Boolean, screenHasFocus: Boolean): Boolean =
     wasEmpty && !isEmpty && !screenHasFocus
+
+internal const val XUPER_HOME_FAILED_PHONE = "No pudimos cargar el catálogo de Xuper, toca para reintentar"
+internal const val XUPER_HOME_FAILED_TV = "No pudimos cargar el catálogo de Xuper."
+internal const val XUPER_HOME_RETRY = "Reintentar"
+
+/**
+ * Whether Home says the Xuper catalog failed (and offers to retry) instead of just leaving its rows out: the plugin
+ * pass is over, the recognized Xuper plugin is installed, usable and has `home`, and not one of its rows came back
+ * (not even the last good snapshot). Xuper's Home is never legitimately empty, unlike another plugin's, which may
+ * simply have no rows to offer. 0.9.45 (ERRORES-AKR): every VOD root came back empty and Home showed nothing at all.
+ */
+fun xuperHomeFailed(
+    plugins: List<InstalledPlugin>,
+    pluginRows: List<com.arkiv.player.data.plugin.PluginHomeRow>,
+    settled: Boolean,
+): Boolean {
+    if (!settled) return false
+    val xuper = plugins.firstOrNull {
+        it.isUsable && !it.needsSetup && "home" in it.manifest.capabilities &&
+            com.arkiv.player.data.plugin.XuperPrivilege.grants(it.record)
+    } ?: return false
+    return pluginRows.none { it.pluginId == xuper.id }
+}

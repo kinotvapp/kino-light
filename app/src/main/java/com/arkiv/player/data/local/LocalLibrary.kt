@@ -13,11 +13,23 @@ import java.io.File
  * it from Android's settings, without this check the player would point at a ghost file and show
  * a black screen with no explanation.
  */
-class LocalLibrary(private val db: ArkivDatabase) {
+class LocalLibrary(
+    private val db: ArkivDatabase,
+    /**
+     * The player is about to open [episodeId]'s download at a path: `Mp4Prep.onOpened` (the file is
+     * in use, and an older download gets its MP4 lazily). Never waits.
+     */
+    private val onOpened: (episodeId: String, path: String) -> Unit = { _, _ -> },
+) {
 
     private val downloadDao = db.downloadDao()
 
-    suspend fun fileFor(episodeId: String): String? = withContext(Dispatchers.IO) {
+    /** [pathFor], for the player: the file it is about to open is reported to [onOpened]. */
+    suspend fun fileFor(episodeId: String): String? =
+        pathFor(episodeId)?.also { path -> runCatching { withContext(Dispatchers.IO) { onOpened(episodeId, path) } } }
+
+    /** The completed download's file for [episodeId], checked to exist (see the class KDoc), or null. */
+    suspend fun pathFor(episodeId: String): String? = withContext(Dispatchers.IO) {
         val row = downloadDao.get(episodeId) ?: return@withContext null
         if (row.state != LocalDownloadState.COMPLETED) return@withContext null
         // Caracol does NOT go through here. What its download leaves in `filePath` isn't a video

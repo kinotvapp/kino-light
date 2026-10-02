@@ -123,17 +123,54 @@ class PlayerCastTest {
         assertNull(pluginCastUri(cast, null))
     }
 
-    @Test fun `a header-free HLS on an allowed host goes straight to the receiver`() {
+    /** The receiver reads HLS with XHR and needs CORS on every host: a plugin's HLS always goes through the proxy (ERRORES-AME). */
+    @Test fun `a header-free HLS on an allowed host still goes through the proxy`() {
         val hls = pluginFrom("x/y").copy(mediaUrl = "https://cdn.example/a/playlist.m3u8", requestHeaders = emptyMap())
-        val cast = castableStreamItem(hls, proxy, { _, _ -> error("no proxy for a direct cast") }) { true }!!
-        assertEquals(hls.mediaUrl, cast.mediaUrl)
+        var asked: String? = null
+        val cast = castableStreamItem(hls, proxy, { _, mime -> asked = mime; "http://127.0.0.1:9/t/tok/index.m3u8" }) { true }!!
+        assertEquals(MIME_HLS, asked)
+        assertEquals("http://127.0.0.1:9/t/tok/index.m3u8", cast.mediaUrl)
         assertEquals(MIME_HLS, cast.mime)
-        assertEquals(hls.mediaUrl, pluginCastUri(cast, null))
+        assertEquals("http://192.168.1.5:9/t/tok/index.m3u8", pluginCastUri(cast, "192.168.1.5"))
     }
 
     @Test fun `a plugin live channel casts from the live edge`() {
         val live = item(SourceKind.PLUGIN, PluginIds.liveEpisodeId("someone", "ch1"))
         assertTrue(isPluginLiveCast(live))
         assertFalse(isPluginLiveCast(pluginFrom("x/y")))
+    }
+
+    private fun request(uri: String) = com.arkiv.player.cast.CastRequest(
+        uri = uri, mimeType = "video/mp4", episodeId = "plugin:lacartoons-source:lc-93::e1",
+        title = "T", subtitle = "", artworkUrl = "", startPositionMs = 0L,
+    )
+
+    /** ERRORES-AME: a direct OK.ru mp4 idle at 0:00 gets its proxied twin to fall back to. */
+    @Test
+    fun `a direct plugin file carries the same media through the proxy as its fallback`() {
+        val ok = item(SourceKind.PLUGIN, "plugin:lacartoons-source:lc-93::e1")
+            .copy(mediaUrl = "https://vd1.mycdn.me/?expires=1", requestHeaders = emptyMap(), mime = "video/mp4")
+        val out = withPluginProxyFallback(request(ok.mediaUrl), ok, "192.168.1.20") { "http://127.0.0.1:4100/t/tok/stream.mp4" }
+        assertEquals("direct", out.route)
+        assertEquals("http://192.168.1.20:4100/t/tok/stream.mp4", out.fallback?.uri)
+        assertEquals("proxy", out.fallback?.route)
+        assertNull(out.fallback?.fallback)
+    }
+
+    @Test
+    fun `a proxied plugin item, a proxy that can't take it, or a non-plugin item get no fallback`() {
+        val viaProxy = item(SourceKind.PLUGIN).copy(mediaUrl = "http://127.0.0.1:4100/t/tok/index.m3u8")
+        val proxied = withPluginProxyFallback(request("http://192.168.1.20:4100/t/tok/index.m3u8"), viaProxy, "192.168.1.20") { error("never registered") }
+        assertEquals("proxy", proxied.route)
+        assertNull(proxied.fallback)
+
+        val direct = item(SourceKind.PLUGIN).copy(mediaUrl = "https://cdn.example/x.mp4", requestHeaders = emptyMap())
+        val noPort = withPluginProxyFallback(request(direct.mediaUrl), direct, "192.168.1.20") { null }
+        assertEquals("direct", noPort.route)
+        assertNull(noPort.fallback)
+        assertNull(withPluginProxyFallback(request(direct.mediaUrl), direct, null) { "http://127.0.0.1:4100/t/tok/s" }.fallback)
+
+        val magis = request("http://192.168.1.20:5000/s")
+        assertSame(magis, withPluginProxyFallback(magis, item(SourceKind.MAGIS), "192.168.1.20") { error("never registered") })
     }
 }

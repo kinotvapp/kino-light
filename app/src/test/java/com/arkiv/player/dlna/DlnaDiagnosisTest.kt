@@ -15,7 +15,8 @@ class DlnaDiagnosisTest {
         lanHits: Int = 3,
         userPaused: Boolean = false,
         stalledMs: Long = 0,
-    ) = DlnaDiagnosis.Snapshot(sincePlayMs, state, status, lanHits, userPaused, stalledMs)
+        everPlayed: Boolean = true,
+    ) = DlnaDiagnosis.Snapshot(sincePlayMs, state, status, lanHits, userPaused, stalledMs, everPlayed)
 
     @Test
     fun `a healthy cast is not a failure`() {
@@ -109,5 +110,14 @@ class DlnaDiagnosisTest {
     @Test fun `a vendor-prefixed loading state (LG_TRANSITIONING) counts as loading`() {
         assertEquals(DlnaDiagnosis.STUCK_LOADING, DlnaDiagnosis.failure(snap(sincePlayMs = 40_000, state = "LG_TRANSITIONING", lanHits = 30)))
         assertNull(DlnaDiagnosis.failure(snap(sincePlayMs = 10_000, state = "LG_TRANSITIONING", lanHits = 30)))
+    }
+
+    @Test fun `a load that never played a minute after Play is a failure of its own, so the next route can be tried`() {
+        assertEquals(DlnaDiagnosis.NEVER_PLAYED, DlnaDiagnosis.failure(snap(sincePlayMs = 61_000, state = "STOPPED", everPlayed = false)))
+        assertEquals(DlnaDiagnosis.NEVER_PLAYED, DlnaDiagnosis.failure(snap(sincePlayMs = 61_000, state = "NO_MEDIA_PRESENT", everPlayed = false)))
+        assertNull("it played once: not this", DlnaDiagnosis.failure(snap(sincePlayMs = 61_000, state = "STOPPED", everPlayed = true)))
+        assertNull("paused by the person", DlnaDiagnosis.failure(snap(sincePlayMs = 61_000, state = "PAUSED_PLAYBACK", everPlayed = false)))
+        assertNull("too soon", DlnaDiagnosis.failure(snap(sincePlayMs = 50_000, state = "STOPPED", everPlayed = false)))
+        assertEquals("La TV no logró empezar a reproducir el video", DlnaDiagnosis.userMessage(DlnaDiagnosis.NEVER_PLAYED))
     }
 }

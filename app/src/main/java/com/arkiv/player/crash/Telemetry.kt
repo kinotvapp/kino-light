@@ -60,6 +60,9 @@ class StoragePressure(message: String) : Exception(message)
 /** An offline (Caracol) download failed. Tells us which titles/devices can't download. */
 class OfflineDownloadFailed(message: String) : Exception(message)
 
+/** A finished download could not be rewritten as MP4 (`Mp4Prep`): the original is kept. The reason travels as an extra. */
+class Mp4PrepFailed(message: String) : Exception(message)
+
 /** A device that auto-detection classified as a HANDHELD but looks like it could be a misread TV
  *  box (large landscape screen). Carries its raw DeviceType signals so a real threshold can be set
  *  from field data instead of guesses. One-shot per process; see ArkivApp. */
@@ -116,13 +119,11 @@ class LiveDecoderSwitched(message: String) : Exception(message)
 class LiveInPlaceRecovery(message: String) : Exception(message)
 
 /**
- * A live channel's session was a shared seed (see `LiveSeedRotation`) and the CDN answered `409 Conflict` to its
- * playlist, or the portal refused the seed on resolve: the channel moved to another seed from the backup pool, or,
- * once the small rotation budget ran out, gave up and went back to the device's own session. Reported once per
- * actual state change (`outcome` extra: `rotated` / `rotated_after_resolve_failure` / `exhausted`), not per retry --
- * the player asks for the same stuck playlist repeatedly, and duplicate refusals of the seed already in use don't
- * report again. The point is measuring whether rotating seeds actually clears the conflicts that used to reach the
- * person as "se cortó la señal", not counting every retry.
+ * A live channel's session was a shared seed (see `LiveSeedRotation`), the CDN answered `409 Conflict` to its
+ * playlist (or the portal refused the seed on resolve) and the channel's rotation budget ran out: it went back to the
+ * device's own session (`outcome` extra: `exhausted`). Reported once per channel per rotation window. A successful
+ * rotation is not reported any more: in 0.9.45 it was 100 events from a handful of TVs, one per channel zapped to,
+ * every one of them rotated on the first try -- the system working, not a problem.
  */
 class LiveSeedRotated(message: String) : Exception(message)
 

@@ -1095,6 +1095,34 @@ class ArkivRepository(
         return SourceSearchTitle(isMovie, item.tmdbId?.takeIf { it > 0 }, title)
     }
 
+    /**
+     * What an online subtitle search needs about [episodeId]: movie or series (as [sourceSearchTitle]
+     * decides it), the item's TMDB id, an IMDb id when the item's own id carries one (a series keyed
+     * by IMDb), the title, and season/episode the way [triviaSubjectFor] reads them. Null when it is
+     * not in the library.
+     */
+    internal suspend fun subtitleSubjectFor(episodeId: String): com.arkiv.player.data.subtitles.SubtitleSubject? {
+        val ep = itemDao.getEpisode(episodeId) ?: return null
+        val item = itemDao.getItem(ep.itemId) ?: return null
+        val isMovie = when {
+            item.tipo == "movie" -> true
+            item.tipo == "tv" -> false
+            item.categoryOverride == "movie" -> true
+            item.categoryOverride == "series" -> false
+            else -> itemDao.getEpisodesOf(ep.itemId).size <= 1
+        }
+        val title = item.tituloCanonico?.takeIf { it.isNotBlank() } ?: item.title
+        return com.arkiv.player.data.subtitles.SubtitleSubject(
+            kind = if (isMovie) "movie" else "tv",
+            tmdbId = item.tmdbId?.takeIf { it > 0 },
+            imdbId = com.arkiv.player.data.subtitles.OnlineSubtitleRules.imdbIn(item.identifier),
+            title = title,
+            year = com.arkiv.player.data.subtitles.OnlineSubtitleRules.yearIn(item.title),
+            season = if (isMovie) null else ep.season?.takeIf { it > 0 } ?: EpisodeNumbering.seasonOf(ep.section),
+            episode = if (isMovie) null else ep.episode?.takeIf { it > 0 } ?: EpisodeNumbering.episodeOf(ep.displayName),
+        )
+    }
+
     suspend fun removeItem(identifier: String) {
         // Chapters are read BEFORE the soft-delete: `getEpisodesOf` filters `deleted = 0`, so
         // after the tombstone there would be nowhere left to get the ids from.

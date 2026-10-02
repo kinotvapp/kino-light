@@ -698,6 +698,14 @@ interface DownloadDao {
     )
     suspend fun markCompleted(episodeId: String, filePath: String)
 
+    /**
+     * Every row on the file [oldPath] now points at [newPath]: a download rewritten as MP4
+     * (`Mp4Prep`), the twins that adopted the same file included. A legacy `localUri` row moves to
+     * `filePath`, which `LocalLibrary.fileFor` reads first.
+     */
+    @Query("UPDATE downloads SET filePath = :newPath WHERE filePath = :oldPath OR localUri = 'file://' || :oldPath")
+    suspend fun movePath(oldPath: String, newPath: String)
+
     @Query("UPDATE downloads SET sizeConfirmed = 1, state = 'queued', error = NULL WHERE episodeId = :episodeId")
     suspend fun markConfirmed(episodeId: String)
 

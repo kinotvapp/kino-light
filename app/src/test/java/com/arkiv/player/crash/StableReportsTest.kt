@@ -20,7 +20,8 @@ class StableReportsTest {
 
     @Test
     fun `no sources is one issue whatever the title`() {
-        val a = StableReports.noSources("Dune", 438631, "movie", 0, 0, false, listOf("dune"), emptyList(), listOf("Dune"))
+        val a = StableReports.noSources("Dune", 438631, "movie", 0, 0, false, listOf("dune"), emptyList(), listOf("Dune"), poolTop = listOf("Dune: Part Two"))
+        assertEquals("[Dune: Part Two]", a.extras["pool_top"])
         val b = StableReports.noSources("Shogun", 126308, "tv", 1, 3, true, listOf("shogun"), listOf("x"), listOf("Shōgun"))
         assertEquals("0 sources", a.message)
         assertEquals(a.message, b.message)

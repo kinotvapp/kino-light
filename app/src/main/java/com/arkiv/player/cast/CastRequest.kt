@@ -43,7 +43,43 @@ data class CastRequest(
      * TS segments otherwise.
      */
     val hlsFmp4: Boolean = false,
+    /**
+     * How the receiver reaches the media, for the failure report: "direct" (the stream's own URL),
+     * "proxy" (a token URL on the phone), or empty when nobody said.
+     */
+    val route: String = "",
+    /**
+     * The same media through the phone's proxy, loaded ONCE if this one fails on the receiver
+     * before it ever played ([CastFallback]); null when there is nothing else to try. Only a
+     * direct plugin file has one: its host may want what only the phone sends (an OK.ru link tied
+     * to the asker), and a receiver at 0:00 said nothing about why (ERRORES-AME).
+     */
+    val fallback: CastRequest? = null,
 )
+
+/** Whether a failed load is retried through its [CastRequest.fallback]. Pure. */
+object CastFallback {
+    /**
+     * The request to load instead of [request], or null: only when it [failed] (the receiver went
+     * idle with an error, refused the load or never played it) and [neverPlayed] since it was
+     * sent -- a stream that played and then dropped is the network's, and the retry from its
+     * position ([CastIdleWatch]) is the answer there. A fallback has none of its own: one try.
+     */
+    fun next(request: CastRequest?, failed: Boolean, neverPlayed: Boolean): CastRequest? =
+        request?.fallback?.takeIf { failed && neverPlayed }?.copy(fallback = null)
+
+    /**
+     * [uri]'s host for a failure report: "lan" for one of the phone's own servers (a private
+     * address), the host name otherwise -- never a path, a query or a token. Empty when unknown.
+     */
+    fun hostOf(uri: String?): String {
+        val host = uri?.substringAfter("://", "")?.substringBefore('/')?.substringAfter('@')?.substringBefore(':').orEmpty()
+        if (host.isEmpty()) return ""
+        val lan = host == "127.0.0.1" || host.startsWith("10.") || host.startsWith("192.168.") ||
+            Regex("""^172\.(1[6-9]|2\d|3[01])\.""").containsMatchIn(host)
+        return if (lan) "lan" else host.lowercase()
+    }
+}
 
 /**
  * Derives the cast request from the source. Pure: testable without Android.

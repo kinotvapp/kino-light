@@ -50,6 +50,13 @@ class CastSubtitleServer(
             now.fetch = fetch
             return
         }
+        // The same title's list only grew (an online subtitle the person added): the TV's current
+        // URLs keep answering -- same token, same cached cues -- and the new one joins them.
+        if (now != null && extendsOffer(now.episodeId, now.sources, episodeId, sources)) {
+            current = Offer(episodeId, sources, fetch, now.token).also { it.cues.putAll(now.cues) }
+            log("offering ${sources.size} subtitle(s) for $episodeId (${sources.size - now.sources.size} added)")
+            return
+        }
         current = if (sources.isEmpty()) null else Offer(episodeId, sources, fetch, newToken())
         if (sources.isNotEmpty()) log("offering ${sources.size} subtitle(s) for $episodeId")
     }
@@ -238,3 +245,12 @@ object CastSubtitleRoutes {
         }
     }
 }
+
+/** Is [sources] for [episodeId] the offer [previousEpisode]/[previous] with more subtitles appended? */
+internal fun extendsOffer(
+    previousEpisode: String,
+    previous: List<CastSubtitleSource>,
+    episodeId: String,
+    sources: List<CastSubtitleSource>,
+): Boolean = previousEpisode == episodeId && previous.isNotEmpty() && sources.size > previous.size &&
+    sources.subList(0, previous.size) == previous
