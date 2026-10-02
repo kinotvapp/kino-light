@@ -539,6 +539,16 @@ object NuvioPluginConverter {
 
     """.trimIndent() + "\n"
 
+    /**
+     * The ref an availability check resolves for a search item ([TitleAvailability]): a movie's own
+     * ref, a series' first episode (its own ref has no episode, and `resolve` refuses it with
+     * "falta elegir temporada y capítulo"). An unreadable ref is returned as is.
+     */
+    fun availabilityRef(kind: String, ref: String): String {
+        if (kind != "series") return ref
+        return runCatching { JSONObject(ref).put("season", 1).put("episode", 1).toString() }.getOrDefault(ref)
+    }
+
     /** `resolve`'s `not_found` detail: the scraper answered, with no stream at all. */
     const val NO_STREAMS = "sin resultados"
 

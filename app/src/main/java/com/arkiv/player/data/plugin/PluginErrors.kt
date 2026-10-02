@@ -35,7 +35,7 @@ object PluginErrors {
      */
     fun userMessage(code: String, pluginName: String, place: String = PluginsPlace.current): String? = when (code) {
         AUTH_REQUIRED -> "Configura $pluginName en $place"
-        NOT_FOUND -> "No se encontró en $pluginName"
+        NOT_FOUND -> "Esta fuente ya no tiene este título ($pluginName)"
         GEO_BLOCKED -> "Este contenido no está disponible en tu región"
         RATE_LIMITED -> "$pluginName está limitando las peticiones; intenta en unos minutos"
         UNAVAILABLE -> "$pluginName no está disponible ahora"

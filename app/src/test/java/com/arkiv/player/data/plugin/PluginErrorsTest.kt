@@ -6,7 +6,7 @@ import org.junit.Test
 class PluginErrorsTest {
     @Test fun `typed errors read in Bogota Spanish with the plugin name`() {
         assertEquals("Configura Jellyfin en Ajustes ▸ Plugins", PluginErrors.userMessage("auth_required", "Jellyfin", PluginsPlace.TV))
-        assertEquals("No se encontró en Jellyfin", PluginErrors.userMessage("not_found", "Jellyfin"))
+        assertEquals("Esta fuente ya no tiene este título (Jellyfin)", PluginErrors.userMessage("not_found", "Jellyfin"))
         assertEquals("Este contenido no está disponible en tu región", PluginErrors.userMessage("geo_blocked", "Jellyfin"))
         assertEquals("Jellyfin está limitando las peticiones; intenta en unos minutos", PluginErrors.userMessage("rate_limited", "Jellyfin"))
         assertEquals("Jellyfin no está disponible ahora", PluginErrors.userMessage("unavailable", "Jellyfin"))

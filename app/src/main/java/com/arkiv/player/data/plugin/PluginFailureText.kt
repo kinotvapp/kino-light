@@ -40,7 +40,7 @@ object PluginFailureText {
 
     /** The adapter's clean "nothing here" answers: the scraper ran to the end, whatever mirrors it met. */
     private fun adapterFoundNothing(e: PluginErrorException, name: String): String? = when (e.message.orEmpty()) {
-        NuvioPluginConverter.NO_STREAMS -> "$name no encontró este título"
+        NuvioPluginConverter.NO_STREAMS -> "Esta fuente ya no tiene este título ($name)"
         NuvioPluginConverter.ONLY_TORRENTS -> "$name solo tiene torrents de este título"
         else -> null
     }

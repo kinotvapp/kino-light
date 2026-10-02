@@ -20,6 +20,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.json.JSONArray
 import org.json.JSONObject
@@ -121,7 +122,16 @@ class PluginContentSource(
      * "no responde" strike), which is right: the call being answered keeps running.
      */
     override val searchTimeoutMs: Long? =
-        SEARCH_TIMEOUT_MS + maxOf(HOME_TIMEOUT_MS, BROWSE_TIMEOUT_MS, EPISODES_TIMEOUT_MS, resolveTimeoutMs) + SEARCH_BACKSTOP_GRACE_MS
+        SEARCH_TIMEOUT_MS + maxOf(HOME_TIMEOUT_MS, BROWSE_TIMEOUT_MS, EPISODES_TIMEOUT_MS, resolveTimeoutMs) + SEARCH_BACKSTOP_GRACE_MS +
+            (if (plugin.record.nuvioScraperId != null) AVAILABILITY_BUDGET_MS else 0L)
+
+    /**
+     * A converted Nuvio scraper's `search` doesn't know whether the scraper has a title: it answers
+     * the TMDB id it was asked about (or TMDB's own matches for a typed query) for every title. Its
+     * items are confirmed with one `resolve` each ([TitleAvailability]) before they are listed;
+     * every other plugin's search answers from the site itself and is listed as is.
+     */
+    private val confirmsTitles = plugin.record.nuvioScraperId != null
 
     override fun recognizes(ref: String): Boolean = ref.startsWith(PluginRef.prefixFor(id))
 
@@ -155,10 +165,41 @@ class PluginContentSource(
             }
             log("[$id] search ok after ${System.currentTimeMillis() - t0} ms")
             val page = searchPageOf(out, query)
-            page.items.forEach { emit(SearchEvent.ResultEvent(source, resultFrom(plugin, it))) }
-            emit(SearchEvent.SourceDone(source, page.items.size, System.currentTimeMillis() - t0, more = page.next))
+            val items = if (confirmsTitles) {
+                val checked = confirmed(page.items)
+                val failure = checked.noAnswer
+                if (checked.available.isEmpty() && failure != null) {
+                    val error = PluginCalls.explained(failure, name) ?: when (failure) {
+                        is PluginTimeoutException -> "tardó más de ${failure.seconds} s en confirmar si tiene este título"
+                        else -> "no pudo confirmar si tiene este título"
+                    }
+                    log("[$id] availability check failed after ${System.currentTimeMillis() - t0} ms: $error")
+                    emit(SearchEvent.SourceError(source, error, System.currentTimeMillis() - t0, 0, cause = failure))
+                    return@flow
+                }
+                log("[$id] availability: ${checked.available.size} of ${page.items.size} confirmed after ${System.currentTimeMillis() - t0} ms")
+                checked.available
+            } else {
+                page.items
+            }
+            items.forEach { emit(SearchEvent.ResultEvent(source, resultFrom(plugin, it))) }
+            emit(SearchEvent.SourceDone(source, items.size, System.currentTimeMillis() - t0, more = page.next))
         }
     }
+
+    /**
+     * The [items] the scraper confirms it has ([TitleAvailability]): one `resolve` each, as a
+     * background call (a slow check is no "no responde" strike), a movie by its own ref and a series
+     * by its first episode's ([NuvioPluginConverter.availabilityRef]). A movie's answer is kept in
+     * [ProbedStreams] for the tap that follows.
+     */
+    private suspend fun confirmed(items: List<PluginItem>): CheckedItems<PluginItem> =
+        TitleAvailability.check(items, AVAILABILITY_MAX_ITEMS, AVAILABILITY_BUDGET_MS, { item, timeoutMs ->
+            val ref = NuvioPluginConverter.availabilityRef(item.kind, item.ref)
+            TitleAvailability.probe {
+                withContext(BackgroundPluginCall) { caller.call(id, "resolve", JSONObject.quote(ref), timeoutMs) }
+            }.also { if (it is Availability.Available && ref == item.ref) ProbedStreams.put(id, item.ref, it.output) }
+        })
 
     /** "Ver más" on this plugin's search results: the same query, from [cursor] on. */
     suspend fun searchPage(queryJson: String, cursor: String): GatewayPage {
@@ -194,7 +235,8 @@ class PluginContentSource(
         // timeouts never count toward "No responde", and a slow scraper (~50 s for PelisPlusHD's title
         // variants) would otherwise never be saved.
         val limit = if (currentCoroutineContext()[PluginDownloadCall] != null) resolveTimeoutMs * DOWNLOAD_RESOLVE_FACTOR else resolveTimeoutMs
-        val out = callOrThrow("resolve", JSONObject.quote(own.ref), limit)
+        // The answer the search's availability check just got for this very title, if still fresh.
+        val out = ProbedStreams.take(id, own.ref) ?: callOrThrow("resolve", JSONObject.quote(own.ref), limit)
         // Outside the call on purpose: its limit (20 s, 75 s for a Nuvio scraper) and the pool's per-plugin lock are both over
         // by now, so a person taking their time to answer holds up neither.
         askAboutUndeclaredHosts(out, own)
@@ -334,6 +376,15 @@ class PluginContentSource(
         const val BROWSE_TIMEOUT_MS = 20_000L
         const val EPISODES_TIMEOUT_MS = 20_000L
         const val RESOLVE_TIMEOUT_MS = 20_000L
+
+        /**
+         * What a converted Nuvio scraper's search may spend confirming its titles ([TitleAvailability]),
+         * all checks together. Past it the source says it didn't answer and its titles are not listed.
+         */
+        const val AVAILABILITY_BUDGET_MS = 45_000L
+
+        /** How many of a converted scraper's search items get checked (a typed search answers up to 10). */
+        const val AVAILABILITY_MAX_ITEMS = 3
 
         /** `resolve` of a converted Nuvio scraper (see `resolveTimeoutMs`). */
         const val NUVIO_RESOLVE_TIMEOUT_MS = 75_000L

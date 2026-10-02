@@ -49,7 +49,7 @@ class PluginFailureTextTest {
     // A 404 is a normal "not here" while a scraper probes mirrors: never blamed.
     @Test fun `a 404 is not a failure cause`() {
         val e = PluginErrorException(PluginErrors.NOT_FOUND, NuvioPluginConverter.NO_STREAMS).with(trace { answered("mirror.example", 404) })
-        assertEquals("Fuente no encontró este título", shown(e))
+        assertEquals("Esta fuente ya no tiene este título (Fuente)", shown(e))
     }
 
     // A scraper walks many mirrors; a dead one is routine. When it still finished with a clean "nothing
@@ -61,7 +61,7 @@ class PluginFailureTextTest {
                 answered("mirror4.xyz", 403)
             },
         )
-        assertEquals("Fuente no encontró este título", shown(dns))
+        assertEquals("Esta fuente ya no tiene este título (Fuente)", shown(dns))
         val torrents = PluginErrorException(PluginErrors.UNAVAILABLE, NuvioPluginConverter.ONLY_TORRENTS)
             .with(trace { failed("mirror3.xyz", PluginCallTrace.Failure.TIMEOUT) })
         assertEquals("Fuente solo tiene torrents de este título", shown(torrents))
@@ -95,7 +95,7 @@ class PluginFailureTextTest {
     }
 
     @Test fun `the Nuvio adapter's own reasons`() {
-        assertEquals("Fuente no encontró este título", shown(PluginErrorException(PluginErrors.NOT_FOUND, NuvioPluginConverter.NO_STREAMS)))
+        assertEquals("Esta fuente ya no tiene este título (Fuente)", shown(PluginErrorException(PluginErrors.NOT_FOUND, NuvioPluginConverter.NO_STREAMS)))
         assertEquals("Fuente solo tiene torrents de este título", shown(PluginErrorException(PluginErrors.UNAVAILABLE, NuvioPluginConverter.ONLY_TORRENTS)))
         assertEquals(
             "Fuente no pudo obtener el video",
