@@ -39,6 +39,10 @@ class LocalFileServer(
     @Volatile
     var growing: Boolean = false
 
+    /** Extra response header lines (CRLF-terminated) for a finished file, e.g. Samsung's `CaptionInfo.sec` (DLNA). */
+    @Volatile
+    var extraHeaders: String = ""
+
     /** Returns the URL reachable from the LAN, or null if there's no IP (no network) or the file isn't there. */
     @Synchronized
     fun serve(file: File): String? {
@@ -260,6 +264,7 @@ class LocalFileServer(
             "Accept-Ranges: bytes\r\n" +
             rangeHeader +
             "Content-Length: $length\r\n" +
+            extraHeaders +
             "Connection: close\r\n\r\n"
 
         Log.i(

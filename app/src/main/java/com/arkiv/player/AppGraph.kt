@@ -1595,6 +1595,19 @@ class AppGraph(context: Context) {
             leftoverOf = { key -> tsRemuxer.leftover(key) },
             // A remux no TV is going to play any more stops downloading (what it wrote is kept).
             onRetired = { key -> tsRemuxer.stop(key) },
+            // The title's subtitles, when the load in course carries them in the manifest.
+            subtitles = { castSubtitles.manifestRenditions() },
+        )
+    }
+
+    /**
+     * The title's external subtitles for a TV (Chromecast and DLNA): served converted on the LAN, the
+     * phone's choice kept app-wide. See [com.arkiv.player.cast.CastSubtitles].
+     */
+    val castSubtitles: com.arkiv.player.cast.CastSubtitles by lazy {
+        com.arkiv.player.cast.CastSubtitles(
+            com.arkiv.player.cast.CastSubtitleServer(lanIp = { lanIp() }, log = { android.util.Log.i("KinoCastSubs", it) }),
+            deliveryOverride = { com.arkiv.player.cast.CastTextMedia.systemProperty("debug.kino.cast_subs") },
         )
     }
 
@@ -1694,7 +1707,7 @@ class AppGraph(context: Context) {
             ),
             // The Chromecast's own remux server: same pacing, same reuse of an earlier remux.
             remuxHls = remuxHlsServer,
-        )
+        ).also { it.subtitleSidecar = { castSubtitles.dlnaSidecar() } }
     }
 
     /**
@@ -1953,6 +1966,7 @@ class AppGraph(context: Context) {
                         }
                     },
                     onReplay = { r -> remuxHlsServer.planStartAt(r.uri, r.startPositionMs) },
+                    subtitles = castSubtitles,
                 ).also { _castSession = it }
             }
         }

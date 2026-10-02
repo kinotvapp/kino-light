@@ -53,6 +53,11 @@ class RemuxHlsServer(
      * Wi-Fi at 12x (review 2026-10-01). Not called by [stop] / [release]: their callers decide.
      */
     private val onRetired: (key: String) -> Unit = {},
+    /**
+     * The title's subtitles as in-manifest renditions (see `CastSubtitleDelivery.MANIFEST`), or none.
+     * Read on every master playlist request, so the list is the one of the load being served.
+     */
+    private val subtitles: () -> List<RemuxHls.SubtitleRendition> = { emptyList() },
 ) {
 
     /** A finished-for-good prefix of the remux, from an earlier cast. Indexed once: it never grows. */
@@ -548,7 +553,11 @@ class RemuxHlsServer(
         return when (val name = route.name) {
             "master.m3u8" -> {
                 onMasterRequest(s)
-                sendText(out, RemuxHls.masterPlaylist(s.initIndex().tracks, s.pieces().map { it.fragment }), head)
+                sendText(
+                    out,
+                    RemuxHls.masterPlaylist(s.initIndex().tracks, s.pieces().map { it.fragment }, subtitleRenditions(s)),
+                    head,
+                )
             }
             "media.m3u8" -> {
                 val segments = s.segments()
@@ -569,7 +578,15 @@ class RemuxHlsServer(
                 }
             }
             "init.mp4" -> sendInit(out, s, head)
-            else -> {
+            // A subtitle rendition's playlist: the video's own segments, each pointing at that
+            // window of the subtitle (see RemuxHls.subtitlePlaylist).
+            else -> if (RemuxHls.subtitleNumber(name) != null) {
+                val rendition = subtitleRenditions(s).getOrNull(RemuxHls.subtitleNumber(name) ?: -1)
+                if (rendition == null) {
+                    out.write(response("404 Not Found", "text/plain", 0))
+                    0L
+                } else sendText(out, RemuxHls.subtitlePlaylist(s.segments(), s.timelineComplete(), rendition.segmentBase), head)
+            } else {
                 val n = RemuxHls.segmentNumber(name)
                 val segments = s.segments()
                 val segment = n?.let { segments.getOrNull(it) }
@@ -600,6 +617,14 @@ class RemuxHlsServer(
             }
         }
     }
+
+    /**
+     * [subtitles] for [s], never throwing into a request: no renditions is a playable master. Only
+     * the Chromecast's remux carries them (they are its last load's): a DLNA cast's ([Source.lan]
+     * set) gets its subtitles in the DIDL instead, see `DlnaSubtitles`.
+     */
+    private fun subtitleRenditions(s: Source): List<RemuxHls.SubtitleRendition> =
+        if (s.lan != null) emptyList() else runCatching(subtitles).getOrDefault(emptyList())
 
     private fun sendText(out: OutputStream, body: String, head: Boolean): Long {
         val bytes = body.toByteArray()
@@ -795,7 +820,11 @@ object RemuxHls {
      * One variant, so the receiver is TOLD the codecs instead of guessing them: an HLS player that
      * has to guess assumes H.264/AAC, and the Magis titles this serves are HEVC.
      */
-    fun masterPlaylist(tracks: List<Fmp4Index.Track>, fragments: List<Fmp4Index.Fragment>): String = buildString {
+    fun masterPlaylist(
+        tracks: List<Fmp4Index.Track>,
+        fragments: List<Fmp4Index.Fragment>,
+        subtitles: List<SubtitleRendition> = emptyList(),
+    ): String = buildString {
         val codecs = tracks.mapNotNull { it.codec }.joinToString(",")
         val video = tracks.firstOrNull { it.handler == "vide" }
         val seconds = fragments.sumOf { it.durationSec }
@@ -806,13 +835,63 @@ object RemuxHls {
         append("#EXTM3U\n")
         append("#EXT-X-VERSION:7\n")
         append("#EXT-X-INDEPENDENT-SEGMENTS\n")
+        // Off by default (AUTOSELECT/DEFAULT=NO): the phone turns one on with setActiveMediaTracks.
+        subtitles.forEachIndexed { i, sub ->
+            append("#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"").append(SUBTITLE_GROUP).append('"')
+            append(",NAME=\"").append(attr(sub.name)).append('"')
+            if (sub.language.isNotBlank() && sub.language != "und") append(",LANGUAGE=\"").append(attr(sub.language)).append('"')
+            append(",AUTOSELECT=NO,DEFAULT=NO,URI=\"subs").append(i).append(".m3u8\"\n")
+        }
         append("#EXT-X-STREAM-INF:BANDWIDTH=").append(bandwidth)
         if (codecs.isNotEmpty()) append(",CODECS=\"").append(codecs).append('"')
         if (video != null && video.width > 0 && video.height > 0) {
             append(",RESOLUTION=").append(video.width).append('x').append(video.height)
         }
+        if (subtitles.isNotEmpty()) append(",SUBTITLES=\"").append(SUBTITLE_GROUP).append('"')
         append('\n')
         append("media.m3u8\n")
+    }
+
+    /**
+     * One subtitle as an in-manifest rendition: [name] and [language] (BCP-47) for the receiver's
+     * menu, and [segmentBase], the subtitle server's URL its segments append `<fromMs>-<toMs>.vtt`
+     * to (`CastSubtitleRoutes.segmentBase`). Its index in the list is its `subs<i>.m3u8`.
+     */
+    data class SubtitleRendition(val name: String, val language: String, val segmentBase: String)
+
+    private const val SUBTITLE_GROUP = "subs"
+
+    /** A quoted-string attribute can't hold a quote or a line break. */
+    private fun attr(s: String): String = s.replace('"', '\'').replace('\n', ' ').replace('\r', ' ')
+
+    /** `subs<n>.m3u8` → n, anything else → null. */
+    fun subtitleNumber(name: String): Int? =
+        Regex("^subs(\\d{1,3})\\.m3u8$").find(name)?.groupValues?.get(1)?.toIntOrNull()
+
+    /**
+     * A subtitle rendition's playlist: the SAME segments as the video's [mediaPlaylist] (same
+     * boundaries, same target duration, EVENT until [complete]), each one the WebVTT of the cues in
+     * that window, in the receiver's time. Mirroring matters: a subtitle playlist that called itself
+     * VOD, ran past what the video has, or had a 2 h target duration would change how the receiver's
+     * HLS player sees the whole presentation (live or not, how far behind the edge to sit) and could
+     * stall the video itself.
+     */
+    fun subtitlePlaylist(segments: List<Segment>, complete: Boolean, segmentBase: String): String = buildString {
+        val target = maxOf(TARGET_DURATION, Math.ceil(segments.maxOfOrNull { it.durationSec } ?: 0.0).toInt())
+        append("#EXTM3U\n")
+        append("#EXT-X-VERSION:7\n")
+        append("#EXT-X-TARGETDURATION:$target\n")
+        append("#EXT-X-MEDIA-SEQUENCE:0\n")
+        append("#EXT-X-PLAYLIST-TYPE:").append(if (complete) "VOD" else "EVENT").append('\n')
+        var at = 0.0
+        segments.forEach { s ->
+            val from = Math.round(at * 1000)
+            at += s.durationSec
+            val to = maxOf(Math.round(at * 1000), from + 1)
+            append(String.format(java.util.Locale.US, "#EXTINF:%.3f,\n", s.durationSec))
+            append(segmentBase).append(from).append('-').append(to).append(".vtt\n")
+        }
+        if (complete) append("#EXT-X-ENDLIST\n")
     }
 
     data class Route(val token: String, val name: String)

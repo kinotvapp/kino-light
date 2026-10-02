@@ -179,8 +179,8 @@ internal class DlnaState(
     }
 
     /** The menu's line about the TV while it is open during a DLNA cast ([castTracksNote]); null otherwise. */
-    fun tracksNote(menuOpen: Boolean): String? =
-        if (menuOpen && active != null) castTracksNote(true, DlnaAudioSwitch.routeOf(dlna.activeKind())) else null
+    fun tracksNote(menuOpen: Boolean, externalSubtitles: List<ResolvedSub>?): String? =
+        if (menuOpen && active != null) castTracksNote(true, DlnaAudioSwitch.routeOf(dlna.activeKind()), externalSubtitles) else null
 
     /**
      * Another subtitle picked in the phone's menu while the TV plays. The choice is the phone's
