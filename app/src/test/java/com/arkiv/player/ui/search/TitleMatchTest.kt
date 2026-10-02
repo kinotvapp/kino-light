@@ -16,7 +16,7 @@ class TitleMatchTest {
 
     @Test fun `normalization drops accents, case, punctuation and a leading article`() {
         assertEquals("dark knight", TitleMatch.normalize("The Dark Knight!"))
-        assertEquals("el senor", TitleMatch.normalize("El Señor"))
+        assertEquals("senor",TitleMatch.normalize("El Señor"))
         assertEquals("amelie", TitleMatch.normalize("Amélie"))
         assertEquals("spider man", TitleMatch.normalize("Spider-Man"))
     }

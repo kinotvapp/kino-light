@@ -97,7 +97,7 @@ class XuperErrorMappingTest {
         }
         // Any other message keeps the code's generic line.
         val other = PluginCalls.typed(PluginErrorException(PluginErrors.NOT_FOUND, "剧集不存在"), "xuper", "Xuper", "resolve")
-        assertEquals("No se encontró en Xuper", other.message)
+        assertEquals("Esta fuente ya no tiene este título (Xuper)", other.message)
     }
 
     @Test fun `a RedError (network-level failure) maps to unavailable`() {
