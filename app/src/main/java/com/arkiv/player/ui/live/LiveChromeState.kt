@@ -10,7 +10,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 
 /** What the app bar can ask of the En vivo screen (the "+" menu). */
-enum class LiveChromeAction { ADD_CHANNEL, ADD_PLAYLIST, MANAGE }
+enum class LiveChromeAction { ADD_CHANNEL, ADD_PLAYLIST, ADD_XTREAM, ADD_IPTV_ORG, MANAGE }
 
 /**
  * The bridge between the phone's app bar (guide toggle, "Recargar", "+") and the En vivo screen below it.

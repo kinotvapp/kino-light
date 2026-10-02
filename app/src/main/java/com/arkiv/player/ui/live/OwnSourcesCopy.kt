@@ -6,12 +6,27 @@ import com.arkiv.player.data.live.OwnLive
 object OwnSourcesCopy {
     const val ADD_MENU = "Agregar canal o lista"
     const val ADD_CHANNEL = "Agregar un canal"
-    const val ADD_PLAYLIST = "Agregar una lista (M3U o W3U)"
+    const val ADD_PLAYLIST = "Agregar una lista (M3U, W3U, XSPF o texto)"
+    const val ADD_XTREAM = "Agregar un servidor Xtream"
+    const val ADD_IPTV_ORG = "Listas de iptv-org"
     const val MY_SOURCES = "Mis canales y listas"
     const val TITLE_CHANNEL = "Agregar un canal"
-    const val TITLE_PLAYLIST = "Agregar una lista (M3U o W3U)"
+    const val TITLE_PLAYLIST = "Agregar una lista"
+    const val TITLE_XTREAM = "Agregar un servidor Xtream"
     /** The kind chip of the add dialog: the format is told by the content, so one choice covers M3U and W3U. */
-    const val KIND_PLAYLIST = "Lista M3U o W3U"
+    const val KIND_PLAYLIST = "Lista"
+    const val KIND_CHANNEL = "Canal"
+    const val KIND_XTREAM = "Servidor Xtream"
+    const val PLAYLIST_INFO = "M3U, W3U (Wiseplay), XSPF o un texto con una dirección por línea: se reconoce solo por su contenido."
+    const val XTREAM_SERVER = "Servidor"
+    const val XTREAM_SERVER_HINT = "Ej.: http://miservidor.com:8080"
+    const val XTREAM_USER = "Usuario"
+    const val XTREAM_PASS = "Contraseña"
+    const val XTREAM_SHOW = "Mostrar contraseña"
+    const val XTREAM_HIDE = "Ocultar contraseña"
+    const val XTREAM_INFO = "Los datos que te dio tu proveedor. Solo se cargan los canales en vivo. Puedes pegar la dirección completa (get.php o player_api.php) en «Servidor» y se separa sola."
+    const val IPTV_ORG_TITLE = "Listas de iptv-org"
+    const val IPTV_ORG_INFO = "Canales gratuitos y públicos que mantiene la comunidad de iptv-org. Elige un país, un idioma o una categoría y se agrega como una lista más."
     const val TITLE_EDIT = "Editar"
     const val NAME = "Nombre"
     const val URL_CHANNEL = "Dirección del canal (.m3u8)"
@@ -48,10 +63,12 @@ object OwnSourcesCopy {
 
     fun confirmDelete(name: String) = "¿Eliminar «$name»? También se quitará del otro aparato vinculado."
     fun kindLabel(playlist: Boolean) = if (playlist) "Lista" else "Canal"
+    /** The manager's label of a stored source: a Xtream server is told apart by its address. */
+    fun kindLabel(kind: String, url: String) = if (kind == "PLAYLIST" && com.arkiv.player.data.live.XtreamUrl.isApi(url)) "Xtream" else kindLabel(kind == "PLAYLIST")
     fun fileLabel(name: String) = "Archivo «$name»"
 
     /** What the manager shows of an address: its server, so a long token never has to fit on one line. */
     fun hostOf(url: String): String =
         if (com.arkiv.player.data.live.OwnPastedList.isPasted(url)) PASTED_LABEL
-        else runCatching { java.net.URI(url).host }.getOrNull() ?: url
+        else com.arkiv.player.data.live.XtreamUrl.hostOf(url) ?: runCatching { java.net.URI(url).host }.getOrNull() ?: url
 }

@@ -38,6 +38,11 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.arkiv.player.data.db.OwnLiveSourceEntity
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import com.arkiv.player.data.live.IptvOrgCatalog
+import com.arkiv.player.data.live.IptvOrgKind
+import com.arkiv.player.data.live.XtreamUrl
 import com.arkiv.player.data.live.OwnField
 import com.arkiv.player.data.live.OwnKind
 import com.arkiv.player.data.live.OwnProbe
@@ -47,6 +52,7 @@ import com.arkiv.player.data.live.OwnProbe
 fun OwnSourceDialogs(vm: OwnSourcesViewModel, showManager: Boolean, onCloseManager: () -> Unit) {
     val ui by vm.ui.collectAsStateWithLifecycle()
     if (ui.open) OwnSourceFormDialog(ui, vm)
+    if (ui.picker) OwnIptvOrgPicker(ui, vm)
     if (showManager) OwnSourcesManager(vm, onCloseManager)
 }
 
@@ -57,12 +63,14 @@ private fun OwnSourceFormDialog(ui: OwnFormUi, vm: OwnSourcesViewModel) {
         mutableStateOf(f.userAgent.isNotEmpty() || f.referer.isNotEmpty() || f.epgUrl.isNotEmpty() || f.logo.isNotEmpty() || f.groupName.isNotEmpty())
     }
     val playlist = f.kind == OwnKind.PLAYLIST
+    val xtream = ui.xtream
     AlertDialog(
         onDismissRequest = { if (!ui.busy) vm.dismiss() },
         title = {
             Text(
                 when {
                     ui.editingId != null -> OwnSourcesCopy.TITLE_EDIT
+                    xtream != null -> OwnSourcesCopy.TITLE_XTREAM
                     playlist -> OwnSourcesCopy.TITLE_PLAYLIST
                     else -> OwnSourcesCopy.TITLE_CHANNEL
                 },
@@ -72,13 +80,16 @@ private fun OwnSourceFormDialog(ui: OwnFormUi, vm: OwnSourcesViewModel) {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (ui.editingId == null) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(selected = !playlist, onClick = { vm.change(f.copy(kind = OwnKind.CHANNEL)) }, label = { Text("Canal") })
-                        FilterChip(selected = playlist, onClick = { vm.change(f.copy(kind = OwnKind.PLAYLIST)) }, label = { Text(OwnSourcesCopy.KIND_PLAYLIST) })
+                        FilterChip(selected = !playlist, onClick = { vm.setXtreamMode(false); vm.change(f.copy(kind = OwnKind.CHANNEL)) }, label = { Text(OwnSourcesCopy.KIND_CHANNEL) })
+                        FilterChip(selected = playlist && xtream == null, onClick = { vm.setXtreamMode(false); vm.change(f.copy(kind = OwnKind.PLAYLIST)) }, label = { Text(OwnSourcesCopy.KIND_PLAYLIST) })
+                        FilterChip(selected = xtream != null, onClick = { vm.setXtreamMode(true) }, label = { Text(OwnSourcesCopy.KIND_XTREAM) })
                     }
                 }
                 OwnTextField(OwnSourcesCopy.NAME, f.name, ui.errors[OwnField.NAME]) { vm.change(f.copy(name = it)) }
                 val pastedLabel = ui.pasted
-                if (playlist && pastedLabel != null) {
+                if (xtream != null) {
+                    OwnXtreamFields(ui, xtream, vm)
+                } else if (playlist && pastedLabel != null) {
                     // A list with no address: what it is, and how to replace it.
                     Text(pastedLabel, style = MaterialTheme.typography.titleSmall)
                     if (ui.editingId != null && f.pastedText == null) {
@@ -91,7 +102,8 @@ private fun OwnSourceFormDialog(ui: OwnFormUi, vm: OwnSourcesViewModel) {
                         placeholder = if (playlist) OwnSourcesCopy.URL_PLAYLIST_HINT else OwnSourcesCopy.URL_CHANNEL_HINT,
                     ) { vm.change(f.copy(url = it)) }
                 }
-                if (playlist) {
+                if (playlist && xtream == null) {
+                    Text(OwnSourcesCopy.PLAYLIST_INFO, style = MaterialTheme.typography.bodySmall)
                     OwnPasteOrFile(vm, enabled = !ui.busy)
                     if (pastedLabel == null) Text(OwnSourcesCopy.PASTE_HINT, style = MaterialTheme.typography.bodySmall)
                     else TextButton(onClick = vm::clearPasted, enabled = !ui.busy) { Text(OwnSourcesCopy.USE_URL) }
@@ -102,6 +114,7 @@ private fun OwnSourceFormDialog(ui: OwnFormUi, vm: OwnSourcesViewModel) {
                 TextButton(onClick = { advanced = !advanced }) { Text(OwnSourcesCopy.ADVANCED + if (advanced) " ▴" else " ▾") }
                 if (advanced) {
                     if (playlist) {
+                        // A Xtream server brings its own guide (xmltv.php); this one is for another.
                         OwnTextField(OwnSourcesCopy.EPG, f.epgUrl, ui.errors[OwnField.EPG], uri = true) { vm.change(f.copy(epgUrl = it)) }
                     } else {
                         OwnTextField(OwnSourcesCopy.GROUP, f.groupName, null) { vm.change(f.copy(groupName = it)) }
@@ -121,7 +134,10 @@ private fun OwnSourceFormDialog(ui: OwnFormUi, vm: OwnSourcesViewModel) {
         confirmButton = { TextButton(onClick = vm::save, enabled = !ui.busy) { Text(OwnSourcesCopy.SAVE) } },
         dismissButton = {
             Row {
-                TextButton(onClick = vm::probeNow, enabled = !ui.busy && f.url.isNotBlank() && ui.pasted == null) { Text(OwnSourcesCopy.PROBE) }
+                TextButton(
+                    onClick = vm::probeNow,
+                    enabled = !ui.busy && ui.pasted == null && (if (xtream != null) xtream.server.isNotBlank() else f.url.isNotBlank()),
+                ) { Text(OwnSourcesCopy.PROBE) }
                 TextButton(onClick = vm::dismiss, enabled = !ui.busy) { Text(OwnSourcesCopy.CANCEL) }
             }
         },
@@ -179,6 +195,54 @@ private fun readPickedList(context: Context, uri: Uri): Triple<String?, ByteArra
     }
 }
 
+/** Server, user and password of a Xtream account. The password is masked (with a toggle) and never leaves the device except through the synced row. */
+@Composable
+private fun OwnXtreamFields(ui: OwnFormUi, x: XtreamInput, vm: OwnSourcesViewModel) {
+    var show by remember { mutableStateOf(false) }
+    Text(OwnSourcesCopy.XTREAM_INFO, style = MaterialTheme.typography.bodySmall)
+    OwnTextField(
+        OwnSourcesCopy.XTREAM_SERVER, x.server, ui.xtreamErrors[XtreamUrl.XtreamField.SERVER] ?: ui.errors[OwnField.URL], uri = true,
+        placeholder = OwnSourcesCopy.XTREAM_SERVER_HINT,
+    ) { vm.changeXtream(x.copy(server = it)) }
+    OwnTextField(OwnSourcesCopy.XTREAM_USER, x.username, ui.xtreamErrors[XtreamUrl.XtreamField.USERNAME], uri = true) { vm.changeXtream(x.copy(username = it)) }
+    OutlinedTextField(
+        value = x.password, onValueChange = { vm.changeXtream(x.copy(password = it)) },
+        label = { Text(OwnSourcesCopy.XTREAM_PASS) }, singleLine = true,
+        isError = ui.xtreamErrors[XtreamUrl.XtreamField.PASSWORD] != null,
+        supportingText = ui.xtreamErrors[XtreamUrl.XtreamField.PASSWORD]?.let { { Text(it) } },
+        visualTransformation = if (show) VisualTransformation.None else PasswordVisualTransformation(),
+        keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, keyboardType = KeyboardType.Password, capitalization = KeyboardCapitalization.None),
+        modifier = Modifier.fillMaxWidth(),
+    )
+    TextButton(onClick = { show = !show }) { Text(if (show) OwnSourcesCopy.XTREAM_HIDE else OwnSourcesCopy.XTREAM_SHOW) }
+}
+
+/** The ready-made iptv-org lists: a country, a language or a category; one tap saves it as a list. */
+@Composable
+private fun OwnIptvOrgPicker(ui: OwnFormUi, vm: OwnSourcesViewModel) {
+    var kind by remember { mutableStateOf(IptvOrgKind.COUNTRY) }
+    AlertDialog(
+        onDismissRequest = { if (!ui.busy) vm.dismiss() },
+        title = { Text(OwnSourcesCopy.IPTV_ORG_TITLE) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(OwnSourcesCopy.IPTV_ORG_INFO, style = MaterialTheme.typography.bodySmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    IptvOrgKind.entries.forEach { k -> FilterChip(selected = kind == k, onClick = { kind = k }, label = { Text(k.label) }) }
+                }
+                IptvOrgCatalog.of(kind).forEach { item ->
+                    TextButton(onClick = { vm.addIptvOrg(item) }, enabled = !ui.busy, modifier = Modifier.fillMaxWidth()) {
+                        Text(item.title, modifier = Modifier.fillMaxWidth())
+                    }
+                }
+                ui.notice?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                if (ui.busy) Text("Agregando…")
+            }
+        },
+        confirmButton = { TextButton(onClick = vm::dismiss, enabled = !ui.busy) { Text(OwnSourcesCopy.CLOSE) } },
+    )
+}
+
 @Composable
 private fun OwnTextField(label: String, value: String, error: String?, uri: Boolean = false, placeholder: String? = null, onChange: (String) -> Unit) {
     OutlinedTextField(
@@ -218,7 +282,7 @@ private fun OwnSourcesManager(vm: OwnSourcesViewModel, onClose: () -> Unit) {
                             Column(Modifier.weight(1f)) {
                                 Text(s.name, style = MaterialTheme.typography.bodyLarge)
                                 Text(
-                                    "${OwnSourcesCopy.kindLabel(s.kind == "PLAYLIST")}\u00A0·\u00A0${OwnSourcesCopy.hostOf(s.url)}",
+                                    "${OwnSourcesCopy.kindLabel(s.kind, s.url)}\u00A0·\u00A0${OwnSourcesCopy.hostOf(s.url)}",
                                     style = MaterialTheme.typography.bodySmall, maxLines = 1,
                                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                                 )

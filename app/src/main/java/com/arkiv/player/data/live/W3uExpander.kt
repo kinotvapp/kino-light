@@ -111,6 +111,7 @@ internal object M3uWriter {
             if (e.tvgId.isNotEmpty()) out.append(" tvg-id=\"").append(attr(e.tvgId)).append('"')
             if (e.tvgName.isNotEmpty()) out.append(" tvg-name=\"").append(attr(e.tvgName)).append('"')
             if (e.logo.isNotEmpty()) out.append(" tvg-logo=\"").append(attr(e.logo)).append('"')
+            if (e.tvgShiftMin != 0) out.append(" tvg-shift=\"").append((e.tvgShiftMin / 60.0).toString().removeSuffix(".0")).append('"')
             if (e.number > 0) out.append(" tvg-chno=\"").append(e.number.toString()).append('"')
             if (e.group.isNotEmpty()) out.append(" group-title=\"").append(attr(e.group)).append('"')
             out.append(',').append(line(e.name)).append('\n')

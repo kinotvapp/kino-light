@@ -444,6 +444,14 @@ fun ArkivRoot(
                                         onClick = { addMenu = false; liveChrome.request(com.arkiv.player.ui.live.LiveChromeAction.ADD_PLAYLIST) },
                                     )
                                     DropdownMenuItem(
+                                        text = { Text(com.arkiv.player.ui.live.OwnSourcesCopy.ADD_XTREAM) },
+                                        onClick = { addMenu = false; liveChrome.request(com.arkiv.player.ui.live.LiveChromeAction.ADD_XTREAM) },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text(com.arkiv.player.ui.live.OwnSourcesCopy.ADD_IPTV_ORG) },
+                                        onClick = { addMenu = false; liveChrome.request(com.arkiv.player.ui.live.LiveChromeAction.ADD_IPTV_ORG) },
+                                    )
+                                    DropdownMenuItem(
                                         text = { Text(com.arkiv.player.ui.live.OwnSourcesCopy.MY_SOURCES) },
                                         onClick = { addMenu = false; liveChrome.request(com.arkiv.player.ui.live.LiveChromeAction.MANAGE) },
                                     )

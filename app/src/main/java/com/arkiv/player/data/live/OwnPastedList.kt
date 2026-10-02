@@ -8,7 +8,7 @@ import java.util.Base64
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 
-enum class OwnPastedFormat { M3U, W3U }
+enum class OwnPastedFormat { M3U, W3U, XSPF, PLAIN }
 
 sealed interface OwnPastedCheck {
     /** [text] is the normalised list to store, [digest] its sha256, [summary] what the person is told it holds. */
@@ -40,11 +40,11 @@ object OwnPastedList {
     const val PART_CHARS = 40_000
     /** Enough for [MAX_BYTES] that gzip cannot shrink (~70 parts); anything above is refused. */
     const val MAX_PARTS = 96
-    val EXTENSIONS = setOf("m3u", "m3u8", "w3u", "json")
+    val EXTENSIONS = setOf("m3u", "m3u8", "w3u", "json", "xspf", "txt", "gz")
 
     const val EMPTY = "No hay nada para pegar: copia primero el texto de la lista (M3U o W3U) y vuelve a intentarlo"
     const val TOO_LARGE = "La lista pesa más de 2 MB y no se puede pegar ni abrir como archivo. Súbela a internet y agrégala con su dirección."
-    const val WRONG_FILE = "Ese archivo no es una lista: elige uno .m3u, .m3u8, .w3u o .json"
+    const val WRONG_FILE = "Ese archivo no es una lista: elige uno .m3u, .m3u8, .w3u, .json, .xspf o .txt"
     const val UNREADABLE_FILE = "No se pudo leer el archivo. Intenta con otro."
 
     private val DIGEST = Regex("[0-9a-f]{64}")
@@ -68,11 +68,16 @@ object OwnPastedList {
         val text = normalize(raw)
         if (text.isEmpty()) return OwnPastedCheck.Refused(EMPTY)
         if (text.toByteArray(Charsets.UTF_8).size > MAX_BYTES) return OwnPastedCheck.Refused(TOO_LARGE)
-        val head = text.take(64).lowercase()
-        if (head.startsWith("<!doctype") || head.startsWith("<html") || head.startsWith("<?xml")) {
-            return OwnPastedCheck.Refused("Eso es una página web, no una lista M3U o W3U")
+        // The format is told by the content: M3U, W3U (Wiseplay), XSPF or one address per line.
+        return when (ListFormats.detect(text)) {
+            ListFormat.XSPF -> converted(text, OwnPastedFormat.XSPF, "Lista XSPF")
+            ListFormat.PLAIN -> converted(text, OwnPastedFormat.PLAIN, "Lista de direcciones")
+            ListFormat.XMLTV -> OwnPastedCheck.Refused("Eso es una guía de programación (XMLTV), no una lista de canales. Pégala en «Guía de programación» de una lista.")
+            ListFormat.XTREAM_JSON -> OwnPastedCheck.Refused("Eso es la respuesta de un servidor Xtream, no una lista. Usa «Servidor Xtream» con su dirección, usuario y contraseña.")
+            ListFormat.WEB_PAGE -> OwnPastedCheck.Refused("Eso es una página web, no una lista M3U o W3U")
+            ListFormat.W3U -> w3u(text)
+            ListFormat.M3U, ListFormat.UNKNOWN -> m3u(text)
         }
-        return if (LenientJson.looksLikeJson(text)) w3u(text) else m3u(text)
     }
 
     /**
@@ -83,12 +88,28 @@ object OwnPastedList {
         val ext = name?.substringAfterLast('.', "")?.lowercase().orEmpty()
         if (name != null && '.' in name && ext !in EXTENSIONS) return OwnPastedCheck.Refused(WRONG_FILE)
         if (truncated || bytes.size > MAX_BYTES) return OwnPastedCheck.Refused(TOO_LARGE)
-        return check(M3uParser.decode(bytes))
+        // A gzip file (told by its magic bytes, whatever its name) is opened first, within the same cap.
+        val plain = if (ListFormats.isGzip(bytes)) gunzip(bytes) ?: return OwnPastedCheck.Refused(UNREADABLE_FILE) else bytes
+        if (plain.size > MAX_BYTES) return OwnPastedCheck.Refused(TOO_LARGE)
+        return check(M3uParser.decode(plain))
     }
 
     /** A list name from the file's name: "Fútbol.m3u8" -> "Fútbol". */
     fun nameFromFile(name: String?): String =
         name?.substringBeforeLast('.')?.trim()?.take(OwnSourceValidator.MAX_NAME).orEmpty()
+
+    private fun gunzip(bytes: ByteArray): ByteArray? = try {
+        GZIPInputStream(ByteArrayInputStream(bytes)).use { readCapped(it) ?: ByteArray(MAX_BYTES + 1) }
+    } catch (e: Exception) {
+        null
+    }
+
+    /** XSPF / plain lists are stored as pasted and turned into M3U when read ([ListFormatFetcher]); here they are only counted. */
+    private fun converted(text: String, format: OwnPastedFormat, label: String): OwnPastedCheck {
+        val n = M3uParser.parse(ListFormats.toM3u(text, if (format == OwnPastedFormat.XSPF) ListFormat.XSPF else ListFormat.PLAIN).orEmpty(), allow = ::allowed).total
+        if (n == 0) return OwnPastedCheck.Refused("$label: no encontré canales con una dirección que se pueda usar")
+        return OwnPastedCheck.Ok(text, digest(text), format, "$label: encontré ${channels(n)}")
+    }
 
     private fun m3u(text: String): OwnPastedCheck {
         val n = M3uParser.parse(text, allow = ::allowed).total

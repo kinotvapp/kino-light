@@ -28,6 +28,8 @@ data class M3uEntry(
      *  Any other license type (Widevine, etc.) is unsupported here and left out entirely. */
     val drmKeyId: String = "",
     val drmKey: String = "",
+    /** `tvg-shift` ("+2", "-5", "2.5": hours the list's guide is off for this channel) in minutes, 0 = none. Applied to its programmes. */
+    val tvgShiftMin: Int = 0,
 )
 
 /**
@@ -206,7 +208,14 @@ object M3uParser {
             language = info.attrs["tvg-language"].orEmpty(), country = info.attrs["tvg-country"].orEmpty(),
             headers = headers,
             drmKeyId = clearKey?.first.orEmpty(), drmKey = clearKey?.second.orEmpty(),
+            tvgShiftMin = shiftMinutes(info.attrs["tvg-shift"]),
         )
+    }
+
+    /** `tvg-shift` hours (decimal, optional sign, comma or dot) -> minutes; anything else, or past a day either way, is 0. */
+    internal fun shiftMinutes(raw: String?): Int {
+        val h = raw?.trim()?.replace(',', '.')?.removePrefix("+")?.toDoubleOrNull()?.takeIf { it.isFinite() } ?: return 0
+        return Math.round(h * 60).toInt().takeIf { it in -1440..1440 } ?: 0
     }
 
     private fun vlcOpt(v: String, into: MutableMap<String, String>) {
@@ -250,7 +259,7 @@ object M3uParser {
     }
 
     /** `kid:key` in hex, or the ClearKey JSON `{"keys":[{"kid":"<b64url>","k":"<b64url>"}]}` (its first key). Null unless both are 16 bytes. */
-    private fun clearKeyPair(raw: String): Pair<String, String>? {
+    internal fun clearKeyPair(raw: String): Pair<String, String>? {
         val text = raw.trim()
         if (text.startsWith("{")) {
             val key = runCatching { org.json.JSONObject(text).getJSONArray("keys").getJSONObject(0) }.getOrNull() ?: return null
@@ -284,7 +293,7 @@ object M3uParser {
         }
     }
 
-    private fun pairs(s: String, into: MutableMap<String, String>) {
+    internal fun pairs(s: String, into: MutableMap<String, String>) {
         s.split('&').forEach { pair ->
             val name = KEPT_HEADERS[pair.substringBefore('=').trim().lowercase()] ?: return@forEach
             val value = runCatching { java.net.URLDecoder.decode(pair.substringAfter('=', "").trim().replace("+", "%2B"), "UTF-8") }.getOrNull()

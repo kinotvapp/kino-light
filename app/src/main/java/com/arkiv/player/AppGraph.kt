@@ -1282,14 +1282,20 @@ class AppGraph(context: Context) {
                     // every redirect hop checked, a name that resolves into the LAN refused (PluginDns).
                     // A W3U (Wiseplay) list is expanded and saved as M3U; the lists it links to must be public too.
                     // A pasted / file list (`kino-list:<id>`) is read from its stored text instead, then goes the same way.
-                    fetcher = com.arkiv.player.data.live.W3uPlaylistFetcher(
-                        com.arkiv.player.data.live.PastedListFetcher(
-                            com.arkiv.player.data.live.PluginPlaylistFetcher(
-                                com.arkiv.player.data.plugin.PluginStreamHttp.client(pluginBaseHttp, com.arkiv.player.data.live.OwnLive.hosts),
+                    // XSPF, plain address lists and gzip answers are rewritten as M3U too (ListFormatFetcher), and a Xtream
+                    // server (`player_api.php` with a login) is asked for its live channels and saved as M3U (XtreamPlaylistFetcher).
+                    fetcher = com.arkiv.player.data.live.XtreamPlaylistFetcher(
+                        com.arkiv.player.data.live.W3uPlaylistFetcher(
+                            com.arkiv.player.data.live.ListFormatFetcher(
+                                com.arkiv.player.data.live.PastedListFetcher(
+                                    com.arkiv.player.data.live.PluginPlaylistFetcher(
+                                        com.arkiv.player.data.plugin.PluginStreamHttp.client(pluginBaseHttp, com.arkiv.player.data.live.OwnLive.hosts),
+                                    ),
+                                    content = { id -> ownLiveStore.contentOf(id) },
+                                ),
                             ),
-                            content = { id -> ownLiveStore.contentOf(id) },
+                            urlAllowed = { com.arkiv.player.data.live.OwnSourceValidator.checkUrl(it) is com.arkiv.player.data.live.OwnUrlCheck.Ok },
                         ),
-                        urlAllowed = { com.arkiv.player.data.live.OwnSourceValidator.checkUrl(it) is com.arkiv.player.data.live.OwnUrlCheck.Ok },
                     ),
                     cacheDir = java.io.File(root, "own"),
                     allCachesRoot = root,
