@@ -1,5 +1,7 @@
 package com.arkiv.player.dlna
 
+import com.arkiv.player.cast.CastStrategy
+
 /**
  * When a VOD file sent to the TV as it is (a bare MPEG-TS the TV's list mentions) gets rejected, the remux to a real MP4 is the
  * container every TV takes: worth one more try instead of leaving the person with "the TV rejected the video". Measured on an
@@ -37,4 +39,35 @@ internal object DirectPlayFallback {
      */
     fun remuxAfterEarlyStop(stage: String, advanced: Boolean): Boolean =
         !advanced && (stage == DlnaDiagnosis.STOPPED_EARLY || stage == DlnaDiagnosis.TRANSPORT_ERROR)
+
+    /**
+     * Whether a DLNA VOD cast moves on to the next stage of its chain ([DlnaRouteChain]) after the
+     * renderer REFUSED [route] over SOAP ([stage] the step, [upnpCode], [http]). The TV's own URL
+     * ([CastStrategy.Route.DIRECT]) goes through the proxy after any refusal with an HTTP error that
+     * is not a busy renderer (701); a file as it is through the proxy only after the refusals a real
+     * MP4 fixes ([shouldRemux]); the growing remux as HLS when [wholeFileAfterHls] says so. No HTTP
+     * answer at all is a TV that is not there: nothing else would reach it either.
+     */
+    fun advancesOnRejection(route: CastStrategy.Route, stage: String, upnpCode: Int?, http: Int): Boolean = when (route) {
+        CastStrategy.Route.DIRECT -> http in 400..599 && upnpCode != 701
+        CastStrategy.Route.PROXY -> shouldRemux(stage, upnpCode, http)
+        CastStrategy.Route.REMUX -> wholeFileAfterHls(upnpCode, http)
+        else -> false
+    }
+
+    /**
+     * Whether a DLNA VOD cast the renderer ACCEPTED moves on to the next stage when the monitor
+     * judges it failed ([stage], a [DlnaDiagnosis] stage) without it ever playing ([advanced]
+     * false): an early stop or a transport error ([remuxAfterEarlyStop]), a load that never reached
+     * PLAYING in time ([DlnaDiagnosis.STUCK_LOADING], [DlnaDiagnosis.NEVER_PLAYED]), and -- only for
+     * the TV's own URL, which it fetches from the Internet and never from the phone -- no request to
+     * the phone ([DlnaDiagnosis.NEVER_FETCHED], expected there). A cast that played and then stalled
+     * is the network's, not the route's.
+     */
+    fun advancesOnMonitor(route: CastStrategy.Route?, stage: String, advanced: Boolean): Boolean = when {
+        advanced -> false
+        stage == DlnaDiagnosis.NEVER_FETCHED -> route == CastStrategy.Route.DIRECT
+        stage == DlnaDiagnosis.STUCK_LOADING || stage == DlnaDiagnosis.NEVER_PLAYED -> true
+        else -> remuxAfterEarlyStop(stage, advanced)
+    }
 }

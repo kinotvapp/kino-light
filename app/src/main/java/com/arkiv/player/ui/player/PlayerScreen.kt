@@ -4507,7 +4507,7 @@ private fun PlayerContent(
 
     // DLNA devices dialog. Building the URL sent to the renderer lives in `sendToRenderer`; here
     // it's only left which item it comes from and what to do if the renderer rejects it.
-    DlnaDevicesDialog(dlnaState) { device ->
+    DlnaDevicesDialog(dlnaState) { device, atMs ->
         // Live via ExoPlayer (Task 1, light-magis pruning) is no longer in `playlist`: it falls to
         // `liveItem`, which carries the same `kind = SourceKind.LIVE` that `sendToRenderer` needs
         // to resolve the proxy's LAN URL (it doesn't use `ep.mediaUrl`/`castUrl` for live).
@@ -4521,8 +4521,9 @@ private fun PlayerContent(
         val ep = castMagis?.takeIf { it.kind == SourceKind.MAGIS || it.kind == SourceKind.PLUGIN }
             ?: playlistRef.value?.items?.getOrNull(currentIndex)
             ?: liveItem
-        // Where the person is, for the TV to start there (dlnaStartMs): never 0:00 when elsewhere.
-        val livePositionMs = runCatching { activePlayer.currentPosition }.getOrNull()
+        // Where the person is, for the TV to start there (dlnaStartMs): never 0:00 when elsewhere. From the
+        // Chromecast's trouble dialog ("Probar por DLNA"), where the Chromecast was.
+        val livePositionMs = atMs ?: runCatching { activePlayer.currentPosition }.getOrNull()
         // Silent from now on, as under a Chromecast (CastLocalHold): it used to pause only `controller`,
         // and a Magis/plugin title or a live channel played on under the TV.
         CastLocalHold.hold(controller, magisPlayer, livePlayer, dituPlayer, isLive)

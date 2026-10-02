@@ -35,10 +35,33 @@ internal object DlnaRenderer {
      * playlist with HTTP 500 / UPnP 716 (ERRORES-AMF, 0.9.45). A renderer that lists nothing is sent
      * it as before: some that play HLS answer no `GetProtocolInfo`.
      *
-     * There is no other route for a live channel: a continuous MPEG-TS out of the live proxy was
-     * tried (`experiment/dlna-live-ts`) and a real LG answered it 501 while a Samsung stalled.
+     * One that refuses HLS may still take the stream as ONE continuous MPEG-TS body: [liveRoute].
      */
     fun takesHls(sinkMimes: List<String>): Boolean = sinkMimes.isEmpty() || receiverOf(sinkMimes).playsHls
+
+    /** How an HLS stream (a live channel, a plugin's playlist) reaches a renderer: [liveRoute]. */
+    sealed interface HlsRoute {
+        /** The playlist as it is: the renderer lists an HLS type, or lists nothing. */
+        data object Playlist : HlsRoute
+
+        /** One continuous MPEG-TS body labelled [mime], the TS type the renderer lists ([com.arkiv.player.playback.ContinuousTs]). */
+        data class ContinuousTs(val mime: String) : HlsRoute
+
+        /** Neither: [noHlsMessage]. */
+        data object None : HlsRoute
+    }
+
+    /**
+     * The route for an HLS stream to a renderer that lists [sinkMimes]. The playlist whenever
+     * [takesHls]: an LG answered the continuous body 501 and a Samsung stalled on it
+     * (`experiment/dlna-live-ts`), and both list HLS. The continuous TS ONLY for a renderer that
+     * lists no HLS type and does list a TS one (the Philips "NMR" of ERRORES-AMF); nothing for one
+     * that lists neither.
+     */
+    fun liveRoute(sinkMimes: List<String>): HlsRoute = when {
+        takesHls(sinkMimes) -> HlsRoute.Playlist
+        else -> com.arkiv.player.playback.ContinuousTs.mimeFor(sinkMimes)?.let { HlsRoute.ContinuousTs(it) } ?: HlsRoute.None
+    }
 
     /** What the person is told when [takesHls] refuses: a [live] channel, or a title. */
     fun noHlsMessage(live: Boolean): String =

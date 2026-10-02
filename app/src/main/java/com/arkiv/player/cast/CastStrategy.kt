@@ -139,6 +139,30 @@ object CastStrategy {
     }
 
     /**
+     * Every route worth trying for a stream of [format], in order, each once: [choose]'s, then what
+     * follows a rejection of each one -- the receiver's own URL ([Route.DIRECT]) goes through the
+     * proxy next, and from there [afterRejection] (a TS it claimed to play to the remux, the growing
+     * remux as HLS to the whole MP4). So only the stages [receiver] allows: a renderer that lists no
+     * TS never gets one as it is, one that lists no HLS never gets the growing remux. Empty when
+     * nothing can carry it.
+     */
+    fun chain(
+        format: Format,
+        needsHeaders: Boolean,
+        directAllowed: Boolean,
+        remuxAvailable: Boolean,
+        receiver: Receiver = Receiver.CAST,
+    ): List<Route> {
+        val out = ArrayList<Route>()
+        var r = choose(format, needsHeaders, directAllowed, remuxAvailable, receiver = receiver)
+        while (r != Route.NONE && r !in out) {
+            out += r
+            r = if (r == Route.DIRECT) Route.PROXY else afterRejection(format, r, receiver, remuxAvailable)
+        }
+        return out
+    }
+
+    /**
      * A stream's MIME from its first bytes (a cheap probe of a URL nothing else describes), or
      * null when they say nothing: an HLS or DASH manifest by its text, a media container by its
      * signature ([VideoContainer.bySignature]).
