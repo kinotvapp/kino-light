@@ -1106,6 +1106,14 @@ class DlnaController(
     }
 
     /**
+     * [fetchSinkMimes] for a caller that has to decide BEFORE sending (an HLS playlist to a
+     * renderer that may list none, [DlnaRenderer.takesHls]). A network call: off the main thread.
+     */
+    fun sinkMimesOf(device: DlnaDevice): List<String> = fetchSinkMimes(device).also {
+        DlnaLog.diag("renderer formats (asked before sending): ${DlnaRenderer.summary(it)}")
+    }
+
+    /**
      * Asks the renderer how it's doing and logs every change. A renderer can answer 200 to `Play` and then
      * give up on the media, so this is where those failures are actually seen. Runs every 2 s for the first
      * minute and then every 10 s, up to ten minutes or until the cast is stopped.

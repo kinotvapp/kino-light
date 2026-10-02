@@ -331,7 +331,8 @@ private suspend fun sendToRendererNow(
         DlnaLog.i("sendToRenderer: kind=LIVE title='${ep.title.take(40)}' lanIp=${ip ?: "NONE"} liveProxyUrl=${DlnaXml.safeUrl(liveUrl)}")
         if (liveUrl != null) {
             withContext(Dispatchers.IO) {
-                dlna.playRawUrl(device, liveUrl, ep.title, "application/vnd.apple.mpegurl")
+                !refusedHls(dlna, device, "live-hls", live = true) &&
+                    dlna.playRawUrl(device, liveUrl, ep.title, "application/vnd.apple.mpegurl")
             }
         } else {
             // The proxy has no LAN URL to hand out (no WiFi/LAN address, or the live proxy isn't listening).
@@ -378,7 +379,14 @@ private suspend fun sendPluginHls(dlna: DlnaController, device: DlnaDevice, ep: 
         "sendToRenderer: kind=PLUGIN $shape mime=${ep.mime.ifBlank { "?" }} title='${ep.title.take(40)}' lanIp=${ip ?: "NONE"} " +
             "url=${DlnaXml.safeUrl(url)}" + if (!ep.mediaUrl.startsWith("http://127.0.0.1:")) " (direct ${DlnaXml.safeUrl(ep.mediaUrl)} via the LAN proxy)" else "",
     )
-    if (url != null) return withContext(Dispatchers.IO) { dlna.playRawUrl(device, url, ep.title, ep.mime.ifBlank { MIME_HLS }, startMs) }
+    if (url != null) {
+        val mime = ep.mime.ifBlank { MIME_HLS }
+        return withContext(Dispatchers.IO) {
+            val live = com.arkiv.player.data.plugin.PluginIds.isLiveEpisode(ep.episodeId)
+            !(mime == MIME_HLS && refusedHls(dlna, device, "plugin-hls", live)) &&
+                dlna.playRawUrl(device, url, ep.title, mime, startMs)
+        }
+    }
     withContext(Dispatchers.IO) {
         dlna.failedBeforeSending(
             device, kind = "plugin-$shape", stage = "no_lan_url",
@@ -387,6 +395,22 @@ private suspend fun sendPluginHls(dlna: DlnaController, device: DlnaDevice, ep: 
         )
     }
     return false
+}
+
+/**
+ * True after telling the person why, when [device] lists what it plays and no HLS type is in it
+ * ([DlnaRenderer.takesHls]): the playlist is never sent, since such a renderer answers
+ * `SetAVTransportURI` with a 500 (ERRORES-AMF). False when HLS may go. Blocking: on IO.
+ */
+private fun refusedHls(dlna: DlnaController, device: DlnaDevice, kind: String, live: Boolean): Boolean {
+    val sink = dlna.sinkMimesOf(device)
+    if (com.arkiv.player.dlna.DlnaRenderer.takesHls(sink)) return false
+    dlna.failedBeforeSending(
+        device, kind = kind, stage = "no_hls_route",
+        userMessage = com.arkiv.player.dlna.DlnaRenderer.noHlsMessage(live),
+        detail = "renderer ${com.arkiv.player.dlna.DlnaRenderer.summary(sink)}",
+    )
+    return true
 }
 
 /**

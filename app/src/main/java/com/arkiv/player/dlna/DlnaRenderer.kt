@@ -28,6 +28,23 @@ internal object DlnaRenderer {
         playsHls = sinkMimes.any { it.lowercase() in HLS_MIMES },
     )
 
+    /**
+     * Whether an HLS playlist may go to a renderer that lists [sinkMimes]. Refused only when the
+     * list is KNOWN and names no HLS type: a Philips "NMR" listing only `video/mpeg`,
+     * `video/vnd.dlna.mpeg-tts` and the like answered `SetAVTransportURI` for a live channel's
+     * playlist with HTTP 500 / UPnP 716 (ERRORES-AMF, 0.9.45). A renderer that lists nothing is sent
+     * it as before: some that play HLS answer no `GetProtocolInfo`.
+     *
+     * There is no other route for a live channel: a continuous MPEG-TS out of the live proxy was
+     * tried (`experiment/dlna-live-ts`) and a real LG answered it 501 while a Samsung stalled.
+     */
+    fun takesHls(sinkMimes: List<String>): Boolean = sinkMimes.isEmpty() || receiverOf(sinkMimes).playsHls
+
+    /** What the person is told when [takesHls] refuses: a [live] channel, or a title. */
+    fun noHlsMessage(live: Boolean): String =
+        if (live) "Este TV no puede reproducir canales en vivo por DLNA"
+        else "Este TV no puede reproducir este título por DLNA"
+
     /** One line for the log: how many types, and the ones the route depends on. */
     fun summary(sinkMimes: List<String>): String {
         if (sinkMimes.isEmpty()) return "lists nothing (no ConnectionManager or no answer)"
