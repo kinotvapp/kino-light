@@ -79,9 +79,13 @@ fun DownloadsScreen(
     val groups by vm.groups.collectAsStateWithLifecycle()
     // Where each finished download stands on its way to MP4 ("Preparando para la TV… NN%").
     val prep by graph.mp4Prep.status.collectAsStateWithLifecycle()
-    androidx.compose.runtime.LaunchedEffect(groups) {
-        val done = groups.flatMap { g -> g.episodes.mapNotNull { (it.status as? EpisodeDownloadStatus.Tracked)?.row } }
-            .filter { it.state == LocalDownloadState.COMPLETED }.map { it.episodeId }
+    // Keyed by the finished ids, not by `groups`: a download in progress republishes the groups
+    // every second, and the markers only change when a download finishes or is prepared.
+    val done = androidx.compose.runtime.remember(groups) {
+        groups.flatMap { g -> g.episodes.mapNotNull { (it.status as? EpisodeDownloadStatus.Tracked)?.row } }
+            .filter { it.state == LocalDownloadState.COMPLETED }.map { it.episodeId }.toSet()
+    }
+    androidx.compose.runtime.LaunchedEffect(done) {
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             runCatching { graph.mp4Prep.refresh(graph.localDownloads.targetDir(), done) }
         }
