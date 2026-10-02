@@ -1396,6 +1396,12 @@ class PlayerViewModel internal constructor(
     fun onLiveExoError(message: String) {
         Log.w(PLAY, "live (exo) error for ${zapping?.current?.code}: $message")
         LiveLog.e("player error: $message")
+        if (message == com.arkiv.player.playback.LiveDecoderRescue.GAVE_UP) {
+            // The software decoder failed too: a reopen only hits the same wall.
+            reopenJob?.cancel()
+            _error.value = com.arkiv.player.playback.LiveDecoderRescue.message(zapping?.current?.name ?: "este canal")
+            return
+        }
         reopenLiveAfterCut()
     }
 
