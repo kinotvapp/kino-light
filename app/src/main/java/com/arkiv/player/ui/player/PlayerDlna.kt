@@ -132,8 +132,10 @@ internal class DlnaState(
 
     /**
      * Another audio picked in the phone's menu while the TV plays ([DlnaAudioSwitch]): on a remux
-     * route the TV is paused where it is, the title remuxed again with [choice] and sent again from
-     * there (the same `sendToRendererNow` as the first cast); on any other route only the phone
+     * route the title is remuxed again with [choice] while the TV plays on with the old audio, and
+     * sent again (the same `sendToRendererNow` as the first cast) from where the TV is once the new
+     * remux covers it -- the Chromecast's staged hand-over, see [DlnaController.setUrlAndPlay]'s
+     * `followTv`. "Detener" meanwhile stops the new remux too. On any other route only the phone
      * changes, and [notify] says so. The first audio seen after an audio-less send is only recorded:
      * tracks arriving after the cast began are not a choice the person made.
      */
@@ -158,16 +160,18 @@ internal class DlnaState(
                 notify("El audio cambió solo en el teléfono: la TV reproduce este video tal cual y suena el audio que trae por defecto")
             CastAudioSwitch.REMUX_AND_RELOAD -> {
                 preparingAudio = true
-                notify("Preparando el nuevo audio… sigue donde iba la TV")
+                notify("Preparando el nuevo audio… la TV sigue con el anterior hasta que esté listo")
                 scope.launch {
-                    val tvMs = withContext(Dispatchers.IO) { dlna.tvPositionMs().also { dlna.pause(dev) } }
-                    val at = DlnaAudioSwitch.startMs(tvMs, phoneMs, ep.startPositionMs)
-                    val ok = sendToRendererNow(dlna, dev, ep, lanIp, liveHlsProxy, choice, at)
+                    // Where the TV is, asked again at every step of the wait: it keeps playing meanwhile.
+                    val follow = { DlnaAudioSwitch.startMs(dlna.tvPositionMs(), phoneMs, ep.startPositionMs) }
+                    val (before, at) = withContext(Dispatchers.IO) { dlna.activeCastId() to follow() }
+                    val ok = sendToRendererNow(dlna, dev, ep, lanIp, liveHlsProxy, choice, at, followTv = follow)
                     // Stopped (or another audio picked) meanwhile: whoever did that owns the bar now.
                     if (active !== dev || audioOnTv != choice?.ordinal) return@launch
                     preparingAudio = false
-                    // A failed re-send leaves the TV paused on the old audio: "Reanudar" plays it on.
-                    paused = !ok
+                    // A re-send that failed after the hand-over leaves the TV paused: "Reanudar" plays it on.
+                    // One that failed before it left the TV playing the old audio, untouched.
+                    paused = !ok && dlna.activeCastId() != before
                     if (!ok) notify(dlna.lastError ?: "No se pudo cambiar el audio en la TV")
                 }
             }
@@ -270,6 +274,8 @@ private suspend fun sendToRendererNow(
     liveHlsProxy: LiveHlsProxy,
     audio: com.arkiv.player.cast.CastAudioChoice?,
     startMs: Long,
+    /** Another audio for what the TV plays: see [DlnaController.setUrlAndPlay]. */
+    followTv: (() -> Long)? = null,
 ): Boolean = when (ep?.kind) {
     null -> {
         DlnaLog.w("sendToRenderer: nothing is playing (no item)")
@@ -304,9 +310,9 @@ private suspend fun sendToRendererNow(
     // a plugin URL fetched by DlnaProxyServer's own, ungated client.
     SourceKind.PLUGIN ->
         if (ep.mime == MIME_HLS || !ep.mediaUrl.startsWith("http://127.0.0.1:")) sendPluginHls(dlna, device, ep, lanIp, startMs)
-        else sendThroughProxy(dlna, device, ep, audio, startMs)
+        else sendThroughProxy(dlna, device, ep, audio, startMs, followTv)
 
-    else -> sendThroughProxy(dlna, device, ep, audio, startMs)
+    else -> sendThroughProxy(dlna, device, ep, audio, startMs, followTv)
 }
 
 /**
@@ -342,6 +348,7 @@ private suspend fun sendThroughProxy(
     ep: PlayerData,
     audio: com.arkiv.player.cast.CastAudioChoice?,
     startMs: Long,
+    followTv: (() -> Long)? = null,
 ): Boolean {
     // Which URL the TV's proxy will pull from, and why it matters: `castUrl` (a CDN URL that may need
     // headers the proxy doesn't send) wins over `mediaUrl` (our own loopback proxy, which adds them).
@@ -357,7 +364,7 @@ private suspend fun sendThroughProxy(
     // Magis is READ through the loopback proxy (it adds the CDN's headers) but its remux is FILED
     // under the CDN url, as the Chromecast's is: stable across token refreshes, and shared with it.
     val keyUrl = ep.castUrl?.takeIf { ep.kind == SourceKind.MAGIS && it.isNotBlank() } ?: source
-    return withContext(Dispatchers.IO) { dlna.setUrlAndPlay(device, source, ep.title, audio, startMs, keyUrl) }
+    return withContext(Dispatchers.IO) { dlna.setUrlAndPlay(device, source, ep.title, audio, startMs, keyUrl, followTv) }
 }
 
 /** "Playing on <TV>" bar with pause/stop, visible while a renderer is active. */

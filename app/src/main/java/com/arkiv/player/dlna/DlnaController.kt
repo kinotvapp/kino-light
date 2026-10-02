@@ -376,6 +376,13 @@ class DlnaController(
          * reused by the other. [archiveUrl] when there is nothing steadier.
          */
         remuxKeyUrl: String = archiveUrl,
+        /**
+         * Another audio for the title the TV already plays ([DlnaAudioSwitch]): where the TV should
+         * start, asked again whenever it is about to be decided. Non-null keeps the TV on what it
+         * plays while the new remux gets ready (staged on [remuxHls]) and hands it over only once
+         * the new one covers where the TV is BY THEN -- the Chromecast's rule. Null: a fresh cast.
+         */
+        followTv: (() -> Long)? = null,
     ): Boolean {
         val mine = ++attempt
         // A file:// (a download) can't be proxied: OkHttp only speaks http(s), so the TV would get a
@@ -423,9 +430,9 @@ class DlnaController(
                 return false
             }
             DlnaLog.diagW("cast: the TV rejected the file as it is (${why?.first} upnp=${why?.second}): retrying as ${next.name}")
-            return castRemux(device, archiveUrl, remuxKeyUrl, title, audio, next, startMs, mine)
+            return castRemux(device, archiveUrl, remuxKeyUrl, title, audio, next, startMs, mine, followTv)
         }
-        return castRemux(device, archiveUrl, remuxKeyUrl, title, audio, route, startMs, mine)
+        return castRemux(device, archiveUrl, remuxKeyUrl, title, audio, route, startMs, mine, followTv)
     }
 
     /**
@@ -438,6 +445,12 @@ class DlnaController(
      *   every DLNA cast of a TS did before; still the one for renderers that list no HLS.
      * A remux already finished on disk is always sent whole: nothing to wait for, and a file with
      * a length and ranges is what every renderer seeks best in.
+     *
+     * With [followTv] (another audio while the TV plays this title) the TV keeps the cast it has
+     * until the new remux is ready to take over: the growing one is only STAGED on [remuxHls]
+     * meanwhile and waited for where the TV is by then (never "the nearest point" minutes back),
+     * the whole file is waited for in full. The TV is paused, the old remux retired and the new
+     * one sent at that moment, not before. Stopped meanwhile ([stop]), the new remux stops too.
      */
     private suspend fun castRemux(
         device: DlnaDevice,
@@ -448,22 +461,35 @@ class DlnaController(
         route: CastStrategy.Route,
         startMs: Long,
         mine: Int,
+        followTv: (() -> Long)? = null,
     ): Boolean {
         // Keyed and remuxed with the phone's audio: a remux carries ONE audio track, and
         // without this it was Transformer's pick, whatever the phone's menu said.
         val key = RemuxPolicy.keyFrom(remuxKeyUrl, 0L, audio?.ordinal)
-        // Another audio picked while casting: the remux of the one the TV had stops (it covers the whole
+        // The cast the TV is on while another audio gets ready ([followTv]); null for a fresh cast.
+        val onTv = cast?.takeIf { followTv != null }
+        // A fresh cast over a remux one: the remux of the one the TV had stops (it covers the whole
         // title, and nothing will play it any more). What it wrote is kept, so switching back is quick.
-        cast?.takeIf { it.remuxKey != null && it.remuxKey != key }?.let {
-            DlnaLog.diag("cast: another audio → stopping the remux of the previous one")
-            releaseRemux(it)
+        // Following the TV, it keeps playing that one until the hand-over ([handOver]).
+        if (onTv == null) {
+            cast?.takeIf { it.remuxKey != null && it.remuxKey != key }?.let {
+                DlnaLog.diag("cast: another remux → stopping the previous one")
+                releaseRemux(it)
+            }
         }
         tsRemuxer.alreadyDone(key)?.let { file ->
             DlnaLog.diag("remux already whole on disk: sending the MP4 file")
-            val c = beginCast(device, kind = "vod-remux", mime = com.arkiv.player.playback.Container.MP4.mime, title = title, source = archiveUrl, startMs = startMs)
+            val at = handOver(onTv, key, followTv, startMs)
+            val c = beginCast(device, kind = "vod-remux", mime = com.arkiv.player.playback.Container.MP4.mime, title = title, source = archiveUrl, startMs = at)
             return playRemuxFile(c, file, title)
         }
         val export = remuxScope.async { tsRemuxer.remux(archiveUrl, key, audio) }
+        // Where the whole file starts if it comes to that: moved to the HLS hand-over's point once there was one.
+        var resumeAt = startMs
+        // Following the TV until it is handed the new remux; from then on it is this cast's own.
+        var following = onTv != null
+        // Still wanted: not stopped or superseded, and -- following the TV -- the TV still on its cast.
+        val wanted = { attempt == mine && (!following || cast === onTv) }
 
         if (route == CastStrategy.Route.REMUX) {
             var start: RemuxCastStart.Start? = null
@@ -473,21 +499,21 @@ class DlnaController(
                 inProgress = tsRemuxer::inProgress,
                 // A finished remux ends the wait too: then the whole file goes, below. A wait
                 // given up (the cast stopped or superseded meanwhile) retires the remux with it.
-                stillWanted = { attempt == mine && !export.isCompleted },
+                stillWanted = { wanted() && !export.isCompleted },
                 lan = remuxRequests,
                 diagPrefix = "dlna ",
-            ) { start = it; true }
-            if (waitingRemuxKey == key) waitingRemuxKey = null
-            if (attempt != mine) {
-                DlnaLog.i("cast: superseded while the remux was getting ready")
-                // Stopped (no cast at all, as [stop] leaves it), not replaced: nothing will play this
-                // remux, which no cast owns yet for [releaseRemux] to find. A newer cast keeps it.
-                if (cast == null) {
-                    tsRemuxer.stop(key)
-                    if (remuxHls.isServing(key)) remuxHls.stop()
-                }
-                return false
+                // The TV goes on with the old audio meanwhile: it waits as long as it takes to
+                // cover where the TV is by then, instead of jumping it back minutes.
+                maxWaitSec = if (followTv != null) Int.MAX_VALUE else com.arkiv.player.playback.RemuxHls.RESUME_WAIT_SEC,
+                wantedNow = followTv ?: { startMs },
+            ) { s ->
+                // The TV stops on the old audio right where the new one takes over.
+                if (onTv != null) pause(onTv.device)
+                start = s
+                true
             }
+            if (waitingRemuxKey == key) waitingRemuxKey = null
+            if (!wanted()) return gaveUp(key)
             val ready = start
             if (ready != null) {
                 val url = ready.url
@@ -497,12 +523,19 @@ class DlnaController(
                     val c = beginCast(device, kind = "vod-remux-hls", mime = CastStrategy.MIME_HLS, title = title, source = archiveUrl)
                     return failPreflight(c, "no_wifi_ip", "No se detectó la red WiFi del teléfono", "wifiEnabled=${wifi.isWifiEnabled}")
                 }
+                // Following the TV, the old remux was retired by the hand-over ([RemuxHlsServer.serve]).
+                onTv?.remuxKey = null
+                following = false
+                resumeAt = ready.fromMs
                 // The playlist's #EXT-X-START says where to begin; the Seek after Play backs it up.
                 remuxHls.planStart(key, ready.fromMs)
                 val c = beginCast(device, kind = "vod-remux-hls", mime = CastStrategy.MIME_HLS, title = title, source = archiveUrl, startMs = ready.fromMs)
                 c.deferReport = true
                 c.remuxKey = key
-                DlnaLog.diag("remux has ${ready.readySec.toInt()}s ready → sending it as HLS from ${ready.fromMs / 1000}s (phone at ${startMs / 1000}s)")
+                DlnaLog.diag(
+                    "remux has ${ready.readySec.toInt()}s ready → sending it as HLS from ${ready.fromMs / 1000}s " +
+                        if (onTv != null) "(where the TV was)" else "(phone at ${startMs / 1000}s)",
+                )
                 if (startPlayback(c, url, title)) {
                     watchRemux(c, export)
                     return true
@@ -519,12 +552,25 @@ class DlnaController(
                 DlnaLog.diagW("cast: the TV refused the remux as HLS (${why.first} upnp=${why.second}): waiting for the whole MP4 instead")
             } else {
                 // The remux finished (or failed) before it covered the start point: the file decides.
-                if (remuxHls.isServing(key)) remuxHls.stop()
+                if (remuxHls.isServing(key)) remuxHls.stop() else runCatching { remuxHls.unstage(key) }
             }
         }
 
-        val c = beginCast(device, kind = "vod-remux", mime = com.arkiv.player.playback.Container.MP4.mime, title = title, source = archiveUrl, startMs = startMs)
-        return when (val result = export.await()) {
+        if (following) {
+            // The whole file, while the TV plays on: checked every second, so a stop meanwhile stops it.
+            while (!export.isCompleted && wanted()) kotlinx.coroutines.delay(1_000L)
+            if (!wanted()) return gaveUp(key)
+        }
+        val result = export.await()
+        if (following && result is TsRemuxer.RemuxResult.Failed) {
+            // Nothing to hand over: the TV stays on the audio it has, its cast untouched.
+            DlnaLog.diagW("cast: the new audio's remux failed (${result.reason}): the TV keeps the one it had")
+            lastError = "No se pudo preparar el nuevo audio: la TV sigue con el anterior"
+            return false
+        }
+        val at = if (following) handOver(onTv, key, followTv, startMs) else resumeAt
+        val c = beginCast(device, kind = "vod-remux", mime = com.arkiv.player.playback.Container.MP4.mime, title = title, source = archiveUrl, startMs = at)
+        return when (result) {
             is TsRemuxer.RemuxResult.Failed ->
                 failPreflight(c, "remux_failed", "No se pudo preparar el video para la TV", "reason=${result.reason}")
             is TsRemuxer.RemuxResult.Done -> {
@@ -532,6 +578,34 @@ class DlnaController(
                 playRemuxFile(c, result.file, title)
             }
         }
+    }
+
+    /**
+     * The TV leaves the cast it had ([onTv], following it) for the whole remux of [key]: paused
+     * where it is, that cast's remux retired, and the position read again ([followTv]). Without
+     * [onTv] (a fresh cast) only [startMs].
+     */
+    private fun handOver(onTv: Cast?, key: String, followTv: (() -> Long)?, startMs: Long): Long {
+        if (onTv == null) return startMs
+        val at = followTv?.invoke() ?: startMs
+        pause(onTv.device)
+        if (onTv.remuxKey != key) releaseRemux(onTv)
+        return at
+    }
+
+    /**
+     * A remux wait given up: stopped ([stop] leaves no cast), superseded, or the TV left the cast
+     * it was following. Without a cast nothing will play this remux, which no cast owns yet for
+     * [releaseRemux] to find: stopped, and unstaged. A newer cast keeps it.
+     */
+    private fun gaveUp(key: String): Boolean {
+        DlnaLog.i("cast: superseded while the remux was getting ready")
+        if (cast == null) {
+            tsRemuxer.stop(key)
+            runCatching { remuxHls.unstage(key) }
+            if (remuxHls.isServing(key)) remuxHls.stop()
+        }
+        return false
     }
 
     /** The finished remux [file], served whole with ranges by the DLNA's own [localFileServer]. */
@@ -705,6 +779,9 @@ class DlnaController(
 
     /** What the cast in progress is ([beginCast]'s kind: `vod-remux-hls`, `vod-proxy`...), null with none. */
     fun activeKind(): String? = cast?.kind
+
+    /** The cast in progress (a new one per send), null with none: tells whether a re-send replaced it. */
+    fun activeCastId(): String? = cast?.id
 
     /**
      * Where the TV is right now, for a re-send to continue there ([DlnaAudioSwitch.tvPositionMs]):
