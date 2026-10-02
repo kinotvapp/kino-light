@@ -254,6 +254,26 @@ internal fun CastScreenPresence(session: com.arkiv.player.cast.CastSessionManage
 }
 
 /**
+ * Whether the phone's audio menu can reach the TV while a download ([mediaUrl], `file://…`) is cast:
+ * an MPEG-TS is remuxed with the chosen audio anyway, and an MP4 with several audio tracks gets a
+ * single-audio copy per audio ([com.arkiv.player.playback.LocalMp4Audio]). Out of `PlayerContent`.
+ */
+internal fun localAudioReachesTv(mediaUrl: String): Boolean {
+    val file = java.io.File(mediaUrl.removePrefix("file://"))
+    val mime = runCatching { com.arkiv.player.playback.VideoContainer.ofFile(file).mime }.getOrNull()
+    return com.arkiv.player.playback.RemuxPolicy.needsRemux(mime) || com.arkiv.player.playback.LocalMp4Audio.switchable(file)
+}
+
+/** A download cast with audio [ordinal] needs its single-audio copy ([com.arkiv.player.playback.LocalMp4Audio.needsCopy]). */
+internal fun localAudioCopy(item: PlayerData, ordinal: Int?): Boolean =
+    item.kind == SourceKind.LOCAL &&
+        com.arkiv.player.playback.LocalMp4Audio.needsCopy(java.io.File(item.mediaUrl.removePrefix("file://")), ordinal)
+
+/** Whether the finished local remux filed under [key] is a faststart MP4, so the receiver can start it mid-title. */
+internal fun localRemuxSeeks(graph: com.arkiv.player.AppGraph, key: String): Boolean =
+    graph.tsRemuxer.alreadyDone(key)?.let { runCatching { com.arkiv.player.data.local.Mp4FastStart.isFastStart(it) }.getOrDefault(false) } ?: false
+
+/**
  * [com.arkiv.player.cast.PlayerOnScreen]: which title the player screen in the foreground shows,
  * with or without a cast session (a phone with no Play services still casts over DLNA).
  */

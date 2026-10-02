@@ -306,6 +306,10 @@ class TsRemuxer(
         }
         start?.let { Log.w(TAG, "remux reads from byte ${it.byteOffset}: the title from ${it.startMs}ms") }
 
+        // A downloaded MP4 with several audio tracks (see LocalMp4Audio): a single-audio copy,
+        // faststart and nothing re-encoded, in seconds -- not Transformer's fragmented export.
+        localMp4(inputUri)?.let { file -> return copyWithOneAudio(file, destination, audio, t0) }
+
         return withContext(Dispatchers.Main) {
             suspendCancellableCoroutine { cont ->
                 val transformer = RemuxExport.transformer(context, assetLoaderFactory(audio, key, start), startsMidFile = start != null)
@@ -382,6 +386,33 @@ class TsRemuxer(
                     Log.w(TAG, "remux could not start: ${it.message}")
                     if (cont.isActive) cont.resume(RemuxResult.Failed(it.message ?: "could not start"))
                 }
+            }
+        }
+    }
+
+    /** The file behind [inputUri] when it is a local MP4, else null. */
+    private fun localMp4(inputUri: String): File? {
+        if (!inputUri.startsWith("file://")) return null
+        val file = File(inputUri.removePrefix("file://"))
+        return file.takeIf { it.exists() && runCatching { VideoContainer.ofFile(it) }.getOrNull() == Container.MP4 }
+    }
+
+    /** [file] with only [audio]'s track, by `Mp4Repackager`; the progress goes to [progress] like an export's. */
+    private suspend fun copyWithOneAudio(file: File, destination: File, audio: CastAudioChoice?, t0: Long): RemuxResult {
+        _progress.value = 0
+        val result = try {
+            com.arkiv.player.data.local.Mp4Repackager().repack(file, destination, onlyAudio = audio?.ordinal ?: 0) { _progress.value = it }
+        } finally {
+            _progress.value = -1
+        }
+        return when (result) {
+            is com.arkiv.player.data.local.Mp4Repackager.Result.Done -> {
+                Log.w(TAG, "single-audio copy done in ${System.currentTimeMillis() - t0}ms → ${destination.name} (${destination.length()}B, faststart=${result.fastStart})")
+                RemuxResult.Done(destination)
+            }
+            else -> {
+                Log.w(TAG, "single-audio copy failed: $result")
+                RemuxResult.Failed(result.toString())
             }
         }
     }

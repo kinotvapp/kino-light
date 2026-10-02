@@ -1162,7 +1162,7 @@ private fun PlayerContent(
             // A LOCAL remux is still one progressive mp4 with no seek index: asking the receiver to
             // start at minute 4:52 of one sent it hunting through the file blind (`range=bytes=
             // 308510720-`, broken pipe, again, never a frame -- measured 2026-09-12), so it starts
-            // at zero.
+            // at zero. A downloaded MP4's single-audio copy is faststart (LocalMp4Audio): it seeks.
             startPositionMs = when {
                 remuxMagis != null -> {
                     val key = magisRemuxKey(item) ?: item.castUrl.orEmpty()
@@ -1174,7 +1174,7 @@ private fun PlayerContent(
                     ).also { graph.remuxHlsServer.planStart(key, it) }
                         .let { com.arkiv.player.playback.RemuxHls.loadStartMs(it) }
                 }
-                remuxLocal != null || isPluginLiveCast(item) -> 0L
+                remuxLocal != null && !localRemuxSeeks(graph, localRemuxKey(item)) || isPluginLiveCast(item) -> 0L
                 else -> startPositionMs
             },
             isLive = isLiveItem,
@@ -1388,8 +1388,16 @@ private fun PlayerContent(
                 com.arkiv.player.playback.RemuxPolicy.transmuxOutlook(fmt?.pixelWidthHeightRatio),
         )
 
-        if (!com.arkiv.player.playback.RemuxPolicy.needsRemux(mime)) {
+        if (!com.arkiv.player.playback.RemuxPolicy.needsRemux(mime) && !localAudioCopy(item, audio?.ordinal)) {
             android.util.Log.i("ArkivCast", "${item.kind} is $mime, no remux needed")
+            // A download with several audios back on its first one: the TV gets the file itself again.
+            if (item.kind == SourceKind.LOCAL && castToReceiver == item.episodeId && castAsRemux != null) {
+                val at = castSession.lastKnownPositionMs(item.episodeId) ?: 0L
+                castRequestFor(PlaylistData(listOf(item), 0, at, requested = item.episodeId), 0, at)?.let {
+                    android.util.Log.w("ArkivCast", "first audio again → reloading the receiver with the file itself from ${at}ms")
+                    castSession.setMedia(it)
+                }
+            }
             return@LaunchedEffect
         }
         // Another audio than the one on the TV: the export for the previous one stops (it covers
@@ -1512,6 +1520,9 @@ private fun PlayerContent(
         // audio) is replaced by the remux FROM WHERE THE RECEIVER IS, not from the top.
         val from = if (item.kind == SourceKind.MAGIS) {
             castSession.lastKnownPositionMs(item.episodeId) ?: resumeMs
+        } else if (item.kind == SourceKind.LOCAL && castToReceiver == item.episodeId) {
+            // Another audio of what the TV plays: from where the TV is.
+            castSession.lastKnownPositionMs(item.episodeId) ?: runCatching { contentPositionMs() }.getOrDefault(0L).coerceAtLeast(0L)
         } else {
             runCatching { contentPositionMs() }.getOrDefault(0L).coerceAtLeast(0L)
         }
@@ -2780,10 +2791,7 @@ private fun PlayerContent(
         if (liveItem != null) return fixed
         val item = playlistRef.value?.items?.getOrNull(currentIndex) ?: return fixed
         if (item.kind != SourceKind.LOCAL) return fixed
-        val mime = runCatching {
-            com.arkiv.player.playback.VideoContainer.ofFile(java.io.File(item.mediaUrl.removePrefix("file://"))).mime
-        }.getOrNull()
-        return if (com.arkiv.player.playback.RemuxPolicy.needsRemux(mime) && localRemuxKey(item) !in remuxFailed) remux else fixed
+        return if (localAudioReachesTv(item.mediaUrl) && localRemuxKey(item) !in remuxFailed) remux else fixed
     }
 
     /**
