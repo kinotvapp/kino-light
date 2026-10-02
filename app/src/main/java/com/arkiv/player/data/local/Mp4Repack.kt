@@ -376,8 +376,8 @@ object Mp4FastStart {
 
     data class Box(val type: String, val offset: Long, val size: Long)
 
-    /** The top-level boxes of [raf], in order; stops at anything that does not add up. */
-    fun topLevelBoxes(raf: RandomAccessFile): List<Box> {
+    /** The top-level boxes of [raf], in order, up to the first [untilType] (included); stops at anything that does not add up. */
+    fun topLevelBoxes(raf: RandomAccessFile, untilType: String? = null): List<Box> {
         val boxes = ArrayList<Box>()
         val length = raf.length()
         var at = 0L
@@ -396,17 +396,27 @@ object Mp4FastStart {
             }
             if (size < 8 || at + size > length) break
             boxes += Box(type, at, size)
+            if (type == untilType) break
             at += size
         }
         return boxes
     }
 
-    /** Whether [file]'s `moov` comes before its `mdat` (or it has no `mdat`). */
+    /**
+     * Whether [file] is a progressive MP4 whose `moov` (the whole index) comes before its first
+     * `mdat`: one a receiver can start mid-title. A fragmented MP4 (a `moof` before the media) is
+     * not, whatever its order. Reads box headers only up to the first `mdat`.
+     */
     fun isFastStart(file: File): Boolean = RandomAccessFile(file, "r").use { raf ->
-        val boxes = topLevelBoxes(raf)
-        val moov = boxes.indexOfFirst { it.type == "moov" }
-        val mdat = boxes.indexOfFirst { it.type == "mdat" }
-        moov >= 0 && (mdat < 0 || moov < mdat)
+        var moov = false
+        for (box in topLevelBoxes(raf, untilType = "mdat")) {
+            when (box.type) {
+                "moov" -> moov = true
+                "moof" -> return@use false
+                "mdat" -> return@use moov
+            }
+        }
+        moov
     }
 
     /**

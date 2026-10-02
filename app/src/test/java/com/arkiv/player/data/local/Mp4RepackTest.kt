@@ -159,6 +159,12 @@ class Mp4RepackTest {
             assertEquals(listOf("ftyp", "moov", "free", "mdat"), boxes.map { it.type })
             assertEquals(16L + 108 + 108, raf.length())
         }
+        assertTrue(Mp4FastStart.isFastStart(f))
+        // A fragmented MP4 has its moov first too, but no index of the media: not seekable from the start.
+        f.writeBytes(box("ftyp", 8) + box("moov", 32) + box("moof", 16) + box("mdat", 100))
+        assertTrue(!Mp4FastStart.isFastStart(f))
+        f.writeBytes(box("ftyp", 8) + box("mdat", 100) + box("moov", 32))
+        assertTrue(!Mp4FastStart.isFastStart(f))
         dir.deleteRecursively()
     }
 

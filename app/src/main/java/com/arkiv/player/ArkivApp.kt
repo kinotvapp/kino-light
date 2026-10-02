@@ -126,6 +126,16 @@ class ArkivApp : Application(), ImageLoaderFactory {
             runCatching { graph.localDownloads.discardUnfinishedOnTv() }
         }
 
+        // Phones: downloads become faststart MP4s (Mp4Prep). The daily pass over older ones while
+        // charging, the originals a previous run could not delete yet (nothing holds them after a
+        // restart).
+        if (com.arkiv.player.data.local.DownloadAvailability.allowed(com.arkiv.player.DeviceType.isTelevision(this))) {
+            runCatching { com.arkiv.player.data.local.Mp4PrepWorker.scheduleSweep(this) }
+            graph.applicationScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching { graph.mp4Prep.deletePending(graph.localDownloads.targetDir()) }
+            }
+        }
+
         // Proactive telemetry: the backup seed pool ran dry for a device that needs it -> the user
         // can't play, and nothing throws. Report the rising edge so we learn about pool exhaustion
         // (and can re-mint) without a user having to tell us. StateFlow only re-emits on change.

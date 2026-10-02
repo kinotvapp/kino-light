@@ -1522,8 +1522,35 @@ class AppGraph(context: Context) {
     }
 
     val localLibrary: com.arkiv.player.data.local.LocalLibrary by lazy {
-        com.arkiv.player.data.local.LocalLibrary(database)
+        // Every download the player opens is in use, and an older one gets its MP4 lazily.
+        com.arkiv.player.data.local.LocalLibrary(database, onOpened = { id, path -> mp4Prep.onOpened(id, path) })
     }
+
+    /** Finished downloads rewritten as faststart MP4 with every audio track and SRT sidecars. See `Mp4Prep`. */
+    val mp4Prep: com.arkiv.player.data.local.Mp4Prep by lazy {
+        val dao = database.downloadDao()
+        com.arkiv.player.data.local.Mp4Prep(
+            // Not `localLibrary.fileFor`: that one reports the file as opened by the player.
+            completedPath = { id -> localLibrary.pathFor(id) },
+            movePath = { old, new -> dao.movePath(old, new) },
+            completedIds = {
+                dao.getAll().filter { it.state == com.arkiv.player.data.local.LocalDownloadState.COMPLETED && it.source != "ditu" }
+                    .map { it.episodeId }
+            },
+            onlineSubtitles = { id -> runCatching { subtitlePrefs.onlineSubtitles(id) }.getOrDefault(emptyList()) },
+            schedule = { ids -> com.arkiv.player.data.local.Mp4PrepWorker.enqueue(appContext, ids) },
+            isTelevision = { com.arkiv.player.DeviceType.isTelevision(appContext) },
+            freeSpace = { dir -> runCatching { android.os.StatFs(dir.absolutePath).availableBytes }.getOrDefault(0L) },
+            reportFailure = { id, reason ->
+                com.arkiv.player.crash.Crash.report(
+                    com.arkiv.player.crash.Mp4PrepFailed("a download could not be rewritten as MP4"),
+                    "mp4-prep",
+                    extras = mapOf("reason" to reason.take(300), "source" to com.arkiv.player.playback.PlayerSource.kindFor(id).name),
+                )
+            },
+        )
+    }
+
 
     /**
      * On-disk folder for the frame JPEGs, a single point so that whoever writes
