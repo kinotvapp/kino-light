@@ -56,6 +56,19 @@ class CastProgressTest {
     }
 
     @Test
+    fun `a remux started mid-title saves on the title's clock, position and duration both`() {
+        // The remux begins at 35:00 of a 2 h title; the receiver is 1:46 into it and reports the
+        // remux's own length, or nothing (the load's length is the fallback).
+        val offset = 35 * 60_000L
+        val media = 120 * 60_000L - offset
+        assertEquals(SavedProgress(offset + 106_000L, 120 * 60_000L), CastProgress.toSaveInTitle(106_000L, media, 0L, offset))
+        assertEquals(SavedProgress(offset + 106_000L, 120 * 60_000L), CastProgress.toSaveInTitle(106_000L, -1L, media, offset))
+        // From the top it is plain toSave; nothing known about the length, nothing saved.
+        assertEquals(CastProgress.toSave(5_000L, 60_000L), CastProgress.toSaveInTitle(5_000L, 60_000L, 0L, 0L))
+        assertEquals(null, CastProgress.toSaveInTitle(106_000L, 0L, 0L, offset))
+    }
+
+    @Test
     fun `an invalid duration from the receiver is not shown`() {
         // TIME_UNSET (a live stream with no known duration): 0 means "unknown", and the bar
         // already knows how to handle it.

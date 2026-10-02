@@ -103,7 +103,7 @@ class DlnaController(
      * The title's subtitles for the TV (see [DlnaSubtitles]): read on every send, so the one on the
      * phone when the video is sent is the one the TV gets. Set by AppGraph; none by default.
      */
-    @Volatile internal var subtitleSidecar: () -> DlnaSidecar? = { null }
+    @Volatile internal var subtitleSidecar: (offsetMs: Long) -> DlnaSidecar? = { null }
 
     private companion object {
         /** UPnP AVTransport error 701: the renderer can't make that transition right now. */
@@ -157,6 +157,14 @@ class DlnaController(
         @Volatile var seekVerify = false
         /** The remux this cast plays while it grows (the HLS route): stopped with the cast. */
         @Volatile var remuxKey: String? = null
+        /**
+         * Where what the TV plays begins in the title (a remux started mid-title, `TsStart`), 0
+         * from the top. The TV counts from there: [startMs] is on its clock, the phone's and the
+         * subtitles' are the title's.
+         */
+        @Volatile var offsetMs = 0L
+        /** The remux's start point on the grid ([RemuxPolicy.fromInKey]): another audio starts on the same one. */
+        @Volatile var startGrid = 0L
         /** What the TV was sent ([startPlayback]), for [resendForSubtitles] to send it again. */
         @Volatile var url: String? = null
         @Volatile var title: String = ""
@@ -475,11 +483,19 @@ class DlnaController(
         mine: Int,
         followTv: (() -> Long)? = null,
     ): Boolean {
-        // Keyed and remuxed with the phone's audio: a remux carries ONE audio track, and
-        // without this it was Transformer's pick, whatever the phone's menu said.
-        val key = RemuxPolicy.keyFrom(remuxKeyUrl, 0L, audio?.ordinal)
         // The cast the TV is on while another audio gets ready ([followTv]); null for a fresh cast.
         val onTv = cast?.takeIf { followTv != null }
+        // Where the remux starts: a keyframe on the grid before the phone's position, as the
+        // Chromecast's (TsRemuxer.startPoint, TsStart) -- another audio keeps the TV's, so the TV
+        // goes on with the same clock. 0:00 when switched off, near the top or not found.
+        val grid = onTv?.startGrid ?: tsRemuxer.startPoint(archiveUrl, remuxKeyUrl, audio?.ordinal, startMs)
+        // Keyed and remuxed with the phone's audio: a remux carries ONE audio track, and
+        // without this it was Transformer's pick, whatever the phone's menu said.
+        val key = RemuxPolicy.keyFrom(remuxKeyUrl, grid, audio?.ordinal)
+        // The TV counts from where the remux begins; [startMs] and [followTv] are the title's.
+        val offset = tsRemuxer.startMsOf(key)
+        val tvMs = { titleMs: Long -> (titleMs - offset).coerceAtLeast(0L) }
+        if (offset > 0L) DlnaLog.diag("remux starts at ${offset / 1000}s of the title (phone at ${startMs / 1000}s)")
         // A fresh cast over a remux one: the remux of the one the TV had stops (it covers the whole
         // title, and nothing will play it any more). What it wrote is kept, so switching back is quick.
         // Following the TV, it keeps playing that one until the hand-over ([handOver]).
@@ -491,13 +507,16 @@ class DlnaController(
         }
         tsRemuxer.alreadyDone(key)?.let { file ->
             DlnaLog.diag("remux already whole on disk: sending the MP4 file")
-            val at = handOver(onTv, key, followTv, startMs)
+            val at = tvMs(handOver(onTv, key, followTv, startMs))
             val c = beginCast(device, kind = "vod-remux", mime = com.arkiv.player.playback.Container.MP4.mime, title = title, source = archiveUrl, startMs = at)
+            c.offsetMs = offset
+            c.startGrid = grid
             return playRemuxFile(c, file, title)
         }
         val export = remuxScope.async { tsRemuxer.remux(archiveUrl, key, audio) }
-        // Where the whole file starts if it comes to that: moved to the HLS hand-over's point once there was one.
-        var resumeAt = startMs
+        // Where the whole file starts if it comes to that (the TV's clock): moved to the HLS
+        // hand-over's point once there was one.
+        var resumeAt = tvMs(startMs)
         // Following the TV until it is handed the new remux; from then on it is this cast's own.
         var following = onTv != null
         // Still wanted: not stopped or superseded, and -- following the TV -- the TV still on its cast.
@@ -507,7 +526,7 @@ class DlnaController(
             var start: RemuxCastStart.Start? = null
             waitingRemuxKey = key
             RemuxCastStart.await(
-                remuxHls, key, startMs,
+                remuxHls, key, tvMs(startMs),
                 inProgress = tsRemuxer::inProgress,
                 // A finished remux ends the wait too: then the whole file goes, below. A wait
                 // given up (the cast stopped or superseded meanwhile) retires the remux with it.
@@ -517,7 +536,7 @@ class DlnaController(
                 // The TV goes on with the old audio meanwhile: it waits as long as it takes to
                 // cover where the TV is by then, instead of jumping it back minutes.
                 maxWaitSec = if (followTv != null) Int.MAX_VALUE else com.arkiv.player.playback.RemuxHls.RESUME_WAIT_SEC,
-                wantedNow = followTv ?: { startMs },
+                wantedNow = followTv?.let { f -> { tvMs(f()) } } ?: { tvMs(startMs) },
             ) { s ->
                 // The TV stops on the old audio right where the new one takes over.
                 if (onTv != null) pause(onTv.device)
@@ -544,6 +563,8 @@ class DlnaController(
                 val c = beginCast(device, kind = "vod-remux-hls", mime = CastStrategy.MIME_HLS, title = title, source = archiveUrl, startMs = ready.fromMs)
                 c.deferReport = true
                 c.remuxKey = key
+                c.offsetMs = offset
+                c.startGrid = grid
                 DlnaLog.diag(
                     "remux has ${ready.readySec.toInt()}s ready → sending it as HLS from ${ready.fromMs / 1000}s " +
                         if (onTv != null) "(where the TV was)" else "(phone at ${startMs / 1000}s)",
@@ -580,8 +601,10 @@ class DlnaController(
             lastError = "No se pudo preparar el nuevo audio: la TV sigue con el anterior"
             return false
         }
-        val at = if (following) handOver(onTv, key, followTv, startMs) else resumeAt
+        val at = if (following) tvMs(handOver(onTv, key, followTv, startMs)) else resumeAt
         val c = beginCast(device, kind = "vod-remux", mime = com.arkiv.player.playback.Container.MP4.mime, title = title, source = archiveUrl, startMs = at)
+        c.offsetMs = offset
+        c.startGrid = grid
         return when (result) {
             is TsRemuxer.RemuxResult.Failed ->
                 failPreflight(c, "remux_failed", "No se pudo preparar el video para la TV", "reason=${result.reason}")
@@ -733,7 +756,7 @@ class DlnaController(
         prepareRenderer(c)
 
         // The title's, if it has any (a live channel never offers any: see castSubtitleSources).
-        val subs = runCatching(subtitleSidecar).getOrNull()
+        val subs = runCatching { subtitleSidecar(c.offsetMs) }.getOrNull()
         DlnaSubtitles.captionHeader(subs).let { proxy.extraHeaders = it; localFileServer.extraHeaders = it }
         subs?.selected?.let { DlnaLog.i("cast: with subtitles · ${it.language} + ${subs.others.size} more") }
         c.url = url
@@ -807,7 +830,7 @@ class DlnaController(
     fun subtitleOnTv(): String? = cast?.subtitleUrl
 
     /** The subtitle a send would carry now: the phone's choice ([subtitleSidecar]); null = off or none offered. */
-    fun subtitleWanted(): String? = runCatching(subtitleSidecar).getOrNull()?.selected?.url
+    fun subtitleWanted(): String? = runCatching { subtitleSidecar(cast?.offsetMs ?: 0L) }.getOrNull()?.selected?.url
 
     /**
      * Sends the cast in progress again, the same URL with the subtitles the phone has on now in its
@@ -821,25 +844,33 @@ class DlnaController(
         val old = cast ?: return false
         val url = old.url ?: return false
         pause(old.device)
-        val c = beginCast(old.device, kind = old.kind, mime = old.mime, title = old.title, source = old.source, startMs = atMs)
+        // [atMs] is the title's; the TV's clock starts where its remux does.
+        val tvMs = (atMs - old.offsetMs).coerceAtLeast(0L)
+        val c = beginCast(old.device, kind = old.kind, mime = old.mime, title = old.title, source = old.source, startMs = tvMs)
+        c.offsetMs = old.offsetMs
+        c.startGrid = old.startGrid
         // The remux goes on with the new cast: nothing must release it with the old one.
         c.remuxKey = old.remuxKey
         old.remuxKey = null
-        c.remuxKey?.let { remuxHls.planStart(it, atMs) }
+        c.remuxKey?.let { remuxHls.planStart(it, tvMs) }
         DlnaLog.diag("subtitles: re-sending the cast ${if (subtitleWanted() != null) "with" else "without"} subtitles from ${atMs / 1000}s")
         return startPlayback(c, url, old.title)
     }
 
     /**
      * Where the TV is right now, for a re-send to continue there ([DlnaAudioSwitch.tvPositionMs]):
-     * asks it (`GetPositionInfo`), falling back on what the monitor last read. Blocking; null with no cast.
+     * asks it (`GetPositionInfo`), falling back on what the monitor last read. On the TITLE's
+     * clock: a remux started mid-title counts from [Cast.offsetMs]. Blocking; null with no cast.
      */
     fun tvPositionMs(): Long? {
         val c = cast ?: return null
         val p = soap(c.device.controlUrl, "GetPositionInfo", "<u:GetPositionInfo xmlns:u=\"$AVT\"><InstanceID>0</InstanceID></u:GetPositionInfo>")
         val reported = DlnaXml.positionInfo(p.body)?.relTimeMs
-        val at = DlnaAudioSwitch.tvPositionMs(reported, c.lastPositionMs, c.startMs, c.seekSettled)
-        DlnaLog.diag("position: TV says ${reported?.div(1000)}s, last read ${c.lastPositionMs?.div(1000)}s, sent at ${c.startMs / 1000}s → ${at?.div(1000)}s")
+        val at = DlnaAudioSwitch.tvPositionMs(reported, c.lastPositionMs, c.startMs, c.seekSettled)?.plus(c.offsetMs)
+        DlnaLog.diag(
+            "position: TV says ${reported?.div(1000)}s, last read ${c.lastPositionMs?.div(1000)}s, sent at ${c.startMs / 1000}s" +
+                (if (c.offsetMs > 0L) " + its remux's start ${c.offsetMs / 1000}s" else "") + " → ${at?.div(1000)}s",
+        )
         return at
     }
 

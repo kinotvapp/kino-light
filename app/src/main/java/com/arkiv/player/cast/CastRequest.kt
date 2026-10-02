@@ -10,7 +10,8 @@ data class CastRequest(
     val artworkUrl: String,
     val startPositionMs: Long,
     /**
-     * How long the title really runs, or 0 when unknown.
+     * How long this media really runs, or 0 when unknown: the title's length, less [offsetMs] for
+     * a remux that starts mid-title (the receiver counts it from its own zero).
      *
      * Needed because a fragmented MP4 served WHILE it is written cannot state its own length, and
      * the receiver then reads one off the fragments it happens to have -- five seconds for a
@@ -30,9 +31,10 @@ data class CastRequest(
     /**
      * Where this media BEGINS inside the title, in ms.
      *
-     * A remux is clipped to start where playback was, so the receiver counts from its own zero
-     * while the title is minutes further along. Everything that records a position -- the progress
-     * the app saves, the bar -- has to add this back or it files minute 62 as minute 0.
+     * A remux that starts near the phone's position (`TsRemuxer.startPoint`, `TsStart`) begins at
+     * a keyframe minutes into the title, and the receiver counts from its own zero there.
+     * Everything that records a position -- the progress the app saves, the bar, the subtitles'
+     * timing -- has to add this back or it files minute 62 as minute 0.
      */
     val offsetMs: Long = 0,
     /**

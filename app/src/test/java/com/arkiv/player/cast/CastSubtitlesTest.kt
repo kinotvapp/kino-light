@@ -92,5 +92,7 @@ class CastSubtitlesTest {
         assertNotNull(sidecar.selected)
         assertTrue(sidecar.selected!!.url.endsWith("/0/1.srt"))
         assertEquals(listOf("es"), sidecar.others.map { it.language })
+        // A remux started 35 min in: the cues move back by as much, like the Chromecast's.
+        assertTrue(s.dlnaSidecar(2_100_000L)!!.selected!!.url.endsWith("/2100000/1.srt"))
     }
 }

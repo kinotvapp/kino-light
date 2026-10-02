@@ -172,6 +172,7 @@ import com.arkiv.player.ui.theme.ArkivRed
 import com.arkiv.player.ui.theme.ArkivSurface
 import com.arkiv.player.ui.theme.ArkivTextSecondary
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -604,10 +605,11 @@ private fun PlayerContent(
     val remuxFailed = remember { mutableStateListOf<String>() }
 
     /**
-     * Where each title's remux is clipped, in ms, already snapped to a real keyframe.
+     * Where each title's cast remux starts, in ms: its grid point (`TsRemuxer.startPoint`), 0 from
+     * the top. The keyframe it really starts on is `TsRemuxer.startMsOf(key)`.
      *
-     * Computed once per title because finding it costs a couple of reads from the CDN, and read
-     * back everywhere the remux is looked up so the key always matches the one it was filed under.
+     * Computed once per cast because finding it costs a few reads from the CDN, and read back
+     * everywhere the remux is looked up so the key always matches the one it was filed under.
      */
     val remuxStartPoint: androidx.compose.runtime.snapshots.SnapshotStateMap<String, Long> =
         remember { mutableStateMapOf() }
@@ -629,6 +631,9 @@ private fun PlayerContent(
 
     /** Key of the remux this screen last asked for while casting; see the remux effect. */
     var remuxInFlight by remember { mutableStateOf<String?>(null) }
+
+    /** A seek before where the TV's remux begins, for the remux effect ([CastSeekBack]). */
+    val castSeekBack = remember { CastSeekBack() }
 
     // The player we're driving right now: the Chromecast's while there's a session, the local one
     // if not. Both implement Player, so the controls don't need to know which one it is.
@@ -660,12 +665,9 @@ private fun PlayerContent(
      */
     fun remuxOffset(): Long {
         if (!casting) return 0L
-        val ep = castMagis?.episodeId ?: return 0L
-        val cdn = castMagis?.castUrl?.takeIf { it.isNotBlank() } ?: return 0L
-        // From the stored, keyframe-aligned point -- NOT from the local player's live position,
-        // which keeps moving and would make the bar jump every time it was read.
-        val key = com.arkiv.player.playback.RemuxPolicy.keyFrom(cdn, remuxStartPoint[ep] ?: 0L)
-        return com.arkiv.player.playback.RemuxPolicy.fromInKey(key)
+        // Of the remux ON THE TV (castAsRemux), not of the one being prepared: during a hand-over
+        // to another start point the TV still counts from the old one.
+        return castAsRemux?.let { graph.tsRemuxer.startMsOf(it) } ?: 0L
     }
 
     fun contentPositionMs(): Long =
@@ -1039,6 +1041,8 @@ private fun PlayerContent(
         } else {
             null
         }
+        // Where the remux going out begins in the title (TsStart), 0 for anything else.
+        val remuxStartsAt = if (remuxMagis != null) magisRemuxKey(item)?.let { graph.tsRemuxer.startMsOf(it) } ?: 0L else 0L
         val lanUrl = when (item.kind) {
             SourceKind.LIVE -> lanIp?.let { graph.liveHlsProxy.lanUrl(it) }
             // Magis: through the proxy either way, because the CDN wants headers the receiver
@@ -1159,8 +1163,9 @@ private fun PlayerContent(
             startPositionMs = when {
                 remuxMagis != null -> {
                     val key = magisRemuxKey(item) ?: item.castUrl.orEmpty()
+                    // [startPositionMs] is the title's clock; the remux's begins [remuxStartsAt] in.
                     com.arkiv.player.playback.RemuxHls.clampSeek(
-                        startPositionMs,
+                        (startPositionMs - remuxStartsAt).coerceAtLeast(0L),
                         graph.remuxHlsServer.availableSec(key),
                         graph.remuxHlsServer.isComplete(key),
                     ).also { graph.remuxHlsServer.planStart(key, it) }
@@ -1190,23 +1195,16 @@ private fun PlayerContent(
             asLive = isPluginLiveCast(item),
             // The remux's segments are fMP4: the receiver has to be told, or it reads them as TS.
             hlsFmp4 = remuxMagis != null,
-            // Where the remux begins, so a saved position lands on the right minute of the title.
-            offsetMs = if (item.kind == SourceKind.MAGIS) {
-                com.arkiv.player.playback.RemuxPolicy.fromInKey(
-                    com.arkiv.player.playback.RemuxPolicy.keyFrom(
-                        item.castUrl.orEmpty(),
-                        remuxStartPoint[item.episodeId] ?: 0L,
-                    ),
-                )
-            } else {
-                0L
-            },
+            // Where the remux begins, so a saved position lands on the right minute of the title
+            // (and the bar, the subtitles). Only the remux: the TS playlist counts from 0:00.
+            offsetMs = remuxStartsAt,
             // The local player already knows how long this runs -- it has been showing it on the
             // bar. A remux still being written cannot state it, so without this the receiver
             // invents one from the fragments it has (5 s for a two-hour film) and stalls on that
             // imaginary end every few seconds.
+            // A remux starting mid-title runs that much less.
             durationMs = runCatching {
-                (magisPlayer ?: controller).duration.takeIf { it > 0 } ?: 0L
+                (magisPlayer ?: controller).duration.takeIf { it > 0 }?.let { (it - remuxStartsAt).coerceAtLeast(1L) } ?: 0L
             }.getOrDefault(0L),
         )
         // No transcoder: audio the receiver can't decode still gets cast, muted, instead of not
@@ -1299,9 +1297,11 @@ private fun PlayerContent(
     // The audio the phone has on, as the remux sees it: a key of the effect below, so picking
     // another audio while casting remuxes again with it and reloads the receiver.
     val castAudioOrdinal = tracksState.castAudioChoice?.ordinal
-    LaunchedEffect(casting, d?.episodeId, d?.kind, magisItem?.episodeId, castAudioOrdinal) {
+    LaunchedEffect(casting, d?.episodeId, d?.kind, magisItem?.episodeId, castAudioOrdinal, castSeekBack.generation) {
         if (!casting || castSession == null) return@LaunchedEffect
         val audio = tracksState.castAudioChoice
+        // A seek before where the TV's remux begins (seekTo): a remux from an earlier start point.
+        val seekBackTo = castSeekBack.take()?.takeIf { castAsRemux != null }
         // Magis travels in `magisItem`, everything else in the playlist. `castMagis` is that item in
         // its cast shape (an official-Xuper plugin title included), null for any other plugin.
         val item = castMagis?.takeIf { it.kind == SourceKind.MAGIS } ?: d ?: return@LaunchedEffect
@@ -1340,30 +1340,27 @@ private fun PlayerContent(
                 val livePosition = runCatching { magisPlayer?.currentPosition }.getOrNull()?.takeIf { it > 0 }
                 // Already on the TV (another audio was picked while casting): the TV's position,
                 // not the phone player's, which has sat paused where the cast began.
-                val tvPosition = if (castToReceiver == item.episodeId) castSession.lastKnownPositionMs(item.episodeId) else null
+                val tvPosition = if (castToReceiver == item.episodeId && seekBackTo == null) castSession.lastKnownPositionMs(item.episodeId) else null
                 tvOnTitle = tvPosition != null
-                val requestedPosition = com.arkiv.player.cast.CastStart.resumePointMs(tvPosition, livePosition, item.startPositionMs)
+                val requestedPosition = seekBackTo ?: com.arkiv.player.cast.CastStart.resumePointMs(tvPosition, livePosition, item.startPositionMs)
                 android.util.Log.w(
                     "ArkivCast",
                     "resume point: ${requestedPosition}ms (${if (livePosition != null) "live position" else "the item's startPosition, player not ready"})",
                 )
-                // ALWAYS FROM ZERO. Clipping works -- the cut lands exactly on a keyframe now,
-                // verified in the log -- and the audio still ran ahead of the picture. The cause
-                // measured earlier (1.57 s of audio with no video in the opening fragment) was
-                // fixed and the symptom survived it, so something else misaligns the tracks when
-                // the remux does not start at the beginning. The likeliest remaining suspect is
-                // outside our reach: media3's fragmented muxer writes no `tfdt`, the box that
-                // anchors each fragment in time, so nothing ever re-syncs what starts out skewed.
-                //
-                // Starting at zero has no such problem and is measured good: real time, no stalls,
-                // audio correct. Resuming is a convenience; watchable sound is not. The keyframe
-                // search and the clipping stay in the code -- they are correct and they are what a
-                // receiver that can seek would need.
-                val aligned = 0L
-                remuxStartPoint[item.episodeId] = 0L
-                // The remux still starts at zero; the CAST does not have to. Served as HLS, the
-                // receiver can start at any segment, so it starts where the phone was as soon as
-                // the remux has reached that point -- no clipping, so nothing to desynchronise.
+                // Where the remux starts: a keyframe on the 5-minute grid before the phone's
+                // position (TsRemuxer.startPoint, read from that byte so the tracks start together,
+                // see TsStart), instead of 0:00 -- the wait was position/15 (101 s at 36:46). Zero
+                // when switched off (`debug.kino.remux_seek_start off`), near the top, or not
+                // found. Another audio for what the TV plays keeps the TV's start point: same
+                // keyframe, same offset, and the TV goes on where it is.
+                val aligned = when {
+                    !magisIsTs(item) -> 0L
+                    tvOnTitle && castAsRemux != null -> com.arkiv.player.playback.RemuxPolicy.fromInKey(castAsRemux!!)
+                    else -> graph.tsRemuxer.startPoint(item.mediaUrl, cdn, audio?.ordinal, requestedPosition)
+                }
+                remuxStartPoint[item.episodeId] = aligned
+                // Served as HLS, the receiver can start at any segment: it starts where the phone
+                // was as soon as the remux has reached that point.
                 resumeMs = requestedPosition
                 Triple(
                     item.mediaUrl,
@@ -1409,7 +1406,7 @@ private fun PlayerContent(
             // one, or the TV keeps the audio the phone just moved away from.
             if (castToReceiver == item.episodeId && castAsRemux != key) {
                 // From where the TV was, not from the top (see CastAudio.reloadStartMs).
-                val at = com.arkiv.player.cast.CastAudio.reloadStartMs(
+                val at = seekBackTo ?: com.arkiv.player.cast.CastAudio.reloadStartMs(
                     com.arkiv.player.cast.CastAudioRoute.REMUX,
                     castSession.lastKnownPositionMs(item.episodeId) ?: 0L,
                 )
@@ -1436,8 +1433,10 @@ private fun PlayerContent(
             val followTv = tvOnTitle
             graph.applicationScope.launch(Dispatchers.Main) {
                 // The wait itself is shared with DLNA (RemuxCastStart); loading it is Cast's own.
+                // The wait runs on the remux's clock: it begins [offset] into the title.
+                val offset = graph.tsRemuxer.startMsOf(key)
                 com.arkiv.player.playback.RemuxCastStart.await(
-                    graph.remuxHlsServer, key, resumeAt,
+                    graph.remuxHlsServer, key, (resumeAt - offset).coerceAtLeast(0L),
                     inProgress = graph.tsRemuxer::inProgress,
                     // Gone, already on the TV, or the person picked another audio meanwhile: this
                     // remux is no longer wanted, and casting it would put the audio they moved
@@ -1447,14 +1446,19 @@ private fun PlayerContent(
                     // so the new one starts where the TV is BY THEN, and only once it covers that
                     // -- never "the nearest point" minutes back (review 2026-10-01).
                     maxWaitSec = if (followTv) Int.MAX_VALUE else com.arkiv.player.playback.RemuxHls.RESUME_WAIT_SEC,
-                    wantedNow = { if (followTv) castSession?.lastKnownPositionMs(item.episodeId) ?: resumeAt else resumeAt },
+                    wantedNow = {
+                        val titleMs = if (followTv) castSession?.lastKnownPositionMs(item.episodeId) ?: resumeAt else resumeAt
+                        (titleMs - offset).coerceAtLeast(0L)
+                    },
                 ) { start ->
                     val session = castSession ?: return@await false
-                    val retryPl = PlaylistData(listOf(item), 0, start.fromMs, requested = item.episodeId)
-                    val retryReq = castRequestFor(retryPl, 0, start.fromMs) ?: return@await false
+                    // castRequestFor takes the TITLE's clock.
+                    val retryPl = PlaylistData(listOf(item), 0, start.fromMs + offset, requested = item.episodeId)
+                    val retryReq = castRequestFor(retryPl, 0, start.fromMs + offset) ?: return@await false
                     android.util.Log.w(
                         "ArkivCast",
-                        "remux has ${start.readySec.toInt()}s ready → casting it as HLS from ${start.fromMs}ms " +
+                        "remux has ${start.readySec.toInt()}s ready → casting it as HLS from ${start.fromMs}ms of the remux " +
+                            "= ${start.fromMs + offset}ms of the title " +
                             "(${if (followTv) "where the TV was" else "the phone was at ${resumeAt}ms"})",
                     )
                     session.setMedia(retryReq)
@@ -2419,6 +2423,10 @@ private fun PlayerContent(
                 runCatching { magisPlayer?.pause() }
             }
         } else if (wasCasting) {
+            // The receiver counted from where its remux began: the phone resumes on the title's clock.
+            val endedOffset = castAsRemux?.let { graph.tsRemuxer.startMsOf(it) } ?: 0L
+            // The remux the TV had, when a hand-over to another (audio, start point) was under way.
+            castAsRemux?.let { graph.tsRemuxer.stop(it) }
             castToReceiver = null
             castAsRemux = null
             // A remux that failed in this session is tried again in the next one, instead of
@@ -2464,7 +2472,7 @@ private fun PlayerContent(
                 if (mg != null) {
                     val castMediaId = runCatching { castPlayer?.currentMediaItem?.mediaId }.getOrNull()
                     val castPos = if (castMediaId == mg.episodeId) {
-                        runCatching { CastProgress.contentPosition(castPlayer?.currentPosition ?: 0L) }
+                        runCatching { CastProgress.contentPosition(castPlayer?.currentPosition ?: 0L) + endedOffset }
                             .getOrDefault(0L)
                     } else {
                         android.util.Log.w(
@@ -2818,9 +2826,19 @@ private fun PlayerContent(
             return
         }
         val dur = contentDurationMs()
-        val target = remuxSeekLimit(targetMs.coerceIn(0L, if (dur > 0) dur else Long.MAX_VALUE))
+        val wanted = targetMs.coerceIn(0L, if (dur > 0) dur else Long.MAX_VALUE)
+        // The TV counts from where its remux begins: before that there is nothing to seek to on it,
+        // so a remux from an earlier start point takes over (CastSeekBack); past it, the remux's clock.
+        val offset = remuxOffset()
+        if (wanted < offset) {
+            castSeekBack.request(wanted)
+            android.widget.Toast.makeText(context, "Preparando la TV desde ese punto…", android.widget.Toast.LENGTH_SHORT).show()
+            bump()
+            return
+        }
+        val target = remuxSeekLimit(wanted - offset)
         activePlayer.seekTo(target)
-        mirror.jumpTo(target)
+        mirror.jumpTo(target + offset)
         bump()
     }
 
@@ -3245,7 +3263,7 @@ private fun PlayerContent(
                                         liveState.showInfo()
                                     }
                                 } else if (horizontal) {
-                                    currentPlayer.seekTo(swipeTarget); mirror.jumpTo(swipeTarget); bump()
+                                    currentPlayer.seekTo(swipeTarget); mirror.jumpTo(swipeTarget + remuxOffset()); bump()
                                 }
                                 gestures.clearHud()
                             },
