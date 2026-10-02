@@ -92,7 +92,8 @@ internal const val STREAM_TS_SEARCH_BYTES = (TsDurationProbe.PROBE_BYTES / MpegT
  */
 private class PreparedSource(
     val player: ExoPlayer,
-    val mediaItem: MediaItem,
+    /** Var only for [addSubtitlesInPlace]: an online subtitle joins the item without a new player. */
+    var mediaItem: MediaItem,
     val mediaSourceFactory: DefaultMediaSourceFactory,
     /** Set by [PluginWidevine.sessionManagerProvider] (playback thread) when the device would not run Widevine at L3; read by `onPlayerError` to tag the report. */
     val drmSoftwareLevelRefused: java.util.concurrent.atomic.AtomicBoolean = java.util.concurrent.atomic.AtomicBoolean(false),
@@ -157,6 +158,36 @@ private fun applyAudioTracks(
     if (startPositionMs > 0L) player.seekTo(startPositionMs)
     player.playWhenReady = playWhenReady
     Log.i(TAG, "ExoPlayer prepared · seekTo=$startPositionMs audioTracks=${tracks.size}")
+}
+
+/**
+ * Gives the playing item [configs] as its subtitles without a new player: the same item rebuilt
+ * with them, set again (merged with the side audio still in, as [applyAudioTracks] always does)
+ * and sought back to where it was, keeping play/pause. A subtitle's track only exists once the item
+ * is prepared with it -- media3 has no "add a text track" -- so this is the cheapest way an online
+ * subtitle downloaded mid-film joins it. Track overrides stay on the player and still match.
+ */
+private fun addSubtitlesInPlace(prepared: PreparedSource, configs: List<MediaItem.SubtitleConfiguration>, audio: List<ResolvedAudioTrack>) {
+    val player = prepared.player
+    val at = player.currentPosition.coerceAtLeast(0L)
+    val playing = player.playWhenReady
+    prepared.mediaItem = prepared.mediaItem.buildUpon().setSubtitleConfigurations(configs).build()
+    Log.i(TAG, "subtitles added in place · now ${configs.size} · at ${at}ms")
+    applyAudioTracks(prepared, audio, at, playWhenReady = playing)
+}
+
+/**
+ * The subtitle list [StreamExoPlayer] keys its player on: [previous] while [current] only appends to
+ * it (an online subtitle, added in place), else [current] (another title's list: a new player).
+ */
+internal fun <T> subtitleKeyFor(previous: List<T>, current: List<T>): List<T> =
+    if (current.size > previous.size && current.subList(0, previous.size) == previous) previous else current
+
+/** [subtitleKeyFor] across recompositions. Plain holder, not state: the key itself is what is compared. */
+@Composable
+private fun rememberSubtitleKey(configs: List<MediaItem.SubtitleConfiguration>): List<MediaItem.SubtitleConfiguration> {
+    val held = remember { arrayOf(configs) }
+    return subtitleKeyFor(held[0], configs).also { held[0] = it }
 }
 
 /**
@@ -291,7 +322,10 @@ internal fun StreamExoPlayer(
     val recoveryScope = androidx.compose.runtime.rememberCoroutineScope()
     val subtitleStyle by graph.subtitlePrefs.prefs.collectAsStateWithLifecycle()
 
-    val prepared = remember(mediaUrl, subtitleConfigs, requestHeaders, mimeType, http, audioTracks, drm, clearKey) {
+    // Subtitles only APPENDED to the list (an online one the person downloaded) keep this player:
+    // they are added in place below (see [addSubtitlesInPlace]); any other change rebuilds it.
+    val subtitleKey = rememberSubtitleKey(subtitleConfigs)
+    val prepared = remember(mediaUrl, subtitleKey, requestHeaders, mimeType, http, audioTracks, drm, clearKey) {
         // Host and path only: a signed URL's query (Signature=…, tokens) never reaches the log.
         val shownUrl = Uri.parse(mediaUrl).let { "${it.scheme}://${it.host}${it.path.orEmpty().take(60)}" }
         Log.i(
@@ -302,7 +336,7 @@ internal fun StreamExoPlayer(
         val pluginFactories: PluginHttpFactories? = (http as? StreamHttp.PluginGated)?.let {
             // Under liveStreamHosts "any", side-loaded subtitles and audio tracks stay strict on every hop
             // (under the broad video permission they don't: it covers them).
-            val sideUrls = strictSideUrls(it.hosts, subtitleConfigs.map { c -> c.uri.toString() }, audioTracks.map { a -> a.url })
+            val sideUrls = strictSideUrls(it.hosts, subtitleConfigs.map { c -> c.uri.toString() }.filterNot { u -> u.startsWith("file:") }, audioTracks.map { a -> a.url })
             val streamClient = graph.pluginStreamClient(it.hosts, it.xuper, sideUrls, askAboutFor = it.pluginId)
             // Never askable: a license redirect to a new host would carry the plugin's licenseHeaders
             // (its auth) there, and a DRM session's failure takes its own route (DRM_FINAL). Never
@@ -338,8 +372,10 @@ internal fun StreamExoPlayer(
         // reach the video's and the subtitles'.
         // VOD: a `.ts` whose last PCR lies before that window still gets its duration and seeking
         // (see TsTailPcrExtractor), searched through this same httpFactory -- same gate, same headers.
+        // Wrapped so a local file (a downloaded online subtitle) opens from disk; every http(s) URI
+        // still goes to [httpFactory] untouched, with its gate and headers.
         val mediaSourceFactory = DefaultMediaSourceFactory(
-            httpFactory,
+            androidx.media3.datasource.DefaultDataSource.Factory(context, httpFactory),
             com.arkiv.player.playback.streamExtractorsFactory(live = onLiveError != null, tsSearchBytes = STREAM_TS_SEARCH_BYTES),
         )
         // Only with a license to fetch: the factory's default provider would request it through its
@@ -401,10 +437,17 @@ internal fun StreamExoPlayer(
         built
     }
     val exoPlayer = prepared.player
+    // The subtitles the player's item has now; an appended one is added in place, where it is.
+    var appliedSubtitles by remember(prepared) { mutableStateOf(subtitleConfigs) }
     // The tracks actually still merged in for THIS player: starts as [audioTracks] and only ever
     // shrinks, when [fallbackAudioTracks] blames one (or all) of them for a player error -- never
     // restored within the same playback, so a track already found unusable is not retried.
     var activeAudioTracks by remember(prepared) { mutableStateOf(audioTracks) }
+    LaunchedEffect(prepared, subtitleConfigs) {
+        if (subtitleConfigs == appliedSubtitles) return@LaunchedEffect
+        addSubtitlesInPlace(prepared, subtitleConfigs, activeAudioTracks)
+        appliedSubtitles = subtitleConfigs
+    }
     // Re-prepares already spent on a stuck VOD player (see PlayerErrorRoute.STUCK_RETRY); per prepared source.
     var stuckRetries by remember(prepared) { mutableStateOf(0) }
     // The VOD network recovery's state, per prepared source (see [VodNetworkRecovery]): whether this
@@ -1174,6 +1217,7 @@ internal fun List<ResolvedSub>.toExoSubtitleConfigs(): List<MediaItem.SubtitleCo
         MediaItem.SubtitleConfiguration.Builder(Uri.parse(sub.url))
             .setMimeType(subtitleMimeType(sub))
             .setLanguage(sub.lang)
+            .apply { if (sub.label.isNotBlank()) setLabel(sub.label) }
             .setId(com.arkiv.player.cast.CastTextTracks.phoneIdOf(i))
             .build()
     }

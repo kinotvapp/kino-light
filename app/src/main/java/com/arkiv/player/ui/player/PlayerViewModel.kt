@@ -216,7 +216,15 @@ data class ResolvedSub(
     val url: String,
     /** `"vtt"`/`"srt"` when the source declared it (plugins); "" = guess from the URL. */
     val format: String = "",
+    /** The menu's name for the track ("" = named from [lang]): an online subtitle's own. */
+    val label: String = "",
+    /** Downloaded by the person from an online catalog, not given by the source. */
+    val online: Boolean = false,
 )
+
+/** A downloaded online subtitle as a track: a local UTF-8 SRT. */
+internal fun onlineSub(d: com.arkiv.player.data.subtitles.DownloadedSubtitle): ResolvedSub =
+    ResolvedSub(lang = d.lang, url = java.io.File(d.path).toURI().toString(), format = "srt", label = d.label, online = true)
 
 /** A plugin's subtitles, keeping the `format` it declared (its URLs rarely end in `.srt`). */
 internal fun pluginSubtitles(subs: List<GatewaySubtitle>): List<ResolvedSub> =
@@ -264,7 +272,10 @@ data class WebExtras(
     val drm: ResolvedDrm? = null,
     /** Own M3U live channels only (a `#KODIPROP` ClearKey key); null for every other source. */
     val clearKey: ResolvedClearKey? = null,
-)
+) {
+    /** The languages the SOURCE declared for its subtitles (the online ones, added after them, aside). */
+    val declaredLanguages: List<String> get() = subtitles.filterNot { it.online }.map { it.lang }
+}
 
 /**
  * What's playing from Caracol: which episode it is, where to start from, and what the source
@@ -443,7 +454,24 @@ class PlayerViewModel internal constructor(
         { _, _, _ -> null },
     /** Is a cast session up right now? A live channel's stream is only probed then (see [pluginCastProbe]). */
     private val castingNow: () -> Boolean = { false },
+    /** The online subtitles a title got before (still on disk), re-added as tracks when it reopens. */
+    private val onlineSubtitlesFor: (String) -> List<ResolvedSub> = { emptyList() },
 ) : ViewModel() {
+
+    /**
+     * An online subtitle the person just downloaded for [episodeId]: added after the source's own,
+     * so the player adds it as a track in place (see `StreamExoPlayer`) and a cast offers it to the
+     * TV (`CastSubtitlesSync`). Ignored when another title is on screen by now, or it is already there.
+     */
+    fun addOnlineSubtitle(episodeId: String, sub: ResolvedSub) {
+        val extras = _webExtras.value ?: return
+        if (extras.episodeId != episodeId || extras.subtitles.any { it.url == sub.url }) return
+        _webExtras.value = extras.copy(subtitles = extras.subtitles + sub)
+    }
+
+    /** [episodeId]'s remembered online subtitles, read off the main thread; none on any failure. */
+    private suspend fun rememberedOnlineSubtitles(episodeId: String): List<ResolvedSub> =
+        withContext(Dispatchers.IO) { runCatching { onlineSubtitlesFor(episodeId) }.getOrDefault(emptyList()) }
 
     /** One question per host per playback attempt; see [onPluginHostRefused]. */
     private val playbackHostPrompts = hostDecider?.let { com.arkiv.player.data.plugin.PlaybackHostPrompts(it) }
@@ -1640,7 +1668,7 @@ class PlayerViewModel internal constructor(
         _webExtras.value = WebExtras(
             episodeId,
             play.headers,
-            play.subtitles.map { ResolvedSub(lang = it.lang, url = it.url) },
+            play.subtitles.map { ResolvedSub(lang = it.lang, url = it.url) } + rememberedOnlineSubtitles(episodeId),
         )
         // Ephemeral content ALWAYS starts at zero, and not by oversight: no progress was saved, so
         // there's nowhere to resume from. It's the direct consequence of the rule -- what we
@@ -1863,7 +1891,9 @@ class PlayerViewModel internal constructor(
         pluginExpiry = com.arkiv.player.data.plugin.PluginStreamExpiry(System.currentTimeMillis(), play.expiresInSeconds)
         val header = if (live) null else repo.headerInfo(episodeId)
         _webExtras.value = WebExtras(
-            episodeId, play.headers, pluginSubtitles(play.subtitles), pluginAudioTracks(play.audioTracks),
+            episodeId, play.headers,
+            pluginSubtitles(play.subtitles) + (if (live) emptyList() else rememberedOnlineSubtitles(episodeId)),
+            pluginAudioTracks(play.audioTracks),
             drm = pluginDrm(play), clearKey = pluginClearKey(play),
         )
         // A live stream has no "where you were": it starts at the player's default position (the
