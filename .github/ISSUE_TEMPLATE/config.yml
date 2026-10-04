@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Telegram de Kino
+    url: https://t.me/Kinoapptv
+    about: Preguntas y ayuda de la comunidad.
+  - name: Reportar una vulnerabilidad
+    url: https://github.com/kinotvapp/kino-light/security/advisories/new
+    about: Las fallas de seguridad se reportan en privado.

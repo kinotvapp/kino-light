@@ -1,0 +1,16 @@
+Kino Demo
+Copyright 2026 kinotvapp
+
+The source code in this repository is licensed under the Apache License, Version 2.0.
+See the LICENSE file.
+
+TRADEMARK
+The "Kino" name, the Kino logo (the wordmark and the ring-and-dot mark) and the launcher and
+banner artwork are NOT licensed under the Apache License or any other license. All rights
+reserved. You may not use them to identify your own app, fork or service. If you redistribute a
+modified version of this code, replace the name and the artwork.
+
+FILMS
+The films listed in app/src/main/assets/home.json are works marked as public domain in the US
+("de dominio público en EE. UU. según el Internet Archive") and hosted by the Internet Archive
+(archive.org). They are not part of this repository; the app streams them from archive.org.

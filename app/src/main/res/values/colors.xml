@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="kino_background">#0E0E0E</color>
+    <color name="kino_red">#E50914</color>
+    <!-- The red of the logo's dot: the logo was drawn with its own red, not the UI's. -->
+    <color name="kino_logo_red">#E53224</color>
+    <color name="ic_launcher_background">#0E0E0E</color>
+</resources>
