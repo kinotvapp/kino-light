@@ -13,7 +13,8 @@ The full Kino app is closed source and lives elsewhere. This repo only mirrors i
   anything that would make a mock screen actually work. The only network the demo uses is the
   Internet Archive posters and videos listed in `app/src/main/assets/home.json`.
 - **No real third-party service names** in mock data (plugins, channels, addons): use fictional or
-  generic names. Never name the services the full app's community plugins talk to.
+  generic names. Never name the services the full app's community plugins talk to. The plugin
+  format names "Kino", "Stremio" and "Nuvio" stay visible (owner's call, 2026-10-05).
 - **No private details**: no internal hosts, tokens, device IPs, private repo names or commit hashes.
 - Language: what the person sees is Spanish (Bogotá, tuteo, never voseo); code, identifiers,
   comments and commit messages are English.
