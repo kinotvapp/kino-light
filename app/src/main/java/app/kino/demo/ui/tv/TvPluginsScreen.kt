@@ -62,7 +62,8 @@ fun TvPluginsScreen() {
 
 /**
  * The TV's plugins: ONE header row with the tabs Recomendados, De la comunidad and Instalados (n),
- * "Buscar plugins" (opens the search field under the row; one text for every tab) and "Agregar"; then
+ * "Buscar plugins" (opens the search field under the row; one text for every tab) and "Agregar" (the
+ * "Agregar un plugin" dialog); then
  * the selected tab's category chips (only the categories its cards have) and its grid of cards.
  * [landing], when given, goes on the selected tab.
  */
@@ -71,6 +72,8 @@ fun TvPluginsContent(landing: LandingFocus? = null, modifier: Modifier = Modifie
     val context = LocalContext.current
     var tab by rememberSaveable { mutableStateOf(TvPluginsTab.RECOMMENDED) }
     var searching by rememberSaveable { mutableStateOf(false) }
+    var adding by rememberSaveable { mutableStateOf(false) }
+    if (adding) TvAddPluginDialog(onDismiss = { adding = false })
     var query by rememberSaveable { mutableStateOf("") }
     var recommendedChip by rememberSaveable { mutableStateOf<PluginCategory?>(null) }
     var communityChip by rememberSaveable { mutableStateOf<PluginCategory?>(null) }
@@ -106,7 +109,7 @@ fun TvPluginsContent(landing: LandingFocus? = null, modifier: Modifier = Modifie
             }
             TvCompactAction(label = "Buscar plugins", icon = Icons.Default.Search) { searching = !searching }
             Spacer(Modifier.width(10.dp))
-            TvCompactAction(label = "Agregar", icon = Icons.Default.Add) { fullAppOnly(context) }
+            TvCompactAction(label = "Agregar", icon = Icons.Default.Add) { adding = true }
         }
         if (searching) {
             OutlinedTextField(

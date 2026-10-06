@@ -18,6 +18,9 @@ then move the date.
   have), "No hay plugins que coincidan.", the community note, Stremio/Nuvio format badges and the
   "Gratis y legal" pill. Mock: the catalog in `DemoData.kt` is fictional; the TV now opens its own
   Plugins screen (`TvPluginsScreen.kt`) from the rail.
+- **"Agregar un plugin" (phone + TV):** "Tipo de plugin" Kino / Nuvio / Stremio, the type's own
+  instruction, the address field, "Agregar" / "Cancelar". Mock: "Agregar" reads "Revisando…" for a
+  moment and then says it is in the full app; nothing is fetched.
 
 ## Baseline — Demo 1.0.0 (2026-10-03)
 

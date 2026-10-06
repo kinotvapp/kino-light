@@ -7,6 +7,7 @@
   agregar queda junto al título.
 - Las tarjetas de plugins muestran su formato (Stremio o Nuvio) y "Gratis y legal" en los canales
   gratuitos.
+- "Agregar un plugin" pregunta el tipo (Kino, Nuvio o Stremio) y explica qué dirección pegar en cada caso.
 
 ## Demo 1.0.0 — 2026-10-03
 

@@ -50,6 +50,7 @@ import app.kino.demo.data.categoryChips
 import app.kino.demo.data.filterPlugins
 import app.kino.demo.ui.components.KinoChip
 import app.kino.demo.ui.fullAppOnly
+import app.kino.demo.ui.plugins.AddPluginDialog
 import app.kino.demo.ui.plugins.COMMUNITY_NOTE
 import app.kino.demo.ui.plugins.COMMUNITY_TITLE
 import app.kino.demo.ui.plugins.NO_MATCH_LINE
@@ -67,19 +68,21 @@ private val FULL_WIDTH: LazyGridItemSpanScope.() -> GridItemSpan = { GridItemSpa
 private enum class ExtensionsTab { RECOMMENDED, COMMUNITY, INSTALLED }
 
 /**
- * "Plugins" on the phone: the heading with the round "Agregar" at its end, then ONE row with the tabs
+ * "Plugins" on the phone: the heading with the round "Agregar" at its end (the "Agregar un plugin"
+ * dialog), then ONE row with the tabs
  * Recomendados, De la comunidad and Instalados (n). Every tab has the shared "Buscar plugins" field, its
  * own category chips (only the categories its cards have) and its cards.
  */
 @Composable
 fun ExtensionsScreen(contentPadding: PaddingValues) {
-    val context = LocalContext.current
+    var adding by rememberSaveable { mutableStateOf(false) }
+    if (adding) AddPluginDialog(onDismiss = { adding = false })
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         Column(Modifier.widthIn(max = 720.dp).fillMaxSize().padding(top = contentPadding.calculateTopPadding())) {
             Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = SIDE_GUTTER, top = 12.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Plugins", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f))
                 FilledIconButton(
-                    onClick = { fullAppOnly(context) },
+                    onClick = { adding = true },
                     modifier = Modifier.size(48.dp),
                     colors = IconButtonDefaults.filledIconButtonColors(containerColor = ACTION_CONTAINER, contentColor = Color.White),
                 ) { Icon(Icons.Filled.Add, contentDescription = "Agregar plugin") }
