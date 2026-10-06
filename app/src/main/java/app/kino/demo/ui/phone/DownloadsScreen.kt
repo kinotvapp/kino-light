@@ -23,6 +23,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -33,17 +34,26 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.kino.demo.data.CatalogRow
 import app.kino.demo.data.allFilms
+import app.kino.demo.ui.components.EmptyState
 import app.kino.demo.ui.fullAppOnly
 import app.kino.demo.ui.theme.KinoRed
 import app.kino.demo.ui.theme.KinoSurfaceHigh
 import app.kino.demo.ui.theme.KinoTextSecondary
 import coil.compose.AsyncImage
 
-/** "Descargas" on the phone, with example rows (two ready, one in progress): nothing is downloaded for real. */
+/** A row still picking which copy of the video to save, before its download starts. */
+private const val CHOOSING = -1f
+
+/**
+ * "Descargas" on the phone, with example rows (two ready, one in progress, one still choosing its copy): nothing is
+ * downloaded for real. "Quitar" and "Quitar todos" clear rows for as long as the app runs.
+ */
 @Composable
 fun DownloadsScreen(rows: List<CatalogRow>, contentPadding: PaddingValues) {
     val context = LocalContext.current
-    val examples = remember(rows) { allFilms(rows).takeLast(3).zip(listOf(1f, 1f, 0.42f)) }
+    val examples = remember(rows) {
+        allFilms(rows).takeLast(4).zip(listOf(1f, 1f, 0.42f, CHOOSING)).toMutableStateList()
+    }
     LazyColumn(
         contentPadding = PaddingValues(
             top = contentPadding.calculateTopPadding(),
@@ -57,8 +67,11 @@ fun DownloadsScreen(rows: List<CatalogRow>, contentPadding: PaddingValues) {
         item {
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.End) {
                 TextButton(onClick = { fullAppOnly(context) }) { Text("Cancelar todos") }
-                TextButton(onClick = { fullAppOnly(context) }) { Text("Quitar todos") }
+                TextButton(onClick = { examples.clear() }, enabled = examples.isNotEmpty()) { Text("Quitar todos") }
             }
+        }
+        if (examples.isEmpty()) {
+            item { EmptyState("No tienes descargas", subtitle = "Lo que descargues aparece aquí para verlo sin internet.") }
         }
         items(examples, key = { it.first.id }) { (film, progress) ->
             Row(
@@ -77,12 +90,23 @@ fun DownloadsScreen(rows: List<CatalogRow>, contentPadding: PaddingValues) {
                 Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                     Text(film.title, style = MaterialTheme.typography.titleSmall, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     val done = progress >= 1f
+                    val choosing = progress == CHOOSING
                     Text(
-                        if (done) "Listo · ${film.durationMin * 6} MB" else "Bajando ${(progress * 100).toInt()}%",
+                        when {
+                            done -> "Listo · ${film.durationMin * 6} MB"
+                            choosing -> "Eligiendo la mejor copia…"
+                            else -> "Bajando ${(progress * 100).toInt()}%"
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = KinoTextSecondary,
                     )
-                    if (!done) {
+                    if (choosing) {
+                        androidx.compose.material3.LinearProgressIndicator(
+                            color = KinoRed,
+                            trackColor = KinoSurfaceHigh,
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        )
+                    } else if (!done) {
                         androidx.compose.material3.LinearProgressIndicator(
                             progress = { progress },
                             color = KinoRed,
@@ -92,11 +116,11 @@ fun DownloadsScreen(rows: List<CatalogRow>, contentPadding: PaddingValues) {
                     }
                     Row {
                         if (done) {
-                            TextButton(onClick = { fullAppOnly(context) }) { Text("Enviar a la TV") }
+                            TextButton(onClick = { fullAppOnly(context) }) { Text("Enviar a la TV", softWrap = false) }
                         } else {
                             TextButton(onClick = { fullAppOnly(context) }) { Text("Cancelar") }
                         }
-                        TextButton(onClick = { fullAppOnly(context) }) { Text("Quitar") }
+                        TextButton(onClick = { examples.removeAll { it.first.id == film.id } }) { Text("Quitar", softWrap = false) }
                     }
                 }
                 IconButton(onClick = { fullAppOnly(context) }) {

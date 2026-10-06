@@ -171,6 +171,7 @@ private fun MiniPlayerBar(film: Film, tvName: String, onOpen: () -> Unit, onPick
                 progress = { (np.positionMs.toFloat() / durationOf(film)).coerceIn(0f, 1f) },
                 color = KinoRed,
                 trackColor = Color.White.copy(alpha = 0.12f),
+                gapSize = 0.dp,
                 drawStopIndicator = {},
                 modifier = Modifier.fillMaxWidth().height(2.dp),
             )
