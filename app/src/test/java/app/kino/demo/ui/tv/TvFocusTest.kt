@@ -107,6 +107,31 @@ class TvFocusTest {
     }
 
     @Test
+    fun liveRailListAndTabsKeepFocus() {
+        start(Route.Home, Route.Live)
+        assertLanded("En vivo")
+        // Left from the list reaches the category rail; OK picks a category without losing focus.
+        press(Key.DirectionLeft)
+        press(Key.DirectionCenter)
+        assertTrue("En vivo: focus lost after picking a category", focusedCount() >= 1)
+        // Up through the rail reaches the provider tabs; Right walks them.
+        repeat(8) { press(Key.DirectionUp) }
+        press(Key.DirectionRight)
+        assertTrue("En vivo: focus lost in the tabs row", focusedCount() >= 1)
+        press(Key.DirectionDown)
+        assertTrue("En vivo: focus lost coming back down", focusedCount() >= 1)
+    }
+
+    @Test
+    fun pluginsTabsAndChipsKeepFocus() {
+        start(Route.Home, Route.Extensions)
+        assertLanded("Plugins")
+        repeat(3) { press(Key.DirectionRight) }
+        repeat(3) { press(Key.DirectionDown) }
+        assertTrue("Plugins: focus lost walking down", focusedCount() >= 1)
+    }
+
+    @Test
     fun settingsTabsAllRender() {
         start(Route.Home, Route.Settings)
         assertLanded("Ajustes")

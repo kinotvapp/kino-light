@@ -36,6 +36,16 @@ then move the date.
   results. The picker lists "Todas las fuentes" and the installed, active plugins that search (format
   badge, the chosen one red with "Elegida"); the phone shows a removable "En: <plugin>" chip, the TV
   names the button so. Mock: the choice is cosmetic; results still come from `home.json`.
+- **En vivo — radio and sources (phone + TV):** three invented sources (Canales Abiertos, Radio del
+  Mundo, Mis canales) and four radio stations whose logo-less tile shows a radio glyph. Phone: a source
+  chips row always on screen with the chosen one lit, then the source's categories and "Mis canales y
+  listas". Mock: opening a station says it is in the full app; "Mis canales y listas" too.
+- **En vivo on TV, redesigned:** provider tabs on top (colour dot and underline) with Buscar and
+  Recargar as round icons; the left rail with Favoritos, Recientes, the categories grouped under
+  headers with their counts and "Mis canales y listas" last; a compact channel list (provider badge in
+  mixed lists); the preview panel ("EN VIVO", "Ahora: …", "OK para ver …"); 🔍 swaps the rail for the
+  keyboard ("Buscar canal por nombre o número…"); empty states for Favoritos, Recientes, search and Mis
+  canales. Mock: the preview is the film's poster, not a mini-player; Recargar says it is in the full app.
 
 ## Baseline — Demo 1.0.0 (2026-10-03)
 
@@ -46,4 +56,6 @@ Splash, Home rows from `home.json`, title page, player (media3) with Kino's cont
 
 ## Pending
 
-- 2026-10-05: mirror the interface added to the full app since 2026-10-02 (in progress).
+- 2026-10-05: mirror the interface added to the full app since 2026-10-02 (in progress: Plugins,
+  bell, Buscar por fuente and En vivo done; Settings, player, mini-player and Downloads in a separate
+  branch).

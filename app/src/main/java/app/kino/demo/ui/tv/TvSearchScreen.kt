@@ -78,10 +78,11 @@ private fun apply(text: String, key: Key) = when (key) {
 
 /**
  * The remote's alphabetic keyboard: dark keys, the focused one red. Key size follows the smaller of
- * what the width and the height allow, so the whole grid always fits.
+ * what the width and the height allow, so the whole grid always fits. [firstKey] marks the first key
+ * (where the screen puts focus).
  */
 @Composable
-private fun TvKeyboard(text: String, onTextChange: (String) -> Unit, landing: LandingFocus, modifier: Modifier = Modifier) {
+internal fun TvKeyboard(text: String, onTextChange: (String) -> Unit, firstKey: Modifier, modifier: Modifier = Modifier) {
     val gap = 8.dp
     BoxWithConstraints(modifier) {
         val byWidth = (maxWidth - gap * 5) / 6
@@ -97,7 +98,7 @@ private fun TvKeyboard(text: String, onTextChange: (String) -> Unit, landing: La
                             modifier = Modifier
                                 .width(keySize * span + gap * (span - 1))
                                 .height(keySize)
-                                .then(if (r == 0 && c == 0) Modifier.landingFocus(landing) else Modifier),
+                                .then(if (r == 0 && c == 0) firstKey else Modifier),
                             shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
                             colors = ClickableSurfaceDefaults.colors(
                                 containerColor = KinoSurfaceHigh,
@@ -145,7 +146,7 @@ fun TvSearchScreen(rows: List<CatalogRow>, onOpenFilm: (Film) -> Unit) {
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(bottom = 16.dp),
                 )
-                TvKeyboard(text = text, onTextChange = { text = it }, landing = landing, modifier = Modifier.weight(1f))
+                TvKeyboard(text = text, onTextChange = { text = it }, firstKey = Modifier.landingFocus(landing), modifier = Modifier.weight(1f))
             }
             Column(Modifier.fillMaxSize().padding(top = 24.dp, end = 24.dp)) {
                 Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {

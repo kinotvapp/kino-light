@@ -14,6 +14,9 @@
 - Una campana en Inicio avisa de las novedades de tus plugins: las actualizaciones que esperan tu
   aprobación y las que ya se instalaron. El menú (y en la TV, Plugins) muestra cuántas esperan.
 - Buscar por fuente: elige en qué plugin buscar, o en todas las fuentes.
+- En vivo: emisoras de radio, y una fila de fuentes siempre a la vista en el celular.
+- En vivo en la TV, renovado: pestañas por fuente arriba, categorías agrupadas a la izquierda con
+  cuántos canales tienen, lista compacta de canales y vista previa del canal elegido.
 
 ## Demo 1.0.0 — 2026-10-03
 

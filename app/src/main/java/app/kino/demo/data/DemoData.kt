@@ -287,11 +287,44 @@ object DemoPluginLists {
     val nuvioRepos = mutableStateListOf("ejemplo/nuvio-scrapers")
 }
 
-/** A fictional live channel for En vivo: it "airs" one of the catalog films ([filmIndex] into the catalog). */
-data class DemoChannel(val number: Int, val name: String, val category: String, val now: String, val progress: Float, val filmIndex: Int)
+/**
+ * A fictional live channel for En vivo: it "airs" one of the catalog films ([filmIndex] into the catalog).
+ * [provider] is the [DemoLiveProvider] it comes from; a [radio] station with no logo shows a radio glyph.
+ */
+data class DemoChannel(
+    val number: Int,
+    val name: String,
+    val category: String,
+    val now: String,
+    val progress: Float,
+    val filmIndex: Int,
+    val provider: String = DemoLiveProviders.TV,
+    val radio: Boolean = false,
+)
+
+/** A source of live channels: a plugin with channels, or the person's own ("Mis canales"). */
+data class DemoLiveProvider(val id: String, val name: String, val color: Long)
+
+object DemoLiveProviders {
+    const val TV = "tv"
+    const val RADIO = "radio"
+    const val OWN = "own"
+
+    val all = listOf(
+        DemoLiveProvider(TV, "Canales Abiertos", 0xFF0F766E),
+        DemoLiveProvider(RADIO, "Radio del Mundo", 0xFFB7791F),
+        DemoLiveProvider(OWN, "Mis canales", 0xFF6B46C1),
+    )
+
+    fun of(id: String): DemoLiveProvider = all.firstOrNull { it.id == id } ?: all.first()
+}
 
 object DemoChannels {
     val categories = listOf("Cine", "Comedia", "Animación", "Misterio")
+
+    /** The TV rail's group of a category; a category with none shows without a header. */
+    val groups = mapOf("Cine" to "Películas", "Misterio" to "Películas", "Comedia" to "Entretenimiento", "Animación" to "Entretenimiento")
+
     val channels = listOf(
         DemoChannel(1, "Cine Clásico", "Cine", "Ayuno de amor", 0.35f, 0),
         DemoChannel(2, "Cine Mudo 24h", "Cine", "El gabinete del doctor Caligari", 0.6f, 5),
@@ -303,7 +336,20 @@ object DemoChannels {
         DemoChannel(8, "Noche de Misterio", "Misterio", "El carnaval de las almas", 0.55f, 1),
         DemoChannel(9, "Terror de Época", "Misterio", "El fantasma de la ópera", 0.3f, 3),
         DemoChannel(10, "Aventura TV", "Cine", "El libro de la selva", 0.65f, 13),
+        DemoChannel(11, "Radio Clásica", "Radio", "Sinfonías de la mañana", 0.45f, 0, DemoLiveProviders.RADIO, radio = true),
+        DemoChannel(12, "Jazz de Medianoche", "Radio", "Clásicos del swing", 0.7f, 0, DemoLiveProviders.RADIO, radio = true),
+        DemoChannel(13, "Noticias al Día", "Radio", "Resumen informativo", 0.2f, 0, DemoLiveProviders.RADIO, radio = true),
+        DemoChannel(14, "Tropical Estéreo", "Radio", "Cumbias de siempre", 0.85f, 0, DemoLiveProviders.RADIO, radio = true),
+        DemoChannel(15, "Cine en casa", "Mi lista", "Juan Nadie", 0.5f, 4, DemoLiveProviders.OWN),
+        DemoChannel(16, "Clásicos de la familia", "Mi lista", "Los viajes de Gulliver", 0.25f, 2, DemoLiveProviders.OWN),
     )
+
+    /** [provider]'s categories, in the order its channels give them. */
+    fun categoriesOf(provider: String): List<String> = channels.filter { it.provider == provider }.map { it.category }.distinct()
+
+    /** The channels whose name contains [query], or whose number is it, across every provider. */
+    fun search(query: String): List<DemoChannel> =
+        channels.filter { it.name.contains(query.trim(), ignoreCase = true) || it.number.toString() == query.trim() }
 }
 
 /** Favorites and recents of the demo's channels, kept while the app runs. */
