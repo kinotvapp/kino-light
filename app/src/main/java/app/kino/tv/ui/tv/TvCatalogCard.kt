@@ -1,0 +1,101 @@
+package app.kino.tv.ui.tv
+
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.tv.material3.Border
+import androidx.tv.material3.Card
+import androidx.tv.material3.CardDefaults
+import androidx.tv.material3.MaterialTheme
+import androidx.tv.material3.Text
+import app.kino.tv.data.KinoSource
+import app.kino.tv.ui.LocalReducedEffects
+import app.kino.tv.ui.cardFocusScale
+import app.kino.tv.ui.phone.cardInitial
+import app.kino.tv.ui.plugins.COMMUNITY_TITLE
+import app.kino.tv.ui.plugins.FREE_LIVE_COLOR
+import app.kino.tv.ui.plugins.FREE_LIVE_NOTE
+import app.kino.tv.ui.plugins.PluginKindBadge
+import app.kino.tv.ui.theme.KinoRed
+import app.kino.tv.ui.theme.KinoSurface
+import app.kino.tv.ui.theme.KinoTextSecondary
+
+/**
+ * A plugin as a TV card: the icon tile in its colour (with "Gratis y legal" or "De la comunidad"),
+ * name and format badge, one line of description and what OK does ("Instalar" in red, a grey "Instalado ✓", or the installed plugin's state).
+ */
+@Composable
+internal fun TvCatalogCard(plugin: KinoSource, actionLabel: String, actionIsQuiet: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Card(
+        onClick = onClick,
+        modifier = modifier.fillMaxWidth(),
+        scale = cardFocusScale(LocalReducedEffects.current),
+        colors = CardDefaults.colors(containerColor = KinoSurface),
+        shape = CardDefaults.shape(RoundedCornerShape(12.dp)),
+        border = CardDefaults.border(focusedBorder = Border(BorderStroke(3.dp, Color.White), shape = RoundedCornerShape(12.dp))),
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .background(Brush.verticalGradient(listOf(Color(plugin.color).copy(alpha = 0.35f), Color.Transparent))),
+        ) {
+            Row(Modifier.fillMaxWidth().padding(start = 12.dp, top = 12.dp, end = 12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                Box(Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)).background(Color(plugin.color)), contentAlignment = Alignment.Center) {
+                    Text(cardInitial(plugin.name), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, color = Color.White)
+                }
+                val pill = when {
+                    plugin.freeLive -> FREE_LIVE_NOTE
+                    plugin.community -> COMMUNITY_TITLE
+                    else -> null
+                }
+                if (pill != null) {
+                    Text(
+                        pill,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White,
+                        maxLines = 1,
+                        softWrap = false,
+                        // Narrow cards (the first-run picker's six columns) leave ~85 dp beside the tile.
+                        fontSize = 10.sp,
+                        modifier = Modifier
+                            .padding(start = 4.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(if (plugin.freeLive) Color(FREE_LIVE_COLOR) else KinoRed)
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                    )
+                }
+            }
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(plugin.name, style = MaterialTheme.typography.titleSmall, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                    PluginKindBadge(plugin.kind)
+                }
+                Text(plugin.description, style = MaterialTheme.typography.bodySmall, color = KinoTextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    actionLabel,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (actionIsQuiet) KinoTextSecondary else KinoRed,
+                    maxLines = 1,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+        }
+    }
+}

@@ -1,0 +1,132 @@
+package app.kino.tv.ui.phone
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.toMutableStateList
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import app.kino.tv.data.CatalogRow
+import app.kino.tv.data.allFilms
+import app.kino.tv.ui.components.EmptyState
+import app.kino.tv.ui.fullAppOnly
+import app.kino.tv.ui.theme.KinoRed
+import app.kino.tv.ui.theme.KinoSurfaceHigh
+import app.kino.tv.ui.theme.KinoTextSecondary
+import coil.compose.AsyncImage
+
+/** A row still picking which copy of the video to save, before its download starts. */
+private const val CHOOSING = -1f
+
+/**
+ * "Descargas" on the phone, with example rows (two ready, one in progress, one still choosing its copy): nothing is
+ * downloaded for real. "Quitar" and "Quitar todos" clear rows for as long as the app runs.
+ */
+@Composable
+fun DownloadsScreen(rows: List<CatalogRow>, contentPadding: PaddingValues) {
+    val context = LocalContext.current
+    val examples = remember(rows) {
+        allFilms(rows).takeLast(4).zip(listOf(1f, 1f, 0.42f, CHOOSING)).toMutableStateList()
+    }
+    LazyColumn(
+        contentPadding = PaddingValues(
+            top = contentPadding.calculateTopPadding(),
+            bottom = contentPadding.calculateBottomPadding() + 24.dp,
+        ),
+        modifier = Modifier.fillMaxSize(),
+    ) {
+        item {
+            Text("Descargas", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp))
+        }
+        item {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = { fullAppOnly(context) }) { Text("Cancelar todos") }
+                TextButton(onClick = { examples.clear() }, enabled = examples.isNotEmpty()) { Text("Quitar todos") }
+            }
+        }
+        if (examples.isEmpty()) {
+            item { EmptyState("No tienes descargas", subtitle = "Lo que descargues aparece aquí para verlo sin internet.") }
+        }
+        items(examples, key = { it.first.id }) { (film, progress) ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            ) {
+                Box(
+                    Modifier
+                        .width(120.dp)
+                        .aspectRatio(16f / 9f)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(KinoSurfaceHigh),
+                ) {
+                    AsyncImage(model = film.posterUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                }
+                Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                    Text(film.title, style = MaterialTheme.typography.titleSmall, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    val done = progress >= 1f
+                    val choosing = progress == CHOOSING
+                    Text(
+                        when {
+                            done -> "Listo · ${film.durationMin * 6} MB"
+                            choosing -> "Eligiendo la mejor copia…"
+                            else -> "Bajando ${(progress * 100).toInt()}%"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = KinoTextSecondary,
+                    )
+                    if (choosing) {
+                        androidx.compose.material3.LinearProgressIndicator(
+                            color = KinoRed,
+                            trackColor = KinoSurfaceHigh,
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        )
+                    } else if (!done) {
+                        androidx.compose.material3.LinearProgressIndicator(
+                            progress = { progress },
+                            color = KinoRed,
+                            trackColor = KinoSurfaceHigh,
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        )
+                    }
+                    Row {
+                        if (done) {
+                            TextButton(onClick = { fullAppOnly(context) }) { Text("Enviar a la TV", softWrap = false) }
+                        } else {
+                            TextButton(onClick = { fullAppOnly(context) }) { Text("Cancelar") }
+                        }
+                        TextButton(onClick = { examples.removeAll { it.first.id == film.id } }) { Text("Quitar", softWrap = false) }
+                    }
+                }
+                IconButton(onClick = { fullAppOnly(context) }) {
+                    Icon(Icons.Default.PlayArrow, contentDescription = "Reproducir", tint = KinoRed)
+                }
+            }
+        }
+    }
+}

@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "app.kino.demo"
+    namespace = "app.kino.tv"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "app.kino.demo"
+        applicationId = "app.kino.tv"
         minSdk = 24
         targetSdk = 35
         versionCode = 2

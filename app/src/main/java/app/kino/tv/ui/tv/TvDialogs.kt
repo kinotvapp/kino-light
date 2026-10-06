@@ -1,0 +1,262 @@
+package app.kino.tv.ui.tv
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.Spacer
+import androidx.tv.material3.Border
+import androidx.tv.material3.ClickableSurfaceDefaults
+import androidx.tv.material3.MaterialTheme
+import androidx.tv.material3.Surface
+import androidx.tv.material3.Text
+import app.kino.tv.data.KinoPluginUpdates
+import app.kino.tv.data.KinoSession
+import app.kino.tv.data.KinoSource
+import app.kino.tv.data.PluginKind
+import app.kino.tv.data.pluginLog
+import app.kino.tv.ui.fullAppOnly
+import app.kino.tv.ui.plugins.DEBUG_SWITCH_LABEL
+import app.kino.tv.ui.plugins.DEBUG_SWITCH_LINE
+import app.kino.tv.ui.plugins.PluginKindBadge
+import app.kino.tv.ui.plugins.PluginUpdatesCopy
+import app.kino.tv.ui.plugins.versionLine
+import app.kino.tv.ui.plugins.registroTitle
+import app.kino.tv.ui.theme.KinoBlack
+import app.kino.tv.ui.plugins.ADD_CONSENT_LINE
+import app.kino.tv.ui.plugins.ALL_SOURCES_LABEL
+import app.kino.tv.ui.plugins.SEARCH_BY_SOURCE_LABEL
+import app.kino.tv.ui.plugins.SearchScopeIcon
+import app.kino.tv.ui.plugins.ADD_PLUGIN_TITLE
+import app.kino.tv.ui.plugins.AddCheckEffect
+import app.kino.tv.ui.plugins.addInstruction
+import app.kino.tv.ui.plugins.addLabel
+import app.kino.tv.ui.plugins.addPlaceholder
+import app.kino.tv.ui.theme.KinoRed
+import app.kino.tv.ui.theme.KinoSurface
+import app.kino.tv.ui.theme.KinoSurfaceHigh
+import app.kino.tv.ui.theme.KinoTextSecondary
+import kotlinx.coroutines.delay
+
+/**
+ * Where a TV dialog puts the D-pad focus when it opens. The dialog's window takes a few frames to be
+ * focused, so the request repeats until the target really holds focus (as [rememberLandingFocus]).
+ */
+class DialogFocus internal constructor() {
+    val requester = FocusRequester()
+    internal var focused = false
+}
+
+@Composable
+fun rememberDialogFocus(): DialogFocus {
+    val focus = remember { DialogFocus() }
+    LaunchedEffect(focus) {
+        repeat(60) {
+            if (focus.focused) return@LaunchedEffect
+            runCatching { focus.requester.requestFocus() }
+            delay(50)
+        }
+    }
+    return focus
+}
+
+/** Marks the element a TV dialog opens on. */
+fun Modifier.dialogFocus(focus: DialogFocus): Modifier =
+    focusRequester(focus.requester).onFocusChanged { focus.focused = it.isFocused }
+
+/** A TV dialog: a dark rounded panel with a title, [content] below it; Back closes it ([onDismiss]). */
+@Composable
+internal fun TvDialog(title: String, onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            Modifier
+                .widthIn(min = 420.dp, max = 640.dp)
+                .background(KinoSurface, RoundedCornerShape(16.dp))
+                .padding(28.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Text(title, style = MaterialTheme.typography.headlineSmall, color = Color.White)
+            content()
+        }
+    }
+}
+
+/**
+ * The TV's "Agregar un plugin": the type selector (Kino / Nuvio / Stremio) where focus starts, the
+ * type's instruction, the address field and "Cancelar" / "Agregar" ("Revisando…" for a moment).
+ */
+@Composable
+internal fun TvAddPluginDialog(onDismiss: () -> Unit) {
+    var kind by rememberSaveable { mutableStateOf(PluginKind.KINO) }
+    var address by rememberSaveable { mutableStateOf("") }
+    var busy by rememberSaveable { mutableStateOf(false) }
+    val focus = rememberDialogFocus()
+    AddCheckEffect(busy) { busy = false; onDismiss() }
+
+    TvDialog(ADD_PLUGIN_TITLE, onDismiss) {
+        Text("Tipo de plugin", style = MaterialTheme.typography.labelLarge, color = KinoTextSecondary)
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            PluginKind.entries.forEach { k ->
+                TvChoiceChip(
+                    label = k.label,
+                    selected = k == kind,
+                    onClick = { kind = k },
+                    modifier = if (k == PluginKind.KINO) Modifier.dialogFocus(focus) else Modifier,
+                )
+            }
+        }
+        Text(addInstruction(kind), style = MaterialTheme.typography.bodyMedium, color = KinoTextSecondary)
+        Text(ADD_CONSENT_LINE, style = MaterialTheme.typography.bodySmall, color = KinoTextSecondary)
+        OutlinedTextField(
+            value = address,
+            onValueChange = { address = it },
+            label = { androidx.compose.material3.Text(addLabel(kind)) },
+            placeholder = { androidx.compose.material3.Text(addPlaceholder(kind), color = KinoTextSecondary) },
+            singleLine = true,
+            readOnly = busy,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (busy) LinearProgressIndicator(Modifier.fillMaxWidth(), color = KinoRed)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)) {
+            TvCompactAction(label = "Cancelar", onClick = onDismiss)
+            TvCompactAction(label = if (busy) "Revisando…" else "Agregar") { if (address.isNotBlank() && !busy) busy = true }
+        }
+    }
+}
+
+/**
+ * An installed plugin's settings on the TV (OK on its card): "Activo", "Modo debug" with its line and,
+ * while it is on, "Ver registro", which turns the dialog into the plugin's Registro (its last events,
+ * "Copiar registro" and "Volver").
+ */
+@Composable
+internal fun TvPluginSettingsDialog(plugin: KinoSource, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    var showingLog by rememberSaveable(plugin.id) { mutableStateOf(false) }
+    val focus = rememberDialogFocus()
+    val on = KinoSession.enabled[plugin.id] == true
+    val debugOn = KinoSession.debug[plugin.id] == true
+
+    TvDialog(if (showingLog) registroTitle(plugin.name) else "${plugin.name} ${plugin.version}", onDismiss) {
+        if (showingLog) {
+            Column(
+                Modifier.fillMaxWidth().background(KinoBlack, RoundedCornerShape(8.dp)).padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                pluginLog(plugin).forEach {
+                    Text(it, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, color = Color.White)
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                TvCompactAction(label = "Volver", modifier = Modifier.dialogFocus(focus)) { showingLog = false }
+                TvCompactAction(label = "Copiar registro") { fullAppOnly(context) }
+            }
+        } else {
+            PluginKindBadge(plugin.kind)
+            Text("Se conecta a: ${plugin.hosts}", style = MaterialTheme.typography.bodyMedium, color = KinoTextSecondary)
+            TvCompactAction(label = if (on) "Activo: sí" else "Activo: no", modifier = Modifier.dialogFocus(focus)) { KinoSession.enabled[plugin.id] = !on }
+            TvCompactAction(label = if (debugOn) "$DEBUG_SWITCH_LABEL: activado" else "$DEBUG_SWITCH_LABEL: desactivado") { KinoSession.debug[plugin.id] = !debugOn }
+            Text(DEBUG_SWITCH_LINE, style = MaterialTheme.typography.bodySmall, color = KinoTextSecondary)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (debugOn) TvCompactAction(label = "Ver registro") { showingLog = true }
+                TvCompactAction(label = "Desinstalar") { fullAppOnly(context) }
+                TvCompactAction(label = "Cerrar", onClick = onDismiss)
+            }
+        }
+    }
+}
+
+/**
+ * The TV's bell sheet: the updates waiting for approval, each with "Revisar", then the last week's
+ * applied ones ("Nombre v1.2.0 → v1.3.0" and the day); focus starts on "Cerrar".
+ */
+@Composable
+internal fun TvPluginUpdatesDialog(onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val focus = rememberDialogFocus()
+    TvDialog(PluginUpdatesCopy.TITLE, onDismiss) {
+        if (KinoPluginUpdates.waiting.isNotEmpty()) {
+            Text(PluginUpdatesCopy.WAITING, style = MaterialTheme.typography.titleSmall, color = KinoTextSecondary)
+            KinoPluginUpdates.waiting.forEach { w ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(w.name, style = MaterialTheme.typography.bodyLarge, color = Color.White)
+                        Text(versionLine(w.currentVersion, w.pendingVersion), style = MaterialTheme.typography.bodySmall, color = KinoTextSecondary)
+                    }
+                    TvCompactAction(label = PluginUpdatesCopy.REVIEW) { fullAppOnly(context) }
+                }
+            }
+        }
+        if (KinoPluginUpdates.updated.isNotEmpty()) {
+            Text(PluginUpdatesCopy.UPDATED, style = MaterialTheme.typography.titleSmall, color = KinoTextSecondary)
+            KinoPluginUpdates.updated.forEach { u ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("${u.name} ${versionLine(u.fromVersion, u.toVersion)}", style = MaterialTheme.typography.bodyLarge, color = Color.White, modifier = Modifier.weight(1f))
+                    Text(u.day, style = MaterialTheme.typography.bodySmall, color = KinoTextSecondary)
+                }
+            }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            TvCompactAction(label = PluginUpdatesCopy.CLOSE, modifier = Modifier.dialogFocus(focus), onClick = onDismiss)
+        }
+    }
+}
+
+/**
+ * The TV's "Buscar por fuente" picker: "Todas las fuentes", then every plugin that searches with its
+ * format badge; the chosen one says "Elegida" and holds the focus when it opens.
+ */
+@Composable
+internal fun TvSearchScopeDialog(scopes: List<KinoSource>, current: KinoSource?, onPick: (KinoSource?) -> Unit, onDismiss: () -> Unit) {
+    val focus = rememberDialogFocus()
+    TvDialog(SEARCH_BY_SOURCE_LABEL, onDismiss) {
+        (listOf<KinoSource?>(null) + scopes).forEach { scope ->
+            val on = scope?.id == current?.id
+            Surface(
+                onClick = { onPick(scope) },
+                modifier = Modifier.fillMaxWidth().then(if (on) Modifier.dialogFocus(focus) else Modifier),
+                shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+                colors = ClickableSurfaceDefaults.colors(
+                    containerColor = KinoSurfaceHigh,
+                    focusedContainerColor = KinoSurfaceHigh,
+                    contentColor = Color.White,
+                    focusedContentColor = Color.White,
+                ),
+                border = ClickableSurfaceDefaults.border(focusedBorder = Border(BorderStroke(2.dp, Color.White), shape = RoundedCornerShape(10.dp))),
+            ) {
+                Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    SearchScopeIcon(scope, 36.dp)
+                    Text(scope?.name ?: ALL_SOURCES_LABEL, style = MaterialTheme.typography.bodyLarge, color = if (on) KinoRed else Color.White)
+                    if (scope != null) PluginKindBadge(scope.kind)
+                    Spacer(Modifier.weight(1f))
+                    if (on) Text("Elegida", style = MaterialTheme.typography.labelLarge, color = KinoRed)
+                }
+            }
+        }
+    }
+}
