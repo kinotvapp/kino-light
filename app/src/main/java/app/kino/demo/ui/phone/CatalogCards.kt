@@ -33,6 +33,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import app.kino.demo.data.DemoSource
 import app.kino.demo.data.PluginKind
 import app.kino.demo.ui.plugins.COMMUNITY_TITLE
@@ -86,12 +87,13 @@ internal fun CardTile(name: String, color: Long, pill: String?, pillColor: Color
                     color = Color.White,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    fontSize = 10.sp,
                     modifier = Modifier
                         .weight(1f, fill = false)
-                        .padding(start = 6.dp)
+                        .padding(start = 4.dp)
                         .clip(RoundedCornerShape(50))
                         .background(pillColor)
-                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
                 )
             }
         }

@@ -19,6 +19,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Border
 import androidx.tv.material3.Card
 import androidx.tv.material3.CardDefaults
@@ -70,11 +71,14 @@ internal fun TvCatalogCard(plugin: DemoSource, actionLabel: String, actionIsQuie
                         style = MaterialTheme.typography.labelSmall,
                         color = Color.White,
                         maxLines = 1,
+                        softWrap = false,
+                        // Narrow cards (the first-run picker's six columns) leave ~85 dp beside the tile.
+                        fontSize = 10.sp,
                         modifier = Modifier
-                            .padding(start = 6.dp)
+                            .padding(start = 4.dp)
                             .clip(RoundedCornerShape(50))
                             .background(if (plugin.freeLive) Color(FREE_LIVE_COLOR) else KinoRed)
-                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
                     )
                 }
             }

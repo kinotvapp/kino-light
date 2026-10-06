@@ -161,7 +161,7 @@ private fun durationOf(film: Film): Long = (if (film.durationMin > 0) film.durat
 private fun MiniPlayerBar(film: Film, tvName: String, onOpen: () -> Unit, onPickTv: (() -> Unit)?) {
     val np = NowPlayingOnTv
     Surface(
-        color = KinoSurfaceHigh.copy(alpha = 0.96f),
+        color = KinoSurfaceHigh,
         shape = RoundedCornerShape(16.dp),
         shadowElevation = 8.dp,
         modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(8.dp).clickable(onClickLabel = "Abrir", onClick = onOpen),
