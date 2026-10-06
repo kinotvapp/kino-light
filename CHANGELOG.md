@@ -1,6 +1,6 @@
 # Cambios
 
-## 1.1.0 — 2026-10-05
+## 0.9.45 — 2026-10-05
 
 - Plugins en tres pestañas: Recomendados, De la comunidad e Instalados, con búsqueda y filtros por
   categoría (Películas, Series, Anime, En vivo, Radio, Subtítulos, Utilidades). El botón "+" para
@@ -30,7 +30,7 @@
   cambiar audio o subtítulos, elegir qué TV controlar o detenerlo.
 - Descargas: una descarga eligiendo la mejor copia antes de empezar, y "Quitar todos" vacía la lista.
 
-## Demo 1.0.0 — 2026-10-03
+## Primera versión — 2026-10-03
 
 - Primera versión de la demo pública de Kino.
 - La animación de inicio, el logo, los colores y el diseño de Kino, en celular y en Android TV.

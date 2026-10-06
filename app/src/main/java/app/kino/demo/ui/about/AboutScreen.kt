@@ -69,7 +69,7 @@ fun AboutScreen(contentPadding: PaddingValues) {
                 Text("Telegram: t.me/Kinoapptv", color = Color.White)
             }
             Text(
-                "Kino Demo 1.1.0 · Código de la demo bajo licencia Apache-2.0. El nombre y el logo de Kino no están licenciados.",
+                "Kino Demo 0.9.45 · Código de la demo bajo licencia Apache-2.0. El nombre y el logo de Kino no están licenciados.",
                 style = MaterialTheme.typography.bodySmall,
                 color = KinoTextSecondary,
                 modifier = Modifier.padding(top = 8.dp, bottom = contentPadding.calculateBottomPadding() + 24.dp),

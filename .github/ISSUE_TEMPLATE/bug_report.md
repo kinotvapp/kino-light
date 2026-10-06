@@ -5,7 +5,7 @@ labels: bug
 ---
 
 **Versión**
-<!-- Kino Demo 1.0.0, o la versión de Kino completo que uses -->
+<!-- Kino Demo 0.9.45, o la versión de Kino completo que uses -->
 
 **Equipo**
 <!-- Marca y modelo, versión de Android. ¿Celular, tablet o TV? -->

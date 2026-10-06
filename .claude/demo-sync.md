@@ -63,7 +63,7 @@ then move the date.
 - Downloads (phone): a row "Eligiendo la mejor copia…" with indeterminate progress; "Quitar" and
   "Quitar todos" clear rows in memory.
 
-## Baseline — Demo 1.0.0 (2026-10-03)
+## Baseline — first version (2026-10-03)
 
 Splash, Home rows from `home.json`, title page, player (media3) with Kino's controls, search over
 `home.json`, About. Mock screens: Categorías, Biblioteca, Descargas, En vivo, Plugins

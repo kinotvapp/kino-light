@@ -283,7 +283,7 @@ private fun AppTab(onOpenDownloads: () -> Unit) {
     SettingsSection("Actualizaciones") {
         SettingsRow(
             if (update.checking) "Buscando…" else "Buscar actualizaciones",
-            supporting = "Versión instalada: Kino Demo 1.1.0",
+            supporting = "Versión instalada: Kino Demo 0.9.45",
             enabled = !update.checking,
             onClick = { update.run() },
         )
