@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -32,18 +33,33 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import app.kino.demo.data.CatalogRow
+import app.kino.demo.data.DemoSession
 import app.kino.demo.data.Film
 import app.kino.demo.data.searchFilms
 import app.kino.demo.data.metaLine
 import app.kino.demo.ui.components.PosterCard
+import app.kino.demo.ui.plugins.SEARCH_BY_SOURCE_LABEL
+import app.kino.demo.ui.plugins.SearchScopeChip
+import app.kino.demo.ui.plugins.SearchScopeDialog
+import app.kino.demo.ui.theme.KinoRed
 import app.kino.demo.ui.theme.KinoBlack
 import app.kino.demo.ui.theme.KinoTextSecondary
 
-/** "Buscar" on the phone. In the demo it filters the bundled catalog on the device, as you type. */
+/**
+ * "Buscar" on the phone. In the demo it filters the bundled catalog on the device, as you type. The
+ * source icon beside the field opens "Buscar por fuente"; a chosen source shows as "En: <plugin>".
+ */
 @Composable
 fun SearchScreen(rows: List<CatalogRow>, onBack: () -> Unit, onOpenFilm: (Film) -> Unit) {
     var text by rememberSaveable { mutableStateOf("") }
     val results = remember(rows, text) { searchFilms(rows, text) }
+    val scopes = DemoSession.searchScopes()
+    var scopeId by rememberSaveable { mutableStateOf<String?>(null) }
+    val scope = scopes.firstOrNull { it.id == scopeId }
+    var picking by rememberSaveable { mutableStateOf(false) }
+    if (picking) {
+        SearchScopeDialog(scopes, scope, onPick = { scopeId = it?.id; picking = false }, onDismiss = { picking = false })
+    }
     Column(Modifier.fillMaxSize().background(KinoBlack).statusBarsPadding()) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)) {
             IconButton(onClick = onBack) {
@@ -59,18 +75,26 @@ fun SearchScreen(rows: List<CatalogRow>, onBack: () -> Unit, onOpenFilm: (Film) 
             modifier = Modifier.fillMaxSize(),
         ) {
             item(span = { GridItemSpan(maxLineSpan) }) {
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = { text = it },
-                    placeholder = { Text("Buscar…") },
-                    singleLine = true,
-                    trailingIcon = {
-                        if (text.isNotEmpty()) {
-                            IconButton(onClick = { text = "" }) { Icon(Icons.Default.Close, contentDescription = "Limpiar") }
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            value = text,
+                            onValueChange = { text = it },
+                            placeholder = { Text("Buscar…") },
+                            singleLine = true,
+                            trailingIcon = {
+                                if (text.isNotEmpty()) {
+                                    IconButton(onClick = { text = "" }) { Icon(Icons.Default.Close, contentDescription = "Limpiar") }
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                        )
+                        IconButton(onClick = { picking = true }) {
+                            Icon(Icons.Default.Tune, contentDescription = SEARCH_BY_SOURCE_LABEL, tint = if (scope != null) KinoRed else Color.White)
                         }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                    }
+                    if (scope != null) SearchScopeChip(scope, onClear = { scopeId = null })
+                }
             }
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Text("Películas y series", style = MaterialTheme.typography.titleMedium, color = Color.White)

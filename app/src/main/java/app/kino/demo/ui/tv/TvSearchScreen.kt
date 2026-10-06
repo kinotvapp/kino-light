@@ -32,7 +32,12 @@ import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Tune
 import app.kino.demo.data.CatalogRow
+import app.kino.demo.data.DemoSession
+import app.kino.demo.ui.plugins.SEARCH_BY_SOURCE_LABEL
+import app.kino.demo.ui.plugins.scopeChipLabel
 import app.kino.demo.data.Film
 import app.kino.demo.data.searchFilms
 import app.kino.demo.ui.theme.KinoBlack
@@ -112,12 +117,22 @@ private fun TvKeyboard(text: String, onTextChange: (String) -> Unit, landing: La
     }
 }
 
-/** "Buscar" on the TV: the keyboard on the left, the matching films on the right as you type. */
+/**
+ * "Buscar" on the TV: the keyboard on the left, the matching films on the right as you type. Above the
+ * results, "Buscar por fuente" opens the source picker; a chosen source names the button "En: <plugin>".
+ */
 @Composable
 fun TvSearchScreen(rows: List<CatalogRow>, onOpenFilm: (Film) -> Unit) {
     var text by rememberSaveable { mutableStateOf("") }
     val results = remember(rows, text) { searchFilms(rows, text) }
     val landing = rememberLandingFocus()
+    val scopes = DemoSession.searchScopes()
+    var scopeId by rememberSaveable { mutableStateOf<String?>(null) }
+    val scope = scopes.firstOrNull { it.id == scopeId }
+    var picking by rememberSaveable { mutableStateOf(false) }
+    if (picking) {
+        TvSearchScopeDialog(scopes, scope, onPick = { scopeId = it?.id; picking = false }, onDismiss = { picking = false })
+    }
 
     Box(Modifier.fillMaxSize().background(KinoBlack)) {
         Row(Modifier.fillMaxSize()) {
@@ -133,12 +148,15 @@ fun TvSearchScreen(rows: List<CatalogRow>, onOpenFilm: (Film) -> Unit) {
                 TvKeyboard(text = text, onTextChange = { text = it }, landing = landing, modifier = Modifier.weight(1f))
             }
             Column(Modifier.fillMaxSize().padding(top = 24.dp, end = 24.dp)) {
-                Text(
-                    if (text.isBlank()) "Películas" else "Resultados",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Color.White,
-                    modifier = Modifier.padding(bottom = 12.dp),
-                )
+                Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        if (text.isBlank()) "Películas" else "Resultados",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TvCompactAction(label = scope?.let(::scopeChipLabel) ?: SEARCH_BY_SOURCE_LABEL, icon = Icons.Default.Tune) { picking = true }
+                }
                 if (results.isEmpty()) {
                     Text("Sin resultados", style = MaterialTheme.typography.bodyMedium, color = KinoTextSecondary)
                 }

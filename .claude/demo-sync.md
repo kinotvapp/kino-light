@@ -32,6 +32,10 @@ then move the date.
   "Se actualizaron" ("Nombre v1.2.0 → v1.3.0" and the day), "Cerrar". The phone's menu button and its
   drawer's Plugins carry the count; the TV rail's Plugins carries it and, open, "1 por aprobar". Mock:
   the updates are invented and "Revisar" says it is in the full app.
+- **Buscar por fuente (phone + TV):** phone: a source icon beside the field; TV: a button above the
+  results. The picker lists "Todas las fuentes" and the installed, active plugins that search (format
+  badge, the chosen one red with "Elegida"); the phone shows a removable "En: <plugin>" chip, the TV
+  names the button so. Mock: the choice is cosmetic; results still come from `home.json`.
 
 ## Baseline — Demo 1.0.0 (2026-10-03)
 

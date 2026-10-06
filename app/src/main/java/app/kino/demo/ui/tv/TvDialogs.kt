@@ -28,7 +28,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.Spacer
+import androidx.tv.material3.Border
+import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.MaterialTheme
+import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import app.kino.demo.data.DemoPluginUpdates
 import app.kino.demo.data.DemoSession
@@ -44,6 +49,9 @@ import app.kino.demo.ui.plugins.versionLine
 import app.kino.demo.ui.plugins.registroTitle
 import app.kino.demo.ui.theme.KinoBlack
 import app.kino.demo.ui.plugins.ADD_CONSENT_LINE
+import app.kino.demo.ui.plugins.ALL_SOURCES_LABEL
+import app.kino.demo.ui.plugins.SEARCH_BY_SOURCE_LABEL
+import app.kino.demo.ui.plugins.SearchScopeIcon
 import app.kino.demo.ui.plugins.ADD_PLUGIN_TITLE
 import app.kino.demo.ui.plugins.AddCheckEffect
 import app.kino.demo.ui.plugins.addInstruction
@@ -51,6 +59,7 @@ import app.kino.demo.ui.plugins.addLabel
 import app.kino.demo.ui.plugins.addPlaceholder
 import app.kino.demo.ui.theme.KinoRed
 import app.kino.demo.ui.theme.KinoSurface
+import app.kino.demo.ui.theme.KinoSurfaceHigh
 import app.kino.demo.ui.theme.KinoTextSecondary
 import kotlinx.coroutines.delay
 
@@ -214,6 +223,40 @@ internal fun TvPluginUpdatesDialog(onDismiss: () -> Unit) {
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
             TvCompactAction(label = PluginUpdatesCopy.CLOSE, modifier = Modifier.dialogFocus(focus), onClick = onDismiss)
+        }
+    }
+}
+
+/**
+ * The TV's "Buscar por fuente" picker: "Todas las fuentes", then every plugin that searches with its
+ * format badge; the chosen one says "Elegida" and holds the focus when it opens.
+ */
+@Composable
+internal fun TvSearchScopeDialog(scopes: List<DemoSource>, current: DemoSource?, onPick: (DemoSource?) -> Unit, onDismiss: () -> Unit) {
+    val focus = rememberDialogFocus()
+    TvDialog(SEARCH_BY_SOURCE_LABEL, onDismiss) {
+        (listOf<DemoSource?>(null) + scopes).forEach { scope ->
+            val on = scope?.id == current?.id
+            Surface(
+                onClick = { onPick(scope) },
+                modifier = Modifier.fillMaxWidth().then(if (on) Modifier.dialogFocus(focus) else Modifier),
+                shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+                colors = ClickableSurfaceDefaults.colors(
+                    containerColor = KinoSurfaceHigh,
+                    focusedContainerColor = KinoSurfaceHigh,
+                    contentColor = Color.White,
+                    focusedContentColor = Color.White,
+                ),
+                border = ClickableSurfaceDefaults.border(focusedBorder = Border(BorderStroke(2.dp, Color.White), shape = RoundedCornerShape(10.dp))),
+            ) {
+                Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    SearchScopeIcon(scope, 36.dp)
+                    Text(scope?.name ?: ALL_SOURCES_LABEL, style = MaterialTheme.typography.bodyLarge, color = if (on) KinoRed else Color.White)
+                    if (scope != null) PluginKindBadge(scope.kind)
+                    Spacer(Modifier.weight(1f))
+                    if (on) Text("Elegida", style = MaterialTheme.typography.labelLarge, color = KinoRed)
+                }
+            }
         }
     }
 }

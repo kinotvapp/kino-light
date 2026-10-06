@@ -13,6 +13,7 @@
   repositorios de Nuvio.
 - Una campana en Inicio avisa de las novedades de tus plugins: las actualizaciones que esperan tu
   aprobación y las que ya se instalaron. El menú (y en la TV, Plugins) muestra cuántas esperan.
+- Buscar por fuente: elige en qué plugin buscar, o en todas las fuentes.
 
 ## Demo 1.0.0 — 2026-10-03
 

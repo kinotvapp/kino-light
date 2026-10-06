@@ -206,6 +206,12 @@ object DemoSession {
 
     fun isInstalled(id: String) = id in installed
 
+    /** The installed, active plugins that search films, series or anime: the sources "Buscar por fuente" offers. */
+    fun searchScopes(): List<DemoSource> {
+        val searchable = setOf(PluginCategory.MOVIES, PluginCategory.SERIES, PluginCategory.ANIME)
+        return DemoSources.all.filter { isInstalled(it.id) && enabled[it.id] == true && it.categories.any { c -> c in searchable } }
+    }
+
     /** "Modo debug" per installed plugin, in memory. */
     val debug = mutableStateMapOf("example" to true)
 }
