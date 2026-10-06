@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -26,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -43,10 +45,15 @@ import androidx.tv.material3.Text
 import app.kino.demo.data.DemoSources
 import app.kino.demo.data.DemoSession
 import app.kino.demo.ui.fullAppOnly
+import app.kino.demo.ui.settings.ConnectedGreen
+import app.kino.demo.ui.settings.DemoCompanion
 import app.kino.demo.ui.settings.DemoSettings
 import app.kino.demo.ui.settings.rememberUpdateCheck
 import app.kino.demo.ui.settings.SubtitlePreview
 import app.kino.demo.ui.theme.KinoBlack
+import app.kino.demo.ui.theme.KinoSurface
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import app.kino.demo.ui.theme.KinoTextSecondary
 
 /** Ajustes' tabs on the TV. */
@@ -183,12 +190,43 @@ private fun TvAppTab() {
 
 @Composable
 private fun TvConnectTab() {
+    val c = DemoCompanion
+    val scope = rememberCoroutineScope()
     TvSectionTitle("Conectar")
     Note("Abre Kino en tu celular, ve a Ajustes ▸ Conectar y elige esta TV. Si te pide un código, es este:")
     Text("482 913", style = MaterialTheme.typography.displaySmall, color = Color.White)
     Note("Nombre de esta TV: TV de la sala")
+    Text("Conectado: Celular principal", style = MaterialTheme.typography.bodyMedium, color = ConnectedGreen)
     TvSectionTitle("Dispositivos emparejados")
-    Note("Todavía no hay dispositivos emparejados.")
+    if (c.pairedPhones.isEmpty()) {
+        Note("Todavía no hay dispositivos emparejados.")
+        return
+    }
+    c.pairedPhones.toList().forEach { phone ->
+        Column(
+            Modifier.fillMaxWidth(0.6f).background(KinoSurface, RoundedCornerShape(12.dp)).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(phone.name, style = MaterialTheme.typography.titleSmall, color = Color.White)
+            Note(phone.statusLine())
+            TvCompactAction(if (phone.selected) "Sincronizar con este dispositivo: sí" else "Sincronizar con este dispositivo: no") {
+                phone.selected = !phone.selected
+            }
+            TvCompactAction("Olvidar") { c.forget(c.pairedPhones, phone) }
+        }
+    }
+    TvActionOption(if (c.syncing) "Sincronizando…" else "Sincronizar ahora") {
+        if (c.syncing || c.pairedPhones.none { it.selected }) return@TvActionOption
+        c.syncing = true
+        scope.launch {
+            try {
+                delay(1_500)
+            } finally {
+                c.finishSync(c.pairedPhones)
+            }
+        }
+    }
+    Note("Con todos los dispositivos elegidos que estén en tu red.")
 }
 
 private enum class ExtensionsTab { RECOMMENDED, INSTALLED }

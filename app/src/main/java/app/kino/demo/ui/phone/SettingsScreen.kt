@@ -52,11 +52,15 @@ import androidx.compose.ui.unit.dp
 import app.kino.demo.ui.components.KinoChip
 import app.kino.demo.ui.components.SettingLabel
 import app.kino.demo.ui.fullAppOnly
+import app.kino.demo.ui.settings.ConnectedGreen
+import app.kino.demo.ui.settings.DemoCompanion
 import app.kino.demo.ui.settings.DemoSettings
 import app.kino.demo.ui.settings.OssNoticesDialog
 import app.kino.demo.ui.settings.rememberUpdateCheck
 import app.kino.demo.ui.settings.SETTINGS_MARGIN
 import app.kino.demo.ui.settings.SettingsBlock
+import app.kino.demo.ui.settings.SettingsCard
+import app.kino.demo.ui.settings.SettingsSectionTitle
 import app.kino.demo.ui.settings.SettingsDestructiveRow
 import app.kino.demo.ui.settings.SettingsNavRow
 import app.kino.demo.ui.settings.SettingsNote
@@ -67,6 +71,7 @@ import app.kino.demo.ui.settings.SettingsValueRow
 import app.kino.demo.ui.settings.SubtitlePreview
 import app.kino.demo.ui.theme.KinoRed
 import app.kino.demo.ui.theme.KinoTextSecondary
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -335,13 +340,39 @@ private fun ConnectTab() {
         color = KinoTextSecondary,
         modifier = Modifier.padding(top = 24.dp, start = 4.dp, end = 4.dp),
     )
+    val c = DemoCompanion
     SettingsSection("Estado") {
-        SettingsValueRow("Estado", "Inactivo")
+        val connected = c.connectedTvName()
+        SettingsRow("Estado", supporting = connected?.let { "Controlando $it" }) {
+            Text(
+                if (connected != null) "Conectado" else "Inactivo",
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (connected != null) ConnectedGreen else KinoTextSecondary,
+            )
+        }
+        if (connected != null) SettingsDestructiveRow("Desconectar", onClick = { c.connectedTvId = null })
     }
     SettingsSection("Dispositivos encontrados") {
-        listOf("TV de la sala" to "192.168.1.40:8765", "TV del cuarto" to "192.168.1.52:8765").forEach { (name, address) ->
-            SettingsRow(name, supporting = address, onClick = { fullAppOnly(context) }) {
-                Text("Emparejar", style = MaterialTheme.typography.labelLarge)
+        c.foundTvs.forEach { (id, info) ->
+            val (name, address) = info
+            val paired = c.pairedTvs.any { it.id == id }
+            val isConnected = id == c.connectedTvId
+            SettingsRow(
+                name,
+                supporting = address,
+                onClick = if (isConnected) null else {
+                    { if (paired) c.connectedTvId = id else fullAppOnly(context) }
+                },
+            ) {
+                Text(
+                    when {
+                        isConnected -> "Conectado"
+                        paired -> "Conectar"
+                        else -> "Emparejar"
+                    },
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (isConnected) ConnectedGreen else Color.Unspecified,
+                )
             }
         }
     }
@@ -364,7 +395,47 @@ private fun ConnectTab() {
             Button(onClick = { fullAppOnly(context) }, modifier = Modifier.padding(top = 8.dp)) { Text("Conectar por IP") }
         }
     }
-    SettingsSection("Dispositivos emparejados") {
-        SettingsNote("Todavía no hay dispositivos emparejados.")
+    PairedDevicesSync()
+}
+
+/**
+ * "Dispositivos emparejados": each paired TV in its own card with its sync status, "Olvidar" and "Sincronizar con este
+ * dispositivo" (this phone's choice only); then one "Sincronizar ahora" for every selected TV.
+ */
+@Composable
+private fun PairedDevicesSync() {
+    val c = DemoCompanion
+    val scope = rememberCoroutineScope()
+    if (c.pairedTvs.isEmpty()) {
+        SettingsSection("Dispositivos emparejados") { SettingsNote("Todavía no hay dispositivos emparejados.") }
+        return
+    }
+    SettingsSectionTitle("Dispositivos emparejados", Modifier.padding(top = 24.dp))
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        c.pairedTvs.forEach { tv ->
+            SettingsCard {
+                SettingsRow(tv.name, supporting = tv.statusLine()) {
+                    OutlinedButton(onClick = { c.forget(c.pairedTvs, tv) }) { Text("Olvidar") }
+                }
+                SettingsSwitchRow("Sincronizar con este dispositivo", tv.selected, { tv.selected = it })
+            }
+        }
+        SettingsCard {
+            SettingsRow(
+                if (c.syncing) "Sincronizando…" else "Sincronizar ahora",
+                supporting = "Con todos los dispositivos elegidos que estén en tu red",
+                enabled = !c.syncing && c.pairedTvs.any { it.selected },
+                onClick = {
+                    c.syncing = true
+                    scope.launch {
+                        try {
+                            delay(1_500)
+                        } finally {
+                            c.finishSync(c.pairedTvs)
+                        }
+                    }
+                },
+            )
+        }
     }
 }
