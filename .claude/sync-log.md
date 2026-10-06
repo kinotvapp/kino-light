@@ -1,4 +1,4 @@
-# Demo sync log
+# Sync log
 
 What of the full app's interface is mirrored here (as mock), newest first. Each entry: date, what
 was added or changed on phone / TV, and what was left out on purpose.
@@ -16,7 +16,7 @@ then move the date.
   round "+" sits beside the "Plugins" heading. Shared "Buscar plugins" text, per-tab category chips
   (Todos, Películas, Series, Anime, En vivo, Radio, Subtítulos, Utilidades — only those a tab's cards
   have), "No hay plugins que coincidan.", the community note, Stremio/Nuvio format badges and the
-  "Gratis y legal" pill. Mock: the catalog in `DemoData.kt` is fictional; the TV now opens its own
+  "Gratis y legal" pill. Mock: the catalog in `KinoData.kt` is fictional; the TV now opens its own
   Plugins screen (`TvPluginsScreen.kt`) from the rail.
 - **"Agregar un plugin" (phone + TV):** "Tipo de plugin" Kino / Nuvio / Stremio, the type's own
   instruction, the address field, "Agregar" / "Cancelar". Mock: "Agregar" reads "Revisando…" for a
@@ -53,7 +53,7 @@ then move the date.
   "Ya tienes la última versión"). Phone and TV.
 - Conectar: one card per paired TV (phone) / phone (TV) with "Sincronizar con este dispositivo", status
   line, "Olvidar"; "Sincronizar ahora" → "Sincronizando…" 1.5 s; connected TV in green
-  (`ui/settings/DemoCompanion.kt`). Left out: the red pending dot on the tab and the pending banner.
+  (`ui/settings/KinoCompanion.kt`). Left out: the red pending dot on the tab and the pending banner.
 - Player: "Audio y subtítulos" dialog (Servidor Opción 1/2/3 with the fallback note, Audio, Subtítulos del
   archivo, "Sincronizar subtítulos" ±0,1/±0,5 s cosmetic, "Quitar el ajuste"); "Saltar intro" in the first
   2 min (jumps 85 s, once per film; holds the D-pad focus on TV); "Corregir intro y outro" dialog. Phone and TV.

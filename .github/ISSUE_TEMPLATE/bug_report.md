@@ -1,11 +1,11 @@
 ---
 name: Reportar un error
-about: Algo de la demo no funciona como debería
+about: Algo de la app no funciona como debería
 labels: bug
 ---
 
 **Versión**
-<!-- Kino Demo 0.9.45, o la versión de Kino completo que uses -->
+<!-- Kino 0.9.45 (código abierto), o la versión de Kino completo que uses -->
 
 **Equipo**
 <!-- Marca y modelo, versión de Android. ¿Celular, tablet o TV? -->

@@ -32,7 +32,7 @@
 
 ## Primera versión — 2026-10-03
 
-- Primera versión de la demo pública de Kino.
+- Primera versión pública de Kino en código abierto.
 - La animación de inicio, el logo, los colores y el diseño de Kino, en celular y en Android TV.
 - Inicio con filas de películas de dominio público del Internet Archive (`home.json`).
 - Ficha de la película con "Reproducir" y reproductor con los controles de Kino (media3 ExoPlayer).

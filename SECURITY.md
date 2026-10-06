@@ -1,6 +1,6 @@
 # Seguridad
 
-Si encuentras una vulnerabilidad en esta demo o en Kino, **no abras un issue público**.
+Si encuentras una vulnerabilidad en esta versión o en Kino, **no abras un issue público**.
 
 Repórtala de forma privada con los avisos de seguridad de GitHub:
 **Security → Report a vulnerability** en este repositorio

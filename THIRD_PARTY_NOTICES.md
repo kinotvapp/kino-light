@@ -1,9 +1,9 @@
 # Third-party notices
 
-The demo's own code is covered by `LICENSE` (Apache-2.0). The libraries below keep their own
+This repository's own code is covered by `LICENSE` (Apache-2.0). The libraries below keep their own
 licenses. The "Kino" name and logo are not licensed (see `NOTICE`).
 
-## Libraries in this demo
+## Libraries in this app
 
 Downloaded by Gradle at build time; none is vendored in this repository.
 

@@ -1,11 +1,11 @@
 # Privacidad
 
-## Esta demo
+## Esta versión
 
-**La demo no envía nada.** No tiene cuentas, analítica, publicidad ni reportes de errores. Solo
+**Esta versión no envía nada.** No tiene cuentas, analítica, publicidad ni reportes de errores. Solo
 descarga los pósters y los videos del Internet Archive que aparecen en su catálogo; esas
 peticiones van directo a archive.org y quedan sujetas a la política de privacidad del Internet
-Archive. Los ajustes que cambias en la demo viven en la memoria del aparato mientras la app está
+Archive. Los ajustes que cambias aquí viven en la memoria del aparato mientras la app está
 abierta; lo único que guarda es que ya pasaste por "Elige tus fuentes".
 
 ## La app completa de Kino

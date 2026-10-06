@@ -1,11 +1,11 @@
-# Kino — demo
+# Kino
 
 **Kino** es un reproductor de video para Android, para celular y para Android TV. Le pones fuentes
 (plugins), tus canales y listas M3U, y Kino lo reproduce todo con la misma interfaz: inicio con
 filas de títulos, búsqueda, biblioteca, En vivo, descargas, envío a la TV y sincronización entre
 tus aparatos.
 
-> **Este repositorio es solo una demo.** Contiene una app pequeña y de código abierto que tiene la
+> **Este repositorio tiene una versión pequeña y de código abierto de Kino** que tiene la
 > misma cara que Kino (la animación de inicio, el logo, los colores y el diseño de las pantallas en
 > celular y en TV) y reproduce algunas películas **de dominio público en EE. UU.** según el Internet Archive, que las aloja.
 > Todo lo demás está de adorno: los plugins, En vivo, las descargas, el envío a la TV y la
@@ -34,7 +34,7 @@ Los plugins de Kino tienen su documentación pública:
 
 Las capturas van en [`docs/screenshots/`](docs/screenshots/) (por ahora está vacía).
 
-## Qué trae la demo
+## Qué trae esta versión
 
 | Pantalla | Estado |
 |---|---|
@@ -50,10 +50,10 @@ Lo que sale en las pantallas de muestra es inventado: los canales, los plugins d
 descargas no existen. Los botones que harían algo de verdad (instalar, descargar, conectar…) solo
 avisan que eso está en la app completa.
 
-La demo no tiene cuentas, analítica ni reportes de errores. Lo único que pide por internet son los
+Esta versión no tiene cuentas, analítica ni reportes de errores. Lo único que pide por internet son los
 pósters y los videos del Internet Archive que están en `home.json`.
 
-## Compilar la demo (dev)
+## Compilar (dev)
 
 Requirements: JDK 17 and the Android SDK (platform 36). Point Gradle at the SDK with
 `local.properties` (`sdk.dir=/path/to/Android/sdk`) or `ANDROID_HOME`.
@@ -64,7 +64,7 @@ Requirements: JDK 17 and the Android SDK (platform 36). Point Gradle at the SDK 
 ./gradlew lint
 ```
 
-- Package: `app.kino.demo` (installs next to the full app without replacing it).
+- Package: `app.kino.tv` (installs next to the full app without replacing it).
 - Kotlin, Jetpack Compose (+ Compose for TV), media3 ExoPlayer, Coil. minSdk 24.
 - The catalog is `app/src/main/assets/home.json`: `rows[]` → `items[]` with `id`, `title`,
   `year`, `durationMin`, `synopsis`, `poster`, `video` and `source` (the archive.org page that
@@ -72,7 +72,7 @@ Requirements: JDK 17 and the Android SDK (platform 36). Point Gradle at the SDK 
 
 ## Licencia
 
-El código de esta demo está bajo [Apache-2.0](LICENSE). **El nombre "Kino" y su logo no están
+El código de este repositorio está bajo [Apache-2.0](LICENSE). **El nombre "Kino" y su logo no están
 licenciados** (todos los derechos reservados): ver [NOTICE](NOTICE). Las librerías de terceros
 están en [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
