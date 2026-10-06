@@ -62,6 +62,7 @@ import app.kino.demo.ui.phone.SearchScreen
 import app.kino.demo.ui.phone.SettingsScreen
 import app.kino.demo.ui.phone.SourcePickerScreen
 import app.kino.demo.ui.player.PlayerScreen
+import app.kino.demo.ui.remote.RemoteMiniPlayer
 import app.kino.demo.ui.theme.KinoBlack
 import app.kino.demo.ui.theme.KinoRed
 import app.kino.demo.ui.title.TitleScreen
@@ -191,6 +192,8 @@ fun PhoneApp(rows: List<CatalogRow>, nav: Navigator) {
                         colors = TopAppBarDefaults.topAppBarColors(containerColor = KinoBlack),
                     )
                 },
+                // The linked TV's remote, floating over the section screens while it plays something.
+                bottomBar = { RemoteMiniPlayer(rows) },
             ) { padding ->
                 when (route) {
                     Route.Home -> HomeScreen(
