@@ -53,6 +53,8 @@ import app.kino.demo.ui.components.KinoChip
 import app.kino.demo.ui.components.SettingLabel
 import app.kino.demo.ui.fullAppOnly
 import app.kino.demo.ui.settings.DemoSettings
+import app.kino.demo.ui.settings.OssNoticesDialog
+import app.kino.demo.ui.settings.rememberUpdateCheck
 import app.kino.demo.ui.settings.SETTINGS_MARGIN
 import app.kino.demo.ui.settings.SettingsBlock
 import app.kino.demo.ui.settings.SettingsDestructiveRow
@@ -270,8 +272,17 @@ private fun AppTab(onOpenDownloads: () -> Unit) {
             onClick = { fullAppOnly(context) },
         )
     }
+    val update = rememberUpdateCheck()
+    var showNotices by rememberSaveable { mutableStateOf(false) }
+    if (showNotices) OssNoticesDialog(onDismiss = { showNotices = false })
     SettingsSection("Actualizaciones") {
-        SettingsRow("Buscar actualizaciones", supporting = "Versión instalada: Kino Demo 1.0.0", onClick = { fullAppOnly(context) })
+        SettingsRow(
+            if (update.checking) "Buscando…" else "Buscar actualizaciones",
+            supporting = "Versión instalada: Kino Demo 1.0.0",
+            enabled = !update.checking,
+            onClick = { update.run() },
+        )
+        SettingsNavRow("Licencias de software libre", onClick = { showNotices = true }, supporting = "Las bibliotecas de terceros que usa Kino")
     }
     SettingsSection("Reproducción") {
         SettingsSwitchRow("Datos curiosos", s.funFacts, { s.funFacts = it }, "Muestra un dato curioso de la película o serie durante la reproducción.")

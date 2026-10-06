@@ -44,6 +44,7 @@ import app.kino.demo.data.DemoSources
 import app.kino.demo.data.DemoSession
 import app.kino.demo.ui.fullAppOnly
 import app.kino.demo.ui.settings.DemoSettings
+import app.kino.demo.ui.settings.rememberUpdateCheck
 import app.kino.demo.ui.settings.SubtitlePreview
 import app.kino.demo.ui.theme.KinoBlack
 import app.kino.demo.ui.theme.KinoTextSecondary
@@ -154,9 +155,14 @@ private fun ColumnScope.TvSubtitlesTab() {
 private fun TvAppTab() {
     val context = LocalContext.current
     val s = DemoSettings
+    val update = rememberUpdateCheck()
+    var showNotices by rememberSaveable { mutableStateOf(false) }
+    if (showNotices) TvOssNoticesDialog(onDismiss = { showNotices = false })
     TvSectionTitle("Actualizaciones")
     Note("Versión instalada: Kino Demo 1.0.0")
-    TvActionOption("Buscar actualizaciones") { fullAppOnly(context) }
+    TvActionOption(if (update.checking) "Buscando…" else "Buscar actualizaciones") { update.run() }
+    TvActionOption("Licencias de software libre") { showNotices = true }
+    Note("Las bibliotecas de terceros que usa Kino.")
     TvSectionTitle("Almacenamiento")
     Note("Descargas: 1,4 GB · Caché: 86 MB · Libre: 21,3 GB")
     TvActionOption("Limpiar caché") { fullAppOnly(context) }
