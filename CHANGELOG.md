@@ -8,6 +8,9 @@
 - Las tarjetas de plugins muestran su formato (Stremio o Nuvio) y "Gratis y legal" en los canales
   gratuitos.
 - "Agregar un plugin" pregunta el tipo (Kino, Nuvio o Stremio) y explica qué dirección pegar en cada caso.
+- Cada plugin instalado tiene sus ajustes: "Modo debug" y su registro, para compartirlo con quien lo hizo.
+- Instalados termina con tus colecciones de Stremio (con "Explorar") y, en el celular, tus
+  repositorios de Nuvio.
 
 ## Demo 1.0.0 — 2026-10-03
 

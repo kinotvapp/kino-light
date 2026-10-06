@@ -1,5 +1,6 @@
 package app.kino.demo.ui.tv
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -32,6 +33,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import app.kino.demo.data.DemoCollection
+import app.kino.demo.data.DemoPluginLists
 import app.kino.demo.data.DemoSession
 import app.kino.demo.data.DemoSources
 import app.kino.demo.data.PluginCategory
@@ -41,6 +44,8 @@ import app.kino.demo.ui.fullAppOnly
 import app.kino.demo.ui.plugins.COMMUNITY_NOTE
 import app.kino.demo.ui.plugins.COMMUNITY_TITLE
 import app.kino.demo.ui.plugins.NO_MATCH_LINE
+import app.kino.demo.ui.plugins.STREMIO_COLLECTIONS_TITLE
+import app.kino.demo.ui.plugins.collectionLine
 import app.kino.demo.ui.plugins.installedTabLabel
 import app.kino.demo.ui.theme.KinoBlack
 import app.kino.demo.ui.theme.KinoTextSecondary
@@ -49,6 +54,35 @@ import app.kino.demo.ui.theme.KinoTextSecondary
 private const val TV_PLUGIN_COLUMNS = 4
 
 private enum class TvPluginsTab { RECOMMENDED, COMMUNITY, INSTALLED }
+
+/**
+ * A Stremio collection on the TV, in place of the tabs: "Volver" and its name, how many addons it
+ * offers, and its addons as cards whose OK is "Instalar". Back returns to the tabs.
+ */
+@Composable
+private fun TvStremioCollection(collection: DemoCollection, onBack: () -> Unit, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val focus = rememberDialogFocus()
+    Column(modifier.padding(top = 12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            TvCompactAction(label = "Volver", modifier = Modifier.dialogFocus(focus), onClick = onBack)
+            Column {
+                Text(collection.name, style = MaterialTheme.typography.titleMedium, color = Color.White)
+                Text(collectionLine(collection.addons.size), style = MaterialTheme.typography.bodySmall, color = KinoTextSecondary)
+            }
+        }
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(TV_PLUGIN_COLUMNS),
+            contentPadding = PaddingValues(top = 16.dp, bottom = 32.dp, start = 8.dp, end = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            items(collection.addons, key = { "addon-${it.id}" }) { p ->
+                TvCatalogCard(p, "Instalar", actionIsQuiet = false, onClick = { fullAppOnly(context) })
+            }
+        }
+    }
+}
 
 /** "Plugins" on the TV, from the Home rail: the title and [TvPluginsContent], full screen. */
 @Composable
@@ -65,7 +99,9 @@ fun TvPluginsScreen() {
  * "Buscar plugins" (opens the search field under the row; one text for every tab) and "Agregar" (the
  * "Agregar un plugin" dialog); then
  * the selected tab's category chips (only the categories its cards have) and its grid of cards.
- * [landing], when given, goes on the selected tab.
+ * OK on an installed card opens its settings ("Modo debug", its Registro); Instalados ends with the
+ * person's Stremio collections ("Explorar" shows one in place of the tabs). [landing], when given,
+ * goes on the selected tab.
  */
 @Composable
 fun TvPluginsContent(landing: LandingFocus? = null, modifier: Modifier = Modifier) {
@@ -74,6 +110,14 @@ fun TvPluginsContent(landing: LandingFocus? = null, modifier: Modifier = Modifie
     var searching by rememberSaveable { mutableStateOf(false) }
     var adding by rememberSaveable { mutableStateOf(false) }
     if (adding) TvAddPluginDialog(onDismiss = { adding = false })
+    var managing by rememberSaveable { mutableStateOf<String?>(null) }
+    DemoSources.all.firstOrNull { it.id == managing }?.let { TvPluginSettingsDialog(it, onDismiss = { managing = null }) }
+    var browsing by rememberSaveable { mutableStateOf<String?>(null) }
+    DemoPluginLists.collections.firstOrNull { it.name == browsing }?.let { collection ->
+        BackHandler { browsing = null }
+        TvStremioCollection(collection, onBack = { browsing = null }, modifier = modifier)
+        return
+    }
     var query by rememberSaveable { mutableStateOf("") }
     var recommendedChip by rememberSaveable { mutableStateOf<PluginCategory?>(null) }
     var communityChip by rememberSaveable { mutableStateOf<PluginCategory?>(null) }
@@ -152,14 +196,24 @@ fun TvPluginsContent(landing: LandingFocus? = null, modifier: Modifier = Modifie
                     val isInstalled = DemoSession.isInstalled(p.id)
                     TvCatalogCard(p, if (isInstalled) "Instalado ✓" else "Instalar", isInstalled, onClick = { if (!isInstalled) fullAppOnly(context) })
                 }
-                TvPluginsTab.INSTALLED -> items(shown, key = { "inst-${it.id}" }) { p ->
-                    val on = DemoSession.enabled[p.id] == true
-                    TvCatalogCard(
-                        p,
-                        if (on) "Activo · OK para desactivar" else "Desactivado · OK para activar",
-                        actionIsQuiet = on,
-                        onClick = { DemoSession.enabled[p.id] = !on },
-                    )
+                TvPluginsTab.INSTALLED -> {
+                    items(shown, key = { "inst-${it.id}" }) { p ->
+                        val on = DemoSession.enabled[p.id] == true
+                        TvCatalogCard(
+                            p,
+                            if (on) "Activo · OK para sus ajustes" else "Desactivado · OK para sus ajustes",
+                            actionIsQuiet = on,
+                            onClick = { managing = p.id },
+                        )
+                    }
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(top = 8.dp)) {
+                            Text(STREMIO_COLLECTIONS_TITLE, style = MaterialTheme.typography.titleSmall, color = Color.White)
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                DemoPluginLists.collections.forEach { c -> TvCompactAction(label = "Explorar ${c.name}") { browsing = c.name } }
+                            }
+                        }
+                    }
                 }
             }
         }

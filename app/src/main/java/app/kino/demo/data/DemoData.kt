@@ -205,6 +205,62 @@ object DemoSession {
     val enabled = mutableStateMapOf("internet-archive" to true, "example" to true, "open-subtitles" to true, "old-series" to true)
 
     fun isInstalled(id: String) = id in installed
+
+    /** "Modo debug" per installed plugin, in memory. */
+    val debug = mutableStateMapOf("example" to true)
+}
+
+/** The few lines a plugin's "Registro" shows while its "Modo debug" is on. Illustrative only. */
+fun demoPluginLog(plugin: DemoSource): List<String> = listOf(
+    "18:42:15  buscar \"caligari\" · 3 resultados · 412 ms",
+    "18:42:09  abrir \"El gabinete del doctor Caligari\" · 2 copias",
+    "18:41:58  error: ${plugin.hosts} respondió 503 (servicio no disponible) · se reintentó",
+    "18:41:57  inicio · ${plugin.name} ${plugin.version}",
+)
+
+/** An addon collection the person added ("Tus colecciones de Stremio"): its addons, none installed by itself. */
+data class DemoCollection(val name: String, val addons: List<DemoSource>)
+
+/** The person's Stremio collections and Nuvio repositories, kept while the app runs. */
+object DemoPluginLists {
+    val collections = listOf(
+        DemoCollection(
+            name = "Addons abiertos",
+            addons = listOf(
+                DemoSource(
+                    id = "silent-classics",
+                    name = "Clásicos Mudos",
+                    description = "Películas mudas restauradas, con su música.",
+                    tags = listOf("Películas"),
+                    color = 0xFF744210,
+                    hosts = "clasicos-mudos.example",
+                    kind = PluginKind.STREMIO,
+                    categories = setOf(PluginCategory.MOVIES),
+                ),
+                DemoSource(
+                    id = "old-newsreels",
+                    name = "Noticieros de Época",
+                    description = "Noticieros de cine de los años treinta y cuarenta.",
+                    tags = listOf("Series"),
+                    color = 0xFF2A4365,
+                    hosts = "noticieros.example",
+                    kind = PluginKind.STREMIO,
+                    categories = setOf(PluginCategory.SERIES),
+                ),
+                DemoSource(
+                    id = "live-music",
+                    name = "Música en Vivo",
+                    description = "Conciertos y emisoras musicales abiertas.",
+                    tags = listOf("Radio"),
+                    color = 0xFF97266D,
+                    hosts = "musica-en-vivo.example",
+                    kind = PluginKind.STREMIO,
+                    categories = setOf(PluginCategory.RADIO),
+                ),
+            ),
+        ),
+    )
+    val nuvioRepos = mutableStateListOf("ejemplo/nuvio-scrapers")
 }
 
 /** A fictional live channel for En vivo: it "airs" one of the catalog films ([filmIndex] into the catalog). */

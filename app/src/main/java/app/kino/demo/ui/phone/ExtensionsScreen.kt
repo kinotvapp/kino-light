@@ -1,5 +1,6 @@
 package app.kino.demo.ui.phone
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,10 +20,12 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -39,9 +42,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import app.kino.demo.data.DemoCollection
+import app.kino.demo.data.DemoPluginLists
 import app.kino.demo.data.DemoSession
 import app.kino.demo.data.DemoSource
 import app.kino.demo.data.DemoSources
@@ -51,6 +57,10 @@ import app.kino.demo.data.filterPlugins
 import app.kino.demo.ui.components.KinoChip
 import app.kino.demo.ui.fullAppOnly
 import app.kino.demo.ui.plugins.AddPluginDialog
+import app.kino.demo.ui.plugins.NUVIO_REPOS_TITLE
+import app.kino.demo.ui.plugins.PluginSettingsDialog
+import app.kino.demo.ui.plugins.STREMIO_COLLECTIONS_TITLE
+import app.kino.demo.ui.plugins.collectionLine
 import app.kino.demo.ui.plugins.COMMUNITY_NOTE
 import app.kino.demo.ui.plugins.COMMUNITY_TITLE
 import app.kino.demo.ui.plugins.NO_MATCH_LINE
@@ -71,7 +81,9 @@ private enum class ExtensionsTab { RECOMMENDED, COMMUNITY, INSTALLED }
  * "Plugins" on the phone: the heading with the round "Agregar" at its end (the "Agregar un plugin"
  * dialog), then ONE row with the tabs
  * Recomendados, De la comunidad and Instalados (n). Every tab has the shared "Buscar plugins" field, its
- * own category chips (only the categories its cards have) and its cards.
+ * own category chips (only the categories its cards have) and its cards. "Gestionar" opens a plugin's
+ * settings ("Modo debug", its Registro); Instalados ends with the person's Stremio collections
+ * ("Explorar" shows one in place of the tabs) and Nuvio repositories.
  */
 @Composable
 fun ExtensionsScreen(contentPadding: PaddingValues) {
@@ -102,7 +114,16 @@ private fun ExtensionsContent(bottomInset: Dp, modifier: Modifier = Modifier) {
     var recommendedChip by rememberSaveable { mutableStateOf<PluginCategory?>(null) }
     var communityChip by rememberSaveable { mutableStateOf<PluginCategory?>(null) }
     var installedChip by rememberSaveable { mutableStateOf<PluginCategory?>(null) }
+    var managing by rememberSaveable { mutableStateOf<String?>(null) }
+    var browsing by rememberSaveable { mutableStateOf<String?>(null) }
     val installed = DemoSources.all.filter { DemoSession.isInstalled(it.id) }
+    installed.firstOrNull { it.id == managing }?.let { PluginSettingsDialog(it, onDismiss = { managing = null }) }
+
+    DemoPluginLists.collections.firstOrNull { it.name == browsing }?.let { collection ->
+        BackHandler { browsing = null }
+        StremioCollectionScreen(collection, bottomInset, onBack = { browsing = null }, modifier = modifier)
+        return
+    }
 
     Column(modifier) {
         PrimaryScrollableTabRow(
@@ -171,8 +192,14 @@ private fun ExtensionsContent(bottomInset: Dp, modifier: Modifier = Modifier) {
                             plugin = p,
                             enabled = DemoSession.enabled[p.id] == true,
                             onToggle = { DemoSession.enabled[p.id] = it },
-                            onManage = { fullAppOnly(context) },
+                            onManage = { managing = p.id },
                         )
+                    }
+                    item(key = "collections", span = FULL_WIDTH) {
+                        PluginListSection(STREMIO_COLLECTIONS_TITLE, DemoPluginLists.collections.map { it.name }, "Explorar", onOpen = { browsing = it }, onRemove = { fullAppOnly(context) })
+                    }
+                    item(key = "nuvio-repos", span = FULL_WIDTH) {
+                        PluginListSection(NUVIO_REPOS_TITLE, DemoPluginLists.nuvioRepos, "Ver scrapers", onOpen = { fullAppOnly(context) }, onRemove = { DemoPluginLists.nuvioRepos.remove(it) })
                     }
                 }
             }
@@ -210,6 +237,56 @@ private fun LazyGridScope.noMatchItem(empty: Boolean) {
     if (!empty) return
     item(key = "no-match", span = FULL_WIDTH) {
         Text(NO_MATCH_LINE, style = MaterialTheme.typography.bodySmall, color = KinoTextSecondary)
+    }
+}
+
+/**
+ * One of the lists that close Instalados ("Tus colecciones de Stremio", "Tus repositorios de Nuvio"):
+ * the title and a row per entry with [openLabel] and "Quitar". Nothing at all when there are none.
+ */
+@Composable
+private fun PluginListSection(title: String, entries: List<String>, openLabel: String, onOpen: (String) -> Unit, onRemove: (String) -> Unit) {
+    if (entries.isEmpty()) return
+    Column(Modifier.fillMaxWidth().padding(top = 12.dp)) {
+        Text(title, style = MaterialTheme.typography.titleSmall, color = Color.White, fontWeight = FontWeight.SemiBold)
+        entries.forEach { entry ->
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(entry, style = MaterialTheme.typography.bodyMedium, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                TextButton(onClick = { onOpen(entry) }) { Text(openLabel, color = KinoRed) }
+                TextButton(onClick = { onRemove(entry) }) { Text("Quitar", color = KinoTextSecondary) }
+            }
+        }
+    }
+}
+
+/**
+ * A Stremio collection, in place of the tabs: back arrow and its name, how many addons it offers, and
+ * its addons as cards, each with "Instalar". Nothing installs by itself.
+ */
+@Composable
+private fun StremioCollectionScreen(collection: DemoCollection, bottomInset: Dp, onBack: () -> Unit, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(COLUMNS),
+        modifier = modifier,
+        contentPadding = PaddingValues(start = SIDE_GUTTER, end = SIDE_GUTTER, top = 0.dp, bottom = bottomInset + 24.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item(key = "collection-header", span = FULL_WIDTH) {
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver", tint = Color.White)
+                    }
+                    Text(collection.name, style = MaterialTheme.typography.titleMedium, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Text(collectionLine(collection.addons.size), style = MaterialTheme.typography.bodySmall, color = KinoTextSecondary)
+            }
+        }
+        items(collection.addons, key = { "addon-${it.id}" }) { p ->
+            CatalogCard(p, installed = false, onAction = { fullAppOnly(context) })
+        }
     }
 }
 

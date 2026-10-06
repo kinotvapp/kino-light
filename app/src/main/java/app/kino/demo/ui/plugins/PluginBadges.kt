@@ -28,6 +28,19 @@ internal const val FREE_LIVE_NOTE = "Gratis y legal"
 /** The pill of a free live addon's card: green, so it never reads as the red "De la comunidad". */
 internal const val FREE_LIVE_COLOR = 0xFF2F855AL
 
+/** The title of the person's addon collections, phone and TV. */
+internal const val STREMIO_COLLECTIONS_TITLE = "Tus colecciones de Stremio"
+
+/** The title of the person's Nuvio repositories (phone). */
+internal const val NUVIO_REPOS_TITLE = "Tus repositorios de Nuvio"
+
+/** What a collection says under its name: how many of its addons work here. */
+internal fun collectionLine(count: Int): String = when (count) {
+    0 -> "Esta lista no tiene addons que funcionen en Kino."
+    1 -> "1 addon que funciona en Kino. Tú decides cuál instalar."
+    else -> "$count addons que funcionan en Kino. Tú decides cuáles instalar."
+}
+
 /** The label of the Instalados tab. */
 internal fun installedTabLabel(count: Int): String = if (count > 0) "Instalados ($count)" else "Instalados"
 

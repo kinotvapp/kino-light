@@ -23,11 +23,22 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import app.kino.demo.data.DemoSession
+import app.kino.demo.data.DemoSource
 import app.kino.demo.data.PluginKind
+import app.kino.demo.data.demoPluginLog
+import app.kino.demo.ui.fullAppOnly
+import app.kino.demo.ui.plugins.DEBUG_SWITCH_LABEL
+import app.kino.demo.ui.plugins.DEBUG_SWITCH_LINE
+import app.kino.demo.ui.plugins.PluginKindBadge
+import app.kino.demo.ui.plugins.registroTitle
+import app.kino.demo.ui.theme.KinoBlack
 import app.kino.demo.ui.plugins.ADD_CONSENT_LINE
 import app.kino.demo.ui.plugins.ADD_PLUGIN_TITLE
 import app.kino.demo.ui.plugins.AddCheckEffect
@@ -121,6 +132,48 @@ internal fun TvAddPluginDialog(onDismiss: () -> Unit) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp, androidx.compose.ui.Alignment.End)) {
             TvCompactAction(label = "Cancelar", onClick = onDismiss)
             TvCompactAction(label = if (busy) "Revisando…" else "Agregar") { if (address.isNotBlank() && !busy) busy = true }
+        }
+    }
+}
+
+/**
+ * An installed plugin's settings on the TV (OK on its card): "Activo", "Modo debug" with its line and,
+ * while it is on, "Ver registro", which turns the dialog into the plugin's Registro (its last events,
+ * "Copiar registro" and "Volver").
+ */
+@Composable
+internal fun TvPluginSettingsDialog(plugin: DemoSource, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    var showingLog by rememberSaveable(plugin.id) { mutableStateOf(false) }
+    val focus = rememberDialogFocus()
+    val on = DemoSession.enabled[plugin.id] == true
+    val debugOn = DemoSession.debug[plugin.id] == true
+
+    TvDialog(if (showingLog) registroTitle(plugin.name) else "${plugin.name} ${plugin.version}", onDismiss) {
+        if (showingLog) {
+            Column(
+                Modifier.fillMaxWidth().background(KinoBlack, RoundedCornerShape(8.dp)).padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                demoPluginLog(plugin).forEach {
+                    Text(it, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, color = Color.White)
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                TvCompactAction(label = "Volver", modifier = Modifier.dialogFocus(focus)) { showingLog = false }
+                TvCompactAction(label = "Copiar registro") { fullAppOnly(context) }
+            }
+        } else {
+            PluginKindBadge(plugin.kind)
+            Text("Se conecta a: ${plugin.hosts}", style = MaterialTheme.typography.bodyMedium, color = KinoTextSecondary)
+            TvCompactAction(label = if (on) "Activo: sí" else "Activo: no", modifier = Modifier.dialogFocus(focus)) { DemoSession.enabled[plugin.id] = !on }
+            TvCompactAction(label = if (debugOn) "$DEBUG_SWITCH_LABEL: activado" else "$DEBUG_SWITCH_LABEL: desactivado") { DemoSession.debug[plugin.id] = !debugOn }
+            Text(DEBUG_SWITCH_LINE, style = MaterialTheme.typography.bodySmall, color = KinoTextSecondary)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (debugOn) TvCompactAction(label = "Ver registro") { showingLog = true }
+                TvCompactAction(label = "Desinstalar") { fullAppOnly(context) }
+                TvCompactAction(label = "Cerrar", onClick = onDismiss)
+            }
         }
     }
 }

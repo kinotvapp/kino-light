@@ -21,6 +21,12 @@ then move the date.
 - **"Agregar un plugin" (phone + TV):** "Tipo de plugin" Kino / Nuvio / Stremio, the type's own
   instruction, the address field, "Agregar" / "Cancelar". Mock: "Agregar" reads "Revisando…" for a
   moment and then says it is in the full app; nothing is fetched.
+- **Installed plugin settings (phone + TV):** "Gestionar" (phone) / OK on the card (TV) opens Activo,
+  "Modo debug" with its line, "Ver registro" → "Registro de <plugin>" (a few invented log lines,
+  "Copiar registro" / "Compartir registro" (phone) / "Volver"), Desinstalar. Instalados ends with
+  "Tus colecciones de Stremio" (one invented collection; "Explorar" → its addons, "Instalar") and,
+  phone only, "Tus repositorios de Nuvio" ("Ver scrapers", "Quitar"). Mock: copy, share, uninstall,
+  install and "Ver scrapers" say it is in the full app; switches and "Quitar" are in memory.
 
 ## Baseline — Demo 1.0.0 (2026-10-03)
 
