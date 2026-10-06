@@ -17,6 +17,18 @@
 - En vivo: emisoras de radio, y una fila de fuentes siempre a la vista en el celular.
 - En vivo en la TV, renovado: pestañas por fuente arriba, categorías agrupadas a la izquierda con
   cuántos canales tienen, lista compacta de canales y vista previa del canal elegido.
+- Ajustes en el celular, rediseñado: cada sección es una tarjeta gris con sus opciones como filas y la
+  explicación adentro; solo lo que borra va en rojo. La fila de pestañas avisa con "›" cuando hay más.
+- Ajustes ▸ App: "Licencias de software libre" con las bibliotecas que usa la app y su licencia, y
+  "Buscar actualizaciones" que te dice si ya tienes la última versión. En celular y en TV.
+- Conectar: cada dispositivo emparejado en su tarjeta, con "Sincronizar con este dispositivo", cuándo se
+  sincronizó, "Olvidar" y un solo "Sincronizar ahora". El TV conectado se ve en verde.
+- Reproductor: menú "Audio y subtítulos" con el servidor (Opción 1, 2 o 3), el audio, los subtítulos y
+  "Sincronizar subtítulos" para correrlos antes o después. Botón "Saltar intro" al comienzo y
+  "Corregir intro y outro" para marcarlos a mano.
+- Celular: mini reproductor flotante con lo que está sonando en tu TV; ábrelo para adelantar, atrasar,
+  cambiar audio o subtítulos, elegir qué TV controlar o detenerlo.
+- Descargas: una descarga eligiendo la mejor copia antes de empezar, y "Quitar todos" vacía la lista.
 
 ## Demo 1.0.0 — 2026-10-03
 

@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -26,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -43,9 +45,15 @@ import androidx.tv.material3.Text
 import app.kino.demo.data.DemoSources
 import app.kino.demo.data.DemoSession
 import app.kino.demo.ui.fullAppOnly
+import app.kino.demo.ui.settings.ConnectedGreen
+import app.kino.demo.ui.settings.DemoCompanion
 import app.kino.demo.ui.settings.DemoSettings
+import app.kino.demo.ui.settings.rememberUpdateCheck
 import app.kino.demo.ui.settings.SubtitlePreview
 import app.kino.demo.ui.theme.KinoBlack
+import app.kino.demo.ui.theme.KinoSurface
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import app.kino.demo.ui.theme.KinoTextSecondary
 
 /** Ajustes' tabs on the TV. */
@@ -82,7 +90,7 @@ fun TvSettingsScreen(initialTab: TvSettingsTab = TvSettingsTab.SUBTITLES) {
             }
         }
         if (tab == TvSettingsTab.PLUGINS) {
-            TvExtensionsContent(Modifier.weight(1f).fillMaxWidth())
+            TvPluginsContent(modifier = Modifier.weight(1f).fillMaxWidth())
         } else {
             Column(
                 modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(top = 16.dp),
@@ -154,9 +162,14 @@ private fun ColumnScope.TvSubtitlesTab() {
 private fun TvAppTab() {
     val context = LocalContext.current
     val s = DemoSettings
+    val update = rememberUpdateCheck()
+    var showNotices by rememberSaveable { mutableStateOf(false) }
+    if (showNotices) TvOssNoticesDialog(onDismiss = { showNotices = false })
     TvSectionTitle("Actualizaciones")
     Note("Versión instalada: Kino Demo 1.0.0")
-    TvActionOption("Buscar actualizaciones") { fullAppOnly(context) }
+    TvActionOption(if (update.checking) "Buscando…" else "Buscar actualizaciones") { update.run() }
+    TvActionOption("Licencias de software libre") { showNotices = true }
+    Note("Las bibliotecas de terceros que usa Kino.")
     TvSectionTitle("Almacenamiento")
     Note("Descargas: 1,4 GB · Caché: 86 MB · Libre: 21,3 GB")
     TvActionOption("Limpiar caché") { fullAppOnly(context) }
@@ -177,69 +190,41 @@ private fun TvAppTab() {
 
 @Composable
 private fun TvConnectTab() {
+    val c = DemoCompanion
+    val scope = rememberCoroutineScope()
     TvSectionTitle("Conectar")
     Note("Abre Kino en tu celular, ve a Ajustes ▸ Conectar y elige esta TV. Si te pide un código, es este:")
     Text("482 913", style = MaterialTheme.typography.displaySmall, color = Color.White)
     Note("Nombre de esta TV: TV de la sala")
+    Text("Conectado: Celular principal", style = MaterialTheme.typography.bodyMedium, color = ConnectedGreen)
     TvSectionTitle("Dispositivos emparejados")
-    Note("Todavía no hay dispositivos emparejados.")
-}
-
-private enum class ExtensionsTab { RECOMMENDED, INSTALLED }
-
-/** Ajustes ▸ Plugins: Recomendados / Instalados tabs with "Agregar", and a grid of cards. */
-@Composable
-private fun TvExtensionsContent(modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    var tab by rememberSaveable { mutableStateOf(ExtensionsTab.RECOMMENDED) }
-    Column(modifier.padding(top = 12.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            LazyRow(
-                modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                items(ExtensionsTab.entries.toList()) { t ->
-                    TvTab(
-                        label = if (t == ExtensionsTab.RECOMMENDED) "Recomendados" else "Instalados (${DemoSession.installed.size})",
-                        selected = t == tab,
-                        onClick = { tab = t },
-                    )
-                }
-            }
-            TvCompactAction(label = "Agregar", icon = Icons.Default.Add) { fullAppOnly(context) }
-        }
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(4),
-            contentPadding = PaddingValues(top = 12.dp, bottom = 32.dp, start = 8.dp, end = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+    if (c.pairedPhones.isEmpty()) {
+        Note("Todavía no hay dispositivos emparejados.")
+        return
+    }
+    c.pairedPhones.toList().forEach { phone ->
+        Column(
+            Modifier.fillMaxWidth(0.6f).background(KinoSurface, RoundedCornerShape(12.dp)).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            when (tab) {
-                ExtensionsTab.RECOMMENDED -> {
-                    items(DemoSources.recommended, key = { "rec-${it.id}" }) { p ->
-                        val installed = DemoSession.isInstalled(p.id)
-                        TvCatalogCard(p, if (installed) "Instalado ✓" else "Instalar", installed, onClick = { if (!installed) fullAppOnly(context) })
-                    }
-                    item(span = { GridItemSpan(maxLineSpan) }) {
-                        Text("De la comunidad", style = MaterialTheme.typography.titleSmall, color = Color.White, modifier = Modifier.padding(top = 8.dp))
-                    }
-                    items(DemoSources.community, key = { "com-${it.id}" }) { p ->
-                        TvCatalogCard(p, "Instalar", false, onClick = { fullAppOnly(context) })
-                    }
-                }
-                ExtensionsTab.INSTALLED -> {
-                    items(DemoSources.all.filter { DemoSession.isInstalled(it.id) }, key = { "inst-${it.id}" }) { p ->
-                        val on = DemoSession.enabled[p.id] == true
-                        TvCatalogCard(
-                            p,
-                            if (on) "Activo · OK para desactivar" else "Desactivado · OK para activar",
-                            actionIsQuiet = on,
-                            onClick = { DemoSession.enabled[p.id] = !on },
-                        )
-                    }
-                }
+            Text(phone.name, style = MaterialTheme.typography.titleSmall, color = Color.White)
+            Note(phone.statusLine())
+            TvCompactAction(if (phone.selected) "Sincronizar con este dispositivo: sí" else "Sincronizar con este dispositivo: no") {
+                phone.selected = !phone.selected
+            }
+            TvCompactAction("Olvidar") { c.forget(c.pairedPhones, phone) }
+        }
+    }
+    TvActionOption(if (c.syncing) "Sincronizando…" else "Sincronizar ahora") {
+        if (c.syncing || c.pairedPhones.none { it.selected }) return@TvActionOption
+        c.syncing = true
+        scope.launch {
+            try {
+                delay(1_500)
+            } finally {
+                c.finishSync(c.pairedPhones)
             }
         }
     }
+    Note("Con todos los dispositivos elegidos que estén en tu red.")
 }

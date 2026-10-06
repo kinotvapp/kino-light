@@ -11,7 +11,13 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
+import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.Subtitles
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
@@ -99,6 +105,12 @@ import kotlinx.coroutines.delay
 /** How far the arrows and the ±10 buttons jump. */
 private const val SEEK_STEP_MS = 10_000L
 
+/** "Saltar intro": shown between these positions, on films long enough to have an opening; jumps this far. */
+private const val SKIP_FROM_MS = 3_000L
+private const val SKIP_UNTIL_MS = 120_000L
+private const val SKIP_MIN_DURATION_MS = 10 * 60_000L
+private const val SKIP_INTRO_MS = 85_000L
+
 /** The TV's overscan safe zone around the controls. */
 private val SAFE_H = 44.dp
 private val SAFE_V = 44.dp
@@ -128,6 +140,10 @@ fun PlayerScreen(film: Film, isTv: Boolean, onBack: () -> Unit) {
     var barFocused by remember { mutableStateOf(false) }
     val controls = rememberControlsState()
     AutoHideEffect(controls, playing)
+    val menu = rememberPlayerMenuState()
+    var showTracks by remember { mutableStateOf(false) }
+    var showMarkers by remember { mutableStateOf(false) }
+    var skipUsed by remember { mutableStateOf(false) }
 
     DisposableEffect(player) {
         val listener = object : Player.Listener {
@@ -210,15 +226,38 @@ fun PlayerScreen(film: Film, isTv: Boolean, onBack: () -> Unit) {
     val rewindFocus = remember { FocusRequester() }
     val playPauseFocus = remember { FocusRequester() }
     val forwardFocus = remember { FocusRequester() }
+    val tracksFocus = remember { FocusRequester() }
+    val markersFocus = remember { FocusRequester() }
+    val skipFocus = remember { FocusRequester() }
+    var skipFocused by remember { mutableStateOf(false) }
+
+    // "Saltar intro" during the opening minutes; one press and it is gone for this film.
+    val showSkip = !skipUsed && error == null && durationMs > SKIP_MIN_DURATION_MS && positionMs in SKIP_FROM_MS..SKIP_UNTIL_MS
+    fun skipIntro() {
+        skipUsed = true
+        seekBy(SKIP_INTRO_MS)
+        if (isTv) controls.hide()
+    }
 
     // TV: the overlay's play/pause takes focus as it opens; the video takes it back as it closes.
     // Repeated until it holds, since a request made while the overlay is still appearing can be dropped.
-    LaunchedEffect(controls.visible, isTv) {
+    // With the controls hidden, "Saltar intro" holds the focus while it shows, so OK skips.
+    LaunchedEffect(controls.visible, isTv, showSkip) {
         if (!isTv) return@LaunchedEffect
         repeat(40) {
-            val held = if (controls.visible) playPauseFocused else surface.focused
+            val held = when {
+                controls.visible -> playPauseFocused
+                showSkip -> skipFocused
+                else -> surface.focused
+            }
             if (held) return@LaunchedEffect
-            runCatching { if (controls.visible) playPauseFocus.requestFocus() else surface.request() }
+            runCatching {
+                when {
+                    controls.visible -> playPauseFocus.requestFocus()
+                    showSkip -> skipFocus.requestFocus()
+                    else -> surface.request()
+                }
+            }
             delay(50)
         }
     }
@@ -445,7 +484,25 @@ fun PlayerScreen(film: Film, isTv: Boolean, onBack: () -> Unit) {
                             onClick = { seekBy(SEEK_STEP_MS) },
                             modifier = if (!isTv) Modifier else Modifier
                                 .focusRequester(forwardFocus)
-                                .focusProperties { left = playPauseFocus; right = forwardFocus; up = barFocus; down = forwardFocus },
+                                .focusProperties { left = playPauseFocus; right = tracksFocus; up = barFocus; down = forwardFocus },
+                        )
+                        TransportButton(
+                            icon = Icons.Default.Subtitles,
+                            contentDescription = "Audio y subtítulos",
+                            onClick = { showTracks = true; controls.bump() },
+                            iconSize = 26.dp,
+                            modifier = if (!isTv) Modifier else Modifier
+                                .focusRequester(tracksFocus)
+                                .focusProperties { left = forwardFocus; right = markersFocus; up = barFocus; down = tracksFocus },
+                        )
+                        TransportButton(
+                            icon = Icons.Default.Tune,
+                            contentDescription = "Corregir intro y outro",
+                            onClick = { showMarkers = true; controls.bump() },
+                            iconSize = 26.dp,
+                            modifier = if (!isTv) Modifier else Modifier
+                                .focusRequester(markersFocus)
+                                .focusProperties { left = tracksFocus; right = markersFocus; up = barFocus; down = markersFocus },
                         )
                         if (!isTv) {
                             if (isLandscape) Spacer(Modifier.weight(1f))
@@ -468,7 +525,62 @@ fun PlayerScreen(film: Film, isTv: Boolean, onBack: () -> Unit) {
                 }
             }
         }
+
+        if (showSkip) {
+            SkipIntroButton(
+                onClick = { skipIntro() },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .systemBarsPadding()
+                    .padding(end = if (isTv) SAFE_H + 16.dp else 20.dp, bottom = if (controls.visible) 130.dp else 40.dp)
+                    .then(
+                        if (!isTv) Modifier else Modifier
+                            .focusRequester(skipFocus)
+                            .onFocusChanged { skipFocused = it.isFocused }
+                            // Up brings the controls; left/right keep seeking as on the bare video.
+                            .onPreviewKeyEvent { e ->
+                                if (e.type != KeyEventType.KeyDown || controls.visible) return@onPreviewKeyEvent false
+                                when (e.key) {
+                                    Key.DirectionUp, Key.DirectionDown, Key.Menu -> { controls.bump(); true }
+                                    Key.DirectionLeft -> { seekBy(-SEEK_STEP_MS); true }
+                                    Key.DirectionRight -> { seekBy(SEEK_STEP_MS); true }
+                                    else -> false
+                                }
+                            },
+                    ),
+            )
+        }
     }
+
+    if (showTracks) AudioAndSubtitlesDialog(menu, onDismiss = { showTracks = false })
+    if (showMarkers) {
+        SkipMarkersDialog(
+            positionLabel = formatDuration(positionMs),
+            onPick = { intro ->
+                showMarkers = false
+                val what = if (intro) "Fin de la intro" else "Inicio del outro"
+                Toast.makeText(context, "$what marcado en ${formatDuration(positionMs)}", Toast.LENGTH_SHORT).show()
+            },
+            onDismiss = { showMarkers = false },
+        )
+    }
+}
+
+/** "Saltar intro": a white-bordered pill over the video; inverts while it holds the D-pad focus. */
+@Composable
+private fun SkipIntroButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    var focused by remember { mutableStateOf(false) }
+    Text(
+        "Saltar intro",
+        color = if (focused) Color.Black else Color.White,
+        style = MaterialTheme.typography.titleMedium,
+        modifier = modifier
+            .onFocusChanged { focused = it.isFocused }
+            .background(if (focused) Color.White else Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+            .border(1.5.dp, Color.White, RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+    )
 }
 
 /**
