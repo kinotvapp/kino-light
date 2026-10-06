@@ -28,13 +28,17 @@ import app.kino.demo.data.DemoSource
 import app.kino.demo.ui.LocalReducedEffects
 import app.kino.demo.ui.cardFocusScale
 import app.kino.demo.ui.phone.cardInitial
+import app.kino.demo.ui.plugins.COMMUNITY_TITLE
+import app.kino.demo.ui.plugins.FREE_LIVE_COLOR
+import app.kino.demo.ui.plugins.FREE_LIVE_NOTE
+import app.kino.demo.ui.plugins.PluginKindBadge
 import app.kino.demo.ui.theme.KinoRed
 import app.kino.demo.ui.theme.KinoSurface
 import app.kino.demo.ui.theme.KinoTextSecondary
 
 /**
- * A plugin as a TV card: the icon tile in its colour, name, one line of description and what OK
- * does ("Instalar" in red, a grey "Instalado ✓", or the installed plugin's state).
+ * A plugin as a TV card: the icon tile in its colour (with "Gratis y legal" or "De la comunidad"),
+ * name and format badge, one line of description and what OK does ("Instalar" in red, a grey "Instalado ✓", or the installed plugin's state).
  */
 @Composable
 internal fun TvCatalogCard(plugin: DemoSource, actionLabel: String, actionIsQuiet: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
@@ -55,18 +59,30 @@ internal fun TvCatalogCard(plugin: DemoSource, actionLabel: String, actionIsQuie
                 Box(Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)).background(Color(plugin.color)), contentAlignment = Alignment.Center) {
                     Text(cardInitial(plugin.name), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, color = Color.White)
                 }
-                if (plugin.community) {
+                val pill = when {
+                    plugin.freeLive -> FREE_LIVE_NOTE
+                    plugin.community -> COMMUNITY_TITLE
+                    else -> null
+                }
+                if (pill != null) {
                     Text(
-                        "De la comunidad",
+                        pill,
                         style = MaterialTheme.typography.labelSmall,
                         color = Color.White,
                         maxLines = 1,
-                        modifier = Modifier.padding(start = 6.dp).clip(RoundedCornerShape(50)).background(KinoRed).padding(horizontal = 8.dp, vertical = 2.dp),
+                        modifier = Modifier
+                            .padding(start = 6.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(if (plugin.freeLive) Color(FREE_LIVE_COLOR) else KinoRed)
+                            .padding(horizontal = 8.dp, vertical = 2.dp),
                     )
                 }
             }
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(plugin.name, style = MaterialTheme.typography.titleSmall, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(plugin.name, style = MaterialTheme.typography.titleSmall, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                    PluginKindBadge(plugin.kind)
+                }
                 Text(plugin.description, style = MaterialTheme.typography.bodySmall, color = KinoTextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
                     actionLabel,

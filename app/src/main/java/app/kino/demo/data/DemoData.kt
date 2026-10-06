@@ -13,7 +13,45 @@ data class DemoSource(
     val hosts: String,
     val version: String = "1.0.0",
     val community: Boolean = false,
+    val kind: PluginKind = PluginKind.KINO,
+    val categories: Set<PluginCategory> = emptySet(),
+    /** A free, legal live-TV addon: its card carries "Gratis y legal". */
+    val freeLive: Boolean = false,
 )
+
+/** The three plugin formats Kino installs. A Kino-format card wears no badge: "Kino" there would read as "made by Kino". */
+enum class PluginKind(val label: String, val color: Long) {
+    KINO("Kino", 0xFFE50914),
+    NUVIO("Nuvio", 0xFF1E7FA8),
+    STREMIO("Stremio", 0xFF7B4FC9),
+    ;
+
+    val badge: String? get() = if (this == KINO) null else label
+}
+
+/** The Plugins screen's category chips, in their fixed order ("Todos" is no category). A plugin can be in several. */
+enum class PluginCategory(val label: String) {
+    MOVIES("Películas"),
+    SERIES("Series"),
+    ANIME("Anime"),
+    LIVE("En vivo"),
+    RADIO("Radio"),
+    SUBTITLES("Subtítulos"),
+    UTILITIES("Utilidades"),
+}
+
+/** The chips to offer over [plugins]: "Todos" (null) first, then each category one of them has. */
+fun categoryChips(plugins: List<DemoSource>): List<PluginCategory?> {
+    val present = plugins.flatMapTo(HashSet()) { it.categories }
+    return listOf<PluginCategory?>(null) + PluginCategory.entries.filter { it in present }
+}
+
+/** [plugins] under [category] (null: all) whose name or description contains [query]. */
+fun filterPlugins(plugins: List<DemoSource>, query: String, category: PluginCategory?): List<DemoSource> =
+    plugins.filter { p ->
+        (category == null || category in p.categories) &&
+            (query.isBlank() || p.name.contains(query.trim(), ignoreCase = true) || p.description.contains(query.trim(), ignoreCase = true))
+    }
 
 /** The demo's plugin catalog: the two public example plugins plus fictional ones. */
 object DemoSources {
@@ -26,6 +64,7 @@ object DemoSources {
             color = 0xFF2B6CB0,
             hosts = "archive.org",
             version = "1.2.0",
+            categories = setOf(PluginCategory.MOVIES, PluginCategory.SERIES),
         ),
         DemoSource(
             id = "own-server",
@@ -34,6 +73,7 @@ object DemoSources {
             tags = listOf("Personal"),
             color = 0xFF2F855A,
             hosts = "tu red local",
+            categories = setOf(PluginCategory.MOVIES, PluginCategory.SERIES),
         ),
         DemoSource(
             id = "example",
@@ -43,6 +83,68 @@ object DemoSources {
             color = 0xFF9B2C2C,
             hosts = "example.org",
             version = "0.3.1",
+            categories = setOf(PluginCategory.MOVIES),
+        ),
+        DemoSource(
+            id = "open-channels",
+            name = "Canales Abiertos",
+            description = "Canales de TV gratuitos que sus dueños transmiten abiertos por internet.",
+            tags = listOf("En vivo"),
+            color = 0xFF0F766E,
+            hosts = "canales-abiertos.example",
+            kind = PluginKind.STREMIO,
+            categories = setOf(PluginCategory.LIVE),
+            freeLive = true,
+        ),
+        DemoSource(
+            id = "world-radio",
+            name = "Radio del Mundo",
+            description = "Emisoras de radio de muchos países, en vivo.",
+            tags = listOf("Radio"),
+            color = 0xFFB7791F,
+            hosts = "radio-del-mundo.example",
+            kind = PluginKind.STREMIO,
+            categories = setOf(PluginCategory.RADIO),
+        ),
+        DemoSource(
+            id = "open-subtitles",
+            name = "Subtítulos Abiertos",
+            description = "Subtítulos en español y otros idiomas, hechos por voluntarios.",
+            tags = listOf("Subtítulos"),
+            color = 0xFF4A5568,
+            hosts = "subtitulos-abiertos.example",
+            version = "2.1.0",
+            kind = PluginKind.STREMIO,
+            categories = setOf(PluginCategory.SUBTITLES),
+        ),
+        DemoSource(
+            id = "classic-anime",
+            name = "Anime Clásico",
+            description = "Series animadas antiguas cuyos derechos ya vencieron.",
+            tags = listOf("Anime"),
+            color = 0xFFC53030,
+            hosts = "anime-clasico.example",
+            categories = setOf(PluginCategory.ANIME, PluginCategory.SERIES),
+        ),
+        DemoSource(
+            id = "old-series",
+            name = "Series de Antaño",
+            description = "Episodios de series de televisión de los años cincuenta.",
+            tags = listOf("Series"),
+            color = 0xFF2C5282,
+            hosts = "series-antano.example",
+            version = "1.3.0",
+            kind = PluginKind.NUVIO,
+            categories = setOf(PluginCategory.SERIES),
+        ),
+        DemoSource(
+            id = "intro-marks",
+            name = "Marcas de intro",
+            description = "Avisa dónde empiezan y terminan las intros para saltarlas.",
+            tags = listOf("Utilidades"),
+            color = 0xFF553C9A,
+            hosts = "marcas-intro.example",
+            categories = setOf(PluginCategory.UTILITIES),
         ),
     )
 
@@ -55,6 +157,39 @@ object DemoSources {
             color = 0xFF6B46C1,
             hosts = "example.net",
             community = true,
+            categories = setOf(PluginCategory.MOVIES),
+        ),
+        DemoSource(
+            id = "free-docs",
+            name = "Documentales Libres",
+            description = "Documentales con licencia libre de varios archivos públicos.",
+            tags = listOf("Películas"),
+            color = 0xFF276749,
+            hosts = "documentales.example",
+            community = true,
+            kind = PluginKind.NUVIO,
+            categories = setOf(PluginCategory.MOVIES, PluginCategory.SERIES),
+        ),
+        DemoSource(
+            id = "animated-shorts",
+            name = "Cortos Animados",
+            description = "Cortometrajes animados de dominio público.",
+            tags = listOf("Anime"),
+            color = 0xFFD53F8C,
+            hosts = "cortos.example",
+            community = true,
+            kind = PluginKind.STREMIO,
+            categories = setOf(PluginCategory.ANIME),
+        ),
+        DemoSource(
+            id = "community-radio",
+            name = "Radios comunitarias",
+            description = "Emisoras comunitarias y universitarias en vivo.",
+            tags = listOf("Radio"),
+            color = 0xFF975A16,
+            hosts = "radios-comunitarias.example",
+            community = true,
+            categories = setOf(PluginCategory.RADIO),
         ),
     )
 
@@ -66,8 +201,8 @@ object DemoSources {
  * installing and uninstalling belong to the full app.
  */
 object DemoSession {
-    val installed = listOf("internet-archive", "example")
-    val enabled = mutableStateMapOf("internet-archive" to true, "example" to true)
+    val installed = listOf("internet-archive", "example", "open-subtitles", "old-series")
+    val enabled = mutableStateMapOf("internet-archive" to true, "example" to true, "open-subtitles" to true, "old-series" to true)
 
     fun isInstalled(id: String) = id in installed
 }

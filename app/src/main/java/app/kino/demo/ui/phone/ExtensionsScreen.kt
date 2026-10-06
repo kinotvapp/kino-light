@@ -10,11 +10,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridItemSpanScope
 import androidx.compose.foundation.lazy.grid.LazyGridScope
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -37,11 +40,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import app.kino.demo.data.DemoSession
 import app.kino.demo.data.DemoSource
 import app.kino.demo.data.DemoSources
-import app.kino.demo.data.DemoSession
+import app.kino.demo.data.PluginCategory
+import app.kino.demo.data.categoryChips
+import app.kino.demo.data.filterPlugins
+import app.kino.demo.ui.components.KinoChip
 import app.kino.demo.ui.fullAppOnly
+import app.kino.demo.ui.plugins.COMMUNITY_NOTE
+import app.kino.demo.ui.plugins.COMMUNITY_TITLE
+import app.kino.demo.ui.plugins.NO_MATCH_LINE
+import app.kino.demo.ui.plugins.installedTabLabel
 import app.kino.demo.ui.theme.KinoBlack
 import app.kino.demo.ui.theme.KinoRed
 import app.kino.demo.ui.theme.KinoTextSecondary
@@ -49,18 +61,29 @@ import app.kino.demo.ui.theme.KinoTextSecondary
 private const val COLUMNS = 2
 private val SIDE_GUTTER = 16.dp
 
-private enum class ExtensionsTab { RECOMMENDED, INSTALLED }
+/** An item of the grid that takes the whole line: everything but the cards. */
+private val FULL_WIDTH: LazyGridItemSpanScope.() -> GridItemSpan = { GridItemSpan(maxLineSpan) }
+
+private enum class ExtensionsTab { RECOMMENDED, COMMUNITY, INSTALLED }
 
 /**
- * "Plugins" on the phone: the tabs Recomendados and Instalados (n) with "Agregar" at their end.
- * Recomendados searches the catalog's cards and ends with "De la comunidad"; Instalados lists the
- * example plugins with their switch.
+ * "Plugins" on the phone: the heading with the round "Agregar" at its end, then ONE row with the tabs
+ * Recomendados, De la comunidad and Instalados (n). Every tab has the shared "Buscar plugins" field, its
+ * own category chips (only the categories its cards have) and its cards.
  */
 @Composable
 fun ExtensionsScreen(contentPadding: PaddingValues) {
+    val context = LocalContext.current
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         Column(Modifier.widthIn(max = 720.dp).fillMaxSize().padding(top = contentPadding.calculateTopPadding())) {
-            Text("Plugins", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp))
+            Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = SIDE_GUTTER, top = 12.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Plugins", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f))
+                FilledIconButton(
+                    onClick = { fullAppOnly(context) },
+                    modifier = Modifier.size(48.dp),
+                    colors = IconButtonDefaults.filledIconButtonColors(containerColor = ACTION_CONTAINER, contentColor = Color.White),
+                ) { Icon(Icons.Filled.Add, contentDescription = "Agregar plugin") }
+            }
             ExtensionsContent(bottomInset = contentPadding.calculateBottomPadding(), modifier = Modifier.weight(1f).padding(horizontal = 4.dp))
         }
     }
@@ -68,37 +91,40 @@ fun ExtensionsScreen(contentPadding: PaddingValues) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ExtensionsContent(bottomInset: androidx.compose.ui.unit.Dp, modifier: Modifier = Modifier) {
+private fun ExtensionsContent(bottomInset: Dp, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     var tab by rememberSaveable { mutableStateOf(ExtensionsTab.RECOMMENDED) }
+    // One search text for every tab; each tab keeps its own chip.
     var query by rememberSaveable { mutableStateOf("") }
+    var recommendedChip by rememberSaveable { mutableStateOf<PluginCategory?>(null) }
+    var communityChip by rememberSaveable { mutableStateOf<PluginCategory?>(null) }
+    var installedChip by rememberSaveable { mutableStateOf<PluginCategory?>(null) }
+    val installed = DemoSources.all.filter { DemoSession.isInstalled(it.id) }
+
     Column(modifier) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = SIDE_GUTTER), verticalAlignment = Alignment.CenterVertically) {
-            PrimaryScrollableTabRow(
-                selectedTabIndex = tab.ordinal,
-                modifier = Modifier.weight(1f),
-                containerColor = KinoBlack,
-                contentColor = Color.White,
-                edgePadding = 0.dp,
-            ) {
-                ExtensionsTab.entries.forEach { t ->
-                    Tab(
-                        selected = t == tab,
-                        onClick = { tab = t },
-                        selectedContentColor = Color.White,
-                        unselectedContentColor = KinoTextSecondary,
-                        text = {
-                            val label = if (t == ExtensionsTab.RECOMMENDED) "Recomendados" else "Instalados (${DemoSession.installed.size})"
-                            Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        },
-                    )
-                }
+        PrimaryScrollableTabRow(
+            selectedTabIndex = tab.ordinal,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = SIDE_GUTTER),
+            containerColor = KinoBlack,
+            contentColor = Color.White,
+            edgePadding = 0.dp,
+        ) {
+            ExtensionsTab.entries.forEach { t ->
+                Tab(
+                    selected = t == tab,
+                    onClick = { tab = t },
+                    selectedContentColor = Color.White,
+                    unselectedContentColor = KinoTextSecondary,
+                    text = {
+                        val label = when (t) {
+                            ExtensionsTab.RECOMMENDED -> "Recomendados"
+                            ExtensionsTab.COMMUNITY -> COMMUNITY_TITLE
+                            ExtensionsTab.INSTALLED -> installedTabLabel(installed.size)
+                        }
+                        Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    },
+                )
             }
-            FilledIconButton(
-                onClick = { fullAppOnly(context) },
-                modifier = Modifier.size(48.dp),
-                colors = IconButtonDefaults.filledIconButtonColors(containerColor = ACTION_CONTAINER, contentColor = Color.White),
-            ) { Icon(Icons.Filled.Add, contentDescription = "Agregar plugin") }
         }
         LazyVerticalGrid(
             columns = GridCells.Fixed(COLUMNS),
@@ -109,30 +135,35 @@ private fun ExtensionsContent(bottomInset: androidx.compose.ui.unit.Dp, modifier
         ) {
             when (tab) {
                 ExtensionsTab.RECOMMENDED -> {
-                    item(key = "search", span = { GridItemSpan(maxLineSpan) }) {
-                        OutlinedTextField(
-                            value = query,
-                            onValueChange = { query = it },
-                            label = { Text("Buscar plugins") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
-                    val match = { p: DemoSource -> query.isBlank() || p.name.contains(query.trim(), ignoreCase = true) }
-                    val recommended = DemoSources.recommended.filter(match)
-                    val community = DemoSources.community.filter(match)
-                    items(recommended, key = { "card-${it.id}" }) { p ->
+                    searchItem(query) { query = it }
+                    chipsItem(DemoSources.recommended, recommendedChip) { recommendedChip = it }
+                    val shown = filterPlugins(DemoSources.recommended, query, recommendedChip)
+                    noMatchItem(shown.isEmpty())
+                    items(shown, key = { "card-${it.id}" }) { p ->
                         CatalogCard(p, installed = DemoSession.isInstalled(p.id), onAction = { fullAppOnly(context) })
                     }
-                    if (recommended.isEmpty() && community.isEmpty()) {
-                        item(key = "no-match", span = { GridItemSpan(maxLineSpan) }) {
-                            Text("No hay plugins que coincidan.", style = MaterialTheme.typography.bodySmall, color = KinoTextSecondary)
+                }
+                ExtensionsTab.COMMUNITY -> {
+                    item(key = "community-note", span = FULL_WIDTH) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(COMMUNITY_NOTE, style = MaterialTheme.typography.bodySmall, color = KinoTextSecondary, modifier = Modifier.weight(1f))
+                            TextButton(onClick = { fullAppOnly(context) }) { Text("Actualizar", color = KinoRed) }
                         }
                     }
-                    communityItems(community) { fullAppOnly(context) }
+                    searchItem(query) { query = it }
+                    chipsItem(DemoSources.community, communityChip) { communityChip = it }
+                    val shown = filterPlugins(DemoSources.community, query, communityChip)
+                    noMatchItem(shown.isEmpty())
+                    items(shown, key = { "community-${it.id}" }) { p ->
+                        CatalogCard(p, installed = DemoSession.isInstalled(p.id), onAction = { fullAppOnly(context) })
+                    }
                 }
                 ExtensionsTab.INSTALLED -> {
-                    items(DemoSources.all.filter { DemoSession.isInstalled(it.id) }, key = { "installed-${it.id}" }) { p ->
+                    searchItem(query) { query = it }
+                    chipsItem(installed, installedChip) { installedChip = it }
+                    val shown = filterPlugins(installed, query, installedChip)
+                    noMatchItem(shown.isEmpty())
+                    items(shown, key = { "installed-${it.id}" }) { p ->
                         InstalledCard(
                             plugin = p,
                             enabled = DemoSession.enabled[p.id] == true,
@@ -146,12 +177,48 @@ private fun ExtensionsContent(bottomInset: androidx.compose.ui.unit.Dp, modifier
     }
 }
 
-/** "De la comunidad": a header with "Actualizar" and one card per community plugin. */
+/** The "Buscar plugins" field, a full-width item of the grid; its text is shared by the three tabs. */
+private fun LazyGridScope.searchItem(query: String, onQueryChange: (String) -> Unit) {
+    item(key = "search", span = FULL_WIDTH) {
+        OutlinedTextField(
+            value = query,
+            onValueChange = onQueryChange,
+            label = { Text("Buscar plugins") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+/** The tab's category chips on one line that scrolls sideways: "Todos", then each category of [plugins]. */
+private fun LazyGridScope.chipsItem(plugins: List<DemoSource>, selected: PluginCategory?, onSelect: (PluginCategory?) -> Unit) {
+    val chips = categoryChips(plugins)
+    if (chips.size <= 1) return
+    item(key = "category-chips", span = FULL_WIDTH) {
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(chips, key = { it?.name ?: "all" }) { c ->
+                KinoChip(c?.label ?: "Todos", selected = c == selected) { onSelect(c) }
+            }
+        }
+    }
+}
+
+private fun LazyGridScope.noMatchItem(empty: Boolean) {
+    if (!empty) return
+    item(key = "no-match", span = FULL_WIDTH) {
+        Text(NO_MATCH_LINE, style = MaterialTheme.typography.bodySmall, color = KinoTextSecondary)
+    }
+}
+
+/** "De la comunidad" ("Elige tus fuentes"): a header with "Actualizar", the note, and one card per community plugin. */
 internal fun LazyGridScope.communityItems(plugins: List<DemoSource>, onAction: () -> Unit) {
-    item(key = "community-header", span = { GridItemSpan(maxLineSpan) }) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
-            Text("De la comunidad", style = MaterialTheme.typography.titleSmall, color = Color.White, modifier = Modifier.weight(1f))
-            TextButton(onClick = onAction) { Text("Actualizar", color = KinoRed) }
+    item(key = "community-header", span = FULL_WIDTH) {
+        Column(Modifier.padding(top = 8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(COMMUNITY_TITLE, style = MaterialTheme.typography.titleSmall, color = Color.White, modifier = Modifier.weight(1f))
+                TextButton(onClick = onAction) { Text("Actualizar", color = KinoRed) }
+            }
+            Text(COMMUNITY_NOTE, style = MaterialTheme.typography.bodySmall, color = KinoTextSecondary)
         }
     }
     items(plugins, key = { "community-${it.id}" }) { p ->

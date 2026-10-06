@@ -1,5 +1,13 @@
 # Cambios
 
+## 1.1.0 — (sin publicar)
+
+- Plugins en tres pestañas: Recomendados, De la comunidad e Instalados, con búsqueda y filtros por
+  categoría (Películas, Series, Anime, En vivo, Radio, Subtítulos, Utilidades). El botón "+" para
+  agregar queda junto al título.
+- Las tarjetas de plugins muestran su formato (Stremio o Nuvio) y "Gratis y legal" en los canales
+  gratuitos.
+
 ## Demo 1.0.0 — 2026-10-03
 
 - Primera versión de la demo pública de Kino.

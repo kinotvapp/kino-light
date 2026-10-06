@@ -24,10 +24,10 @@ import app.kino.demo.ui.tv.TvCategoriesScreen
 import app.kino.demo.ui.tv.TvHomeScreen
 import app.kino.demo.ui.tv.TvLibraryScreen
 import app.kino.demo.ui.tv.TvLiveScreen
+import app.kino.demo.ui.tv.TvPluginsScreen
 import app.kino.demo.ui.tv.TvRailItem
 import app.kino.demo.ui.tv.TvSearchScreen
 import app.kino.demo.ui.tv.TvSettingsScreen
-import app.kino.demo.ui.tv.TvSettingsTab
 import app.kino.demo.ui.tv.TvSourcePickerScreen
 import app.kino.demo.ui.tv.TvTitleScreen
 
@@ -67,7 +67,7 @@ private fun TvRoute(rows: List<CatalogRow>, nav: Navigator, route: Route) {
         Route.Categories -> TvCategoriesScreen(rows, onOpenFilm = { nav.push(Route.Title(it)) })
         Route.Library, Route.Downloads -> TvLibraryScreen(rows, onOpenFilm = { nav.push(Route.Title(it)) })
         Route.Live -> TvLiveScreen(rows, onPlay = { nav.push(Route.Player(it)) })
-        Route.Extensions -> TvSettingsScreen(initialTab = TvSettingsTab.PLUGINS)
+        Route.Extensions -> TvPluginsScreen()
         Route.Settings -> TvSettingsScreen()
         Route.About -> TvAboutScreen()
         Route.SourcePicker -> TvSourcePickerScreen(onFinish = { nav.finishPicker(); markPickerDone(context) })

@@ -10,6 +10,15 @@ app's merges after this date; bump it when an update lands).
 person sees (screens, tabs, buttons, rows, dialogs), add each one here as mock on phone and TV,
 then move the date.
 
+## 2026-10-05
+
+- **Plugins — three tabs (phone + TV):** Recomendados | De la comunidad | Instalados (n); the phone's
+  round "+" sits beside the "Plugins" heading. Shared "Buscar plugins" text, per-tab category chips
+  (Todos, Películas, Series, Anime, En vivo, Radio, Subtítulos, Utilidades — only those a tab's cards
+  have), "No hay plugins que coincidan.", the community note, Stremio/Nuvio format badges and the
+  "Gratis y legal" pill. Mock: the catalog in `DemoData.kt` is fictional; the TV now opens its own
+  Plugins screen (`TvPluginsScreen.kt`) from the rail.
+
 ## Baseline — Demo 1.0.0 (2026-10-03)
 
 Splash, Home rows from `home.json`, title page, player (media3) with Kino's controls, search over

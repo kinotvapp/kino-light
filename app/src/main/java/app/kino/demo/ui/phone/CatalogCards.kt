@@ -34,6 +34,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.kino.demo.data.DemoSource
+import app.kino.demo.data.PluginKind
+import app.kino.demo.ui.plugins.COMMUNITY_TITLE
+import app.kino.demo.ui.plugins.FREE_LIVE_COLOR
+import app.kino.demo.ui.plugins.FREE_LIVE_NOTE
+import app.kino.demo.ui.plugins.PluginKindBadge
 import app.kino.demo.ui.theme.KinoRed
 import app.kino.demo.ui.theme.KinoSurface
 import app.kino.demo.ui.theme.KinoTextSecondary
@@ -54,7 +59,7 @@ internal fun cardInitial(name: String): String =
  * other end, an optional pill; then [body] under a soft gradient of the same colour.
  */
 @Composable
-internal fun CardTile(name: String, color: Long, pill: String?, body: @Composable () -> Unit) {
+internal fun CardTile(name: String, color: Long, pill: String?, pillColor: Color = KinoRed, body: @Composable () -> Unit) {
     Column(
         Modifier
             .fillMaxWidth()
@@ -85,12 +90,29 @@ internal fun CardTile(name: String, color: Long, pill: String?, body: @Composabl
                         .weight(1f, fill = false)
                         .padding(start = 6.dp)
                         .clip(RoundedCornerShape(50))
-                        .background(KinoRed)
+                        .background(pillColor)
                         .padding(horizontal = 8.dp, vertical = 2.dp),
                 )
             }
         }
         body()
+    }
+}
+
+/** A card's name and, after it, its format badge (none for a Kino plugin); the name ellipsizes only when it must. */
+@Composable
+private fun NameWithBadge(name: String, kind: PluginKind) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            name,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = Color.White,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        PluginKindBadge(kind)
     }
 }
 
@@ -107,8 +129,9 @@ private fun TagChip(text: String) {
 }
 
 /**
- * One catalog plugin as a card: tile, name, two lines of description, tags and one full-width
- * button ("Instalar", or a quiet disabled "Instalado").
+ * One catalog plugin as a card: tile (with "Gratis y legal" or "De la comunidad"), name and format
+ * badge, two lines of description, tags and one full-width button ("Instalar", or a quiet disabled
+ * "Instalado").
  */
 @Composable
 internal fun CatalogCard(plugin: DemoSource, installed: Boolean, onAction: () -> Unit, modifier: Modifier = Modifier) {
@@ -117,12 +140,21 @@ internal fun CatalogCard(plugin: DemoSource, installed: Boolean, onAction: () ->
         shape = RoundedCornerShape(CARD_CORNER),
         colors = CardDefaults.cardColors(containerColor = KinoSurface),
     ) {
-        CardTile(name = plugin.name, color = plugin.color, pill = if (plugin.community) "De la comunidad" else null) {
+        CardTile(
+            name = plugin.name,
+            color = plugin.color,
+            pill = when {
+                plugin.freeLive -> FREE_LIVE_NOTE
+                plugin.community -> COMMUNITY_TITLE
+                else -> null
+            },
+            pillColor = if (plugin.freeLive) Color(FREE_LIVE_COLOR) else KinoRed,
+        ) {
             Column(
                 modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Text(plugin.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                NameWithBadge(plugin.name, plugin.kind)
                 Text(
                     plugin.description,
                     style = MaterialTheme.typography.bodySmall,
@@ -157,8 +189,8 @@ internal fun CatalogCard(plugin: DemoSource, installed: Boolean, onAction: () ->
 }
 
 /**
- * One installed plugin as a card: tile, name and version, status, the hosts it may reach, an on/off
- * switch and "Gestionar".
+ * One installed plugin as a card: tile, name, version and format badge, status, the hosts it may
+ * reach, an on/off switch and "Gestionar".
  */
 @Composable
 internal fun InstalledCard(plugin: DemoSource, enabled: Boolean, onToggle: (Boolean) -> Unit, onManage: () -> Unit) {
@@ -172,7 +204,7 @@ internal fun InstalledCard(plugin: DemoSource, enabled: Boolean, onToggle: (Bool
                 modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Text("${plugin.name} ${plugin.version}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                NameWithBadge("${plugin.name} ${plugin.version}", plugin.kind)
                 Text(
                     if (enabled) "Activo" else "Desactivado",
                     style = MaterialTheme.typography.bodySmall,
