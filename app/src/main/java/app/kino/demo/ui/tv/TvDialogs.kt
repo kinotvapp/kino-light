@@ -18,6 +18,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -29,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import app.kino.demo.data.DemoPluginUpdates
 import app.kino.demo.data.DemoSession
 import app.kino.demo.data.DemoSource
 import app.kino.demo.data.PluginKind
@@ -37,6 +39,8 @@ import app.kino.demo.ui.fullAppOnly
 import app.kino.demo.ui.plugins.DEBUG_SWITCH_LABEL
 import app.kino.demo.ui.plugins.DEBUG_SWITCH_LINE
 import app.kino.demo.ui.plugins.PluginKindBadge
+import app.kino.demo.ui.plugins.PluginUpdatesCopy
+import app.kino.demo.ui.plugins.versionLine
 import app.kino.demo.ui.plugins.registroTitle
 import app.kino.demo.ui.theme.KinoBlack
 import app.kino.demo.ui.plugins.ADD_CONSENT_LINE
@@ -129,7 +133,7 @@ internal fun TvAddPluginDialog(onDismiss: () -> Unit) {
             modifier = Modifier.fillMaxWidth(),
         )
         if (busy) LinearProgressIndicator(Modifier.fillMaxWidth(), color = KinoRed)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp, androidx.compose.ui.Alignment.End)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)) {
             TvCompactAction(label = "Cancelar", onClick = onDismiss)
             TvCompactAction(label = if (busy) "Revisando…" else "Agregar") { if (address.isNotBlank() && !busy) busy = true }
         }
@@ -174,6 +178,42 @@ internal fun TvPluginSettingsDialog(plugin: DemoSource, onDismiss: () -> Unit) {
                 TvCompactAction(label = "Desinstalar") { fullAppOnly(context) }
                 TvCompactAction(label = "Cerrar", onClick = onDismiss)
             }
+        }
+    }
+}
+
+/**
+ * The TV's bell sheet: the updates waiting for approval, each with "Revisar", then the last week's
+ * applied ones ("Nombre v1.2.0 → v1.3.0" and the day); focus starts on "Cerrar".
+ */
+@Composable
+internal fun TvPluginUpdatesDialog(onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val focus = rememberDialogFocus()
+    TvDialog(PluginUpdatesCopy.TITLE, onDismiss) {
+        if (DemoPluginUpdates.waiting.isNotEmpty()) {
+            Text(PluginUpdatesCopy.WAITING, style = MaterialTheme.typography.titleSmall, color = KinoTextSecondary)
+            DemoPluginUpdates.waiting.forEach { w ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(w.name, style = MaterialTheme.typography.bodyLarge, color = Color.White)
+                        Text(versionLine(w.currentVersion, w.pendingVersion), style = MaterialTheme.typography.bodySmall, color = KinoTextSecondary)
+                    }
+                    TvCompactAction(label = PluginUpdatesCopy.REVIEW) { fullAppOnly(context) }
+                }
+            }
+        }
+        if (DemoPluginUpdates.updated.isNotEmpty()) {
+            Text(PluginUpdatesCopy.UPDATED, style = MaterialTheme.typography.titleSmall, color = KinoTextSecondary)
+            DemoPluginUpdates.updated.forEach { u ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("${u.name} ${versionLine(u.fromVersion, u.toVersion)}", style = MaterialTheme.typography.bodyLarge, color = Color.White, modifier = Modifier.weight(1f))
+                    Text(u.day, style = MaterialTheme.typography.bodySmall, color = KinoTextSecondary)
+                }
+            }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            TvCompactAction(label = PluginUpdatesCopy.CLOSE, modifier = Modifier.dialogFocus(focus), onClick = onDismiss)
         }
     }
 }

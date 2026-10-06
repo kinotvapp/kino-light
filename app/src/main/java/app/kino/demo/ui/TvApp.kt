@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import app.kino.demo.data.CatalogRow
+import app.kino.demo.data.DemoPluginUpdates
 import app.kino.demo.ui.about.TvAboutScreen
 import app.kino.demo.ui.player.PlayerScreen
 import app.kino.demo.ui.tv.FocusRescue
@@ -55,7 +56,7 @@ private fun TvRoute(rows: List<CatalogRow>, nav: Navigator, route: Route) {
                 TvRailItem(Icons.Default.GridView, "Categorías", { nav.push(Route.Categories) }),
                 TvRailItem(Icons.Default.VideoLibrary, "Mi biblioteca", { nav.push(Route.Library) }),
                 TvRailItem(Icons.Default.LiveTv, "En vivo", { nav.push(Route.Live) }),
-                TvRailItem(Icons.Default.Extension, "Plugins", { nav.push(Route.Extensions) }),
+                TvRailItem(Icons.Default.Extension, "Plugins", { nav.push(Route.Extensions) }, badge = DemoPluginUpdates.count),
                 TvRailItem(Icons.Default.Settings, "Ajustes", { nav.push(Route.Settings) }),
                 TvRailItem(Icons.Default.Info, "Acerca de", { nav.push(Route.About) }),
             ),

@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -39,6 +40,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Surface
@@ -49,6 +51,7 @@ import app.kino.demo.ui.brand.KinoWordmark
 import app.kino.demo.ui.effectEnter
 import app.kino.demo.ui.effectExit
 import app.kino.demo.ui.effectSpec
+import app.kino.demo.ui.plugins.railBadgeLabel
 import app.kino.demo.ui.theme.KinoBlack
 import app.kino.demo.ui.theme.KinoRed
 
@@ -73,12 +76,17 @@ private val RAIL_STRIP = 52.dp
 
 private val dpSpring = spring(visibilityThreshold = Dp.VisibilityThreshold)
 
-/** One destination of the rail. [modifier] is for an item that holds a `FocusRequester`. */
+/**
+ * One destination of the rail. [modifier] is for an item that holds a `FocusRequester`; [badge] is a
+ * count on the icon's corner and, while the rail is open, "N por aprobar" after the label (Plugins:
+ * updates waiting for approval); 0 shows none.
+ */
 data class TvRailItem(
     val icon: ImageVector,
     val label: String,
     val onClick: () -> Unit,
     val modifier: Modifier = Modifier,
+    val badge: Int = 0,
 )
 
 /**
@@ -144,7 +152,16 @@ private fun TvRailButton(item: TvRailItem, expanded: Boolean) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box(Modifier.size(slot), contentAlignment = Alignment.Center) {
-                    Icon(item.icon, contentDescription = if (expanded) null else item.label, modifier = Modifier.size(RAIL_ICON))
+                    Icon(
+                        item.icon,
+                        contentDescription = if (expanded) null else listOfNotNull(item.label, item.badge.takeIf { it > 0 }?.let(::railBadgeLabel)).joinToString(", "),
+                        modifier = Modifier.size(RAIL_ICON),
+                    )
+                    if (item.badge > 0) {
+                        Box(Modifier.align(Alignment.TopEnd).size(18.dp).background(KinoRed, CircleShape), contentAlignment = Alignment.Center) {
+                            Text("${item.badge}", color = Color.White, fontSize = 11.sp, maxLines = 1)
+                        }
+                    }
                 }
                 AnimatedVisibility(
                     visible = expanded,
@@ -154,6 +171,10 @@ private fun TvRailButton(item: TvRailItem, expanded: Boolean) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Spacer(Modifier.width(16.dp))
                         Text(item.label, maxLines = 1, softWrap = false, overflow = TextOverflow.Clip)
+                        if (item.badge > 0) {
+                            Spacer(Modifier.width(8.dp))
+                            Text(railBadgeLabel(item.badge), maxLines = 1, softWrap = false, overflow = TextOverflow.Clip, fontSize = 12.sp)
+                        }
                     }
                 }
             }

@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.VideoLibrary
+import androidx.compose.material3.Badge
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -41,7 +42,11 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -49,6 +54,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import app.kino.demo.data.CatalogRow
+import app.kino.demo.data.DemoPluginUpdates
 import app.kino.demo.ui.about.AboutScreen
 import app.kino.demo.ui.brand.KinoWordmark
 import app.kino.demo.ui.home.HomeScreen
@@ -62,6 +68,9 @@ import app.kino.demo.ui.phone.SearchScreen
 import app.kino.demo.ui.phone.SettingsScreen
 import app.kino.demo.ui.phone.SourcePickerScreen
 import app.kino.demo.ui.player.PlayerScreen
+import app.kino.demo.ui.plugins.CountBadgedIcon
+import app.kino.demo.ui.plugins.PluginUpdatesBellIcon
+import app.kino.demo.ui.plugins.PluginUpdatesDialog
 import app.kino.demo.ui.theme.KinoBlack
 import app.kino.demo.ui.theme.KinoRed
 import app.kino.demo.ui.title.TitleScreen
@@ -82,7 +91,7 @@ private val TABS = listOf(
 
 /**
  * The phone's shell: a drawer with the sections (a rail on a landscape tablet), a top bar with the
- * logo on section screens, and full-screen pages for a film, the player, search and the assistant.
+ * logo on section screens (on Inicio also the plugin-updates bell), and full-screen pages for a film, the player, search and the assistant.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -93,6 +102,15 @@ fun PhoneApp(rows: List<CatalogRow>, nav: Navigator) {
     val route = nav.current
     val isTab = TABS.any { it.route == route }
     val isWide = isLandscapeTablet()
+    var showPluginUpdates by rememberSaveable { mutableStateOf(false) }
+    if (showPluginUpdates) {
+        PluginUpdatesDialog(
+            waiting = DemoPluginUpdates.waiting,
+            updated = DemoPluginUpdates.updated,
+            onReview = { fullAppOnly(context) },
+            onDismiss = { showPluginUpdates = false },
+        )
+    }
 
     BackHandler(enabled = drawerState.isOpen) { scope.launch { drawerState.close() } }
     BackHandler(enabled = !drawerState.isOpen && nav.stack.size > 1 && route != Route.SourcePicker) { nav.pop() }
@@ -122,6 +140,11 @@ fun PhoneApp(rows: List<CatalogRow>, nav: Navigator) {
                         NavigationDrawerItem(
                             icon = { Icon(tab.icon, contentDescription = tab.label) },
                             label = { Text(tab.label) },
+                            badge = if (tab.route == Route.Extensions && DemoPluginUpdates.count > 0) {
+                                { Badge(containerColor = KinoRed, contentColor = Color.White) { Text("${DemoPluginUpdates.count}") } }
+                            } else {
+                                null
+                            },
                             selected = tab.route == route,
                             colors = NavigationDrawerItemDefaults.colors(
                                 selectedContainerColor = KinoRed.copy(alpha = 0.15f),
@@ -162,7 +185,8 @@ fun PhoneApp(rows: List<CatalogRow>, nav: Navigator) {
                         navigationIcon = {
                             if (!isWide) {
                                 IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                                    Icon(Icons.Default.Menu, contentDescription = "Menú", tint = Color.White)
+                                    // The plugin updates waiting for approval show on the menu too, where Plugins is.
+                                    CountBadgedIcon(Icons.Default.Menu, "Menú", DemoPluginUpdates.count)
                                 }
                             }
                         },
@@ -177,6 +201,7 @@ fun PhoneApp(rows: List<CatalogRow>, nav: Navigator) {
                         },
                         actions = {
                             if (route == Route.Home) {
+                                IconButton(onClick = { showPluginUpdates = true }) { PluginUpdatesBellIcon(DemoPluginUpdates.count) }
                                 IconButton(onClick = { fullAppOnly(context) }) {
                                     Icon(Icons.Default.Refresh, contentDescription = "Recargar catálogo", tint = Color.White)
                                 }

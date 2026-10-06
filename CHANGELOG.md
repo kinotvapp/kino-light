@@ -11,6 +11,8 @@
 - Cada plugin instalado tiene sus ajustes: "Modo debug" y su registro, para compartirlo con quien lo hizo.
 - Instalados termina con tus colecciones de Stremio (con "Explorar") y, en el celular, tus
   repositorios de Nuvio.
+- Una campana en Inicio avisa de las novedades de tus plugins: las actualizaciones que esperan tu
+  aprobación y las que ya se instalaron. El menú (y en la TV, Plugins) muestra cuántas esperan.
 
 ## Demo 1.0.0 — 2026-10-03
 

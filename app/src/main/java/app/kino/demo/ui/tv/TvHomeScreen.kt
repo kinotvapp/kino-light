@@ -50,11 +50,13 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import app.kino.demo.data.CatalogRow
+import app.kino.demo.data.DemoPluginUpdates
 import app.kino.demo.data.Film
 import app.kino.demo.data.metaLine
 import app.kino.demo.ui.LocalReducedEffects
 import app.kino.demo.ui.backdropFadeSpec
 import app.kino.demo.ui.fullAppOnly
+import app.kino.demo.ui.plugins.PluginUpdatesBellIcon
 import app.kino.demo.ui.rememberHeroDrift
 import app.kino.demo.ui.theme.KinoBlack
 import app.kino.demo.ui.theme.KinoRed
@@ -106,7 +108,8 @@ private val MinimalScrollBringIntoView = object : BringIntoViewSpec {
 
 /**
  * The TV Home: a fixed immersive hero (the focused film's backdrop, title and synopsis) over a zone
- * that scrolls exactly two rows of landscape cards, with the navigation rail on the left.
+ * that scrolls exactly two rows of landscape cards, with the navigation rail on the left and, top
+ * right, the plugin-updates bell and reload.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -255,6 +258,24 @@ fun TvHomeScreen(
         }
 
         TvSideRail(railItems, Modifier.align(Alignment.CenterStart))
+        // The plugin-updates bell sits beside reload, as on the phone's Home.
+        var showPluginUpdates by rememberSaveable { mutableStateOf(false) }
+        if (showPluginUpdates) TvPluginUpdatesDialog(onDismiss = { showPluginUpdates = false })
+        Surface(
+            onClick = { showPluginUpdates = true },
+            modifier = Modifier.align(Alignment.TopEnd).padding(top = 24.dp, end = 32.dp + 48.dp + 12.dp).size(48.dp),
+            shape = ClickableSurfaceDefaults.shape(CircleShape),
+            colors = ClickableSurfaceDefaults.colors(
+                containerColor = KinoBlack.copy(alpha = 0.55f),
+                contentColor = Color.White,
+                focusedContainerColor = KinoRed,
+                focusedContentColor = Color.White,
+                pressedContainerColor = KinoRed,
+                pressedContentColor = Color.White,
+            ),
+        ) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { PluginUpdatesBellIcon(DemoPluginUpdates.count) }
+        }
         // Reload sits in the top right corner: an action on the screen, not a place to go.
         Surface(
             onClick = { fullAppOnly(context) },

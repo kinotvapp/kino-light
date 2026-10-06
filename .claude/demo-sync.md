@@ -27,6 +27,11 @@ then move the date.
   "Tus colecciones de Stremio" (one invented collection; "Explorar" → its addons, "Instalar") and,
   phone only, "Tus repositorios de Nuvio" ("Ver scrapers", "Quitar"). Mock: copy, share, uninstall,
   install and "Ver scrapers" say it is in the full app; switches and "Quitar" are in memory.
+- **Plugin-updates bell (phone + TV):** a bell with its count on Inicio (phone top bar; TV top right,
+  beside reload) opens "Novedades de tus plugins": "Esperan tu aprobación" (a row with "Revisar") and
+  "Se actualizaron" ("Nombre v1.2.0 → v1.3.0" and the day), "Cerrar". The phone's menu button and its
+  drawer's Plugins carry the count; the TV rail's Plugins carries it and, open, "1 por aprobar". Mock:
+  the updates are invented and "Revisar" says it is in the full app.
 
 ## Baseline — Demo 1.0.0 (2026-10-03)
 

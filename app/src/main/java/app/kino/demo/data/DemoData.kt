@@ -218,6 +218,24 @@ fun demoPluginLog(plugin: DemoSource): List<String> = listOf(
     "18:41:57  inicio · ${plugin.name} ${plugin.version}",
 )
 
+/** A plugin update waiting for the person's approval: its version now and the one waiting. */
+data class WaitingUpdate(val id: String, val name: String, val currentVersion: String, val pendingVersion: String)
+
+/** A plugin update applied by itself, and the day ("dd/MM") it was. */
+data class AppliedUpdate(val name: String, val fromVersion: String, val toVersion: String, val day: String)
+
+/** What the plugin-updates bell shows. Illustrative: nothing updates in this app. */
+object DemoPluginUpdates {
+    val waiting = listOf(WaitingUpdate("old-series", "Series de Antaño", "1.3.0", "1.4.0"))
+    val updated = listOf(
+        AppliedUpdate("Internet Archive", "1.1.0", "1.2.0", "04/10"),
+        AppliedUpdate("Subtítulos Abiertos", "2.0.3", "2.1.0", "02/10"),
+    )
+
+    /** The red number: updates waiting for approval. */
+    val count: Int get() = waiting.size
+}
+
 /** An addon collection the person added ("Tus colecciones de Stremio"): its addons, none installed by itself. */
 data class DemoCollection(val name: String, val addons: List<DemoSource>)
 
