@@ -166,7 +166,7 @@ private fun TvAppTab() {
     var showNotices by rememberSaveable { mutableStateOf(false) }
     if (showNotices) TvOssNoticesDialog(onDismiss = { showNotices = false })
     TvSectionTitle("Actualizaciones")
-    Note("Versión instalada: Kino Demo 1.0.0")
+    Note("Versión instalada: Kino Demo 1.1.0")
     TvActionOption(if (update.checking) "Buscando…" else "Buscar actualizaciones") { update.run() }
     TvActionOption("Licencias de software libre") { showNotices = true }
     Note("Las bibliotecas de terceros que usa Kino.")

@@ -1,6 +1,6 @@
 # Cambios
 
-## 1.1.0 — (sin publicar)
+## 1.1.0 — 2026-10-05
 
 - Plugins en tres pestañas: Recomendados, De la comunidad e Instalados, con búsqueda y filtros por
   categoría (Películas, Series, Anime, En vivo, Radio, Subtítulos, Utilidades). El botón "+" para
