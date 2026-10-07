@@ -1,0 +1,18 @@
+# Sample file. Copy to `gradle.properties` on your machine and fill the values.
+# gradle.properties is gitignored -- per-machine, never pushed.
+
+org.gradle.jvmargs=-Xmx4096m -Dfile.encoding=UTF-8
+org.gradle.caching=true
+android.useAndroidX=true
+android.nonTransitiveRClass=true
+kotlin.code.style=official
+
+# Release signing (kept out of .env and out of the repo so the build doesn't depend
+# on either). The APK must be signed with the SAME key as kino-app
+# (github.com/kinotvapp/kino-light/releases) so the system installer accepts an
+# in-place update.
+#
+# kinoReleaseKeystorePath=/path/to/your/arkiv-release.jks
+# kinoReleaseKeystorePassword=
+# kinoReleaseKeyAlias=
+# kinoReleaseKeyPassword=

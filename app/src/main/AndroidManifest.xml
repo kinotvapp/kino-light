@@ -2,6 +2,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Ask the system to install a downloaded update APK via the package installer. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- WorkManager / foreground services on API 34+ require an explicit POST_NOTIFICATIONS request
+         (a notification is only raised on devices that need one for the download worker). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- Android TV: no touchscreen required, leanback optional so phones can install it too. -->
     <uses-feature
@@ -32,5 +38,16 @@
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Share the downloaded APK with the system installer. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>

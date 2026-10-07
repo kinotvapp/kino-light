@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- The downloaded APK of an OTA update. Shared with the system installer through FileProvider. -->
+    <cache-path
+        name="apk_updates"
+        path="." />
+</paths>

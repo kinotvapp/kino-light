@@ -9,18 +9,46 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "app.kino.demo"
+        // Identical to kino-app's applicationId, so Android sees this APK as the same app and
+        // can update kino-app in-place (same signing cert below + same package = seamless upgrade).
+        applicationId = "com.arkiv.player.light"
         minSdk = 24
         targetSdk = 35
-        versionCode = 1
+// Version hardcoded -- the build doesn't read .env. Bump here when shipping a new release.
+// 790 = universal of base 79 (split-scheme). [OtaVersion.baseOf(790)=79], the server's
+// 0.9.54 ([baseOf(839)=83]) looks newer (83 > 79), so the dialog opens. Also above
+// kino-app v0.9.49 (78) so an in-place install on a device that already has it works.
+        versionCode = 790
         versionName = "1.0.0"
+    }
+
+    // Release signing comes from gradle.properties (gitignored -- never pushed):
+    //   kinoReleaseKeystorePath, kinoReleaseKeystorePassword, kinoReleaseKeyAlias, kinoReleaseKeyPassword
+    // Same release key as kino-app. If gradle.properties is missing those keys, the release
+    // build comes out unsigned -- on purpose: better than silently falling back to the debug key.
+    val keystorePath = (project.findProperty("kinoReleaseKeystorePath") as String?)
+        ?.takeIf { it.isNotBlank() }
+    val hasSigningConfig = keystorePath != null && file(keystorePath).exists()
+    if (hasSigningConfig) {
+        signingConfigs {
+            create("release") {
+                storeFile = file(keystorePath)
+                storePassword = (project.findProperty("kinoReleaseKeystorePassword") as String?).orEmpty()
+                keyAlias = (project.findProperty("kinoReleaseKeyAlias") as String?).orEmpty()
+                keyPassword = (project.findProperty("kinoReleaseKeyPassword") as String?).orEmpty()
+            }
+        }
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+            // No proguard-rules.pro on this fork; re-add when kino-light grows past demo.
+            isMinifyEnabled = false
+            isShrinkResources = false
+            if (hasSigningConfig) signingConfig = signingConfigs.getByName("release")
+        }
+        debug {
+            isMinifyEnabled = false
         }
     }
 
@@ -33,6 +61,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     testOptions {
         // Robolectric runs the TV focus tests on the JVM with the app's real resources.
@@ -63,6 +92,10 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.11.1")
 
     implementation("io.coil-kt:coil-compose:2.7.0")
+
+    // OTA self-update: HTTP for the manifest + APK, WorkManager for the periodic check.
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.16")

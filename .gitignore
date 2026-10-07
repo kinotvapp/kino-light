@@ -15,7 +15,11 @@ captures/
 *.jks
 *.keystore
 keystore.properties
+# gradle.properties holds the release signing creds (path + passwords) so the build
+# doesn't depend on .env. Personal per-machine, not for the repo.
+gradle.properties
 .env
 
 # Local build notes
 BUILD-REPORT.md
+gradle.properties.bak
