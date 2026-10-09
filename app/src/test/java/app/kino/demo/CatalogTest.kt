@@ -66,7 +66,9 @@ class CatalogTest {
         assertTrue(films.size in 8..15)
         films.forEach {
             assertTrue(it.videoUrl.startsWith("https://archive.org/download/"))
-            assertTrue(it.posterUrl.startsWith("https://archive.org/services/img/"))
+            // Posters are frames of the film itself, bundled in the APK.
+            assertTrue(it.posterUrl.startsWith("file:///android_asset/posters/"))
+            assertTrue(File("src/main/assets/posters/" + it.posterUrl.substringAfterLast('/')).isFile)
             assertTrue(it.synopsis.isNotBlank() && it.year > 0)
         }
     }

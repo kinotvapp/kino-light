@@ -2,11 +2,11 @@
 
 ## Esta demo
 
-**La demo no envía nada.** No tiene cuentas, analítica, publicidad ni reportes de errores. Solo
-descarga los pósters y los videos del Internet Archive que aparecen en su catálogo; esas
-peticiones van directo a archive.org y quedan sujetas a la política de privacidad del Internet
-Archive. Los ajustes que cambias en la demo viven en la memoria del aparato mientras la app está
-abierta; lo único que guarda es que ya pasaste por "Elige tus fuentes".
+**Kino Tv no envía nada sobre ti.** No tiene cuentas, analítica, publicidad ni reportes de errores. Solo
+descarga los videos del Internet Archive que aparecen en su catálogo (los pósters vienen dentro de la
+app); esas peticiones van directo a archive.org y quedan sujetas a la política de privacidad del
+Internet Archive. Además, al abrir la app consulta en GitHub si hay una versión nueva; solo descarga
+e instala la actualización si tú lo aceptas en el diálogo, y no guarda nada más en el aparato.
 
 ## La app completa de Kino
 

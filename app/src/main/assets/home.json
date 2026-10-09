@@ -12,7 +12,7 @@
           "year": 1940,
           "durationMin": 92,
           "synopsis": "Una periodista estrella está a punto de dejar el oficio para casarse, pero su exjefe y exesposo usa una última gran noticia para retenerla. Comedia veloz de diálogos que no paran.",
-          "poster": "https://archive.org/services/img/his_girl_friday",
+          "poster": "file:///android_asset/posters/his_girl_friday.jpg",
           "video": "https://archive.org/download/his_girl_friday/his_girl_friday.mp4",
           "source": "https://archive.org/details/his_girl_friday"
         },
@@ -22,7 +22,7 @@
           "year": 1962,
           "durationMin": 83,
           "synopsis": "Tras sobrevivir a un accidente, una organista se muda a un pueblo nuevo donde un hombre pálido la persigue y un pabellón abandonado la llama. Un clásico del terror independiente.",
-          "poster": "https://archive.org/services/img/CarnivalofSouls",
+          "poster": "file:///android_asset/posters/CarnivalofSouls.jpg",
           "video": "https://archive.org/download/CarnivalofSouls/CarnivalOfSouls.mp4",
           "source": "https://archive.org/details/CarnivalofSouls"
         },
@@ -32,7 +32,7 @@
           "year": 1939,
           "durationMin": 73,
           "synopsis": "Un náufrago llega a Liliput, un reino de gente diminuta enfrentada con sus vecinos por una canción de boda. Largometraje animado de 1939.",
-          "poster": "https://archive.org/services/img/gullivers_travels1939",
+          "poster": "file:///android_asset/posters/gullivers_travels1939.jpg",
           "video": "https://archive.org/download/gullivers_travels1939/gullivers_travels1939.mp4",
           "source": "https://archive.org/details/gullivers_travels1939"
         },
@@ -42,7 +42,7 @@
           "year": 1925,
           "durationMin": 106,
           "synopsis": "Bajo la Ópera de París vive un genio enmascarado que se obsesiona con una joven cantante. Cine mudo de terror con la célebre caracterización de Lon Chaney.",
-          "poster": "https://archive.org/services/img/ThePhantomoftheOpera",
+          "poster": "file:///android_asset/posters/ThePhantomoftheOpera.jpg",
           "video": "https://archive.org/download/ThePhantomoftheOpera/Phantom_of_the_Opera_512kb.mp4",
           "source": "https://archive.org/details/ThePhantomoftheOpera"
         },
@@ -52,7 +52,7 @@
           "year": 1941,
           "durationMin": 123,
           "synopsis": "Una periodista inventa una carta de un hombre común y un vagabundo acepta encarnarlo, hasta que el personaje se vuelve un movimiento que otros quieren usar. Dirigida por Frank Capra.",
-          "poster": "https://archive.org/services/img/meet_john_doe",
+          "poster": "file:///android_asset/posters/meet_john_doe.jpg",
           "video": "https://archive.org/download/meet_john_doe/meet_john_doe.mp4",
           "source": "https://archive.org/details/meet_john_doe"
         }
@@ -68,7 +68,7 @@
           "year": 1920,
           "durationMin": 51,
           "synopsis": "Un feriante hipnotizador y su sonámbulo llegan a un pueblo y empiezan los crímenes. La obra maestra del expresionismo alemán, con sus decorados torcidos y sombras pintadas.",
-          "poster": "https://archive.org/services/img/DasKabinettdesDoktorCaligariTheCabinetofDrCaligari",
+          "poster": "file:///android_asset/posters/DasKabinettdesDoktorCaligariTheCabinetofDrCaligari.jpg",
           "video": "https://archive.org/download/DasKabinettdesDoktorCaligariTheCabinetofDrCaligari/The_Cabinet_of_Dr._Caligari_512kb.mp4",
           "source": "https://archive.org/details/DasKabinettdesDoktorCaligariTheCabinetofDrCaligari"
         },
@@ -78,7 +78,7 @@
           "year": 1925,
           "durationMin": 73,
           "synopsis": "Los marineros de un acorazado ruso se rebelan contra sus oficiales y la ciudad de Odesa se une a ellos. Cine mudo soviético famoso por su montaje y la escena de la escalinata.",
-          "poster": "https://archive.org/services/img/BattleshipPotemkin",
+          "poster": "file:///android_asset/posters/BattleshipPotemkin.jpg",
           "video": "https://archive.org/download/BattleshipPotemkin/Battleship_Potemkin_512kb.mp4",
           "source": "https://archive.org/details/BattleshipPotemkin"
         },
@@ -88,7 +88,7 @@
           "year": 1925,
           "durationMin": 106,
           "synopsis": "Bajo la Ópera de París vive un genio enmascarado que se obsesiona con una joven cantante. Cine mudo de terror con la célebre caracterización de Lon Chaney.",
-          "poster": "https://archive.org/services/img/ThePhantomoftheOpera",
+          "poster": "file:///android_asset/posters/ThePhantomoftheOpera.jpg",
           "video": "https://archive.org/download/ThePhantomoftheOpera/Phantom_of_the_Opera_512kb.mp4",
           "source": "https://archive.org/details/ThePhantomoftheOpera"
         },
@@ -98,7 +98,7 @@
           "year": 1925,
           "durationMin": 68,
           "synopsis": "Una expedición viaja a una meseta remota de Sudamérica donde los dinosaurios siguen vivos. Pionera de los efectos de animación cuadro por cuadro.",
-          "poster": "https://archive.org/services/img/lost_world",
+          "poster": "file:///android_asset/posters/lost_world.jpg",
           "video": "https://archive.org/download/lost_world/lost_world.mp4",
           "source": "https://archive.org/details/lost_world"
         },
@@ -108,7 +108,7 @@
           "year": 1916,
           "durationMin": 99,
           "synopsis": "El capitán Nemo y su submarino Nautilus recorren el fondo del mar. Adaptación muda de Julio Verne con algunas de las primeras tomas filmadas bajo el agua.",
-          "poster": "https://archive.org/services/img/20000LeaguesUndertheSea",
+          "poster": "file:///android_asset/posters/20000LeaguesUndertheSea.jpg",
           "video": "https://archive.org/download/20000LeaguesUndertheSea/20000_Leagues_Under_the_Sea_512kb.mp4",
           "source": "https://archive.org/details/20000LeaguesUndertheSea"
         }
@@ -124,7 +124,7 @@
           "year": 1940,
           "durationMin": 92,
           "synopsis": "Una periodista estrella está a punto de dejar el oficio para casarse, pero su exjefe y exesposo usa una última gran noticia para retenerla. Comedia veloz de diálogos que no paran.",
-          "poster": "https://archive.org/services/img/his_girl_friday",
+          "poster": "file:///android_asset/posters/his_girl_friday.jpg",
           "video": "https://archive.org/download/his_girl_friday/his_girl_friday.mp4",
           "source": "https://archive.org/details/his_girl_friday"
         },
@@ -134,7 +134,7 @@
           "year": 1939,
           "durationMin": 68,
           "synopsis": "Para olvidar un desamor, Laurel y Hardy se alistan en la Legión Extranjera francesa, y todo sale tan mal como cabe esperar.",
-          "poster": "https://archive.org/services/img/TheFlyingDeuces",
+          "poster": "file:///android_asset/posters/TheFlyingDeuces.jpg",
           "video": "https://archive.org/download/TheFlyingDeuces/The_Flying_Deuces.mp4",
           "source": "https://archive.org/details/TheFlyingDeuces"
         },
@@ -144,7 +144,7 @@
           "year": 1916,
           "durationMin": 20,
           "synopsis": "Charlot trabaja en una casa de empeño y convierte cada objeto que le llega, de un reloj a una escalera, en un desastre. Cortometraje mudo de Charles Chaplin.",
-          "poster": "https://archive.org/services/img/CC_1916_10_02_ThePawnshop",
+          "poster": "file:///android_asset/posters/CC_1916_10_02_ThePawnshop.jpg",
           "video": "https://archive.org/download/CC_1916_10_02_ThePawnshop/CC_1916_10_02_ThePawnshop_512kb.mp4",
           "source": "https://archive.org/details/CC_1916_10_02_ThePawnshop"
         },
@@ -154,7 +154,7 @@
           "year": 1916,
           "durationMin": 20,
           "synopsis": "Despedido de su trabajo de sastre, Charlot se cuela en una fiesta elegante haciéndose pasar por conde. Cortometraje mudo de Charles Chaplin.",
-          "poster": "https://archive.org/services/img/CC_1916_09_04_TheCount",
+          "poster": "file:///android_asset/posters/CC_1916_09_04_TheCount.jpg",
           "video": "https://archive.org/download/CC_1916_09_04_TheCount/CC_1916_09_04_TheCount_512kb.mp4",
           "source": "https://archive.org/details/CC_1916_09_04_TheCount"
         },
@@ -164,7 +164,7 @@
           "year": 1941,
           "durationMin": 123,
           "synopsis": "Una periodista inventa una carta de un hombre común y un vagabundo acepta encarnarlo, hasta que el personaje se vuelve un movimiento que otros quieren usar. Dirigida por Frank Capra.",
-          "poster": "https://archive.org/services/img/meet_john_doe",
+          "poster": "file:///android_asset/posters/meet_john_doe.jpg",
           "video": "https://archive.org/download/meet_john_doe/meet_john_doe.mp4",
           "source": "https://archive.org/details/meet_john_doe"
         }
@@ -180,7 +180,7 @@
           "year": 1939,
           "durationMin": 73,
           "synopsis": "Un náufrago llega a Liliput, un reino de gente diminuta enfrentada con sus vecinos por una canción de boda. Largometraje animado de 1939.",
-          "poster": "https://archive.org/services/img/gullivers_travels1939",
+          "poster": "file:///android_asset/posters/gullivers_travels1939.jpg",
           "video": "https://archive.org/download/gullivers_travels1939/gullivers_travels1939.mp4",
           "source": "https://archive.org/details/gullivers_travels1939"
         },
@@ -190,7 +190,7 @@
           "year": 1933,
           "durationMin": 7,
           "synopsis": "Una versión surrealista y musical del cuento de Blancanieves, con la reina, el espejo y los siete enanitos. Corto animado de 1933.",
-          "poster": "https://archive.org/services/img/bb_snow_white",
+          "poster": "file:///android_asset/posters/bb_snow_white.jpg",
           "video": "https://archive.org/download/bb_snow_white/bb_snow_white_512kb.mp4",
           "source": "https://archive.org/details/bb_snow_white"
         },
@@ -200,7 +200,7 @@
           "year": 1942,
           "durationMin": 105,
           "synopsis": "Mowgli, criado por lobos, vuelve a la aldea de los hombres y descubre un tesoro escondido en la selva. Adaptación en Technicolor del libro de Rudyard Kipling.",
-          "poster": "https://archive.org/services/img/JungleBook",
+          "poster": "file:///android_asset/posters/JungleBook.jpg",
           "video": "https://archive.org/download/JungleBook/Jungle_Book.mp4",
           "source": "https://archive.org/details/JungleBook"
         },
@@ -210,7 +210,7 @@
           "year": 1925,
           "durationMin": 68,
           "synopsis": "Una expedición viaja a una meseta remota de Sudamérica donde los dinosaurios siguen vivos. Pionera de los efectos de animación cuadro por cuadro.",
-          "poster": "https://archive.org/services/img/lost_world",
+          "poster": "file:///android_asset/posters/lost_world.jpg",
           "video": "https://archive.org/download/lost_world/lost_world.mp4",
           "source": "https://archive.org/details/lost_world"
         },
@@ -220,7 +220,7 @@
           "year": 1916,
           "durationMin": 99,
           "synopsis": "El capitán Nemo y su submarino Nautilus recorren el fondo del mar. Adaptación muda de Julio Verne con algunas de las primeras tomas filmadas bajo el agua.",
-          "poster": "https://archive.org/services/img/20000LeaguesUndertheSea",
+          "poster": "file:///android_asset/posters/20000LeaguesUndertheSea.jpg",
           "video": "https://archive.org/download/20000LeaguesUndertheSea/20000_Leagues_Under_the_Sea_512kb.mp4",
           "source": "https://archive.org/details/20000LeaguesUndertheSea"
         }

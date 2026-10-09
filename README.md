@@ -51,7 +51,8 @@ descargas no existen. Los botones que harían algo de verdad (instalar, descarga
 avisan que eso está en la app completa.
 
 La demo no tiene cuentas, analítica ni reportes de errores. Lo único que pide por internet son los
-pósters y los videos del Internet Archive que están en `home.json`.
+videos del Internet Archive que están en `home.json`; los pósters son fotogramas de las propias
+películas, incluidos en la app (`assets/posters/`).
 
 ## Compilar la demo (dev)
 
