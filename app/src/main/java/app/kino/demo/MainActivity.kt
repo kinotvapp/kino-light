@@ -8,24 +8,14 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
@@ -41,7 +31,6 @@ import app.kino.demo.ui.TvApp
 import app.kino.demo.ui.brand.KinoSplash
 import app.kino.demo.ui.systemAnimationsOff
 import app.kino.demo.ui.theme.KinoBlack
-import app.kino.demo.ui.theme.KinoTextSecondary
 import app.kino.demo.ui.theme.KinoTheme
 import app.kino.demo.ui.tv.FocusRescue
 import com.arkiv.player.data.update.OtaRuntime
@@ -52,13 +41,10 @@ import com.arkiv.player.ui.update.UpdateDialog
 import java.util.concurrent.TimeUnit
 
 /**
- * The three states the app's first-paint UI can be in, depending on whether the OTA check has finished
- * and what it found. The app renders a loading splash while [Checking]; only after the check resolves
- * does it transition to [Ready] (no update: show the app) or [UpdateAvailable] (mandatory dialog
- * on top of the app).
+ * What the OTA check found. The app paints at once; [UpdateAvailable] puts the opt-in dialog on top
+ * of it when the check resolves.
  */
 private sealed interface OtaPhase {
-    data object Checking : OtaPhase
     data object Ready : OtaPhase
     data class UpdateAvailable(val info: UpdateInfo) : OtaPhase
 }
@@ -98,7 +84,7 @@ class MainActivity : ComponentActivity() {
                 CompositionLocalProvider(LocalReducedEffects provides reduced) {
                     var splashVisible by rememberSaveable { mutableStateOf(true) }
                     val navigator = remember { nav }
-                    var otaPhase by remember { mutableStateOf<OtaPhase>(OtaPhase.Checking) }
+                    var otaPhase by remember { mutableStateOf<OtaPhase>(OtaPhase.Ready) }
 
                     LaunchedEffect(Unit) {
                         ota.recordOtaStart()
@@ -110,61 +96,23 @@ class MainActivity : ComponentActivity() {
                     }
 
                     Box(Modifier.fillMaxSize().background(KinoBlack)) {
-                        // While the OTA check is in flight we render ONLY the splash + a "Buscando
-                        // actualizaciones..." hint. The source picker / home never paint, so the
-                        // person can't tap past the gate or pick sources that won't survive the
-                        // update.
-                        if (otaPhase is OtaPhase.Checking) {
-                            CheckingSplash(isTv = isTv)
-                        } else {
-                            if (isTv) TvApp(rows, navigator) else PhoneApp(rows, navigator)
-                            if (splashVisible) {
-                                KinoSplash(isTv = isTv, canExit = true, onFinished = { splashVisible = false })
-                            }
-                            // Drive the dialog's mandatory dismiss path from otaPhase rather than
-                            // from a separate StateFlow so the loading screen and the dialog are
-                            // governed by the same source of truth.
-                            (otaPhase as? OtaPhase.UpdateAvailable)?.let { phase ->
-                                UpdateDialog(
-                                    info = phase.info,
-                                    ota = ota,
-                                    onDismiss = {
-                                        ota.dismissPendingUpdate()
-                                        otaPhase = OtaPhase.Ready
-                                    },
-                                )
-                            }
+                        if (isTv) TvApp(rows, navigator) else PhoneApp(rows, navigator)
+                        if (splashVisible) {
+                            KinoSplash(isTv = isTv, canExit = true, onFinished = { splashVisible = false })
+                        }
+                        // Opt-in: declining ("Ahora no") just clears otaPhase; it comes back next launch.
+                        (otaPhase as? OtaPhase.UpdateAvailable)?.let { phase ->
+                            UpdateDialog(
+                                info = phase.info,
+                                ota = ota,
+                                onDismiss = {
+                                    ota.dismissPendingUpdate()
+                                    otaPhase = OtaPhase.Ready
+                                },
+                            )
                         }
                     }
                 }
-            }
-        }
-    }
-}
-
-/** Splash + a small "Buscando actualizaciones…" caption that blocks the app until the OTA check finishes. */
-@Composable
-private fun CheckingSplash(isTv: Boolean) {
-    Box(Modifier.fillMaxSize().background(KinoBlack)) {
-        KinoSplash(isTv = isTv, canExit = false) { /* never exits while OTA check is pending */ }
-        Box(
-            modifier = Modifier.fillMaxSize().statusBarsPadding().padding(bottom = 32.dp),
-            contentAlignment = Alignment.BottomCenter,
-        ) {
-            androidx.compose.foundation.layout.Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp),
-            ) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(18.dp),
-                    color = KinoTextSecondary,
-                    strokeWidth = 2.dp,
-                )
-                Text(
-                    text = "Buscando actualizaciones…",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = KinoTextSecondary,
-                )
             }
         }
     }

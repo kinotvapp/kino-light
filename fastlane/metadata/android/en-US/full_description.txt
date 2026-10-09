@@ -1,0 +1,12 @@
+Kino Tv is a video player with Kino's look, for phones and Android TV. It ships a catalog of films that are public domain in the US (per the Internet Archive, which hosts them) and plays them with ExoPlayer.
+
+• Home with rows of titles, categories and search.
+• A page for each film with synopsis, year and runtime.
+• A player with controls designed for the TV remote.
+• No accounts, no analytics, no crash reporting. The only network traffic is posters and videos from the Internet Archive.
+
+Open source under Apache-2.0. The name "Kino" and its logo are not licensed.
+
+Updates: the app tells you when a newer version exists on GitHub and downloads it only if you accept. You can decline; nothing is downloaded without your consent.
+
+The full Kino app (plugins, live channels, downloads and sync) is a separate, closed-source project: https://github.com/kinotvapp/kino-light/releases/latest

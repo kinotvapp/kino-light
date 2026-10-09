@@ -1,0 +1,41 @@
+# Draft of the fdroiddata metadata file (https://gitlab.com/fdroid/fdroiddata, metadata/<id>.yml).
+# Copy it there for the merge request; it lives here so it is versioned with the app.
+Categories:
+  - Multimedia
+License: Apache-2.0
+AuthorName: Kino
+WebSite: https://github.com/kinotvapp/kino-light
+SourceCode: https://github.com/kinotvapp/kino-light
+IssueTracker: https://github.com/kinotvapp/kino-light/issues
+Changelog: https://github.com/kinotvapp/kino-light/blob/HEAD/CHANGELOG.md
+
+AntiFeatures:
+  NonFreeAdd:
+    en-US: Points to the full Kino app, which is closed source, and offers (opt-in) to update from GitHub outside F-Droid.
+    es-CO: Apunta a la app completa de Kino, que es de código cerrado, y ofrece (si aceptas) actualizarse desde GitHub por fuera de F-Droid.
+  NonFreeNet:
+    en-US: Plays films hosted by the Internet Archive.
+
+RepoType: git
+Repo: https://github.com/kinotvapp/kino-light.git
+
+# The APK F-Droid publishes is OUR signed one, once the build is verified as reproducible: same
+# applicationId + same key as the self-updating release, so the opt-in OTA installs over it.
+Binaries: https://github.com/kinotvapp/kino-light/releases/download/v%v/app-release.apk
+AllowedAPKSigningKeys: REPLACE_WITH_SHA256_OF_THE_RELEASE_CERT
+
+Builds:
+  - versionName: 1.0.0
+    versionCode: 790
+    commit: v1.0.0
+    subdir: app
+    gradle:
+      - yes
+    # gradle.properties is per-machine and gitignored; the sample has the non-secret settings.
+    prebuild: cp ../gradle.properties.example ../gradle.properties
+
+AutoUpdateMode: Version
+UpdateCheckMode: Tags
+UpdateCheckData: app/build.gradle.kts|versionCode = (\d+)|.|versionName = "([\d.]+)"
+CurrentVersion: 1.0.0
+CurrentVersionCode: 790
