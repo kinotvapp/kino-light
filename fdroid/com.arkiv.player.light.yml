@@ -1,5 +1,11 @@
-# Draft of the fdroiddata metadata file (https://gitlab.com/fdroid/fdroiddata, metadata/<id>.yml).
-# Copy it there for the merge request; it lives here so it is versioned with the app.
+AntiFeatures:
+  NonFreeAdd:
+    en-US: Points to the full Kino app, which is closed source, and offers (opt-in)
+      to update from GitHub outside F-Droid.
+    es-CO: Apunta a la app completa de Kino, que es de código cerrado, y ofrece (si
+      aceptas) actualizarse desde GitHub por fuera de F-Droid.
+  NonFreeNet:
+    en-US: Plays films hosted by the Internet Archive.
 Categories:
   - Multimedia
 License: Apache-2.0
@@ -9,37 +15,23 @@ SourceCode: https://github.com/kinotvapp/kino-light
 IssueTracker: https://github.com/kinotvapp/kino-light/issues
 Changelog: https://github.com/kinotvapp/kino-light/blob/HEAD/CHANGELOG.md
 
-AntiFeatures:
-  NonFreeAdd:
-    en-US: Points to the full Kino app, which is closed source, and offers (opt-in) to update from GitHub outside F-Droid.
-    es-CO: Apunta a la app completa de Kino, que es de código cerrado, y ofrece (si aceptas) actualizarse desde GitHub por fuera de F-Droid.
-  NonFreeNet:
-    en-US: Plays films hosted by the Internet Archive.
-
 RepoType: git
 Repo: https://github.com/kinotvapp/kino-light.git
-
-# The APK F-Droid publishes is OUR signed one, once the build is verified as reproducible: same
-# applicationId + same key as the full app, so the opt-in OTA installs over it.
-#
-# This repo's v0.9.x tags and releases are the FULL app's (kino.apk + latest.json, versionCode 859).
-# Nothing here may touch them: F-Droid builds only from tags named fdroid-vX.Y.Z, and those
-# GitHub releases carry just the APK -- no latest.json, never marked "latest".
 Binaries: https://github.com/kinotvapp/kino-light/releases/download/fdroid-v%v/kino-player.apk
-AllowedAPKSigningKeys: 35c2ff7d172f3001a48edac842dbe46058b80f8ae7c1ce3943d1c3b75477af31
 
 Builds:
-  - versionName: 1.0.2
-    versionCode: 792
-    commit: fdroid-v1.0.2
+  - versionName: 1.0.3
+    versionCode: 793
+    commit: fdroid-v1.0.3
     subdir: app
     gradle:
       - yes
-    # gradle.properties is per-machine and gitignored; the sample has the non-secret settings.
     prebuild: cp ../gradle.properties.example ../gradle.properties
 
-AutoUpdateMode: Version fdroid-v%v
+AllowedAPKSigningKeys: 35c2ff7d172f3001a48edac842dbe46058b80f8ae7c1ce3943d1c3b75477af31
+
+AutoUpdateMode: Version
 UpdateCheckMode: Tags ^fdroid-v
 UpdateCheckData: app/build.gradle.kts|versionCode = (\d+)|.|versionName = "([\d.]+)"
-CurrentVersion: 1.0.2
-CurrentVersionCode: 792
+CurrentVersion: 1.0.3
+CurrentVersionCode: 793
