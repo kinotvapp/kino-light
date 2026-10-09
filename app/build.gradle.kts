@@ -15,11 +15,11 @@ android {
         minSdk = 24
         targetSdk = 35
 // Version hardcoded -- the build doesn't read .env. Bump here when shipping a new release.
-// 790 = universal of base 79 (split-scheme). [OtaVersion.baseOf(790)=79], the server's
+// 791 = universal of base 79 (split-scheme). [OtaVersion.baseOf(791)=79], the server's
 // 0.9.54 ([baseOf(839)=83]) looks newer (83 > 79), so the dialog opens. Also above
 // kino-app v0.9.49 (78) so an in-place install on a device that already has it works.
-        versionCode = 790
-        versionName = "1.0.0"
+        versionCode = 791
+        versionName = "1.0.1"
     }
 
     // Release signing comes from gradle.properties (gitignored -- never pushed):

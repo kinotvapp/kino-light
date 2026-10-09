@@ -1,0 +1,1 @@
+Removed the "demo" wording and kept only what works: public-domain catalog, player and search.

@@ -1,0 +1,1 @@
+Quitamos el texto de «demo» y dejamos solo lo que funciona: catálogo de dominio público, reproductor y búsqueda.

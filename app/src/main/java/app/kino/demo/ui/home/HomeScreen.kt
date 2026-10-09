@@ -83,9 +83,9 @@ fun HomeScreen(
         items(rows, key = { it.id }) { row ->
             FilmRow(row = row, posterWidth = sizes.posterWidth, onOpen = onOpenFilm)
         }
-        item(key = "demo-note") {
+        item(key = "footer-note") {
             Text(
-                DEMO_NOTE,
+                FOOTER_NOTE,
                 style = MaterialTheme.typography.bodySmall,
                 color = KinoTextSecondary,
                 modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 28.dp),
@@ -95,9 +95,9 @@ fun HomeScreen(
 }
 
 /** The short footer line that says what this app is. */
-internal const val DEMO_NOTE =
-    "Esto es una demo con películas de dominio público del Internet Archive. " +
-        "Kino completo se descarga en archive.org/details/kino-app."
+internal const val FOOTER_NOTE =
+    "Películas de dominio público del Internet Archive. " +
+        "La app completa, Kino, se descarga en archive.org/details/kino-app."
 
 /** Full-width feature: backdrop, bottom gradient, title/subtitle and an optional action. */
 @Composable

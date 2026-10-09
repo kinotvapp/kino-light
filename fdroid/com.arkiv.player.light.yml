@@ -29,9 +29,9 @@ Binaries: https://github.com/kinotvapp/kino-light/releases/download/fdroid-v%v/k
 AllowedAPKSigningKeys: 35c2ff7d172f3001a48edac842dbe46058b80f8ae7c1ce3943d1c3b75477af31
 
 Builds:
-  - versionName: 1.0.0
-    versionCode: 790
-    commit: fdroid-v1.0.0
+  - versionName: 1.0.1
+    versionCode: 791
+    commit: fdroid-v1.0.1
     subdir: app
     gradle:
       - yes
@@ -41,5 +41,5 @@ Builds:
 AutoUpdateMode: Version fdroid-v%v
 UpdateCheckMode: Tags ^fdroid-v
 UpdateCheckData: app/build.gradle.kts|versionCode = (\d+)|.|versionName = "([\d.]+)"
-CurrentVersion: 1.0.0
-CurrentVersionCode: 790
+CurrentVersion: 1.0.1
+CurrentVersionCode: 791

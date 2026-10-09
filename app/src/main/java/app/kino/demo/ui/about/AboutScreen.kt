@@ -32,11 +32,11 @@ import app.kino.demo.ui.tv.TvActionOption
 import app.kino.demo.ui.tv.landingFocus
 import app.kino.demo.ui.tv.rememberLandingFocus
 
-internal const val ABOUT_DEMO =
-    "Esto es una demo. Kino completo (plugins, En vivo, cast, sincronización…) se descarga en $FULL_APP_URL"
+internal const val ABOUT_FULL_APP =
+    "Kino Tv reproduce películas de dominio público. Kino completo (plugins, En vivo, cast, sincronización…) es una app aparte y se descarga en $FULL_APP_URL"
 
 internal const val ABOUT_CONTENT =
-    "Las películas de esta demo son de dominio público en EE. UU. según el Internet Archive y se reproducen directo desde archive.org. " +
+    "Las películas son de dominio público en EE. UU. según el Internet Archive y se reproducen directo desde archive.org. " +
         "Kino es un reproductor: no aloja ni distribuye contenido."
 
 internal const val ABOUT_DOWNLOAD = "Códigos de Downloader: 6793041 / 7152029"
@@ -57,7 +57,7 @@ fun AboutScreen(contentPadding: PaddingValues) {
         ) {
             Text("Acerca de", style = MaterialTheme.typography.headlineMedium)
             KinoWordmark(height = 40.dp, modifier = Modifier.padding(vertical = 8.dp))
-            Text(ABOUT_DEMO, style = MaterialTheme.typography.bodyLarge, color = Color.White)
+            Text(ABOUT_FULL_APP, style = MaterialTheme.typography.bodyLarge, color = Color.White)
             Text(ABOUT_CONTENT, style = MaterialTheme.typography.bodyMedium, color = KinoTextSecondary)
             Text(ABOUT_DOWNLOAD, style = MaterialTheme.typography.bodyMedium, color = KinoTextSecondary)
             Button(
@@ -69,7 +69,7 @@ fun AboutScreen(contentPadding: PaddingValues) {
                 Text("Telegram: t.me/Kinoapptv", color = Color.White)
             }
             Text(
-                "Kino Demo 1.0.0 · Código de la demo bajo licencia Apache-2.0. El nombre y el logo de Kino no están licenciados.",
+                "Kino Tv ${app.kino.demo.BuildConfig.VERSION_NAME} · Código bajo licencia Apache-2.0. El nombre y el logo de Kino no están licenciados.",
                 style = MaterialTheme.typography.bodySmall,
                 color = KinoTextSecondary,
                 modifier = Modifier.padding(top = 8.dp, bottom = contentPadding.calculateBottomPadding() + 24.dp),
@@ -86,7 +86,7 @@ fun TvAboutScreen() {
     Row(Modifier.fillMaxSize().padding(horizontal = 96.dp, vertical = 48.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             KinoWordmark(height = 56.dp)
-            androidx.tv.material3.Text(ABOUT_DEMO, style = androidx.tv.material3.MaterialTheme.typography.titleMedium, color = Color.White)
+            androidx.tv.material3.Text(ABOUT_FULL_APP, style = androidx.tv.material3.MaterialTheme.typography.titleMedium, color = Color.White)
             androidx.tv.material3.Text(ABOUT_CONTENT, style = androidx.tv.material3.MaterialTheme.typography.bodyMedium, color = KinoTextSecondary)
             androidx.tv.material3.Text(ABOUT_DOWNLOAD, style = androidx.tv.material3.MaterialTheme.typography.titleSmall, color = Color.White)
             androidx.tv.material3.Text("Telegram: t.me/Kinoapptv", style = androidx.tv.material3.MaterialTheme.typography.titleSmall, color = Color.White)
