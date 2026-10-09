@@ -130,7 +130,10 @@ class MainActivity : ComponentActivity() {
                                 UpdateDialog(
                                     info = phase.info,
                                     ota = ota,
-                                    onDismiss = { ota.dismissPendingUpdate() },
+                                    onDismiss = {
+                                        ota.dismissPendingUpdate()
+                                        otaPhase = OtaPhase.Ready
+                                    },
                                 )
                             }
                         }

@@ -27,14 +27,11 @@ import kotlinx.coroutines.launch
 import java.io.File
 
 /**
- * MANDATORY update dialog: shown on the source picker when an update is pending, blocks all
- * input behind it (no back, no tap-outside, no "Después"/"Cerrar"/"Cancelar"). The only ways
- * out are: install successfully (the system installer replaces the process and the dialog dies
- * with the activity), or the installer permanently refuses the APK (then "Abrir GitHub" opens
- * the release page so the person can sideload by hand).
- *
- * Cancelar the download is also disabled: a half-done download would leave the cache in an
- * unusable state and the release wouldn't be re-attempted for a while.
+ * Opt-in update dialog: shown when a newer release exists. Nothing is downloaded until the person
+ * taps "Descargar e instalar"; "Ahora no", back and tap-outside all dismiss it, and a running
+ * download can be cancelled. The text says plainly that the APK comes from GitHub and is installed
+ * outside the store the app was installed from (F-Droid's inclusion policy: explicit, opt-in
+ * consent, declining no harder than accepting).
  */
 @Composable
 fun UpdateDialog(info: UpdateInfo, ota: OtaRuntime, onDismiss: () -> Unit) {
@@ -144,20 +141,29 @@ fun UpdateDialog(info: UpdateInfo, ota: OtaRuntime, onDismiss: () -> Unit) {
         }
     }
 
+    val decline: () -> Unit = {
+        downloadJob?.cancel()
+        downloading = false
+        onDismiss()
+    }
+
     Dialog(
-        // MANDATORY: cannot be closed by tapping outside or by system back. No "Después" / "Cerrar"
-        // button. The only escape is the installer succeeding (RESULT_OK -> the process is replaced
-        // and the dialog dies with the activity).
-        onDismissRequest = { /* no-op: dialog cannot be closed */ },
-        properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
+        onDismissRequest = decline,
+        properties = DialogProperties(),
     ) {
         Surface(shape = RoundedCornerShape(16.dp), tonalElevation = 6.dp) {
             Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text("Actualización obligatoria", style = MaterialTheme.typography.titleLarge)
+                Text("Actualización disponible", style = MaterialTheme.typography.titleLarge)
                 Text("Versión ${info.versionName}", style = MaterialTheme.typography.titleMedium)
                 if (info.notes.isNotBlank()) {
                     Text(info.notes, style = MaterialTheme.typography.bodyMedium)
                 }
+                Text(
+                    text = "Si aceptas, Kino descargará la actualización desde GitHub (kinotvapp/kino-light) y la " +
+                        "instalará por fuera de la tienda desde la que instalaste la app, sin pasar por sus revisiones. " +
+                        "Si no aceptas, no se descarga nada.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
                 // High-contrast warning so the post-install message isn't missed. White background
                 // (the dialog is dark) + red text (high urgency). Outlined so it doesn't bleed into
                 // the surrounding Material 3 dark surface.
@@ -202,11 +208,11 @@ fun UpdateDialog(info: UpdateInfo, ota: OtaRuntime, onDismiss: () -> Unit) {
                     Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
 
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End), verticalAlignment = Alignment.CenterVertically) {
+                    // Declining is always one tap away and as prominent as accepting.
+                    OutlinedButton(onClick = decline) { Text(if (downloading) "Cancelar" else "Ahora no") }
                     when {
-                        downloading -> {
-                            // No "Cancelar": the download is part of the install path.
-                        }
+                        downloading -> Unit
                         readyFile != null -> {
                             Button(
                                 onClick = { readyFile?.let { installApk(it) } },
@@ -228,7 +234,7 @@ fun UpdateDialog(info: UpdateInfo, ota: OtaRuntime, onDismiss: () -> Unit) {
                             Button(
                                 onClick = { startDownload() },
                                 modifier = Modifier.focusRequester(buttonFocus),
-                            ) { Text(if (error != null) "Reintentar" else "Actualizar ahora") }
+                            ) { Text(if (error != null) "Reintentar" else "Descargar e instalar") }
                         }
                     }
                 }

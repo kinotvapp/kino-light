@@ -59,6 +59,12 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+    // Reproducible builds (F-Droid verifies our signed APK byte for byte): no Google-encrypted
+    // dependency blob in the APK/bundle, since it differs between builds.
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
+    }
     buildFeatures {
         compose = true
         buildConfig = true
