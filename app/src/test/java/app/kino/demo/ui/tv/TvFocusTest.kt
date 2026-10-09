@@ -61,17 +61,6 @@ class TvFocusTest {
     }
 
     @Test
-    fun onboardingLandsOnACardAndContinueIsReachable() {
-        val nav = start(Route.Home, Route.SourcePicker)
-        assertLanded("Elige tus fuentes")
-        repeat(8) { press(Key.DirectionDown) }
-        // Down from the last line of cards reaches "Continuar"; OK on it goes Home.
-        press(Key.DirectionCenter)
-        assertEquals(Route.Home, nav.current)
-        assertLanded("Inicio after onboarding")
-    }
-
-    @Test
     fun homeToFilmToPlayerAndBack() {
         val nav = start(Route.Home)
         assertLanded("Inicio")
@@ -94,9 +83,9 @@ class TvFocusTest {
     }
 
     @Test
-    fun everyPlaceholderScreenLands() {
+    fun everySectionLands() {
         val nav = start(Route.Home)
-        listOf(Route.Search, Route.Categories, Route.Library, Route.Live, Route.Extensions, Route.Settings, Route.About).forEach { route ->
+        listOf(Route.Search, Route.Categories, Route.About).forEach { route ->
             compose.runOnIdle { nav.push(route) }
             assertLanded(route.toString())
             press(Key.DirectionDown)
@@ -104,12 +93,5 @@ class TvFocusTest {
             compose.runOnIdle { nav.pop() }
             assertLanded("Inicio back from $route")
         }
-    }
-
-    @Test
-    fun settingsTabsAllRender() {
-        start(Route.Home, Route.Settings)
-        assertLanded("Ajustes")
-        compose.onAllNodesWithText("Ajustes").assertCountEquals(1)
     }
 }

@@ -39,7 +39,6 @@ import app.kino.demo.ui.PhoneApp
 import app.kino.demo.ui.Route
 import app.kino.demo.ui.TvApp
 import app.kino.demo.ui.brand.KinoSplash
-import app.kino.demo.ui.isPickerDone
 import app.kino.demo.ui.systemAnimationsOff
 import app.kino.demo.ui.theme.KinoBlack
 import app.kino.demo.ui.theme.KinoTextSecondary
@@ -79,8 +78,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         isTv = DeviceKind.isTelevision(this)
         val rows = runCatching { loadCatalog(this) }.getOrDefault(emptyList())
-        val pickerDone = isPickerDone(this)
-        val nav = Navigator(if (pickerDone) listOf(Route.Home) else listOf(Route.Home, Route.SourcePicker))
+        val nav = Navigator(listOf(Route.Home))
         val reduced = systemAnimationsOff(this)
 
         // OTA self-update: at most every 3h, retries the check with exponential backoff (10, 20, 40... min)

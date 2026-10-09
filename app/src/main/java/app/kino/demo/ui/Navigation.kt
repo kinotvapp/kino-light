@@ -3,24 +3,17 @@ package app.kino.demo.ui
 import androidx.compose.runtime.mutableStateListOf
 import app.kino.demo.data.Film
 
-/** Every place the demo can show. */
+/** Every place the app can show. */
 sealed interface Route {
     data object Home : Route
     data object Categories : Route
-    data object Library : Route
-    data object Downloads : Route
-    data object Live : Route
-    data object Extensions : Route
-    data object Settings : Route
     data object About : Route
     data object Search : Route
-    data object Assistant : Route
-    data object SourcePicker : Route
     data class Title(val film: Film) : Route
     data class Player(val film: Film) : Route
 }
 
-/** A tiny back stack: the demo has no deep links or process restore to care about. */
+/** A tiny back stack: the app has no deep links or process restore to care about. */
 class Navigator(start: List<Route>) {
     val stack = mutableStateListOf<Route>().apply { addAll(start) }
 
@@ -41,11 +34,5 @@ class Navigator(start: List<Route>) {
         stack.clear()
         stack += Route.Home
         if (route != Route.Home) stack += route
-    }
-
-    /** Leaves the first-run picker for Home. */
-    fun finishPicker() {
-        stack.remove(Route.SourcePicker)
-        if (stack.isEmpty()) stack += Route.Home
     }
 }

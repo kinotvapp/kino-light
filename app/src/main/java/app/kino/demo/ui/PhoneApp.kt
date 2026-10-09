@@ -13,18 +13,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -52,15 +45,8 @@ import app.kino.demo.data.CatalogRow
 import app.kino.demo.ui.about.AboutScreen
 import app.kino.demo.ui.brand.KinoWordmark
 import app.kino.demo.ui.home.HomeScreen
-import app.kino.demo.ui.phone.AssistantScreen
 import app.kino.demo.ui.phone.CategoriesScreen
-import app.kino.demo.ui.phone.DownloadsScreen
-import app.kino.demo.ui.phone.LibraryScreen
-import app.kino.demo.ui.phone.LiveScreen
-import app.kino.demo.ui.phone.ExtensionsScreen
 import app.kino.demo.ui.phone.SearchScreen
-import app.kino.demo.ui.phone.SettingsScreen
-import app.kino.demo.ui.phone.SourcePickerScreen
 import app.kino.demo.ui.player.PlayerScreen
 import app.kino.demo.ui.theme.KinoBlack
 import app.kino.demo.ui.theme.KinoRed
@@ -72,17 +58,12 @@ private data class Tab(val route: Route, val label: String, val icon: ImageVecto
 private val TABS = listOf(
     Tab(Route.Home, "Inicio", Icons.Default.Home),
     Tab(Route.Categories, "Categorías", Icons.Default.GridView),
-    Tab(Route.Library, "Biblioteca", Icons.Default.VideoLibrary),
-    Tab(Route.Downloads, "Descargas", Icons.Default.Download),
-    Tab(Route.Live, "En vivo", Icons.Default.LiveTv),
-    Tab(Route.Extensions, "Plugins", Icons.Default.Extension),
-    Tab(Route.Settings, "Ajustes", Icons.Default.Settings),
     Tab(Route.About, "Acerca de", Icons.Default.Info),
 )
 
 /**
  * The phone's shell: a drawer with the sections (a rail on a landscape tablet), a top bar with the
- * logo on section screens, and full-screen pages for a film, the player, search and the assistant.
+ * logo on section screens, and full-screen pages for a film, the player and search.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -95,7 +76,7 @@ fun PhoneApp(rows: List<CatalogRow>, nav: Navigator) {
     val isWide = isLandscapeTablet()
 
     BackHandler(enabled = drawerState.isOpen) { scope.launch { drawerState.close() } }
-    BackHandler(enabled = !drawerState.isOpen && nav.stack.size > 1 && route != Route.SourcePicker) { nav.pop() }
+    BackHandler(enabled = !drawerState.isOpen && nav.stack.size > 1) { nav.pop() }
 
     when (route) {
         is Route.Player -> { PlayerScreen(route.film, isTv = false, onBack = { nav.pop() }); return }
@@ -104,8 +85,6 @@ fun PhoneApp(rows: List<CatalogRow>, nav: Navigator) {
             return
         }
         Route.Search -> { SearchScreen(rows, onBack = { nav.pop() }, onOpenFilm = { nav.push(Route.Title(it)) }); return }
-        Route.Assistant -> { AssistantScreen(onBack = { nav.pop() }); return }
-        Route.SourcePicker -> { SourcePickerScreen(onFinish = { nav.finishPicker(); markPickerDone(context) }); return }
         else -> Unit
     }
 
@@ -177,12 +156,6 @@ fun PhoneApp(rows: List<CatalogRow>, nav: Navigator) {
                         },
                         actions = {
                             if (route == Route.Home) {
-                                IconButton(onClick = { fullAppOnly(context) }) {
-                                    Icon(Icons.Default.Refresh, contentDescription = "Recargar catálogo", tint = Color.White)
-                                }
-                                IconButton(onClick = { nav.push(Route.Assistant) }) {
-                                    Icon(Icons.Default.AutoAwesome, contentDescription = "Kinobot, el asistente de IA", tint = Color.White)
-                                }
                                 IconButton(onClick = { nav.push(Route.Search) }) {
                                     Icon(Icons.Default.Search, contentDescription = "Buscar", tint = Color.White)
                                 }
@@ -200,11 +173,6 @@ fun PhoneApp(rows: List<CatalogRow>, nav: Navigator) {
                         onPlayFilm = { nav.push(Route.Player(it)) },
                     )
                     Route.Categories -> CategoriesScreen(rows, padding, onOpenFilm = { nav.push(Route.Title(it)) })
-                    Route.Library -> LibraryScreen(rows, padding, onOpenFilm = { nav.push(Route.Title(it)) }, onPlayFilm = { nav.push(Route.Player(it)) })
-                    Route.Downloads -> DownloadsScreen(rows, padding)
-                    Route.Live -> LiveScreen(rows, padding, onPlay = { nav.push(Route.Player(it)) })
-                    Route.Extensions -> ExtensionsScreen(padding)
-                    Route.Settings -> SettingsScreen(padding, onOpenDownloads = { nav.goTab(Route.Downloads) })
                     Route.About -> AboutScreen(padding)
                     else -> Unit
                 }

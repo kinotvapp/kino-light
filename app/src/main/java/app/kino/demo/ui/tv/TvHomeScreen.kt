@@ -54,7 +54,6 @@ import app.kino.demo.data.Film
 import app.kino.demo.data.metaLine
 import app.kino.demo.ui.LocalReducedEffects
 import app.kino.demo.ui.backdropFadeSpec
-import app.kino.demo.ui.fullAppOnly
 import app.kino.demo.ui.rememberHeroDrift
 import app.kino.demo.ui.theme.KinoBlack
 import app.kino.demo.ui.theme.KinoRed
@@ -255,23 +254,5 @@ fun TvHomeScreen(
         }
 
         TvSideRail(railItems, Modifier.align(Alignment.CenterStart))
-        // Reload sits in the top right corner: an action on the screen, not a place to go.
-        Surface(
-            onClick = { fullAppOnly(context) },
-            modifier = Modifier.align(Alignment.TopEnd).padding(top = 24.dp, end = 32.dp).size(48.dp),
-            shape = ClickableSurfaceDefaults.shape(CircleShape),
-            colors = ClickableSurfaceDefaults.colors(
-                containerColor = KinoBlack.copy(alpha = 0.55f),
-                contentColor = Color.White,
-                focusedContainerColor = KinoRed,
-                focusedContentColor = Color.White,
-                pressedContainerColor = KinoRed,
-                pressedContentColor = Color.White,
-            ),
-        ) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Icon(Icons.Default.Refresh, contentDescription = "Recargar", modifier = Modifier.size(26.dp))
-            }
-        }
     }
 }
