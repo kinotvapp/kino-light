@@ -20,22 +20,26 @@ RepoType: git
 Repo: https://github.com/kinotvapp/kino-light.git
 
 # The APK F-Droid publishes is OUR signed one, once the build is verified as reproducible: same
-# applicationId + same key as the self-updating release, so the opt-in OTA installs over it.
-Binaries: https://github.com/kinotvapp/kino-light/releases/download/v%v/app-release.apk
+# applicationId + same key as the full app, so the opt-in OTA installs over it.
+#
+# This repo's v0.9.x tags and releases are the FULL app's (kino.apk + latest.json, versionCode 859).
+# Nothing here may touch them: F-Droid builds only from tags named fdroid-vX.Y.Z, and those
+# GitHub releases carry just the APK -- no latest.json, never marked "latest".
+Binaries: https://github.com/kinotvapp/kino-light/releases/download/fdroid-v%v/kino-player.apk
 AllowedAPKSigningKeys: 35c2ff7d172f3001a48edac842dbe46058b80f8ae7c1ce3943d1c3b75477af31
 
 Builds:
   - versionName: 1.0.0
     versionCode: 790
-    commit: v1.0.0
+    commit: fdroid-v1.0.0
     subdir: app
     gradle:
       - yes
     # gradle.properties is per-machine and gitignored; the sample has the non-secret settings.
     prebuild: cp ../gradle.properties.example ../gradle.properties
 
-AutoUpdateMode: Version
-UpdateCheckMode: Tags
+AutoUpdateMode: Version fdroid-v%v
+UpdateCheckMode: Tags ^fdroid-v
 UpdateCheckData: app/build.gradle.kts|versionCode = (\d+)|.|versionName = "([\d.]+)"
 CurrentVersion: 1.0.0
 CurrentVersionCode: 790
