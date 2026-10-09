@@ -1,0 +1,1 @@
+Internal: the build is now reproducible for F-Droid.

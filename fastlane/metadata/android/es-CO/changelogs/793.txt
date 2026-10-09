@@ -1,0 +1,1 @@
+Mejora interna: la compilación ahora es reproducible para F-Droid.

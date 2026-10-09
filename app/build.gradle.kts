@@ -15,11 +15,11 @@ android {
         minSdk = 24
         targetSdk = 35
 // Version hardcoded -- the build doesn't read .env. Bump here when shipping a new release.
-// 792 = universal of base 79 (split-scheme). [OtaVersion.baseOf(792)=79], the server's
+// 793 = universal of base 79 (split-scheme). [OtaVersion.baseOf(793)=79], the server's
 // 0.9.54 ([baseOf(839)=83]) looks newer (83 > 79), so the dialog opens. Also above
 // kino-app v0.9.49 (78) so an in-place install on a device that already has it works.
-        versionCode = 792
-        versionName = "1.0.2"
+        versionCode = 793
+        versionName = "1.0.3"
     }
 
     // Release signing comes from gradle.properties (gitignored -- never pushed):
@@ -45,6 +45,9 @@ android {
             // No proguard-rules.pro on this fork; re-add when kino-light grows past demo.
             isMinifyEnabled = false
             isShrinkResources = false
+            // Reproducible builds: AGP otherwise writes the git revision into META-INF, which differs
+            // between a clone (F-Droid) and any other checkout.
+            vcsInfo.include = false
             if (hasSigningConfig) signingConfig = signingConfigs.getByName("release")
         }
         debug {
