@@ -22,7 +22,7 @@ Repo: https://github.com/kinotvapp/kino-light.git
 # The APK F-Droid publishes is OUR signed one, once the build is verified as reproducible: same
 # applicationId + same key as the self-updating release, so the opt-in OTA installs over it.
 Binaries: https://github.com/kinotvapp/kino-light/releases/download/v%v/app-release.apk
-AllowedAPKSigningKeys: REPLACE_WITH_SHA256_OF_THE_RELEASE_CERT
+AllowedAPKSigningKeys: 35c2ff7d172f3001a48edac842dbe46058b80f8ae7c1ce3943d1c3b75477af31
 
 Builds:
   - versionName: 1.0.0
