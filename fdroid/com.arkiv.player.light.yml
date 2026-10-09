@@ -17,7 +17,8 @@ Changelog: https://github.com/kinotvapp/kino-light/blob/HEAD/CHANGELOG.md
 
 RepoType: git
 Repo: https://github.com/kinotvapp/kino-light.git
-Binaries: https://github.com/kinotvapp/kino-light/releases/download/fdroid-v%v/kino-player.apk
+Binaries: 
+  https://github.com/kinotvapp/kino-light/releases/download/fdroid-v%v/kino-player.apk
 
 Builds:
   - versionName: 1.0.3
