@@ -1,6 +1,6 @@
 # Privacidad
 
-## Esta demo
+## Kino Tv
 
 **Kino Tv no envía nada sobre ti.** No tiene cuentas, analítica, publicidad ni reportes de errores. Solo
 descarga los videos del Internet Archive que aparecen en su catálogo (los pósters vienen dentro de la
